@@ -564,11 +564,11 @@ workflows and the files they read, Renovate tracks:
   Documentation), and both copies are updated in one PR.
 - **Container images pinned by version and digest** (the Renovate image of
   `renovate-validation.yml`, the Trivy image of `image-scan.yml`, the Syft
-  and CycloneDX CLI images of
-  `.github/sbom-tools.env`, and the `shellcheck`, `shfmt`, and `actionlint`
-  images of `scripts/lint-shell.sh`, which the `Shell Lint` job of `ci.yml`
-  and the pre-commit hook run), through custom managers that read the
-  `<name>:<version>@sha256:<digest>` reference.
+  and CycloneDX CLI images of `.github/sbom-tools.env`, and the
+  `shellcheck`, `shfmt`, and `actionlint` images of `scripts/lint-shell.sh`,
+  which the `Shell Lint` job of `ci.yml` and the pre-commit hook run),
+  through custom managers that read the `<name>:<version>@sha256:<digest>`
+  reference.
 - **Images of the Compose files and the Dockerfile** that a workflow starts
   or builds (for example `docker-compose.smoke.yml` and `backend/Dockerfile`
   in the image smoke gate), through the built-in `docker-compose` and
