@@ -551,9 +551,7 @@ workflows and the files they read, Renovate tracks:
   `# renovate: datasource=<datasource> depName=<name>` hint comment placed
   directly above the input.
 - **Python tools run as `uvx <package>@<version>`** (`pip-audit` in
-  `ci.yml`, and `bandit` in `scripts/bandit-scan.sh`, which the `Backend
-  Security Scan` job of `ci.yml` and the `Makefile` `security` target
-  run), through a custom manager that looks the package up on PyPI.
+  `ci.yml`), through a custom manager that looks the package up on PyPI.
   `uvx` ignores `backend/.python-version` and would run the tool on the
   first interpreter that `uv` finds, so each invocation passes the file's
   value in `UV_PYTHON` (`docs/conventions.md`, Runtime Version).
@@ -576,12 +574,11 @@ workflows and the files they read, Renovate tracks:
 
 A new pin uses one of these forms, so that Renovate tracks it from the
 start. Updates of the dependencies that these custom managers find under
-`.github/`, in `scripts/lint-shell.sh`, or in `scripts/bandit-scan.sh`
-use the `ci(deps):` title prefix, like GitHub Actions updates, and each
-tool gets its own PR. The `ci` type carries no release signal
-(`docs/conventions.md`, Versioning). Swagger UI updates use `chore(deps):`
-instead, because the image ships the copy of the `/api/docs` page; that
-type carries no release signal either.
+`.github/` or in `scripts/lint-shell.sh` use the `ci(deps):` title prefix,
+like GitHub Actions updates, and each tool gets its own PR. The `ci` type
+carries no release signal (`docs/conventions.md`, Versioning). Swagger UI
+updates use `chore(deps):` instead, because the image ships the copy of the
+`/api/docs` page; that type carries no release signal either.
 
 `renovate-validation.yml` is a separate, advisory repository check. It runs
 on every pull request rather than maintaining a whitelist of Renovate-managed

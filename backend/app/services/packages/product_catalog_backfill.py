@@ -140,7 +140,7 @@ async def _rollback(session: AsyncSession) -> None:
         await session.rollback()
     except SoftTimeLimitExceeded, MemoryError:
         raise
-    except Exception:  # nosec B110  # the pair is already counted as failed
+    except Exception:  # noqa: S110 — the pair is already counted as failed
         pass
 
 

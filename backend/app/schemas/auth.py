@@ -30,7 +30,7 @@ class LoginData(BaseModel):
     """The `data` payload of a successful login response."""
 
     access_token: str = Field(repr=False)
-    token_type: Literal["bearer"] = "bearer"
+    token_type: Literal["bearer"] = "bearer"  # noqa: S105 — OAuth 2.0 token type, not a credential
     expires_at: datetime
 
 

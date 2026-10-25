@@ -75,7 +75,7 @@ GHSA_CURSOR_RESET_EVENT: Final = "ghsa_cursor_reset"
 
 INVALID_CWE_REASON: Final = "invalid_cwe"
 
-TOKEN_NOT_CONFIGURED: Final = "GITHUB_TOKEN not configured"
+TOKEN_NOT_CONFIGURED: Final = "GITHUB_TOKEN not configured"  # noqa: S105 — error message, not a credential
 AUTHENTICATION_FAILED: Final = "GitHub API authentication failed"
 RATE_LIMITED: Final = "GitHub API rate limit exceeded or access denied"
 CONNECTION_FAILED: Final = "Failed to connect to GitHub Advisory API"

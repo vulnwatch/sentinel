@@ -202,7 +202,7 @@ STEPS: Final = (
 # Dataset Content
 # ---------------------------------------------------------------------------
 
-PASSWORD: Final = "example-dataset-password"
+PASSWORD: Final = "example-dataset-password"  # noqa: S105 — public by design (example-dataset.md, Credentials)
 """The local password of every dataset user (Credentials)."""
 
 _MANUAL_ORIGIN: Final = "_manual"

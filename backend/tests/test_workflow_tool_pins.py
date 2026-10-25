@@ -286,7 +286,7 @@ def test_uvx_tools_are_pinned_exactly() -> None:
         for package, _ in _uvx_pins("\n".join(lines))
     }
 
-    assert packages >= {"bandit", "pip-audit"}
+    assert packages >= {"pip-audit"}
 
 
 @pytest.mark.unit
@@ -319,8 +319,7 @@ def test_uvx_tools_run_on_the_project_python() -> None:
     # one of backend/.python-version, so every invocation passes a version
     # read at run time in UV_PYTHON, never a literal (docs/conventions.md,
     # Runtime Version; issue #1103). That the value is the file's is tested
-    # for each caller: tests/test_bandit_scan_script.py and
-    # tests/test_ci_workflow.py.
+    # for its caller in tests/test_ci_workflow.py.
     without_project_python = [
         f"{relative}: {line.strip()}"
         for relative, lines in _uvx_sources().items()
