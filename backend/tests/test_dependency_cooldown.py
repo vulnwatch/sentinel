@@ -126,23 +126,25 @@ def test_renovate_holds_every_new_version_for_the_backend_cooldown() -> None:
 
 
 @pytest.mark.unit
-def test_renovate_admits_only_docker_releases_without_a_timestamp() -> None:
-    # Docker Hub timestamps are missing for an image with more than 1,000
-    # tags; such an image updates without the cooldown instead of never. A
-    # missing timestamp of any other datasource keeps holding the update.
+def test_renovate_admits_only_the_named_docker_images_without_a_timestamp() -> None:
+    # Anonymous Docker Hub lookups have no timestamps for an image with more
+    # than 1,000 tags; the named ones update without the cooldown instead of
+    # never. Any other release without a timestamp, of any image or
+    # datasource, keeps holding its update, so a lookup failure fails closed.
     config = renovate_config()
     optional = [
         rule for rule in config["packageRules"] if "minimumReleaseAgeBehaviour" in rule
     ]
 
     assert "minimumReleaseAgeBehaviour" not in config
-    assert optional == [
-        {
-            "description": optional[0]["description"],
-            "matchDatasources": ["docker"],
-            "minimumReleaseAgeBehaviour": "timestamp-optional",
-        }
-    ]
+    assert len(optional) == 1
+    assert {
+        key: value for key, value in optional[0].items() if key != "description"
+    } == {
+        "matchDatasources": ["docker"],
+        "matchPackageNames": ["anchore/syft", "postgres", "redis", "renovate/renovate"],
+        "minimumReleaseAgeBehaviour": "timestamp-optional",
+    }
 
 
 @pytest.mark.unit
