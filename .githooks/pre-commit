@@ -26,31 +26,14 @@ echo "  unit tests..."
 (cd backend && uv run --locked pytest -m unit -n auto --maxprocesses 8 \
     --max-worker-restart 0 --no-header -q -x) || [ $? -eq 5 ]
 
-# --- Shell script checks (shellcheck + shfmt) ---
-# Run only on staged shell files. Because shellcheck and shfmt are not
-# part of the Python environment, the hook degrades gracefully with a
-# warning when they are absent — CI remains the authoritative gate.
+# --- Shell lint (shellcheck, shfmt, actionlint) ---
+# Lints the staged shell scripts and hooks with shellcheck and shfmt, and
+# the staged workflows with actionlint, from the pinned images that the
+# Shell Lint job of ci.yml runs. When Docker cannot run them, the script
+# warns and the commit proceeds — CI remains the authoritative gate.
 # See docs/conventions.md (Shell Scripting).
-mapfile -t shell_files < <(
-    git diff --cached --name-only --diff-filter=ACMR |
-        grep -E '(\.sh$|^\.githooks/)' || true
-)
-
-if [[ ${#shell_files[@]} -gt 0 ]]; then
-    echo "  shellcheck..."
-    if command -v shellcheck >/dev/null 2>&1; then
-        shellcheck "${shell_files[@]}"
-    else
-        echo "Warning: shellcheck not installed; skipping (CI will enforce)." >&2
-    fi
-
-    echo "  shfmt..."
-    if command -v shfmt >/dev/null 2>&1; then
-        shfmt -i 4 -ci -d "${shell_files[@]}"
-    else
-        echo "Warning: shfmt not installed; skipping (CI will enforce)." >&2
-    fi
-fi
+echo "  shell lint..."
+scripts/lint-shell.sh --staged
 
 # --- Secret scanning (gitleaks) ---
 # Scans staged changes for secrets. Local-only: there is no CI job or

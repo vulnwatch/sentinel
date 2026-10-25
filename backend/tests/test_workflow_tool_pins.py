@@ -2,16 +2,18 @@
 
 `docs/deployment.md` (Workflow Conventions) requires every tool version a
 workflow pins to be tracked by Renovate, and lists the forms that the
-`renovate.jsonc` custom managers match. These tests keep the pins of the
-`Shell Lint` job, the `uvx` tools, and the Swagger UI assets in those forms
-with exact versions: a pin that leaves its form is silently dropped from
-dependency extraction rather than rejected. See issue #1060. The Swagger UI
-of the API's `/api/docs` page shares the GitHub Pages site's pin, and the site
-enables the operation filter (issue #1070).
+`renovate.jsonc` custom managers match. These tests keep the images of the
+shell lint, the `uvx` tools, and the Swagger UI assets in those forms with
+exact versions: a pin that leaves its form is silently dropped from
+dependency extraction rather than rejected. See issue #1060. The `Shell Lint`
+job and the pre-commit hook run the same images, pinned by version and digest,
+through `scripts/lint-shell.sh` (issue #1099). The Swagger UI of the API's
+`/api/docs` page shares the GitHub Pages site's pin, and the site enables the
+operation filter (issue #1070).
 
 The workflows are parsed as YAML (`tests/support/yaml_files.py`); only the
-Renovate hint comments, which are not YAML data, the `Makefile`, and the
-`/api/docs` page module are read as text.
+`Makefile`, the shell lint script and the pre-commit hook, and the `/api/docs`
+page module are read as text.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ import pytest
 
 from app.api.interactive_docs import SWAGGER_UI_DIST
 from tests.support.yaml_files import (
+    job_steps,
     load_yaml_file,
     named_step,
     string_values,
@@ -38,16 +41,26 @@ DEPLOY_API_DOCS_PATH = WORKFLOWS_DIR / "deploy-api-docs.yml"
 MAKEFILE_PATH = REPO_ROOT / "Makefile"
 INTERACTIVE_DOCS_PATH = REPO_ROOT / "backend" / "app" / "api" / "interactive_docs.py"
 RENOVATE_CONFIG_PATH = REPO_ROOT / "renovate.jsonc"
+LINT_SHELL_RELATIVE = "scripts/lint-shell.sh"
+LINT_SHELL_PATH = REPO_ROOT / LINT_SHELL_RELATIVE
+PRE_COMMIT_PATH = REPO_ROOT / ".githooks" / "pre-commit"
 
 EXACT_VERSION = r"\d+\.\d+\.\d+"
 
-# The release repository of each tool the Shell Lint job downloads, by the
-# env: entry that pins its version.
-SHELL_TOOL_RELEASES = {
-    "SHELLCHECK_VERSION": "koalaman/shellcheck",
-    "SHFMT_VERSION": "mvdan/sh",
-    "ACTIONLINT_VERSION": "rhysd/actionlint",
+# The official image of each tool that scripts/lint-shell.sh runs, by the
+# variable that pins it.
+SHELL_LINT_IMAGES = {
+    "SHELLCHECK_IMAGE": "koalaman/shellcheck",
+    "SHFMT_IMAGE": "mvdan/shfmt",
+    "ACTIONLINT_IMAGE": "rhysd/actionlint",
 }
+IMAGE_ASSIGNMENT = re.compile(r"^[A-Z_]+_IMAGE=.*$", re.MULTILINE)
+IMAGE_PIN = re.compile(
+    r'(?P<name>[A-Z_]+_IMAGE)="(?P<image>[a-z0-9._/-]+)'
+    rf":(?P<version>v?{EXACT_VERSION})@(?P<digest>sha256:[0-9a-f]{{64}})\""
+)
+# The PR Metadata check rejects a pull request title above 71 characters.
+PR_TITLE_LIMIT = 71
 
 UVX_INVOCATION = re.compile(r"\buvx\s+\S+")
 UVX_PIN = re.compile(
@@ -67,6 +80,27 @@ def _renovate_config() -> dict[str, Any]:
     return config
 
 
+def _match_strings(manager: dict[str, Any]) -> list[re.Pattern[str]]:
+    """The `matchStrings` of a custom manager as Python patterns: Renovate's
+    named groups use the JavaScript `(?<name>)` syntax."""
+    return [
+        re.compile(string.replace("(?<", "(?P<")) for string in manager["matchStrings"]
+    ]
+
+
+def _file_patterns(manager: dict[str, Any]) -> list[re.Pattern[str]]:
+    return [re.compile(p.strip("/")) for p in manager["managerFilePatterns"]]
+
+
+def _shell_lint_pins() -> list[re.Match[str]]:
+    """The image pin of every `*_IMAGE=` assignment of the shell lint script;
+    an assignment that is not `<image>:<exact version>@<digest>` fails."""
+    assignments = IMAGE_ASSIGNMENT.findall(LINT_SHELL_PATH.read_text(encoding="utf-8"))
+    pins = [IMAGE_PIN.fullmatch(assignment) for assignment in assignments]
+    assert all(pins), assignments
+    return [pin for pin in pins if pin]
+
+
 def _workflow_files() -> list[Path]:
     return sorted({*WORKFLOWS_DIR.glob("*.yml"), *WORKFLOWS_DIR.glob("*.yaml")})
 
@@ -83,26 +117,69 @@ def _uvx_pins(text: str) -> list[tuple[str, str]]:
 
 
 @pytest.mark.unit
-def test_shell_lint_tool_versions_are_exact_and_carry_renovate_hints() -> None:
-    # A value omits the v prefix of the release tag, which the download URL
-    # adds, and the hint names the repository the job downloads from.
-    job = workflow_jobs(load_yaml_file(CI_PATH))["shell-lint"]
-    install_script = named_step(job, "Install pinned shell tooling")["run"]
-    workflow = CI_PATH.read_text(encoding="utf-8")
+def test_shell_lint_images_are_pinned_by_exact_version_and_digest() -> None:
+    # The digest fixes the content that CI and the pre-commit hook run; the
+    # version names it for Renovate and for the reader.
+    pins = _shell_lint_pins()
 
-    assert job["env"].keys() == SHELL_TOOL_RELEASES.keys()
-    for name, repository in SHELL_TOOL_RELEASES.items():
-        version = job["env"][name]
-        assert re.fullmatch(EXACT_VERSION, version), name
-        assert (
-            f"https://github.com/{repository}/releases/download/v${{{name}}}/"
-            in install_script
-        ), name
-        assert re.search(
-            rf"# renovate: datasource=github-releases depName={re.escape(repository)}\n"
-            rf"\s+{name}: \"{re.escape(version)}\"\n",
-            workflow,
-        ), name
+    assert {pin["name"]: pin["image"] for pin in pins} == SHELL_LINT_IMAGES
+
+
+@pytest.mark.unit
+def test_shell_lint_manager_extracts_every_image_with_its_digest() -> None:
+    manager = next(
+        manager
+        for manager in _renovate_config()["customManagers"]
+        if any(p.search(LINT_SHELL_RELATIVE) for p in _file_patterns(manager))
+    )
+    script = LINT_SHELL_PATH.read_text(encoding="utf-8")
+    extracted = {
+        (match["depName"], match["currentValue"], match["currentDigest"])
+        for pattern in _match_strings(manager)
+        for match in pattern.finditer(script)
+    }
+
+    assert manager["datasourceTemplate"] == "docker"
+    assert extracted == {
+        (pin["image"], pin["version"], pin["digest"]) for pin in _shell_lint_pins()
+    }
+
+
+@pytest.mark.unit
+def test_shell_lint_image_updates_use_the_ci_prefix_within_the_title_limit() -> None:
+    # The images run only in CI and in the developer's local checks, so their
+    # updates carry no release signal. The longest title Renovate gives them,
+    # in the form of its digest updates ("<prefix> Update python:3.14-slim
+    # Docker digest to 35caba8"), must pass the PR Metadata check.
+    rules = [
+        rule
+        for rule in _renovate_config()["packageRules"]
+        if LINT_SHELL_RELATIVE in rule.get("matchFileNames", [])
+    ]
+
+    assert [rule.get("commitMessagePrefix") for rule in rules] == ["ci(deps):"]
+    for pin in _shell_lint_pins():
+        title = (
+            f"ci(deps): Update {pin['image']}:{pin['version']} "
+            f"Docker digest to {pin['digest'].removeprefix('sha256:')[:7]}"
+        )
+        assert len(title) <= PR_TITLE_LIMIT, title
+
+
+@pytest.mark.unit
+def test_shell_lint_job_and_pre_commit_hook_run_the_script() -> None:
+    # The job and the hook run the same pinned images only while both lint
+    # through the script, and the job installs no tool of its own.
+    job = workflow_jobs(load_yaml_file(CI_PATH))["shell-lint"]
+    hook = PRE_COMMIT_PATH.read_text(encoding="utf-8")
+
+    assert "env" not in job
+    assert [step["run"] for step in job_steps(job) if "run" in step] == [
+        LINT_SHELL_RELATIVE
+    ]
+    assert re.search(
+        rf"^{re.escape(LINT_SHELL_RELATIVE)} --staged$", hook, re.MULTILINE
+    )
 
 
 @pytest.mark.unit
@@ -155,11 +232,8 @@ def test_unpkg_manager_extracts_both_swagger_ui_copies_on_one_version() -> None:
         for manager in _renovate_config()["customManagers"]
         if manager.get("datasourceTemplate") == "npm"
     )
-    file_patterns = [re.compile(p.strip("/")) for p in manager["managerFilePatterns"]]
-    # Renovate's named groups use the JavaScript (?<name>) syntax.
-    match_strings = [
-        re.compile(string.replace("(?<", "(?P<")) for string in manager["matchStrings"]
-    ]
+    file_patterns = _file_patterns(manager)
+    match_strings = _match_strings(manager)
     api_version = re.fullmatch(
         rf"https://unpkg\.com/swagger-ui-dist@(?P<version>{EXACT_VERSION})/",
         SWAGGER_UI_DIST,

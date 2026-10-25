@@ -1335,14 +1335,15 @@ per-repository via `core.hooksPath` (see activation steps below):
   (in parallel workers, see `docs/conventions.md`, Static Type Checking) +
   the unit suite as a fast gate, run in parallel workers without test
   containers (`pytest -m unit -n auto --maxprocesses 8
-  --max-worker-restart 0`, see Parallel Execution) + `gitleaks git
-  --staged` (secret scan on staged changes). The gate stays fast because
-  it selects only unit tests, which need no database, Redis, network, or
-  test container by definition (see Tier 1 — Unit Tests); no wall-clock
-  limit is specified, because duration depends on the host and grows with
-  the suite. Tool invocations use `uv run --locked`, so the
-  hook never mutates `backend/uv.lock` as a side effect of running a
-  check.
+  --max-worker-restart 0`, see Parallel Execution) + the shell lint of the
+  staged shell scripts, hooks, and workflows (see `docs/conventions.md`,
+  Shell Scripting, Enforcement) + `gitleaks git --staged` (secret scan
+  on staged changes). The gate stays fast because it selects only unit
+  tests, which need no database, Redis, network, or test container by
+  definition (see Tier 1 — Unit Tests); no wall-clock limit is specified,
+  because duration depends on the host and grows with the suite. The
+  Python tool invocations use `uv run --locked`, so the hook never mutates
+  `backend/uv.lock` as a side effect of running a check.
 - **pre-push**: full test suite including integration and e2e tests
   and the system suite, run in one invocation of parallel workers
   (`pytest -m "not image" -n auto --maxprocesses 8
@@ -1372,8 +1373,8 @@ GitHub Action performs secret scanning. The pre-commit hook runs
 `gitleaks git --staged` against staged changes only. Because
 `gitleaks` is not part of the Python environment, the hook degrades
 gracefully — if the binary is absent, it prints a warning and the
-commit proceeds — the same treatment already applied to `shellcheck`
-and `shfmt` (see `docs/conventions.md`, Shell Scripting). No specific
+commit proceeds — as the shell lint does when Docker cannot run its
+images (see `docs/conventions.md`, Shell Scripting). No specific
 version is pinned locally; any recent release is expected to behave
 consistently for this use case. `.gitleaks.toml` at the repository
 root extends gitleaks' default rule set. The fictional values used in
