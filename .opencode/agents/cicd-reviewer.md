@@ -181,8 +181,11 @@ plausibly defeat the check rather than merely fail it:
   mutable reference (`@main`, `@master`, a branch name) is a finding
 - Does an action pinned by commit SHA carry the required inline
   `# vX.Y.Z` comment and a stated reason for the stricter pin?
-- Are tools installed by download (`shellcheck`, `shfmt`, `actionlint`,
-  scanners) pinned to an explicit version?
+- Is every other tool that a workflow uses, itself or through a script
+  that it runs (such as the shell lint images of `scripts/lint-shell.sh`),
+  pinned to an explicit version in one of the forms that
+  `docs/deployment.md` (Workflow Conventions) lists, and tracked by
+  Renovate?
 
 ### Secret handling
 

@@ -103,15 +103,12 @@
     },
     {
       "customType": "regex",
-      "description": "Tool versions that a workflow downloads itself (e.g. shellcheck, shfmt, and actionlint in ci.yml), each marked by a '# renovate: datasource=<datasource> depName=<name>' hint comment directly above its <NAME>_VERSION: \"<version>\" env: entry",
-      "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
+      "description": "Images of shellcheck, shfmt, and actionlint that scripts/lint-shell.sh runs, by version and digest",
+      "managerFilePatterns": ["/^scripts/lint-shell\\.sh$/"],
       "matchStrings": [
-        "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>\\S+)\\s+[A-Z0-9_]+_VERSION:\\s*\"(?<currentValue>[^\"]+)\""
+        "[A-Z]+_IMAGE=\"(?<depName>[a-z0-9._/-]+):(?<currentValue>[^@\"]+)@(?<currentDigest>sha256:[a-f0-9]+)\""
       ],
-      // Release tags carry a 'v' prefix (v1.7.12) that the values omit,
-      // because the download URLs add it; tags that are not versions
-      // (shellcheck's 'latest' and 'stable') are dropped.
-      "extractVersionTemplate": "^v?(?<version>\\d.*)$"
+      "datasourceTemplate": "docker"
     },
     {
       "customType": "regex",
@@ -160,9 +157,9 @@
       "commitMessagePrefix": "ci(deps):"
     },
     {
-      "description": "Versions that the custom managers track in the workflows, in .github/sbom-tools.env, and in the Makefile — tools used only by CI and by the developer's local checks",
+      "description": "Versions that the custom managers track in the workflows, in .github/sbom-tools.env, in the Makefile, and in scripts/lint-shell.sh — tools used only by CI and by the developer's local checks",
       "matchManagers": ["custom.regex"],
-      "matchFileNames": [".github/**", "Makefile"],
+      "matchFileNames": [".github/**", "Makefile", "scripts/lint-shell.sh"],
       "commitMessagePrefix": "ci(deps):"
     },
     {

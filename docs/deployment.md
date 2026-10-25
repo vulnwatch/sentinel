@@ -70,7 +70,7 @@ For architectural decisions and design constraints, see
 
 | Component | Minimum Version | Purpose |
 |-----------|----------------|---------|
-| Docker Engine or Docker Desktop | No independent floor | Repository-managed local development and test container runtime; must support the required Compose plugin |
+| Docker Engine or Docker Desktop | No independent floor | Repository-managed local development and test container runtime; must support the required Compose plugin. Also runs the pinned shell lint tools of the pre-commit hook (`shellcheck`, `shfmt`, `actionlint`), so none of them is installed locally. See `docs/conventions.md` (Shell Scripting) |
 | Docker Compose CLI plugin | 2.32.2+ | Repository-managed development and test orchestration |
 | PostgreSQL | 18+ | Primary database |
 | Redis | 8+ | Session cache, Celery broker, rate limiting |
@@ -78,9 +78,6 @@ For architectural decisions and design constraints, see
 | [uv](https://docs.astral.sh/uv/getting-started/installation/) | 0.13.5+ | Manages the Python 3.14 interpreter and all backend dependencies for local development (see "Quick Start" below). Development only |
 | [gh](https://cli.github.com/) | any recent release | Strongly recommended, development only — manages issues, pull requests, and GitHub Flow from the command line. See `docs/conventions.md` (Git Conventions) |
 | [glab](https://gitlab.com/gitlab-org/cli) | any recent release | Optional, development only — interacts with SUSE-internal GitLab repositories, issues, and merge requests (e.g., SMELT, SMASH). Requires authentication against `gitlab.suse.de`. See `AGENTS.md` (Local Environment) |
-| [shellcheck](https://www.shellcheck.net/) | match `ci.yml` (shell-lint) | Optional, development only — lints shell scripts via the pre-commit hook; CI enforces regardless. See `docs/conventions.md` (Shell Scripting) |
-| [shfmt](https://github.com/mvdan/sh) | match `ci.yml` (shell-lint) | Optional, development only — formats shell scripts via the pre-commit hook. Match the CI version to avoid formatting drift. See `docs/conventions.md` (Shell Scripting) |
-| [actionlint](https://github.com/rhysd/actionlint) | match `ci.yml` (shell-lint) | Optional, development only — validates GitHub Actions workflows locally before pushing. See `docs/conventions.md` (Shell Scripting) |
 | [gitleaks](https://github.com/gitleaks/gitleaks) | any recent release | Optional, development only — scans staged changes for secrets via the pre-commit hook. Local-only; no CI job performs secret scanning. See `docs/features/platform/testing-strategy.md` (Pre-Commit Hooks) |
 
 Repository tooling uses one Docker Compose minimum rather than maintaining
@@ -89,10 +86,6 @@ because it requires `--pull never` for both `up` and one-shot `run` operations.
 Simpler development-stack commands use that same supported baseline. See
 `docs/features/platform/testing-strategy.md` (Image / Container Smoke Testing)
 for the full justification.
-
-Renovate proposes updates of the `shellcheck`, `shfmt`, and `actionlint`
-versions that `ci.yml` pins (see [Workflow Conventions](#workflow-conventions));
-after such an update is merged, update the local tools to match.
 
 ### Network Access (Staging/Production)
 
@@ -557,14 +550,6 @@ workflows and the files they read, Renovate tracks:
   through a custom manager matching a
   `# renovate: datasource=<datasource> depName=<name>` hint comment placed
   directly above the input.
-- **Downloaded tools** (`shellcheck`, `shfmt`, and `actionlint` in the
-  `Shell Lint` job of `ci.yml`), through a custom manager matching the same
-  hint comment placed directly above a `<NAME>_VERSION: "<version>"` entry
-  of an `env:` block, for example
-  `# renovate: datasource=github-releases depName=rhysd/actionlint`. The
-  value omits the `v` prefix of the release tag, which the download URL
-  adds; the manager strips that prefix from the releases it looks up and
-  ignores tags that are not versions.
 - **Python tools run as `uvx <package>@<version>`** (`bandit` and
   `pip-audit` in `ci.yml`, and the `bandit` copy of the `Makefile`
   `security` target), through a custom manager that looks the package up
@@ -575,21 +560,24 @@ workflows and the files they read, Renovate tracks:
   API's `/api/docs` page (`docs/api-spec.md`, OpenAPI Document and Interactive
   Documentation), and both copies are updated in one PR.
 - **Container images pinned by version and digest** (the Renovate image of
-  `renovate-validation.yml`, and the Syft and CycloneDX CLI images of
-  `.github/sbom-tools.env`), through a custom manager per image.
+  `renovate-validation.yml`, the Syft and CycloneDX CLI images of
+  `.github/sbom-tools.env`, and the `shellcheck`, `shfmt`, and `actionlint`
+  images of `scripts/lint-shell.sh`, which the `Shell Lint` job of `ci.yml`
+  and the pre-commit hook run), through custom managers that read the
+  `<name>:<version>@sha256:<digest>` reference.
 - **Images of the Compose files and the Dockerfile** that a workflow starts
   or builds (for example `docker-compose.smoke.yml` and `backend/Dockerfile`
   in the image smoke gate), through the built-in `docker-compose` and
   `dockerfile` managers (see Container Build Conventions).
 
 A new pin uses one of these forms, so that Renovate tracks it from the
-start; a tool a workflow downloads is pinned through a hinted `env:` entry.
-Updates of the dependencies that these custom managers find under
-`.github/` or in the `Makefile` use the `ci(deps):` title prefix, like
-GitHub Actions updates, and each tool gets its own PR. The `ci` type
-carries no release signal (`docs/conventions.md`, Versioning). Swagger UI
-updates use `chore(deps):` instead, because the image ships the copy of the
-`/api/docs` page; that type carries no release signal either.
+start. Updates of the dependencies that these custom managers find under
+`.github/`, in the `Makefile`, or in `scripts/lint-shell.sh` use the
+`ci(deps):` title prefix, like GitHub Actions updates, and each tool gets
+its own PR. The `ci` type carries no release signal (`docs/conventions.md`,
+Versioning). Swagger UI updates use `chore(deps):` instead, because the
+image ships the copy of the `/api/docs` page; that type carries no release
+signal either.
 
 `renovate-validation.yml` is a separate, advisory repository check. It runs
 on every pull request rather than maintaining a whitelist of Renovate-managed

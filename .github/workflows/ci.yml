@@ -236,73 +236,15 @@ jobs:
     name: Shell Lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Each hint comment is read by a renovate.jsonc custom manager; the
-    # values omit the v prefix of the release tags, which the download
-    # URLs below add. See docs/deployment.md (Workflow Conventions).
-    env:
-      # renovate: datasource=github-releases depName=koalaman/shellcheck
-      SHELLCHECK_VERSION: "0.11.0"
-      # renovate: datasource=github-releases depName=mvdan/sh
-      SHFMT_VERSION: "3.14.1"
-      # renovate: datasource=github-releases depName=rhysd/actionlint
-      ACTIONLINT_VERSION: "1.7.12"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install pinned shell tooling
-        run: |
-          set -euo pipefail
-          tools_dir="${RUNNER_TEMP}/shell-tools"
-          mkdir -p "${tools_dir}"
-
-          # Install shellcheck (tar.xz; binary at shellcheck-v<ver>/shellcheck)
-          curl -fsSL -o "${tools_dir}/shellcheck.tar.xz" \
-            "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
-          tar -xJf "${tools_dir}/shellcheck.tar.xz" -C "${tools_dir}"
-          mv "${tools_dir}/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" "${tools_dir}/shellcheck"
-
-          # Install shfmt (single static binary)
-          curl -fsSL -o "${tools_dir}/shfmt" \
-            "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64"
-
-          # Install actionlint (tar.gz containing the actionlint binary)
-          curl -fsSL -o "${tools_dir}/actionlint.tar.gz" \
-            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          tar -xzf "${tools_dir}/actionlint.tar.gz" -C "${tools_dir}" actionlint
-
-          chmod +x "${tools_dir}/shellcheck" "${tools_dir}/shfmt" "${tools_dir}/actionlint"
-          echo "${tools_dir}" >>"${GITHUB_PATH}"
-      - name: Verify pinned tool versions
-        run: |
-          set -euo pipefail
-          shellcheck --version
-          shfmt --version
-          actionlint --version
-      - name: Run shellcheck + shfmt on shell scripts and hooks
-        run: |
-          set -euo pipefail
-          # Discover tracked shell files dynamically so newly added scripts
-          # and hooks are covered automatically (no static list to maintain).
-          # Mirrors the in-scope definition used by .githooks/pre-commit:
-          #   '*.sh'        -> every tracked .sh file anywhere in the repo
-          #   '.githooks/*' -> extension-less bash hooks
-          # git ls-files respects .gitignore (never picks up .venv/, etc.).
-          # NUL-safe read + sort -zu de-duplicates (patterns are disjoint in
-          # practice, but be safe).
-          mapfile -d '' -t shell_files < <(
-            git ls-files -z '*.sh' '.githooks/*' | sort -z -u
-          )
-          if [[ ${#shell_files[@]} -eq 0 ]]; then
-            echo "No tracked shell files found; nothing to lint."
-            exit 0
-          fi
-          printf 'Linting %d shell file(s):\n' "${#shell_files[@]}"
-          printf '  %s\n' "${shell_files[@]}"
-          shellcheck "${shell_files[@]}"
-          shfmt -i 4 -ci -d "${shell_files[@]}"
-      - name: Run actionlint (workflows)
-        run: |
-          set -euo pipefail
-          actionlint
+      # shellcheck and shfmt on every tracked shell script and hook, and
+      # actionlint, which also runs shellcheck on every run: block, on every
+      # workflow (docs/conventions.md, Shell Scripting), each from the image
+      # that the script pins by version and digest. The pre-commit hook runs
+      # the same script on the staged files.
+      - name: Lint shell scripts, hooks, and workflows
+        run: scripts/lint-shell.sh
 
   image-smoke:
     name: Image Smoke Test

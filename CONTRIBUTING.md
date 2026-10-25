@@ -39,7 +39,8 @@ Please report unacceptable behavior to security@suse.com.
 
 - **Python 3.14** (managed via [uv](https://docs.astral.sh/uv/))
 - **Docker Engine or Docker Desktop with Docker Compose 2.32.2+** (for local
-  PostgreSQL and Redis, automatic test provisioning, and the image-smoke suite)
+  PostgreSQL and Redis, automatic test provisioning, the image-smoke suite,
+  and the shell lint of the pre-commit hook)
 
 ### Quick Start
 
@@ -74,12 +75,12 @@ What the hooks do:
 
 | Hook | Checks |
 |------|--------|
-| `pre-commit` | ruff lint, ruff format, mypy, unit tests, shellcheck/shfmt (if installed), gitleaks secret scanning |
+| `pre-commit` | ruff lint, ruff format, mypy, unit tests, shellcheck/shfmt on staged shell scripts and hooks and actionlint on staged workflows (from the pinned images of CI, through Docker), gitleaks secret scanning |
 | `commit-msg` | Validates Conventional Commits format, breaking-marker policy, and 72-character subject limit |
 | `pre-push` | Full test suite including the local process system suite, in one parallel run; blocks direct pushes to `master` and local tag pushes |
 | `post-checkout` / `post-merge` / `post-rewrite` | Auto-syncs the Python virtualenv when `uv.lock` changes |
 
-The hooks degrade gracefully: optional tools (`shellcheck`, `shfmt`, `gitleaks`) produce a warning if missing, but do not block the operation.
+The hooks degrade gracefully: when Docker cannot run the images of the shell lint, or the optional `gitleaks` is missing, the pre-commit hook prints a warning but does not block the operation.
 CI remains the authoritative gate.
 
 ## Coding Standards

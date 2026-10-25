@@ -1571,18 +1571,20 @@ shell equivalent of `ruff check` for Python.
 
 All shell scripts MUST be formatted with `shfmt` using the flags
 `-i 4 -ci` (4-space indentation, indented switch cases). This is the
-shell equivalent of `ruff format` for Python. CI runs `shfmt -d` (diff
-mode) and fails if any file is not already formatted; run `shfmt -i 4
--ci -w <files>` locally to fix.
+shell equivalent of `ruff format` for Python. `scripts/lint-shell.sh`
+runs `shfmt -d` (diff mode) and fails if any file is not already
+formatted (Enforcement). It changes no file: the diff that it prints for
+such a file is the change to apply, for example with `git apply -p0`
+from the repository root.
 
 ### Workflow Shell — actionlint
 
 Shell embedded in GitHub Actions `run:` steps is validated by
-`actionlint`, which checks workflow syntax and runs `shellcheck` on each
-`run:` block. Keep embedded shell short; when a `run:` block grows beyond
-simple orchestration, extract it into a script under `scripts/` (which is
-then covered by the standalone `shellcheck`/`shfmt` gate) and invoke that
-script from the workflow.
+`actionlint`, which checks workflow syntax and runs the `shellcheck` of
+its image on each `run:` block. Keep embedded shell short; when a `run:`
+block grows beyond simple orchestration, extract it into a script under
+`scripts/` (which is then covered by the standalone `shellcheck`/`shfmt`
+gate) and invoke that script from the workflow.
 
 ### Naming and Structure
 
@@ -1608,20 +1610,24 @@ authoritative mapping.
 
 ### Enforcement
 
-- **CI** (`.github/workflows/ci.yml`) is the authoritative gate: a
-  dedicated job discovers all tracked standalone scripts and git hooks
-  (via `git ls-files`, so newly added scripts and hooks are covered
-  automatically) and runs `shellcheck` + `shfmt -d` over them, plus
-  `actionlint` over the workflows. Tool versions are pinned in the
-  workflow, consistent with how Python tools (`ruff`, `bandit`) are
-  pinned
-- **Pre-commit hook** (`.githooks/pre-commit`) runs the same
-  `shellcheck` + `shfmt` checks on staged shell files as a fast local
-  safety net. Because these tools are not part of the Python
-  environment, the hook degrades gracefully with a warning when they are
-  not installed (matching the supplementary-safety-net philosophy in
-  `docs/features/platform/testing-strategy.md`). Install `shellcheck` and
-  `shfmt` locally to get pre-commit coverage
+- **CI** (`.github/workflows/ci.yml`) is the authoritative gate: its
+  `Shell Lint` job runs `scripts/lint-shell.sh`, which discovers all
+  tracked standalone scripts and git hooks (via `git ls-files`, so newly
+  added scripts and hooks are covered automatically) and runs
+  `shellcheck` + `shfmt -d` over them, plus `actionlint` over the
+  workflows. The script runs each tool from its official image, pinned by
+  version and digest (`docs/deployment.md`, Workflow Conventions),
+  through Docker, in a disposable container without network that reads
+  the repository only, so CI and the developer's host run the same tools
+  and none of them needs to be installed locally
+- **Pre-commit hook** (`.githooks/pre-commit`) runs
+  `scripts/lint-shell.sh` on the staged files — the same checks, from the
+  same images, selected in the same way — as a fast local safety net.
+  When Docker cannot run the images (the `docker` command is missing, its
+  daemon is unreachable, or an image cannot be downloaded), the hook
+  warns and the commit proceeds (matching the supplementary-safety-net
+  philosophy in `docs/features/platform/testing-strategy.md`); a commit
+  that stages no shell script, hook, or workflow starts no container
 
 ## Git Conventions
 
