@@ -23,6 +23,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -41,6 +42,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 RELEASE_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "build-images.yml"
 CODECOV_CONFIG_PATH = REPO_ROOT / "codecov.yml"
+PYPROJECT_PATH = REPO_ROOT / "backend" / "pyproject.toml"
 
 DRIFT_CHECK_STEP = (
     "Verify Dockerfile and pyproject.toml Python version match .python-version"
@@ -396,6 +398,7 @@ UVX_STUB = """\
 set -euo pipefail
 {
     printf 'UV_PYTHON=%s\\n' "${UV_PYTHON-}"
+    printf 'UV_EXCLUDE_NEWER=%s\\n' "${UV_EXCLUDE_NEWER-}"
     printf '%s\\n' "$@"
 } >"${UVX_STUB_LOG}"
 """
@@ -427,8 +430,10 @@ def _run_audit_step(
         "UV_STUB_LOG": str(uv_log),
         "UV_STUB_EXIT": str(export_exit),
         "UVX_STUB_LOG": str(uvx_log),
-        # A host default that the step must not pass on to pip-audit.
+        # Host defaults that the step must not pass on to pip-audit; the
+        # second would turn the release-age cooldown off.
         "UV_PYTHON": "3.12",
+        "UV_EXCLUDE_NEWER": "false",
     }
     result = subprocess.run(
         ["bash", "-c", script],
@@ -451,7 +456,7 @@ def test_pip_audit_audits_the_hashed_locked_set_on_the_project_python(
     # package that cannot be audited. Issue #1103.
     result, runner_temp, uv_log, uvx_log = _run_audit_step(tmp_path)
     uv_arguments = uv_log.read_text(encoding="utf-8").splitlines()
-    uv_python, *audit_arguments = uvx_log.read_text(encoding="utf-8").splitlines()
+    uv_python, _, *audit_arguments = uvx_log.read_text(encoding="utf-8").splitlines()
     requirements = uv_arguments[uv_arguments.index("--output-file") + 1]
     audited = audit_arguments[audit_arguments.index("--requirement") + 1]
 
@@ -464,6 +469,22 @@ def test_pip_audit_audits_the_hashed_locked_set_on_the_project_python(
     assert re.fullmatch(r"pip-audit@\d+\.\d+\.\d+", audit_arguments[0])
     assert {"--strict", "--disable-pip"} <= set(audit_arguments)
     assert audited == requirements
+
+
+@pytest.mark.unit
+def test_pip_audit_resolves_with_the_backend_release_age_cooldown(
+    tmp_path: Path,
+) -> None:
+    # uvx resolves pip-audit and its dependencies without a lock file and
+    # ignores the project's [tool.uv] settings, so the step passes the
+    # cooldown of backend/pyproject.toml itself. Issue #1014.
+    pyproject = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))
+    cooldown = pyproject["tool"]["uv"]["exclude-newer"]
+    result, _, _, uvx_log = _run_audit_step(tmp_path)
+    exclude_newer = uvx_log.read_text(encoding="utf-8").splitlines()[1]
+
+    assert result.returncode == 0, result.stderr
+    assert exclude_newer == f"UV_EXCLUDE_NEWER={cooldown}"
 
 
 @pytest.mark.unit

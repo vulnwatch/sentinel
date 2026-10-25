@@ -232,15 +232,17 @@ jobs:
       # locking again, the exported requirements carry their hashes, so
       # pip-audit resolves nothing again (--disable-pip), --strict fails on
       # a package that it cannot audit, and a failed export fails the step.
-      # A tool run through uvx ignores .python-version, so UV_PYTHON passes
-      # it (docs/conventions.md, Runtime Version).
+      # A tool run through uvx ignores .python-version and the project's
+      # [tool.uv] settings, so UV_PYTHON passes the former (docs/conventions.md,
+      # Runtime Version) and UV_EXCLUDE_NEWER the release-age cooldown of
+      # backend/pyproject.toml (docs/deployment.md, Workflow Conventions).
       - name: Run pip-audit (dependency vulnerabilities)
         if: steps.audit-scope.outputs.required == 'true'
         run: |
           set -euo pipefail
           requirements="${RUNNER_TEMP}/backend-requirements.txt"
           uv export --locked --quiet --no-dev --no-emit-project --output-file "${requirements}"
-          UV_PYTHON="$(cat .python-version)" uvx pip-audit@2.10.1 --strict --disable-pip --requirement "${requirements}"
+          UV_EXCLUDE_NEWER="7 days" UV_PYTHON="$(cat .python-version)" uvx pip-audit@2.10.1 --strict --disable-pip --requirement "${requirements}"
 
   shell-lint:
     name: Shell Lint

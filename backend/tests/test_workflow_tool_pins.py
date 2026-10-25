@@ -9,7 +9,8 @@ dropped from dependency extraction rather than rejected. See issue #1060. The
 `Shell Lint` job and the pre-commit hook run the same images, pinned by version
 and digest, through `scripts/lint-shell.sh` (issue #1099). Every `uvx` tool, in
 a workflow, a script, a Git hook, or the `Makefile`, runs on the project's
-Python version (issue #1103). The image scan runs Trivy from its image, pinned
+Python version (issue #1103) and with the backend's release-age cooldown
+(issue #1014). The image scan runs Trivy from its image, pinned
 by version and digest, which Renovate looks up on Docker Hub (issue #1097). The
 Swagger UI of the API's `/api/docs` page shares the GitHub Pages site's pin, and
 the site enables the operation filter (issue #1070).
@@ -25,6 +26,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import re
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +50,7 @@ IMAGE_SCAN_PATH = REPO_ROOT / IMAGE_SCAN_RELATIVE
 MAKEFILE_PATH = REPO_ROOT / "Makefile"
 INTERACTIVE_DOCS_PATH = REPO_ROOT / "backend" / "app" / "api" / "interactive_docs.py"
 RENOVATE_CONFIG_PATH = REPO_ROOT / "renovate.jsonc"
+PYPROJECT_PATH = REPO_ROOT / "backend" / "pyproject.toml"
 LINT_SHELL_RELATIVE = "scripts/lint-shell.sh"
 LINT_SHELL_PATH = REPO_ROOT / LINT_SHELL_RELATIVE
 PRE_COMMIT_PATH = REPO_ROOT / ".githooks" / "pre-commit"
@@ -329,6 +332,27 @@ def test_uvx_tools_run_on_the_project_python() -> None:
     ]
 
     assert without_project_python == []
+
+
+@pytest.mark.unit
+def test_uvx_tools_resolve_with_the_backend_release_age_cooldown() -> None:
+    # A tool run through uvx is resolved without a lock file and ignores the
+    # project's [tool.uv] settings, so every invocation passes the cooldown of
+    # backend/pyproject.toml in UV_EXCLUDE_NEWER (docs/deployment.md, Workflow
+    # Conventions, Release-age cooldown; issue #1014). That the variable
+    # reaches the tool is tested for its caller in tests/test_ci_workflow.py.
+    pyproject = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))
+    cooldown = pyproject["tool"]["uv"]["exclude-newer"]
+    uvx_cooldown = re.compile(rf'\bUV_EXCLUDE_NEWER="{re.escape(cooldown)}"\s')
+    without_cooldown = [
+        f"{relative}: {line.strip()}"
+        for relative, lines in _uvx_sources().items()
+        for line in lines
+        for invocation in UVX_INVOCATION.finditer(line)
+        if not uvx_cooldown.search(line[: invocation.start()])
+    ]
+
+    assert without_cooldown == []
 
 
 @pytest.mark.unit

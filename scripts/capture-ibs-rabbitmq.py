@@ -2,6 +2,18 @@
 # /// script
 # requires-python = ">=3.14"
 # dependencies = ["aio-pika==10.1.2"]
+#
+# # The backend's release-age cooldown (docs/deployment.md, Workflow
+# # Conventions → Release-age cooldown).
+# [tool.uv]
+# exclude-newer = "7 days"
+#
+# # Temporary: admit the pinned versions, uploaded less than seven days before
+# # the cooldown was adopted. Remove the table from 2026-10-31T13:26:20Z
+# # (issue #1107).
+# [tool.uv.exclude-newer-package]
+# aio-pika = "2026-10-24T13:26:20Z"
+# aiormq = "2026-10-24T12:36:23Z"
 # ///
 """Capture IBS RabbitMQ events into an append-only JSONL file.
 
