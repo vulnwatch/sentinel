@@ -3826,7 +3826,7 @@ async def _rollback_after_failure(session: AsyncSession) -> None:
         await session.rollback()
     except SoftTimeLimitExceeded, MemoryError:
         raise
-    except Exception:  # nosec B110  # the primary failure propagates
+    except Exception:  # noqa: S110 — the primary failure propagates
         pass
 
 

@@ -397,25 +397,52 @@ checking) without changing the shared configuration.
 
 Static analysis of application code (`app/`) for insecure patterns is a
 mandatory CI gate (see `docs/features/platform/testing-strategy.md`, CI
-Pipeline, gate 6), run by bandit.
+Pipeline, gate 6). It is part of `ruff check`: the ruff configuration in
+`backend/pyproject.toml` selects these security rules:
+
+- the flake8-bandit rules (`S`);
+- `PLE2502`, which reports bidirectional Unicode control characters, a
+  check that the `S` rules do not include; and
+- `PGH004`, which reports a `noqa` suppression that names no rule code.
+
+Every `ruff check` of the backend therefore runs the analysis: the lint
+gate in CI, the pre-commit hook, and `make lint`. Ruff parses each file for
+the Python version that it infers from `requires-python` (Runtime Version,
+Source of Truth) without using an interpreter, so the result does not depend
+on the Python installed on the host. A file that ruff cannot parse fails the
+run.
+
+Two exemptions apply, both in the ruff configuration:
+
+- `S101` (`assert`) is disabled. Application code uses `assert` only to
+  narrow types on invariants that the surrounding code already guarantees.
+  An `assert` MUST NOT be the only check of a security or validation
+  condition, because Python removes it under `-O`.
+- Test code (`tests/`) is exempt from the `S` rules.
+
+Ruff's preview rules are not enabled, because preview mode also changes the
+behavior of stable rules in the other selected families. Among them are the
+`S4xx` checks of imports, other than `S410`. For each module that they
+report, a stable rule reports its dangerous calls, the application does not
+use it, or it is a dependency that Sentinel does not declare.
 
 **Suppressing false positives**: prefer a code change that removes the
 false positive, such as a name that does not resemble the flagged pattern.
-Otherwise, an inline suppression MUST name the specific test IDs that it
-silences and give its reason after a second `#`:
+Otherwise, an inline `noqa` suppression MUST name the rule codes that it
+silences, followed by ` — ` and its reason:
 
 ```python
-PASSWORD_RESET = "password_reset"  # nosec B105  # classification value, not a credential
+PASSWORD_RESET = "password_reset"  # noqa: S105 — classification value, not a credential
 ```
 
-Bandit reads every word between `nosec` and the next `#` as a test ID or
-test name, so a reason written in that span can silence further tests:
-`random`, `eval`, and `pickle`, for example, are test names. A suppression
-that names no test ID, or only IDs that bandit does not know, silences
-every test on its line. A structural test enforces this form (see
-`docs/features/platform/testing-strategy.md`, Structural Tests), and the
-analysis fails when a suppression silences every test of a line on which
-bandit found an issue.
+Ruff fails a suppression that names no rule code (`PGH004`), an unknown code
+(`RUF102`), or a code with no finding on its line (`RUF100`). Only the first
+silences the finding of its line; with the other two, ruff reports the
+finding as well. A file-level exemption (`# ruff: noqa: S307`) MUST NOT be
+used for a security rule in `app/`, because it silences the rule on every
+line of the file. A structural test enforces the suppression form and the
+absence of file-level exemptions (see
+`docs/features/platform/testing-strategy.md`, Structural Tests).
 
 ### Naming
 
@@ -1277,7 +1304,7 @@ the Python runtime version used across all environments:
 |---|---|
 | Local development (pyenv, uv, mise) | Reads `backend/.python-version` natively |
 | CI project commands (`uv sync`, `uv run` after `astral-sh/setup-uv`) | `uv` reads `backend/.python-version` natively |
-| Python tools run as `uvx <package>@<version>`, in CI and in local checks | `uvx` ignores `.python-version` and would use the first interpreter that `uv` finds, so each invocation passes the file's value in `UV_PYTHON` (see `docs/deployment.md`, Workflow Conventions) |
+| Python tools run as `uvx <package>@<version>` | `uvx` ignores `.python-version` and would use the first interpreter that `uv` finds, so each invocation passes the file's value in `UV_PYTHON` (see `docs/deployment.md`, Workflow Conventions) |
 | Dockerfile | `ARG PYTHON_VERSION=<value>` default; CI passes `--build-arg` from source of truth |
 | ruff `target-version` | Inferred from `requires-python` in `pyproject.toml` (no explicit `target-version`) |
 

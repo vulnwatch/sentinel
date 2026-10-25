@@ -47,6 +47,8 @@ jobs:
           version: "0.13.5"
           enable-cache: true
       - run: uv sync --locked
+      # Also the static security analysis of app/: the configuration enables
+      # ruff's security rules (docs/conventions.md, Static Security Analysis).
       - run: uv run ruff check .
       - run: uv run ruff format --check .
 
@@ -212,11 +214,6 @@ jobs:
         with:
           version: "0.13.5"
           enable-cache: true
-      # On the Python version of .python-version, and failing when bandit
-      # skips a file of app/; the Makefile security target runs the same
-      # script.
-      - name: Run bandit (static analysis)
-        run: ../scripts/bandit-scan.sh
       # The dependency vulnerability scan is blocking only where a run can
       # change or ship the locked dependency set — see
       # docs/features/platform/testing-strategy.md (CI Pipeline, gate 6).

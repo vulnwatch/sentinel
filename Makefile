@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install test test-cov lint fmt fmt-check typecheck security migrate \
+.PHONY: help install test test-cov lint fmt fmt-check typecheck migrate \
 	dev-up dev-down dev-logs dev-status smoke check
 
 BACKEND := backend
@@ -17,7 +17,7 @@ test: ## Run the backend test suite
 test-cov: ## Run the backend test suite with coverage report
 	cd $(BACKEND) && uv run pytest --cov
 
-lint: ## Run ruff lint checks
+lint: ## Run ruff lint checks, including the static security analysis
 	cd $(BACKEND) && uv run ruff check .
 
 fmt: ## Format backend code with ruff
@@ -28,9 +28,6 @@ fmt-check: ## Check backend code formatting without modifying files
 
 typecheck: ## Run mypy strict type checking
 	cd $(BACKEND) && uv run mypy .
-
-security: ## Run bandit static security analysis (the CI script)
-	./scripts/bandit-scan.sh
 
 migrate: ## Apply database migrations (alembic upgrade head)
 	cd $(BACKEND) && uv run alembic upgrade head

@@ -109,6 +109,17 @@ select = [
     "RUF",   # ruff-specific rules
     "C4",    # flake8-comprehensions
     "LOG",   # flake8-logging
+    # Static security analysis (docs/conventions.md, Static Security
+    # Analysis): flake8-bandit, bidirectional Unicode control characters,
+    # and noqa comments that name no rule code.
+    "S",
+    "PLE2502",
+    "PGH004",
+]
+ignore = [
+    # assert only narrows types on invariants that the code guarantees; it is
+    # never the only check of a security or validation condition.
+    "S101",
 ]
 
 [tool.ruff.lint.isort]
@@ -116,12 +127,7 @@ known-first-party = ["app"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/conftest.py" = ["E402"]
-
-# scripts/bandit-scan.sh runs bandit on app/ only. No exclude_dirs: bandit
-# matches each entry as a substring of every path and does not report the
-# files that it excludes.
-[tool.bandit]
-skips = ["B101"]  # skip assert warnings (used in tests/app code)
+"tests/**" = ["S"]
 
 [tool.mypy]
 strict = true

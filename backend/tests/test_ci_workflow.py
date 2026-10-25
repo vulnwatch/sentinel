@@ -355,18 +355,23 @@ def test_codecov_patch_status_is_informational_and_project_status_disabled() -> 
 
 
 @pytest.mark.unit
-def test_bandit_and_security_job_run_unconditionally() -> None:
-    # The script runs bandit on the project's Python and fails on a skipped
-    # file (tests/test_bandit_scan_script.py); the Makefile security target
-    # runs it too. Issue #1103.
-    job = _ci_jobs()["backend-security"]
-    bandit_step = named_step(job, "Run bandit (static analysis)")
+def test_lint_job_runs_the_static_security_analysis_unconditionally() -> None:
+    # The configuration enables ruff's security rules for app/
+    # (tests/test_static_security_analysis.py), so the lint run over the
+    # whole backend is also the static security analysis of gate 6. The
+    # security job keeps the dependency scan. Issue #1105.
+    jobs = _ci_jobs()
+    job = jobs["backend-lint"]
+    lint_steps = [
+        step for step in job_steps(job) if step.get("run") == "uv run ruff check ."
+    ]
 
     assert "if" not in job
-    assert "if" not in bandit_step
     assert job["defaults"]["run"]["working-directory"] == "backend"
-    assert bandit_step["run"] == "../scripts/bandit-scan.sh"
-    assert "continue-on-error" not in bandit_step
+    assert len(lint_steps) == 1
+    assert "if" not in lint_steps[0]
+    assert "continue-on-error" not in lint_steps[0]
+    assert "if" not in jobs["backend-security"]
 
 
 # Record their arguments, one per line. uv writes a requirements file to the

@@ -94,7 +94,7 @@ _DECOMPRESS_CHUNK: Final = 1024 * 1024
 # split of its whitespace between repetitions. The accepted values are
 # unchanged: whitespace can be followed only by ";" or a parameter name,
 # and a repetition only by another one or the end of the value.
-_TOKEN: Final = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
+_TOKEN: Final = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"  # noqa: S105 — RFC 9110 token grammar, not a credential
 _QUOTED: Final = (
     r'"(?:[\t \x21\x23-\x5b\x5d-\x7e\x80-\xff]|\\[\t \x21-\x7e\x80-\xff])*"'
 )

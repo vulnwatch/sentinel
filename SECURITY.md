@@ -58,7 +58,7 @@ The following are in scope for security reports:
 
 Sentinel employs the following security practices:
 
-- **Static analysis**: ruff, bandit, and mypy (strict mode) run on every pull request
+- **Static analysis**: ruff, including its flake8-bandit security rules, and mypy (strict mode) run on every pull request
 - **Dependency auditing**: GitHub Dependabot alerts monitor dependencies for known vulnerabilities, Renovate raises fix pull requests, and pip-audit blocks dependency changes and releases that contain known vulnerabilities
 - **Container scanning**: Trivy scans the Docker image weekly
 - **Release transparency**: versioned images include a CycloneDX SBOM and
