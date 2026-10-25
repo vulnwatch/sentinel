@@ -721,8 +721,9 @@ settings with the same duration implement the cooldown:
   that Renovate updates by version (`anchore/syft`, `postgres`, `redis`,
   and `renovate/renovate`) and sets `minimumReleaseAgeBehaviour:
   timestamp-optional` for them, so they update without the cooldown, with a
-  warning on the Dependency Dashboard, rather than never. Another image that lacks a timestamp stays
-  held, so a lookup failure never admits a release early. The uv version
+  warning on the Dependency Dashboard, rather than never. Another image
+  that lacks a timestamp stays held, so a lookup failure never admits a
+  release early. The uv version
   group (see Container Build Conventions, uv image pinning) is exempt,
   because `ghcr.io` publishes no release timestamps: its image would be held
   indefinitely while the other members of the group moved on, so `uv` itself
