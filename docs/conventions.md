@@ -411,9 +411,11 @@ PASSWORD_RESET = "password_reset"  # nosec B105  # classification value, not a c
 Bandit reads every word between `nosec` and the next `#` as a test ID or
 test name, so a reason written in that span can silence further tests:
 `random`, `eval`, and `pickle`, for example, are test names. A suppression
-without test IDs silences every test on its line. A structural test
-enforces this form (see `docs/features/platform/testing-strategy.md`,
-Structural Tests).
+that names no test ID, or only IDs that bandit does not know, silences
+every test on its line. A structural test enforces this form (see
+`docs/features/platform/testing-strategy.md`, Structural Tests), and the
+analysis fails when a suppression silences every test of a line on which
+bandit found an issue.
 
 ### Naming
 

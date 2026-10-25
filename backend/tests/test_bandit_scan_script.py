@@ -4,8 +4,10 @@ The `Backend Security Scan` job of `ci.yml` and the `Makefile` `security`
 target run bandit through this script (`docs/features/platform/
 testing-strategy.md`, CI Pipeline, gate 6). It passes the version of
 `backend/.python-version` in `UV_PYTHON`, because a tool run through uvx
-gets the first interpreter that uv finds instead, and it fails when bandit
-reports a skipped file, because bandit still exits 0 then. See issue #1103.
+gets the first interpreter that uv finds instead. It fails when bandit
+reports a skipped file, or a line on which a `nosec` comment without a known
+test ID silenced every test, because bandit still exits 0 then. See issue
+#1103.
 
 Each test copies the script into a temporary directory laid out like the
 repository (never this repository) and puts first on `PATH` a stubbed
@@ -53,12 +55,16 @@ Files skipped (1):
 \tapp/example.py (syntax error while parsing AST from file)"""
 
 
-def _report(test_results: str, skipped: str) -> str:
-    """A report in the shape of bandit's text format."""
+def _report(test_results: str, skipped: str, blanket_suppressions: int = 0) -> str:
+    """A report in the shape of bandit's text format; `blanket_suppressions`
+    counts the lines on which a `nosec` comment silenced every test."""
     return (
         "Run started:2026-01-01 00:00:00.000000+00:00\n\n"
         f"Test results:\n{test_results}\n\n"
-        "Code scanned:\n\tTotal lines of code: 2\n\n"
+        "Code scanned:\n\tTotal lines of code: 2\n"
+        f"\tTotal lines skipped (#nosec): {blanket_suppressions}\n"
+        "\tTotal potential issues skipped due to specifically being disabled "
+        "(e.g., #nosec BXXX): 1\n\n"
         f"Run metrics:\n\tTotal issues (by severity):\n\t\tHigh: 0\n{skipped}\n"
     )
 
@@ -156,6 +162,7 @@ def test_bandit_error_exit_code_propagates(tmp_path: Path) -> None:
 
     assert result.returncode == 2
     assert "did not analyze every file of backend/app/" in result.stderr
+    assert "silenced every test of its line" in result.stderr
 
 
 @pytest.mark.unit
@@ -174,6 +181,30 @@ def test_report_without_the_exact_no_skipped_line_fails(
 
     assert result.returncode == 1
     assert "did not analyze every file of backend/app/" in result.stderr
+
+
+@pytest.mark.unit
+def test_blanket_suppression_fails_although_bandit_exits_zero(
+    tmp_path: Path,
+) -> None:
+    # `# nosec B999` names no test that bandit knows, so bandit silences every
+    # test of its line, reports no issue, and counts the line here.
+    report = _report(NO_ISSUES, NO_SKIPPED, blanket_suppressions=1)
+    result, _ = _run(tmp_path, report=report)
+
+    assert result.returncode == 1
+    assert result.stdout == report
+    assert "silenced every test of its line" in result.stderr
+    assert "did not analyze every file" not in result.stderr
+
+
+@pytest.mark.unit
+def test_report_without_the_suppression_count_fails(tmp_path: Path) -> None:
+    report = CLEAN_REPORT.replace("\tTotal lines skipped (#nosec): 0\n", "")
+    result, _ = _run(tmp_path, report=report)
+
+    assert result.returncode == 1
+    assert "silenced every test of its line" in result.stderr
 
 
 @pytest.mark.unit

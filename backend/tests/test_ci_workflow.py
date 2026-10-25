@@ -381,7 +381,7 @@ if [[ "${UV_STUB_EXIT}" != 0 ]]; then
 fi
 while [[ $# -gt 0 ]]; do
     if [[ "$1" == --output-file ]]; then
-        printf 'example==1.0 \\\\\\n    --hash=sha256:%s\\n' "${EXAMPLE_HASH}" >"$2"
+        printf 'example==1.0\\n' >"$2"
     fi
     shift
 done
@@ -422,7 +422,6 @@ def _run_audit_step(
         "UV_STUB_LOG": str(uv_log),
         "UV_STUB_EXIT": str(export_exit),
         "UVX_STUB_LOG": str(uvx_log),
-        "EXAMPLE_HASH": "0" * 64,
         # A host default that the step must not pass on to pip-audit.
         "UV_PYTHON": "3.12",
     }
@@ -453,10 +452,9 @@ def test_pip_audit_audits_the_hashed_locked_set_on_the_project_python(
 
     assert result.returncode == 0, result.stderr
     assert uv_arguments[0] == "export"
-    assert {"--no-dev", "--no-emit-project"} <= set(uv_arguments)
+    assert {"--locked", "--no-dev", "--no-emit-project"} <= set(uv_arguments)
     assert "--no-hashes" not in uv_arguments
     assert Path(requirements).parent == runner_temp
-    assert "--hash=sha256:" in Path(requirements).read_text(encoding="utf-8")
     assert uv_python == "UV_PYTHON=3.14"
     assert re.fullmatch(r"pip-audit@\d+\.\d+\.\d+", audit_arguments[0])
     assert {"--strict", "--disable-pip"} <= set(audit_arguments)

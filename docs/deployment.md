@@ -665,9 +665,10 @@ three complementary mechanisms:
   locked in `backend/uv.lock` and blocks every change to
   `backend/pyproject.toml` or `backend/uv.lock` and every Release PR — see
   `docs/features/platform/testing-strategy.md` (CI Pipeline, gate 6). It
-  audits the runtime requirements exported with their hashes as they are,
-  without resolving them again, and fails on a package that it cannot
-  audit or when the export fails. Resolving them again would install them
+  audits the runtime requirements that `uv export --locked` exports from
+  the lock file with their hashes as they are, without resolving them
+  again, and fails on a package that it cannot audit or when the export
+  fails. Resolving them again would install them
   into an environment of the runner's interpreter, where the packages that
   `pip` itself needs hide a locked package of the same version from the
   audit.
