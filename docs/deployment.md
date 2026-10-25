@@ -726,9 +726,9 @@ settings with the same duration implement the cooldown:
   group (see Container Build Conventions, uv image pinning) is exempt,
   because `ghcr.io` publishes no release timestamps: its image would be held
   indefinitely while the other members of the group moved on, so `uv` itself
-  has no cooldown. A GitHub Action is
-  aged by the date of its tagged commit, which its publisher controls, so
-  the cooldown holds an Action only as reliably as that date.
+  has no cooldown. A GitHub Action is aged by the date of its tagged
+  commit, which its publisher controls, so the cooldown holds an Action
+  only as reliably as that date.
 
 **Security fixes under the cooldown.** Renovate does not hold a
 vulnerability-fix PR for the cooldown, and a fix is often older than seven
