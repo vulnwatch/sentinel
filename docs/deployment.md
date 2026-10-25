@@ -563,7 +563,8 @@ workflows and the files they read, Renovate tracks:
   API's `/api/docs` page (`docs/api-spec.md`, OpenAPI Document and Interactive
   Documentation), and both copies are updated in one PR.
 - **Container images pinned by version and digest** (the Renovate image of
-  `renovate-validation.yml`, the Syft and CycloneDX CLI images of
+  `renovate-validation.yml`, the Trivy image of `image-scan.yml`, the Syft
+  and CycloneDX CLI images of
   `.github/sbom-tools.env`, and the `shellcheck`, `shfmt`, and `actionlint`
   images of `scripts/lint-shell.sh`, which the `Shell Lint` job of `ci.yml`
   and the pre-commit hook run), through custom managers that read the
@@ -592,18 +593,15 @@ visible as a red Actions status while remaining non-blocking; the Mend-hosted
 Renovate App remains the only component that creates dependency-update PRs.
 
 The lookup authenticates to github.com with the workflow's read-only
-`GITHUB_TOKEN`. Because that token belongs to an organization repository,
-GitHub refuses its API lookups of repositories, public ones included, owned by
-another organization whose IP allow list does not include the runner's
-address. That list is outside this repository's control. The `aquasecurity`
-organization enforces such a list, so the lookups of
-`aquasecurity/trivy-action` (`github-tags`) and `aquasecurity/trivy`
-(`github-releases`) are refused. `scripts/validate_renovate_log.py` tolerates
-the lookup failure of exactly these two packages, and lists it in its output,
-only when the same log records that refusal for the same package and
-datasource. Every other lookup warning, including any other warning for these
-two packages, still fails the check. The exception changes neither
-`renovate.jsonc` nor the Mend-hosted Renovate App.
+`GITHUB_TOKEN`, and `scripts/validate_renovate_log.py` fails the check on every
+package warning that the lookup reports. Because that token belongs to an
+organization repository, GitHub refuses its API lookups of repositories,
+public ones included, owned by another organization whose IP allow list does
+not include the runner's address. That list is outside this repository's
+control. The `aquasecurity` organization enforces such a list, so
+`image-scan.yml` runs Trivy from its image, which Renovate looks up on Docker
+Hub, rather than through `aquasecurity/trivy-action` (see Image Vulnerability
+Monitoring).
 
 **Python dependency updates and vulnerability response.** Renovate's
 `pep621` manager reads `backend/pyproject.toml` together with
@@ -2392,6 +2390,16 @@ A workflow (`.github/workflows/image-scan.yml`) scans the published
 Trivy. It runs on a weekly schedule, after every successful version-tag
 run of `build-images.yml`, and on manual dispatch for on-demand checks.
 
+**How Trivy runs.** The job pulls `latest` with its read-only `packages`
+permission and exports it to an archive, which both scans read, so that they
+cover the same image. Trivy runs from its official image, pinned by version
+and digest (see Workflow Conventions), in a disposable container with the
+runner's user and group IDs and without capabilities or privilege escalation,
+which reads the archive read-only and receives neither the Docker socket, the
+registry credentials, a token, nor an environment variable of the runner. The
+complete report reuses the vulnerability database that the fixable-only scan
+downloads, so both reports come from the same database.
+
 **Triggers.** `latest` changes only when a version-tag build pushes its
 image (see Image Tag Semantics), and the release-metadata job of the same
 run publishes the GitHub Release as its last step. The `workflow_run`
@@ -2418,8 +2426,9 @@ version already published to `ghcr.io` for currently known
 vulnerabilities. The Trivy scan is the mechanism that detects those
 vulnerabilities in the layer already shipped.
 
-**Deliberately non-blocking.** This scan never fails the workflow run
-and is not part of the publish path (`build-images.yml` is untouched).
+**Deliberately non-blocking.** A scan finding never fails the workflow
+run, and the scan is not part of the publish path (`build-images.yml` is
+untouched); only a scan that does not complete fails the run.
 Its release trigger starts only after the version-tag run has completed,
 so a scan result cannot delay or alter a publication.
 Many Debian OS package CVEs are "will not fix" upstream, and even
@@ -2442,9 +2451,10 @@ the existing open one if a prior run already opened it — the workflow
 never creates a duplicate issue for the same ongoing condition. A scan
 that finds no fixable HIGH/CRITICAL OS-level findings closes the open
 tracking issue (with a comment linking the run), so a condition that has
-been remediated does not leave a stale issue behind. A failure of the
-scan step itself never closes the issue: only an exit status reporting
-zero fixable findings does.
+been remediated does not leave a stale issue behind. A scan that does not
+complete leaves the issue unchanged: only a completed scan opens, updates,
+or closes it, and only a completed scan that reports zero fixable findings
+closes it.
 
 **Remediation path.** A fixable finding is usually resolved by merging
 the latest open Renovate PR that refreshes `PYTHON_BASE_DIGEST` in

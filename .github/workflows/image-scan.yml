@@ -19,7 +19,8 @@ name: Image Vulnerability Scan
 # touches build-images.yml or the publish path. Fixable HIGH/CRITICAL
 # findings open or update a single tracking issue, and a scan that finds
 # none closes that issue again; the complete report (all severities,
-# informational) is uploaded as an artifact.
+# informational) is uploaded as an artifact. A scan that does not
+# complete fails the run and leaves the issue unchanged.
 
 on:
   schedule:
@@ -53,6 +54,9 @@ env:
   # The title identifies the open tracking issue across runs; renaming it
   # would orphan an issue opened under the previous title.
   ISSUE_TITLE: "Weekly image scan: fixable HIGH/CRITICAL vulnerabilities detected"
+  # Trivy's official image, pinned by version and digest and updated by
+  # Renovate (docs/deployment.md, Workflow Conventions).
+  TRIVY_IMAGE: aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
 
 jobs:
   image-scan:
@@ -81,56 +85,84 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Fixable-only scan: drives issue creation, update, and closure.
-      # Restricted to vuln-type "os" — Python dependency vulnerabilities
-      # are covered separately (see docs/deployment.md, Workflow
-      # Conventions, Python dependency updates and vulnerability
-      # response); this workflow exists specifically for the unmonitored
-      # OS layer.
-      # scanners is restricted to "vuln": Trivy's secret scanner is
-      # deliberately not enabled here — no CI job or Action performs
-      # secret scanning (see docs/features/platform/testing-strategy.md,
-      # Pre-Commit Hooks); that coverage is local-only via gitleaks.
-      #
-      # The Trivy binary `version` is pinned explicitly. Renovate's
-      # github-actions manager has native support for the `version:`
-      # input of aquasecurity/trivy-action, so this pin is tracked and
-      # bumped automatically — it no longer needs to piggyback on the
-      # action's own SHA bumps to stay current.
-      - name: Scan for fixable HIGH/CRITICAL OS vulnerabilities
-        id: trivy-fixable
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ${{ steps.image.outputs.ref }}
-          format: table
-          output: trivy-fixable.txt
-          exit-code: "1"
-          ignore-unfixed: true
-          vuln-type: "os"
-          scanners: "vuln"
-          severity: "HIGH,CRITICAL"
-          version: "v0.76.1"
+      # Trivy reads an archive of the image rather than the registry, so
+      # the registry credentials stay on the runner, and both scans cover
+      # the same image even if `latest` moves during the run.
+      - name: Pull and export the published image
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+        run: |
+          set -euo pipefail
+          docker pull "${IMAGE_REF}"
+          docker save --output "${RUNNER_TEMP}/image.tar" "${IMAGE_REF}"
 
-      # Complete report: every OS-level finding regardless of fix
-      # availability or severity, for awareness only. Never fails the
-      # run (exit-code 0).
-      - name: Generate complete vulnerability report
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ${{ steps.image.outputs.ref }}
-          format: table
-          output: trivy-full.txt
-          exit-code: "0"
-          ignore-unfixed: false
-          vuln-type: "os"
-          scanners: "vuln"
-          skip-setup-trivy: true
+      - name: Pull the pinned Trivy image
+        run: docker pull "${TRIVY_IMAGE}"
+
+      # Both scans are restricted to OS packages (--pkg-types=os) —
+      # Python dependency vulnerabilities are covered separately (see
+      # docs/deployment.md, Workflow Conventions, Python dependency
+      # updates and vulnerability response); this workflow exists
+      # specifically for the unmonitored OS layer.
+      # --scanners=vuln: Trivy's secret scanner is deliberately not
+      # enabled here — no CI job or Action performs secret scanning (see
+      # docs/features/platform/testing-strategy.md, Pre-Commit Hooks);
+      # that coverage is local-only via gitleaks.
+      #
+      # The fixable-only scan (HIGH/CRITICAL with a known fix) drives
+      # issue creation, update, and closure through the `fixable` output,
+      # `found` or `none`. Trivy itself exits with 1 on an error, so a
+      # finding exits with a code of its own; an error fails the step,
+      # which then opens, updates, or closes no issue. The complete report,
+      # every finding regardless of fix availability or severity, is for
+      # awareness only and reuses the vulnerability database of the first
+      # scan.
+      #
+      # Trivy runs with the runner's user and group IDs, without
+      # capabilities or privilege escalation, and reads the archive
+      # read-only; it receives neither the Docker socket, the registry
+      # credentials, a token, nor an environment variable of the runner.
+      - name: Scan for OS vulnerabilities
+        id: trivy
+        run: |
+          set -euo pipefail
+          readonly FINDINGS_EXIT_CODE=3
+          mkdir -p "${RUNNER_TEMP}/trivy" "${RUNNER_TEMP}/trivy-cache"
+          run_trivy() {
+              docker run --rm --pull=never \
+                  --user="$(id -u):$(id -g)" \
+                  --cap-drop=ALL \
+                  --security-opt=no-new-privileges \
+                  --volume="${RUNNER_TEMP}/image.tar:/scan/image.tar:ro" \
+                  --volume="${RUNNER_TEMP}/trivy-cache:/scan/cache" \
+                  --volume="${RUNNER_TEMP}/trivy:/scan/reports" \
+                  "${TRIVY_IMAGE}" image \
+                  --input=/scan/image.tar \
+                  --cache-dir=/scan/cache \
+                  --scanners=vuln \
+                  --pkg-types=os \
+                  --format=table \
+                  --disable-telemetry \
+                  --skip-version-check \
+                  "$@"
+          }
+          status=0
+          run_trivy --ignore-unfixed --severity=HIGH,CRITICAL \
+              --exit-code="${FINDINGS_EXIT_CODE}" \
+              --output=/scan/reports/trivy-fixable.txt || status=$?
+          case "${status}" in
+              0) fixable=none ;;
+              "${FINDINGS_EXIT_CODE}") fixable=found ;;
+              *) exit "${status}" ;;
+          esac
+          run_trivy --skip-db-update --exit-code=0 \
+              --output=/scan/reports/trivy-full.txt
+          echo "fixable=${fixable}" >>"${GITHUB_OUTPUT}"
 
       - name: Upload complete vulnerability report artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          path: trivy-full.txt
+          path: ${{ runner.temp }}/trivy/trivy-full.txt
           retention-days: 90
           # Single-file direct upload (no zip): the artifact name
           # matches the file name (trivy-full.txt) and is readable
@@ -138,12 +170,11 @@ jobs:
           archive: false
 
       # Only reached when the fixable-only scan (above) found at least
-      # one HIGH/CRITICAL vulnerability (exit-code 1, captured as
-      # `outcome: failure` because of continue-on-error). Opens a new
-      # issue, or updates the existing open one so consecutive runs
+      # one HIGH/CRITICAL vulnerability (`fixable` output `found`). Opens
+      # a new issue, or updates the existing open one so consecutive runs
       # never create a duplicate.
       - name: Open or update tracking issue for fixable findings
-        if: steps.trivy-fixable.outcome == 'failure'
+        if: steps.trivy.outputs.fixable == 'found'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -157,7 +188,7 @@ jobs:
             echo "<details><summary>Fixable HIGH/CRITICAL findings</summary>"
             echo ""
             echo '````'
-            head -c 60000 trivy-fixable.txt
+            head -c 60000 "${RUNNER_TEMP}/trivy/trivy-fixable.txt"
             echo '````'
             echo ""
             echo "</details>"
@@ -179,14 +210,14 @@ jobs:
           fi
 
       # Reached only when the fixable-only scan (above) found nothing
-      # (exit code 0 → `outcome: success`). If a tracking issue from an
-      # earlier run is still open, the condition it tracked no longer
-      # exists — close it so a remediated finding (typically a merged
-      # Renovate base-image digest bump, shipped by a release) does not
-      # leave a stale issue behind. An infrastructure failure of the scan
-      # step is `outcome: failure`, so an error never closes the issue.
+      # (`fixable` output `none`). If a tracking issue from an earlier run
+      # is still open, the condition it tracked no longer exists — close
+      # it so a remediated finding (typically a merged Renovate base-image
+      # digest bump, shipped by a release) does not leave a stale issue
+      # behind. A scan that does not complete fails its step and sets no
+      # output, so an error never closes the issue.
       - name: Close tracking issue when the scan is clean
-        if: steps.trivy-fixable.outcome == 'success'
+        if: steps.trivy.outputs.fixable == 'none'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
