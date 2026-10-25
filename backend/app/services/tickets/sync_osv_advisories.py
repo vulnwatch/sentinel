@@ -260,8 +260,8 @@ class SyncOsvAdvisories(BaseCVEFetcher):
 
     async def _observe(self, cve_id: str) -> _Observation:
         """Phases 1 and 2 and the completeness guard; no database work."""
-        requests = _ThrottledRequests(self.http_client, self._request_delay())
-        response = await requests.get(cve_id)
+        throttled = _ThrottledRequests(self.http_client, self._request_delay())
+        response = await throttled.get(cve_id)
         if response.status_code == 404:
             raise CVENotInSource()
         if response.status_code != 200:
@@ -274,7 +274,7 @@ class SyncOsvAdvisories(BaseCVEFetcher):
             raise CVENotInSource()
 
         aliases = [
-            await self._sub_request(requests, cve_id, record_id)
+            await self._sub_request(throttled, cve_id, record_id)
             for record_id in record.aliases or ()
             if not osv_vulnerability_record.is_cve_alias(record_id)
         ]
@@ -283,7 +283,7 @@ class SyncOsvAdvisories(BaseCVEFetcher):
         return _Observation(cve_id, record, aliases)
 
     async def _sub_request(
-        self, requests: _ThrottledRequests, cve_id: str, record_id: str
+        self, throttled: _ThrottledRequests, cve_id: str, record_id: str
     ) -> _SubRequest:
         """One alias sub-request (Algorithm steps 5, 7, and 8).
 
@@ -295,7 +295,7 @@ class SyncOsvAdvisories(BaseCVEFetcher):
             self._log_skip(cve_id, None, "unsafe_id", None)
             return _SubRequest(record_id)
         try:
-            response = await requests.get(record_id)
+            response = await throttled.get(record_id)
         except httpx.DecodingError:
             # The body is read before the status reaches the fetcher.
             self._log_skip(cve_id, record_id, "invalid_body", None)

@@ -18,6 +18,7 @@
   - [Style](#style)
   - [Type Hints](#type-hints)
   - [Static Type Checking](#static-type-checking)
+  - [Static Security Analysis](#static-security-analysis)
   - [Naming](#naming)
 - [API and Schema Conventions](#api-and-schema-conventions)
   - [FastAPI Conventions](#fastapi-conventions)
@@ -391,6 +392,30 @@ same diagnostics; only their output order may differ. Each worker adds
 memory, so a developer on a constrained machine may lower the count or
 run sequentially by setting `MYPY_NUM_WORKERS` (`0` disables parallel
 checking) without changing the shared configuration.
+
+### Static Security Analysis
+
+Static analysis of application code (`app/`) for insecure patterns is a
+mandatory CI gate (see `docs/features/platform/testing-strategy.md`, CI
+Pipeline, gate 6), run by bandit.
+
+**Suppressing false positives**: prefer a code change that removes the
+false positive, such as a name that does not resemble the flagged pattern.
+Otherwise, an inline suppression MUST name the specific test IDs that it
+silences and give its reason after a second `#`:
+
+```python
+PASSWORD_RESET = "password_reset"  # nosec B105  # classification value, not a credential
+```
+
+Bandit reads every word between `nosec` and the next `#` as a test ID or
+test name, so a reason written in that span can silence further tests:
+`random`, `eval`, and `pickle`, for example, are test names. A suppression
+that names no test ID, or only IDs that bandit does not know, silences
+every test on its line. A structural test enforces this form (see
+`docs/features/platform/testing-strategy.md`, Structural Tests), and the
+analysis fails when a suppression silences every test of a line on which
+bandit found an issue.
 
 ### Naming
 
@@ -1251,7 +1276,8 @@ the Python runtime version used across all environments:
 | Consumer | How it reads the source of truth |
 |---|---|
 | Local development (pyenv, uv, mise) | Reads `backend/.python-version` natively |
-| CI (`astral-sh/setup-uv`) | `uv` reads `backend/.python-version` natively |
+| CI project commands (`uv sync`, `uv run` after `astral-sh/setup-uv`) | `uv` reads `backend/.python-version` natively |
+| Python tools run as `uvx <package>@<version>`, in CI and in local checks | `uvx` ignores `.python-version` and would use the first interpreter that `uv` finds, so each invocation passes the file's value in `UV_PYTHON` (see `docs/deployment.md`, Workflow Conventions) |
 | Dockerfile | `ARG PYTHON_VERSION=<value>` default; CI passes `--build-arg` from source of truth |
 | ruff `target-version` | Inferred from `requires-python` in `pyproject.toml` (no explicit `target-version`) |
 

@@ -141,7 +141,7 @@ class IdentityAuditEventType(StrEnum):
     USER_CREATED = "user_created"
     USER_DEACTIVATED = "user_deactivated"
     USER_REACTIVATED = "user_reactivated"
-    PASSWORD_RESET = "password_reset"  # classification value # nosec B105
+    PASSWORD_RESET = "password_reset"  # nosec B105  # classification value, not a credential
     ROLE_ADDED = "role_added"
     ROLE_REMOVED = "role_removed"
     ROLE_MAPPING_CREATED = "role_mapping_created"
@@ -237,7 +237,7 @@ class SessionInvalidationReason(StrEnum):
     """
 
     DEACTIVATION = "deactivation"
-    PASSWORD_RESET = "password_reset"  # nosec B105 -- classification value, not a credential
+    PASSWORD_RESET = "password_reset"  # nosec B105  # classification value, not a credential
 
 
 class LoginFailureReason(StrEnum):
@@ -253,7 +253,7 @@ class LoginFailureReason(StrEnum):
     LOCKED = "locked"
     UNKNOWN_USER = "unknown_user"
     INELIGIBLE_USER = "ineligible_user"
-    INVALID_PASSWORD = "invalid_password"  # nosec B105 -- classification value, not a credential
+    INVALID_PASSWORD = "invalid_password"  # nosec B105  # classification value, not a credential
     REVALIDATION_FAILED = "revalidation_failed"
 
 

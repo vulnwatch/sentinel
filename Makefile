@@ -29,8 +29,8 @@ fmt-check: ## Check backend code formatting without modifying files
 typecheck: ## Run mypy strict type checking
 	cd $(BACKEND) && uv run mypy .
 
-security: ## Run bandit static security analysis (matches CI pinning)
-	cd $(BACKEND) && uvx bandit@1.9.4 -c pyproject.toml -r app/
+security: ## Run bandit static security analysis (the CI script)
+	./scripts/bandit-scan.sh
 
 migrate: ## Apply database migrations (alembic upgrade head)
 	cd $(BACKEND) && uv run alembic upgrade head

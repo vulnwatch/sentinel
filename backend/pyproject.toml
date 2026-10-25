@@ -117,8 +117,10 @@ known-first-party = ["app"]
 [tool.ruff.lint.per-file-ignores]
 "tests/conftest.py" = ["E402"]
 
+# scripts/bandit-scan.sh runs bandit on app/ only. No exclude_dirs: bandit
+# matches each entry as a substring of every path and does not report the
+# files that it excludes.
 [tool.bandit]
-exclude_dirs = ["tests"]
 skips = ["B101"]  # skip assert warnings (used in tests/app code)
 
 [tool.mypy]
