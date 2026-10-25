@@ -159,9 +159,12 @@ def _stage_shell_and_workflow_changes(repo: Path) -> None:
 def test_lint_tracked_runs_each_tool_on_the_tracked_files_in_a_hardened_container(
     repo: Path,
 ) -> None:
-    # A new script is linted once it is added to the index.
+    # A new script is linted once it is added to the index, before a commit.
+    (repo / "scripts" / "added.sh").write_text("#!/usr/bin/env bash\n")
+    git(repo, "add", "scripts/added.sh")
     (repo / "scripts" / "untracked.sh").write_text("#!/usr/bin/env bash\n")
     (repo / ".github" / "workflows" / "untracked.yml").write_text("name: New\n")
+    shell_files = sorted([*TRACKED_SHELL_FILES, "scripts/added.sh"])
     container = [
         "run",
         "--rm",
@@ -182,14 +185,14 @@ def test_lint_tracked_runs_each_tool_on_the_tracked_files_in_a_hardened_containe
         ["image", "inspect", SHELLCHECK],
         ["image", "inspect", SHFMT],
         ["image", "inspect", ACTIONLINT],
-        [*container, SHELLCHECK, "--", *TRACKED_SHELL_FILES],
-        [*container, SHFMT, "-i", "4", "-ci", "-d", "--", *TRACKED_SHELL_FILES],
+        [*container, SHELLCHECK, "--", *shell_files],
+        [*container, SHFMT, "-i", "4", "-ci", "-d", "--", *shell_files],
         [*container, ACTIONLINT, "--", *TRACKED_WORKFLOWS],
     ]
 
 
 @pytest.mark.unit
-def test_lint_staged_selects_the_added_copied_modified_and_renamed_files(
+def test_lint_staged_selects_the_added_modified_and_renamed_files(
     repo: Path,
 ) -> None:
     _stage_shell_and_workflow_changes(repo)
@@ -262,7 +265,7 @@ def test_lint_downloads_only_the_missing_images_that_the_files_need(
     [(["--staged"], 0), ([], 1)],
     ids=["staged-warns", "tracked-fails"],
 )
-def test_lint_when_docker_cannot_run_the_images(
+def test_lint_without_usable_docker_warns_when_staged_and_fails_when_tracked(
     repo: Path,
     docker: bool,
     stub: dict[str, str],

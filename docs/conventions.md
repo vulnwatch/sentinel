@@ -1619,7 +1619,7 @@ authoritative mapping.
   version and digest (`docs/deployment.md`, Workflow Conventions),
   through Docker, in a disposable container without network that reads
   the repository only, so CI and the developer's host run the same tools
-  and nothing needs to be installed locally
+  and none of them needs to be installed locally
 - **Pre-commit hook** (`.githooks/pre-commit`) runs
   `scripts/lint-shell.sh` on the staged files — the same checks, from the
   same images, selected in the same way — as a fast local safety net.

@@ -183,9 +183,9 @@ plausibly defeat the check rather than merely fail it:
   `# vX.Y.Z` comment and a stated reason for the stricter pin?
 - Is every other tool that a workflow uses, itself or through a script
   that it runs (such as the shell lint images of `scripts/lint-shell.sh`),
-  pinned to an explicit version — a container image by version and
-  digest — and tracked by Renovate, as `docs/deployment.md` (Workflow
-  Conventions) requires?
+  pinned to an explicit version in one of the forms that
+  `docs/deployment.md` (Workflow Conventions) lists, and tracked by
+  Renovate?
 
 ### Secret handling
 

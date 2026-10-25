@@ -80,7 +80,7 @@ What the hooks do:
 | `pre-push` | Full test suite including the local process system suite, in one parallel run; blocks direct pushes to `master` and local tag pushes |
 | `post-checkout` / `post-merge` / `post-rewrite` | Auto-syncs the Python virtualenv when `uv.lock` changes |
 
-The hooks degrade gracefully: when Docker cannot run the images of the shell lint, or the optional `gitleaks` is missing, the hook prints a warning but does not block the operation.
+The hooks degrade gracefully: when Docker cannot run the images of the shell lint, or the optional `gitleaks` is missing, the pre-commit hook prints a warning but does not block the operation.
 CI remains the authoritative gate.
 
 ## Coding Standards
