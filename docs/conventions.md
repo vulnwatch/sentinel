@@ -421,28 +421,32 @@ Two exemptions apply, both in the ruff configuration:
 - Test code (`tests/`) is exempt from the `S` rules.
 
 Ruff's preview rules are not enabled, because preview mode also changes the
-behavior of stable rules in the other selected families. Among them are the
-`S4xx` checks of imports, other than `S410`. For each module that they
-report, a stable rule reports its dangerous calls, the application does not
-use it, or it is a dependency that Sentinel does not declare.
+behavior of stable rules in the other selected families. A flake8-bandit
+rule that is still in preview, such as some checks of imports, therefore
+runs only once ruff makes it stable.
 
-**Suppressing false positives**: prefer a code change that removes the
-false positive, such as a name that does not resemble the flagged pattern.
-Otherwise, an inline `noqa` suppression MUST name the rule codes that it
-silences, followed by ` — ` and its reason:
+**Suppressing findings**: prefer a code change that removes a false
+positive, such as a name that does not resemble the flagged pattern. A false
+positive that no code change removes, or a finding whose risk the owning
+specification accepts, is suppressed inline: the `noqa` suppression MUST name
+the rule codes that it silences, followed by ` — ` and its reason:
 
 ```python
 PASSWORD_RESET = "password_reset"  # noqa: S105 — classification value, not a credential
 ```
 
-Ruff fails a suppression that names no rule code (`PGH004`), an unknown code
-(`RUF102`), or a code with no finding on its line (`RUF100`). Only the first
-silences the finding of its line; with the other two, ruff reports the
-finding as well. A file-level exemption (`# ruff: noqa: S307`) MUST NOT be
-used for a security rule in `app/`, because it silences the rule on every
-line of the file. A structural test enforces the suppression form and the
-absence of file-level exemptions (see
-`docs/features/platform/testing-strategy.md`, Structural Tests).
+Ruff fails the run on a suppression that names no rule code (`PGH004`), an
+unknown code (`RUF102`), or a code with no finding on its line (`RUF100`).
+In `app/`, a security rule MUST NOT be suppressed in any other way:
+
+- not by a file-level exemption (`# ruff: noqa: S307`), which silences the
+  rule on every line of its file; and
+- not by ruff's other suppression comments, `# ruff: ignore[S307]` on a line
+  or `# ruff: disable[S307]` … `# ruff: enable[S307]` around a range, which
+  carry no reason and can span a whole file.
+
+A structural test enforces the suppression form and the absence of the other
+forms (see `docs/features/platform/testing-strategy.md`, Structural Tests).
 
 ### Naming
 

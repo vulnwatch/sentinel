@@ -576,9 +576,9 @@ A new pin uses one of these forms, so that Renovate tracks it from the
 start. Updates of the dependencies that these custom managers find under
 `.github/` or in `scripts/lint-shell.sh` use the `ci(deps):` title prefix,
 like GitHub Actions updates, and each tool gets its own PR. The `ci` type
-carries no release signal (`docs/conventions.md`, Versioning). Swagger UI updates use `chore(deps):`
-instead, because the image ships the copy of the `/api/docs` page; that
-type carries no release signal either.
+carries no release signal (`docs/conventions.md`, Versioning). Swagger UI
+updates use `chore(deps):` instead, because the image ships the copy of the
+`/api/docs` page; that type carries no release signal either.
 
 `renovate-validation.yml` is a separate, advisory repository check. It runs
 on every pull request rather than maintaining a whitelist of Renovate-managed

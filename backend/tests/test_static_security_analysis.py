@@ -10,7 +10,7 @@ in CI and in the pre-commit hook, therefore performs it. See issue #1105.
 The behavior tests run the locked ruff with the backend configuration on a
 source passed on its standard input, under the name of a file of `app/` or
 `tests/`; ruff writes no cache and changes no file. The configuration tests
-read `backend/pyproject.toml` and the files that `ruff check .` analyzes.
+read the ruff configuration and the files that `ruff check .` analyzes.
 """
 
 from __future__ import annotations
@@ -23,7 +23,8 @@ from pathlib import Path
 
 import pytest
 
-BACKEND_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = REPO_ROOT / "backend"
 PYPROJECT_PATH = BACKEND_ROOT / "pyproject.toml"
 
 # The rules that the analysis selects besides flake8-bandit.
@@ -152,10 +153,41 @@ def _disabling(selectors: list[str], rules: frozenset[str]) -> list[str]:
     ]
 
 
+# The top-level `[tool.ruff]` forms of the `[tool.ruff.lint]` rule settings,
+# which ruff still applies although they are deprecated, and `extend`, which
+# loads the settings of another file.
+TOP_LEVEL_RULE_KEYS = frozenset(
+    {
+        "select",
+        "extend-select",
+        "ignore",
+        "extend-ignore",
+        "per-file-ignores",
+        "extend-per-file-ignores",
+        "extend",
+    }
+)
+
+
+def _tracked(pathspec: str) -> list[Path]:
+    """The existing files that Git tracks under `pathspec`. Git runs from the
+    repository root: from `backend/`, the `GIT_DIR` that a Git hook exports in
+    a linked worktree would make Git take `backend/` as the worktree."""
+    result = subprocess.run(
+        ["git", "ls-files", "-z", "--", pathspec],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    paths = [REPO_ROOT / path for path in result.stdout.split("\0") if path]
+    return [path for path in paths if path.exists()]
+
+
 @pytest.mark.unit
 def test_security_rules_are_disabled_only_for_assert_and_tests() -> None:
-    config = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))
-    lint = config["tool"]["ruff"]["lint"]
+    ruff = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))["tool"]["ruff"]
+    lint = ruff["lint"]
     rules = _security_rules()
     ignores = [*lint.get("ignore", []), *lint.get("extend-ignore", [])]
     per_file_ignores = {
@@ -163,6 +195,7 @@ def test_security_rules_are_disabled_only_for_assert_and_tests() -> None:
         **lint.get("extend-per-file-ignores", {}),
     }
 
+    assert TOP_LEVEL_RULE_KEYS.isdisjoint(ruff)
     assert {"S", *EXTRA_SECURITY_RULES} <= set(lint["select"])
     assert _disabling(ignores, rules) == ["S101"]
     assert {
@@ -176,19 +209,25 @@ def test_security_rules_are_disabled_only_for_assert_and_tests() -> None:
 
 
 @pytest.mark.unit
+def test_backend_pyproject_is_the_only_ruff_configuration() -> None:
+    # A ruff.toml or .ruff.toml beside it takes precedence over it, and a
+    # configuration in a subdirectory replaces it for the files below.
+    configurations = _tracked("backend/*ruff.toml") + [
+        path
+        for path in _tracked("backend/*pyproject.toml")
+        if "ruff" in tomllib.loads(path.read_text(encoding="utf-8")).get("tool", {})
+    ]
+
+    assert configurations == [PYPROJECT_PATH]
+
+
+@pytest.mark.unit
 def test_lint_run_analyzes_every_tracked_app_file() -> None:
     # `ruff check .`, as the lint run invokes it, silently skips a file that
     # an exclusion or a .gitignore pattern matches.
-    tracked = subprocess.run(
-        ["git", "ls-files", "-z", "--", "app/*.py"],
-        cwd=BACKEND_ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.split("\0")
-    expected = {BACKEND_ROOT / path for path in tracked if path}
+    expected = set(_tracked("backend/app/*.py"))
     shown = _ruff("check", "--no-cache", "--show-files", ".")
     analyzed = {Path(line) for line in shown.stdout.splitlines()}
 
     assert len(expected) > 100
-    assert {path for path in expected if path.exists()} - analyzed == set()
+    assert expected - analyzed == set()
