@@ -2397,8 +2397,11 @@ and digest (see Workflow Conventions), in a disposable container with the
 runner's user and group IDs and without capabilities or privilege escalation,
 which reads the archive read-only and receives neither the Docker socket, the
 registry credentials, a token, nor an environment variable of the runner. The
-complete report reuses the vulnerability database that the fixable-only scan
-downloads, so both reports come from the same database.
+container writes only into its vulnerability database cache, which the runner
+never reads; the runner saves the reports that Trivy prints, so no file that a
+later step reads comes from the container. The complete report reuses the
+database that the fixable-only scan downloads, so both reports come from the
+same database.
 
 **Triggers.** `latest` changes only when a version-tag build pushes its
 image (see Image Tag Semantics), and the release-metadata job of the same
@@ -2428,7 +2431,8 @@ vulnerabilities in the layer already shipped.
 
 **Deliberately non-blocking.** A scan finding never fails the workflow
 run, and the scan is not part of the publish path (`build-images.yml` is
-untouched); only a scan that does not complete fails the run.
+untouched); an error does fail the run, for example a scan that does not
+complete.
 Its release trigger starts only after the version-tag run has completed,
 so a scan result cannot delay or alter a publication.
 Many Debian OS package CVEs are "will not fix" upstream, and even
@@ -2451,10 +2455,10 @@ the existing open one if a prior run already opened it — the workflow
 never creates a duplicate issue for the same ongoing condition. A scan
 that finds no fixable HIGH/CRITICAL OS-level findings closes the open
 tracking issue (with a comment linking the run), so a condition that has
-been remediated does not leave a stale issue behind. A scan that does not
-complete leaves the issue unchanged: only a completed scan opens, updates,
-or closes it, and only a completed scan that reports zero fixable findings
-closes it.
+been remediated does not leave a stale issue behind. If either scan does
+not complete, the issue is left unchanged: only a run in which both scans
+complete opens, updates, or closes it, and it closes the issue only when the
+fixable-only scan reports zero fixable findings.
 
 **Remediation path.** A fixable finding is usually resolved by merging
 the latest open Renovate PR that refreshes `PYTHON_BASE_DIGEST` in

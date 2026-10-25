@@ -6,14 +6,17 @@ allow list of the `aquasecurity` organization refuses to Renovate (issue
 #1097; `docs/deployment.md`, Image Vulnerability Monitoring). The job exports
 the published image to an archive, and Trivy reads that archive in a
 container that receives neither the Docker socket, the registry credentials,
-a token, nor an environment variable of the runner. The fixable-only scan
-drives the tracking issue through the step's `fixable` output; a scan that
-does not complete fails the step and leaves the issue unchanged.
+a token, nor an environment variable of the runner. The container writes
+only into its database cache; the runner's shell saves the reports that it
+prints, so no file that a later step reads comes from the container. The
+fixable-only scan drives the tracking issue through the step's `fixable`
+output; a scan that does not complete fails the step and leaves the issue
+unchanged.
 
 The workflow is parsed as YAML (`tests/support/yaml_files.py`). The tests run
 the `run:` blocks of the export and scan steps with bash, as GitHub Actions
-does, with a stubbed `docker` first on `PATH` that records each call and
-answers as the test requires.
+does for a step without `shell:`, with a stubbed `docker` first on `PATH`
+that records each call and answers as the test requires.
 """
 
 from __future__ import annotations
@@ -54,19 +57,24 @@ CLOSE_ISSUE_STEP = "Close tracking issue when the scan is clean"
 FINDINGS_EXIT_CODE = 3
 
 # Records each call, one argument per tab-separated field. A `docker run`
-# exits with DOCKER_STUB_FIXABLE_EXIT for the fixable-only scan, the one with
+# prints the report named in FIXABLE_REPORT or FULL_REPORT and exits with
+# DOCKER_STUB_FIXABLE_EXIT for the fixable-only scan, the one with
 # --ignore-unfixed, and with DOCKER_STUB_FULL_EXIT for the complete report.
-DOCKER_STUB = """\
+FIXABLE_REPORT = "fixable-only report"
+FULL_REPORT = "complete report"
+DOCKER_STUB = f"""\
 #!/usr/bin/env bash
 set -euo pipefail
-(IFS=$'\\t'; printf '%s\\n' "$*") >> "${DOCKER_STUB_LOG}"
+(IFS=$'\\t'; printf '%s\\n' "$*") >> "${{DOCKER_STUB_LOG}}"
 if [[ "$1" == run ]]; then
     for argument in "$@"; do
-        if [[ "${argument}" == --ignore-unfixed ]]; then
-            exit "${DOCKER_STUB_FIXABLE_EXIT:-0}"
+        if [[ "${{argument}}" == --ignore-unfixed ]]; then
+            echo "{FIXABLE_REPORT}"
+            exit "${{DOCKER_STUB_FIXABLE_EXIT:-0}}"
         fi
     done
-    exit "${DOCKER_STUB_FULL_EXIT:-0}"
+    echo "{FULL_REPORT}"
+    exit "${{DOCKER_STUB_FULL_EXIT:-0}}"
 fi
 exit 0
 """
@@ -112,15 +120,7 @@ def _run_step(
         "DOCKER_STUB_FULL_EXIT": str(full_exit),
     }
     result = subprocess.run(
-        [
-            "bash",
-            "--noprofile",
-            "--norc",
-            "-eo",
-            "pipefail",
-            "-c",
-            named_step(_job(), name)["run"],
-        ],
+        ["bash", "-e", "-c", named_step(_job(), name)["run"]],
         env=env,
         capture_output=True,
         text=True,
@@ -144,7 +144,6 @@ def _trivy_calls(runner_temp: Path) -> list[list[str]]:
         "--security-opt=no-new-privileges",
         f"--volume={runner_temp}/image.tar:/scan/image.tar:ro",
         f"--volume={runner_temp}/trivy-cache:/scan/cache",
-        f"--volume={runner_temp}/trivy:/scan/reports",
         TRIVY_IMAGE,
         "image",
         "--input=/scan/image.tar",
@@ -161,15 +160,17 @@ def _trivy_calls(runner_temp: Path) -> list[list[str]]:
             "--ignore-unfixed",
             "--severity=HIGH,CRITICAL",
             f"--exit-code={FINDINGS_EXIT_CODE}",
-            "--output=/scan/reports/trivy-fixable.txt",
         ],
-        [
-            *container,
-            "--skip-db-update",
-            "--exit-code=0",
-            "--output=/scan/reports/trivy-full.txt",
-        ],
+        [*container, "--skip-db-update", "--exit-code=0"],
     ]
+
+
+def _reports(runner_temp: Path) -> dict[str, str]:
+    """The reports that the step saved, by file name."""
+    return {
+        path.name: path.read_text(encoding="utf-8")
+        for path in sorted((runner_temp / "trivy").iterdir())
+    }
 
 
 @pytest.mark.unit
@@ -188,13 +189,17 @@ def test_clean_scan_isolates_trivy_and_reports_no_fixable_finding(
     tmp_path: Path,
 ) -> None:
     # Any further option, such as an environment variable or another mount,
-    # would hand the container something of the runner's.
+    # would hand the container something of the runner's; a mount of the
+    # report directory would let it plant the files that later steps read.
     run = _run_step(tmp_path, SCAN_STEP)
 
     assert run.result.returncode == 0, run.result.stderr
     assert run.calls == _trivy_calls(run.runner_temp)
-    assert (run.runner_temp / "trivy").is_dir()
     assert (run.runner_temp / "trivy-cache").is_dir()
+    assert _reports(run.runner_temp) == {
+        "trivy-fixable.txt": f"{FIXABLE_REPORT}\n",
+        "trivy-full.txt": f"{FULL_REPORT}\n",
+    }
     assert run.outputs == "fixable=none\n"
 
 
@@ -206,6 +211,10 @@ def test_fixable_finding_sets_found_and_still_writes_the_complete_report(
 
     assert run.result.returncode == 0, run.result.stderr
     assert run.calls == _trivy_calls(run.runner_temp)
+    assert _reports(run.runner_temp) == {
+        "trivy-fixable.txt": f"{FIXABLE_REPORT}\n",
+        "trivy-full.txt": f"{FULL_REPORT}\n",
+    }
     assert run.outputs == "fixable=found\n"
 
 

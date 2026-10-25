@@ -112,16 +112,21 @@ jobs:
       # The fixable-only scan (HIGH/CRITICAL with a known fix) drives
       # issue creation, update, and closure through the `fixable` output,
       # `found` or `none`. Trivy itself exits with 1 on an error, so a
-      # finding exits with a code of its own; an error fails the step,
-      # which then opens, updates, or closes no issue. The complete report,
-      # every finding regardless of fix availability or severity, is for
-      # awareness only and reuses the vulnerability database of the first
-      # scan.
+      # finding exits with a code of its own; an error fails the step and
+      # sets no output, so neither tracking-issue step runs. The complete
+      # report, every finding regardless of fix availability or severity,
+      # is for awareness only and reuses the vulnerability database of the
+      # first scan.
       #
       # Trivy runs with the runner's user and group IDs, without
       # capabilities or privilege escalation, and reads the archive
       # read-only; it receives neither the Docker socket, the registry
       # credentials, a token, nor an environment variable of the runner.
+      # It writes only into its database cache, which the runner never
+      # reads, and prints each report, which the runner's shell saves: no
+      # file that a later step reads, such as a symbolic link to a file of
+      # the runner, comes from the container. The commands stay inline
+      # because the job has no checkout and runs no repository code.
       - name: Scan for OS vulnerabilities
         id: trivy
         run: |
@@ -135,7 +140,6 @@ jobs:
                   --security-opt=no-new-privileges \
                   --volume="${RUNNER_TEMP}/image.tar:/scan/image.tar:ro" \
                   --volume="${RUNNER_TEMP}/trivy-cache:/scan/cache" \
-                  --volume="${RUNNER_TEMP}/trivy:/scan/reports" \
                   "${TRIVY_IMAGE}" image \
                   --input=/scan/image.tar \
                   --cache-dir=/scan/cache \
@@ -149,14 +153,14 @@ jobs:
           status=0
           run_trivy --ignore-unfixed --severity=HIGH,CRITICAL \
               --exit-code="${FINDINGS_EXIT_CODE}" \
-              --output=/scan/reports/trivy-fixable.txt || status=$?
+              >"${RUNNER_TEMP}/trivy/trivy-fixable.txt" || status=$?
           case "${status}" in
               0) fixable=none ;;
               "${FINDINGS_EXIT_CODE}") fixable=found ;;
               *) exit "${status}" ;;
           esac
           run_trivy --skip-db-update --exit-code=0 \
-              --output=/scan/reports/trivy-full.txt
+              >"${RUNNER_TEMP}/trivy/trivy-full.txt"
           echo "fixable=${fixable}" >>"${GITHUB_OUTPUT}"
 
       - name: Upload complete vulnerability report artifact
