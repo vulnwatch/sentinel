@@ -643,13 +643,13 @@ three complementary mechanisms:
   updates stay disabled so that Renovate remains the only component that
   creates dependency PRs.
 - **Renovate vulnerability-fix PRs** (`vulnerabilityAlerts`) are raised
-  from those alerts immediately, outside the weekly schedule and the
-  release-age cooldown, and labelled `security`. This requires the Mend
+  from those alerts immediately, outside the weekly schedule and Renovate's
+  release-age hold, and labelled `security`. This requires the Mend
   Renovate App to have read access to Dependabot alerts. A fix Renovate
   cannot express as a direct-dependency update is delivered by the next lock
-  file maintenance PR or by a manual PR. uv still locks a fix only once it
-  is seven days old; a younger fix follows the security-fix path of
-  Release-age cooldown below.
+  file maintenance PR or by a manual PR. A fix uploaded less than seven days
+  earlier gets no PR that updates `backend/uv.lock`, because uv cannot lock
+  it yet; see Security fixes under the cooldown below.
 - **Release signal.** A security fix is a patch release under the
   Semantic Versioning Policy, so it is merged as `fix(deps):` —
   `renovate.jsonc` sets this prefix on vulnerability-fix PRs. Routine
@@ -717,29 +717,40 @@ settings with the same duration implement the cooldown:
   image pinning) is exempt, because `ghcr.io` publishes no release
   timestamps: its image would be held indefinitely while the other members
   of the group moved on, so `uv` itself has no cooldown. A GitHub Action is
-  aged by the date of its tagged commit, which its publisher controls.
+  aged by the date of its tagged commit, which its publisher controls, so
+  the cooldown holds an Action only as reliably as that date.
 
-**Security fixes under the cooldown.** Renovate raises a vulnerability-fix
-PR without waiting, and a fix is often older than the cooldown by the time
-its advisory is published. A Python fix uploaded less than seven days
-earlier, however, cannot be locked by the fix PR, by lock file maintenance,
-or by a plain `uv lock`. A maintainer then opens a `fix(deps):` PR that adds
-the package to `[tool.uv.exclude-newer-package]` in `backend/pyproject.toml`
+**Security fixes under the cooldown.** Renovate does not hold a
+vulnerability-fix PR for the cooldown, and a fix is often older than seven
+days by the time its advisory is published. uv, however, cannot lock a
+Python fix uploaded less than seven days earlier. Renovate's lock file
+update for it then changes nothing, so Renovate raises no PR that updates
+`backend/uv.lock` until the fix is seven days old, and neither lock file
+maintenance nor a plain `uv lock` locks it. The Dependabot alert is then
+what starts the fix: a maintainer opens a `fix(deps):` PR that adds the
+package to `[tool.uv.exclude-newer-package]` in `backend/pyproject.toml`
 with an RFC 3339 UTC timestamp just after the upload of the fixed version's
-last file, and runs `uv lock --upgrade-package <package>`; a script pin of
-the package needs the same entry in the script's metadata. The absolute
-cutoff admits the fix and nothing uploaded after it. Once the fixed version
-is seven days old, a later PR removes the entry: uv keeps the locked
-version, so `backend/uv.lock` changes only in its `[options]`. Removing it
-earlier would return the package to its newest version uploaded before the
+last file, and runs `uv lock --upgrade-package <package>`. A script pin of
+the package moves in the same PR, with the same entry in the script's
+metadata. Renovate may meanwhile raise a fix PR that changes only that
+script pin; it fixes nothing in the backend and `pip-audit` does not run on
+it, so it is closed in favor of the manual PR. The absolute cutoff admits
+the fix and nothing uploaded after it. Once the fixed version is seven days
+old, a later PR removes the entry: uv keeps the locked version, so
+`backend/uv.lock` changes only in its `[options]`. Removing it earlier
+would return the package to its newest version uploaded before the
 cooldown cutoff, which `uv lock --dry-run` shows as an update, and
 `pip-audit` blocks a PR that locks a vulnerable version. An entry is never
-`false`, which would exempt the package from the cooldown with nothing to
-show that it still is. The same entry admits any other version that must be
-locked before it is seven days old. An update of another manager is
-requested from the Dependency Dashboard instead. A dependency that only a
-custom manager tracks, such as Swagger UI, receives no vulnerability alert,
-so its security fix waits for the cooldown unless a maintainer requests it.
+`false` or a future date, either of which would exempt the package from the
+cooldown with nothing in the lock file to show it. The same entry admits
+any other version that must be locked before it is seven days old.
+
+An Action, an image, or Swagger UI can instead be requested early from the
+Dependency Dashboard. A `uvx` tool or a script pin cannot, because uv
+resolves it under the cooldown, so its update waits until it is seven days
+old. A dependency that only a custom manager tracks, such as Swagger UI,
+receives no vulnerability alert, so its security fix waits for the cooldown
+unless a maintainer requests it.
 
 **Testcontainers image references.** The `testcontainers`-provisioned
 PostgreSQL and Redis images used by `backend/tests/conftest.py` (see

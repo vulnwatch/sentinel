@@ -23,11 +23,11 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-import tomllib
 from pathlib import Path
 
 import pytest
 
+from tests.support.dependency_config import backend_cooldown
 from tests.support.yaml_files import (
     YamlMapping,
     job_steps,
@@ -42,7 +42,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 RELEASE_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "build-images.yml"
 CODECOV_CONFIG_PATH = REPO_ROOT / "codecov.yml"
-PYPROJECT_PATH = REPO_ROOT / "backend" / "pyproject.toml"
 
 DRIFT_CHECK_STEP = (
     "Verify Dockerfile and pyproject.toml Python version match .python-version"
@@ -377,8 +376,8 @@ def test_lint_job_runs_the_static_security_analysis_unconditionally() -> None:
 
 
 # Record their arguments, one per line. uv writes a requirements file to the
-# path after --output-file unless UV_STUB_EXIT selects a failure; uvx also
-# records UV_PYTHON.
+# path after --output-file unless UV_STUB_EXIT selects a failure; uvx first
+# records UV_PYTHON and UV_EXCLUDE_NEWER, one per line.
 UV_STUB = """\
 #!/usr/bin/env bash
 set -euo pipefail
@@ -478,13 +477,11 @@ def test_pip_audit_resolves_with_the_backend_release_age_cooldown(
     # uvx resolves pip-audit and its dependencies without a lock file and
     # ignores the project's [tool.uv] settings, so the step passes the
     # cooldown of backend/pyproject.toml itself. Issue #1014.
-    pyproject = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))
-    cooldown = pyproject["tool"]["uv"]["exclude-newer"]
     result, _, _, uvx_log = _run_audit_step(tmp_path)
     exclude_newer = uvx_log.read_text(encoding="utf-8").splitlines()[1]
 
     assert result.returncode == 0, result.stderr
-    assert exclude_newer == f"UV_EXCLUDE_NEWER={cooldown}"
+    assert exclude_newer == f"UV_EXCLUDE_NEWER={backend_cooldown()}"
 
 
 @pytest.mark.unit

@@ -28,8 +28,10 @@
   // release on their own. Renovate appends alert rules after packageRules,
   // so this prefix overrides the per-manager chore(deps): prefixes below,
   // and Renovate's minimumReleaseAge default of null for alerts overrides
-  // the release-age cooldown rule: a fix PR is raised at once, and uv still
-  // locks a Python fix only once it is seven days old.
+  // the release-age cooldown rule. uv still locks a Python fix only once it
+  // is seven days old, so a younger fix gets no PR that updates
+  // backend/uv.lock — see docs/deployment.md (Workflow Conventions,
+  // Security fixes under the cooldown) for the manual path.
   "vulnerabilityAlerts": {
     "labels": ["dependencies", "security"],
     "commitMessagePrefix": "fix(deps):"

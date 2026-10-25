@@ -24,15 +24,14 @@ text.
 from __future__ import annotations
 
 import fnmatch
-import json
 import re
-import tomllib
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from app.api.interactive_docs import SWAGGER_UI_DIST
+from tests.support.dependency_config import backend_cooldown, renovate_config
 from tests.support.yaml_files import (
     job_steps,
     load_yaml_file,
@@ -49,8 +48,6 @@ IMAGE_SCAN_RELATIVE = ".github/workflows/image-scan.yml"
 IMAGE_SCAN_PATH = REPO_ROOT / IMAGE_SCAN_RELATIVE
 MAKEFILE_PATH = REPO_ROOT / "Makefile"
 INTERACTIVE_DOCS_PATH = REPO_ROOT / "backend" / "app" / "api" / "interactive_docs.py"
-RENOVATE_CONFIG_PATH = REPO_ROOT / "renovate.jsonc"
-PYPROJECT_PATH = REPO_ROOT / "backend" / "pyproject.toml"
 LINT_SHELL_RELATIVE = "scripts/lint-shell.sh"
 LINT_SHELL_PATH = REPO_ROOT / LINT_SHELL_RELATIVE
 PRE_COMMIT_PATH = REPO_ROOT / ".githooks" / "pre-commit"
@@ -82,18 +79,14 @@ UVX_PIN = re.compile(
 # The end of the text before a uvx invocation that passes a version read at
 # run time, such as "$(cat .python-version)", in UV_PYTHON.
 UVX_PROJECT_PYTHON = re.compile(r'\bUV_PYTHON="\$[^"]+"\s+$')
+# The run of quoted environment assignments that ends the text before a uvx
+# invocation, i.e. the variables that the invocation itself receives.
+UVX_ENVIRONMENT = re.compile(r'(?:\b[A-Z_]+="[^"]*"\s+)+$')
+ASSIGNMENT = re.compile(r'(?P<name>[A-Z_]+)="(?P<value>[^"]*)"')
 UNPKG_URL = re.compile(r"https://unpkg\.com/[^\s\"']+")
 SWAGGER_UI_ASSET = re.compile(
     rf"https://unpkg\.com/swagger-ui-dist@(?P<version>{EXACT_VERSION})/(?P<asset>[\w.-]+)"
 )
-
-
-def _renovate_config() -> dict[str, Any]:
-    """`renovate.jsonc` without its comments, which are whole lines."""
-    lines = RENOVATE_CONFIG_PATH.read_text(encoding="utf-8").splitlines()
-    document = "\n".join(line for line in lines if not line.lstrip().startswith("//"))
-    config: dict[str, Any] = json.loads(document)
-    return config
 
 
 def _match_strings(manager: dict[str, Any]) -> list[re.Pattern[str]]:
@@ -146,6 +139,18 @@ def _uvx_sources() -> dict[str, list[str]]:
     }
 
 
+def _uvx_environment(prefix: str) -> dict[str, str]:
+    """The variables assigned immediately before a uvx invocation, from the
+    text that precedes it on its line."""
+    environment = UVX_ENVIRONMENT.search(prefix)
+    if not environment:
+        return {}
+    return {
+        assignment["name"]: assignment["value"]
+        for assignment in ASSIGNMENT.finditer(environment.group())
+    }
+
+
 def _uvx_pins(text: str) -> list[tuple[str, str]]:
     """The (package, version) pin of every `uvx` invocation in `text`; an
     invocation that is not `uvx <package>@<exact version>` fails."""
@@ -170,7 +175,7 @@ def test_shell_lint_images_are_pinned_by_exact_version_and_digest() -> None:
 def test_shell_lint_manager_extracts_every_image_with_its_digest() -> None:
     manager = next(
         manager
-        for manager in _renovate_config()["customManagers"]
+        for manager in renovate_config()["customManagers"]
         if any(p.search(LINT_SHELL_RELATIVE) for p in _file_patterns(manager))
     )
     script = LINT_SHELL_PATH.read_text(encoding="utf-8")
@@ -194,7 +199,7 @@ def test_shell_lint_image_updates_use_the_ci_prefix_within_the_title_limit() -> 
     # Docker digest to 35caba8"), must pass the PR Metadata check.
     rules = [
         rule
-        for rule in _renovate_config()["packageRules"]
+        for rule in renovate_config()["packageRules"]
         if LINT_SHELL_RELATIVE in rule.get("matchFileNames", [])
     ]
 
@@ -239,7 +244,7 @@ def test_trivy_manager_extracts_the_image_scan_pin_with_its_digest() -> None:
     pin = _trivy_pin()
     managers = [
         manager
-        for manager in _renovate_config()["customManagers"]
+        for manager in renovate_config()["customManagers"]
         if manager.get("depNameTemplate") == "aquasec/trivy"
     ]
     assert len(managers) == 1
@@ -263,7 +268,7 @@ def test_trivy_image_updates_use_the_ci_prefix_within_the_title_limit() -> None:
     pin = _trivy_pin()
     rules = [
         rule
-        for rule in _renovate_config()["packageRules"]
+        for rule in renovate_config()["packageRules"]
         if "custom.regex" in rule.get("matchManagers", [])
         and any(
             fnmatch.fnmatchcase(IMAGE_SCAN_RELATIVE, pattern)
@@ -298,7 +303,7 @@ def test_uvx_manager_extracts_every_uvx_pin() -> None:
     # dependency extraction rather than rejected.
     manager = next(
         manager
-        for manager in _renovate_config()["customManagers"]
+        for manager in renovate_config()["customManagers"]
         if manager.get("datasourceTemplate") == "pypi"
     )
     for relative, lines in _uvx_sources().items():
@@ -341,15 +346,14 @@ def test_uvx_tools_resolve_with_the_backend_release_age_cooldown() -> None:
     # backend/pyproject.toml in UV_EXCLUDE_NEWER (docs/deployment.md, Workflow
     # Conventions, Release-age cooldown; issue #1014). That the variable
     # reaches the tool is tested for its caller in tests/test_ci_workflow.py.
-    pyproject = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))
-    cooldown = pyproject["tool"]["uv"]["exclude-newer"]
-    uvx_cooldown = re.compile(rf'\bUV_EXCLUDE_NEWER="{re.escape(cooldown)}"\s')
+    cooldown = backend_cooldown()
     without_cooldown = [
         f"{relative}: {line.strip()}"
         for relative, lines in _uvx_sources().items()
         for line in lines
         for invocation in UVX_INVOCATION.finditer(line)
-        if not uvx_cooldown.search(line[: invocation.start()])
+        if _uvx_environment(line[: invocation.start()]).get("UV_EXCLUDE_NEWER")
+        != cooldown
     ]
 
     assert without_cooldown == []
@@ -385,7 +389,7 @@ def test_unpkg_manager_extracts_both_swagger_ui_copies_on_one_version() -> None:
     # dependency, and the page loads only the literal it extracts.
     manager = next(
         manager
-        for manager in _renovate_config()["customManagers"]
+        for manager in renovate_config()["customManagers"]
         if manager.get("datasourceTemplate") == "npm"
     )
     file_patterns = _file_patterns(manager)

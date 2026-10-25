@@ -60,7 +60,7 @@ Sentinel employs the following security practices:
 
 - **Static analysis**: ruff, including its flake8-bandit security rules, and mypy (strict mode) run on every pull request
 - **Dependency auditing**: GitHub Dependabot alerts monitor dependencies for known vulnerabilities, Renovate raises fix pull requests, and pip-audit blocks dependency changes and releases that contain known vulnerabilities
-- **Dependency cooldown**: a new dependency release, including a transitive one, is adopted only once it is seven days old; see Release-age cooldown in [Workflow Conventions](docs/deployment.md#workflow-conventions)
+- **Dependency cooldown**: new dependency releases, including transitive ones, are adopted only once they are seven days old, with the exceptions listed under Release-age cooldown in [Workflow Conventions](docs/deployment.md#workflow-conventions)
 - **Container scanning**: Trivy scans the Docker image weekly
 - **Release transparency**: versioned images include a CycloneDX SBOM and
   signed SBOM/build-provenance attestations; see
