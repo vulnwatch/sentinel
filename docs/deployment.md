@@ -716,12 +716,12 @@ settings with the same duration implement the cooldown:
   so is one to a floating tag that is republished more often than the
   cooldown, until it is requested from the Dashboard. Renovate reads Docker
   Hub timestamps from its tag API, which refuses anonymous requests for the
-  pages beyond a repository's first 1,000 tags. Without Docker Hub
-  credentials, the images with more tags (`anchore/syft`, `postgres`,
-  `redis`, and `renovate/renovate`) therefore have no timestamp; a rule
-  that names them sets `minimumReleaseAgeBehaviour: timestamp-optional`,
-  so they update without the cooldown, with a warning on the Dependency
-  Dashboard, rather than never. Another image that lacks a timestamp stays
+  pages beyond a repository's first 1,000 tags, so without Docker Hub
+  credentials an image with more tags has no timestamp. A rule names those
+  that Renovate updates by version (`anchore/syft`, `postgres`, `redis`,
+  and `renovate/renovate`) and sets `minimumReleaseAgeBehaviour:
+  timestamp-optional` for them, so they update without the cooldown, with a
+  warning on the Dependency Dashboard, rather than never. Another image that lacks a timestamp stays
   held, so a lookup failure never admits a release early. The uv version
   group (see Container Build Conventions, uv image pinning) is exempt,
   because `ghcr.io` publishes no release timestamps: its image would be held
