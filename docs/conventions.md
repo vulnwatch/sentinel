@@ -442,8 +442,9 @@ In `app/`, a security rule MUST NOT be suppressed in any other way:
 - not by a file-level exemption (`# ruff: noqa: S307`), which silences the
   rule on every line of its file; and
 - not by ruff's other suppression comments, `# ruff: ignore[S307]` on a line
-  or `# ruff: disable[S307]` … `# ruff: enable[S307]` around a range, which
-  carry no reason and can span a whole file.
+  or `# ruff: disable[S307]` … `# ruff: enable[S307]` around a range, so that
+  the `noqa` form above stays the only one; a range can also span a whole
+  file.
 
 A structural test enforces the suppression form and the absence of the other
 forms (see `docs/features/platform/testing-strategy.md`, Structural Tests).

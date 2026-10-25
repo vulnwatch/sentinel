@@ -15,7 +15,8 @@ and `PGH004`. Ruff already fails a `noqa` comment that names no code
   every line of a file: `PGH004` does not report one that names a code; and
 - no other ruff suppression comment (`# ruff: ignore[S307]` on a line, or
   `# ruff: disable[S307]` ... `# ruff: enable[S307]` around a range) silences
-  a security rule without a reason, or across a whole file.
+  a security rule, so that the `noqa` form above stays the only one; a range
+  can also span a whole file.
 
 Comments are read with `tokenize`, as ruff reads them from the tokens, so a
 string that contains `# noqa` is not a suppression. See issue #1105.
