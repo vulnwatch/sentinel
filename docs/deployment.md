@@ -707,8 +707,9 @@ settings with the same duration implement the cooldown:
   seven days old; otherwise a Python update PR could propose a version that
   uv cannot lock. An update that is still too young is listed under
   "Pending Status Checks" on the Dependency Dashboard, where a maintainer
-  can request it early. Digest updates are not held: Docker Hub dates a
-  digest by the last push of its tag, so the digest of a tag republished
+  can request it early, except a Python dependency (see Security fixes
+  under the cooldown below). Digest updates are not held: Docker Hub dates
+  a digest by the last push of its tag, so the digest of a tag republished
   more often than the cooldown, such as `python:3.14-slim`, would never
   qualify, and its refresh is the remediation path of Image Vulnerability
   Monitoring. A version update to such a floating tag, such as
@@ -741,16 +742,16 @@ old, a later PR removes the entry: uv keeps the locked version, so
 would return the package to its newest version uploaded before the
 cooldown cutoff, which `uv lock --dry-run` shows as an update, and
 `pip-audit` blocks a PR that locks a vulnerable version. An entry is never
-`false` or a future date, either of which would exempt the package from the
-cooldown with nothing in the lock file to show it. The same entry admits
-any other version that must be locked before it is seven days old.
+`false` or a future date, either of which would keep admitting new releases
+of the package instead of a single version. The same entry admits any
+other version that must be locked before it is seven days old.
 
 An Action, an image, or Swagger UI can instead be requested early from the
 Dependency Dashboard. A `uvx` tool or a script pin cannot, because uv
 resolves it under the cooldown, so its update waits until it is seven days
 old. A dependency that only a custom manager tracks, such as Swagger UI,
 receives no vulnerability alert, so its security fix waits for the cooldown
-unless a maintainer requests it.
+unless it can be requested early as above.
 
 **Testcontainers image references.** The `testcontainers`-provisioned
 PostgreSQL and Redis images used by `backend/tests/conftest.py` (see
