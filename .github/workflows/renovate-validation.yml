@@ -41,10 +41,6 @@ jobs:
 
       - name: Run read-only Renovate lookup
         env:
-          # GitHub refuses this token's API lookups of repositories owned
-          # by an organization that enforces an IP allow list; see
-          # docs/deployment.md (Workflow Conventions) for the lookup
-          # failures the validator tolerates.
           RENOVATE_GITHUB_COM_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -63,6 +59,4 @@ jobs:
             --dry-run=lookup \
             --require-config=required \
             --onboarding=false 2>&1 | tee "${log_file}"
-          # One stream keeps the tolerated warnings (stdout) ahead of the
-          # blocking ones (stderr) in the job log.
-          python3 scripts/validate_renovate_log.py "${log_file}" 2>&1
+          python3 scripts/validate_renovate_log.py "${log_file}"

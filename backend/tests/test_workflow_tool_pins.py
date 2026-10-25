@@ -3,23 +3,26 @@
 `docs/deployment.md` (Workflow Conventions) requires every tool version a
 workflow pins to be tracked by Renovate, and lists the forms that the
 `renovate.jsonc` custom managers match. These tests keep the images of the
-shell lint, the `uvx` tools, and the Swagger UI assets in those forms with
-exact versions: a pin that leaves its form is silently dropped from
-dependency extraction rather than rejected. See issue #1060. The `Shell Lint`
-job and the pre-commit hook run the same images, pinned by version and digest,
-through `scripts/lint-shell.sh` (issue #1099). Every `uvx` tool, in a
-workflow, a script, a Git hook, or the `Makefile`, runs on the project's
-Python version (issue #1103). The Swagger UI of the API's `/api/docs` page
-shares the GitHub Pages site's pin, and the site enables the operation filter
-(issue #1070).
+shell lint and of the image scan, the `uvx` tools, and the Swagger UI assets
+in those forms with exact versions: a pin that leaves its form is silently
+dropped from dependency extraction rather than rejected. See issue #1060. The
+`Shell Lint` job and the pre-commit hook run the same images, pinned by version
+and digest, through `scripts/lint-shell.sh` (issue #1099). Every `uvx` tool, in
+a workflow, a script, a Git hook, or the `Makefile`, runs on the project's
+Python version (issue #1103). The image scan runs Trivy from its image, pinned
+by version and digest, which Renovate looks up on Docker Hub (issue #1097). The
+Swagger UI of the API's `/api/docs` page shares the GitHub Pages site's pin, and
+the site enables the operation filter (issue #1070).
 
 The workflows are parsed as YAML (`tests/support/yaml_files.py`); only the
-`Makefile`, the scripts and the Git hooks, and the `/api/docs` page module are
-read as text.
+`Makefile`, the scripts and the Git hooks, the `/api/docs` page module, and the
+image scan workflow, for the Renovate extraction of its Trivy pin, are read as
+text.
 """
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import re
 from pathlib import Path
@@ -40,6 +43,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 CI_PATH = WORKFLOWS_DIR / "ci.yml"
 DEPLOY_API_DOCS_PATH = WORKFLOWS_DIR / "deploy-api-docs.yml"
+IMAGE_SCAN_RELATIVE = ".github/workflows/image-scan.yml"
+IMAGE_SCAN_PATH = REPO_ROOT / IMAGE_SCAN_RELATIVE
 MAKEFILE_PATH = REPO_ROOT / "Makefile"
 INTERACTIVE_DOCS_PATH = REPO_ROOT / "backend" / "app" / "api" / "interactive_docs.py"
 RENOVATE_CONFIG_PATH = REPO_ROOT / "renovate.jsonc"
@@ -60,6 +65,9 @@ IMAGE_ASSIGNMENT = re.compile(r"^[A-Z_]+_IMAGE=.*$", re.MULTILINE)
 IMAGE_PIN = re.compile(
     r'(?P<name>[A-Z_]+_IMAGE)="(?P<image>[a-z0-9._/-]+)'
     rf":(?P<version>v?{EXACT_VERSION})@(?P<digest>sha256:[0-9a-f]{{64}})\""
+)
+TRIVY_IMAGE_PIN = re.compile(
+    rf"aquasec/trivy:(?P<version>{EXACT_VERSION})@(?P<digest>sha256:[0-9a-f]{{64}})"
 )
 # The PR Metadata check rejects a pull request title above 71 characters.
 PR_TITLE_LIMIT = 71
@@ -210,6 +218,62 @@ def test_shell_lint_job_and_pre_commit_hook_run_the_script() -> None:
     assert re.search(
         rf"^{re.escape(LINT_SHELL_RELATIVE)} --staged$", hook, re.MULTILINE
     )
+
+
+def _trivy_pin() -> re.Match[str]:
+    """The pin of the Trivy image that the image scan runs; a pin that is
+    not `aquasec/trivy:<exact version>@<digest>` fails."""
+    image = load_yaml_file(IMAGE_SCAN_PATH)["env"]["TRIVY_IMAGE"]
+    pin = TRIVY_IMAGE_PIN.fullmatch(image)
+    assert pin, image
+    return pin
+
+
+@pytest.mark.unit
+def test_trivy_manager_extracts_the_image_scan_pin_with_its_digest() -> None:
+    # The digest fixes the Trivy content that the scan runs; the version
+    # names it for Renovate, which looks the image up on Docker Hub.
+    pin = _trivy_pin()
+    managers = [
+        manager
+        for manager in _renovate_config()["customManagers"]
+        if manager.get("depNameTemplate") == "aquasec/trivy"
+    ]
+    assert len(managers) == 1
+    manager = managers[0]
+    workflow = IMAGE_SCAN_PATH.read_text(encoding="utf-8")
+    extracted = {
+        (match["currentValue"], match["currentDigest"])
+        for pattern in _match_strings(manager)
+        for match in pattern.finditer(workflow)
+    }
+
+    assert manager["datasourceTemplate"] == "docker"
+    assert any(p.search(IMAGE_SCAN_RELATIVE) for p in _file_patterns(manager))
+    assert extracted == {(pin["version"], pin["digest"])}
+
+
+@pytest.mark.unit
+def test_trivy_image_updates_use_the_ci_prefix_within_the_title_limit() -> None:
+    # Trivy runs only in CI, so its updates carry no release signal. The
+    # title of its digest updates must pass the PR Metadata check.
+    pin = _trivy_pin()
+    rules = [
+        rule
+        for rule in _renovate_config()["packageRules"]
+        if "custom.regex" in rule.get("matchManagers", [])
+        and any(
+            fnmatch.fnmatchcase(IMAGE_SCAN_RELATIVE, pattern)
+            for pattern in rule.get("matchFileNames", [])
+        )
+    ]
+    title = (
+        f"ci(deps): Update aquasec/trivy:{pin['version']} "
+        f"Docker digest to {pin['digest'].removeprefix('sha256:')[:7]}"
+    )
+
+    assert [rule.get("commitMessagePrefix") for rule in rules] == ["ci(deps):"]
+    assert len(title) <= PR_TITLE_LIMIT, title
 
 
 @pytest.mark.unit

@@ -95,6 +95,16 @@
     },
     {
       "customType": "regex",
+      "description": "Trivy image of the image scan workflow, by version and digest",
+      "managerFilePatterns": ["/^\\.github/workflows/image-scan\\.yml$/"],
+      "matchStrings": [
+        "TRIVY_IMAGE:\\s+aquasec/trivy:(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "aquasec/trivy"
+    },
+    {
+      "customType": "regex",
       "description": "Action version: inputs that the github-actions manager does not track (e.g. the Codecov CLI of codecov/codecov-action), each marked by a '# renovate: datasource=<datasource> depName=<name>' hint comment directly above it",
       "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
       "matchStrings": [
@@ -155,7 +165,7 @@
       "commitMessagePrefix": "chore(deps):"
     },
     {
-      "description": "GitHub Actions updates, including with: version inputs (e.g. astral-sh/setup-uv, aquasecurity/trivy-action)",
+      "description": "GitHub Actions updates, including with: version inputs (e.g. astral-sh/setup-uv)",
       "matchManagers": ["github-actions"],
       "commitMessagePrefix": "ci(deps):"
     },
