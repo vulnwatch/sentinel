@@ -7,13 +7,15 @@ shell lint, the `uvx` tools, and the Swagger UI assets in those forms with
 exact versions: a pin that leaves its form is silently dropped from
 dependency extraction rather than rejected. See issue #1060. The `Shell Lint`
 job and the pre-commit hook run the same images, pinned by version and digest,
-through `scripts/lint-shell.sh` (issue #1099). The Swagger UI of the API's
-`/api/docs` page shares the GitHub Pages site's pin, and the site enables the
-operation filter (issue #1070).
+through `scripts/lint-shell.sh` (issue #1099). Every `uvx` tool, in a
+workflow, a script, a Git hook, or the `Makefile`, runs on the project's
+Python version (issue #1103). The Swagger UI of the API's `/api/docs` page
+shares the GitHub Pages site's pin, and the site enables the operation filter
+(issue #1070).
 
 The workflows are parsed as YAML (`tests/support/yaml_files.py`); only the
-`Makefile`, the shell lint script and the pre-commit hook, and the `/api/docs`
-page module are read as text.
+`Makefile`, the scripts and the Git hooks, and the `/api/docs` page module are
+read as text.
 """
 
 from __future__ import annotations
@@ -66,6 +68,9 @@ UVX_INVOCATION = re.compile(r"\buvx\s+\S+")
 UVX_PIN = re.compile(
     rf"uvx\s+(?P<package>[A-Za-z0-9][A-Za-z0-9._-]*)@(?P<version>{EXACT_VERSION})"
 )
+# The end of the text before a uvx invocation that passes a version read at
+# run time, such as "$(cat .python-version)", in UV_PYTHON.
+UVX_PROJECT_PYTHON = re.compile(r'\bUV_PYTHON="\$[^"]+"\s+$')
 UNPKG_URL = re.compile(r"https://unpkg\.com/[^\s\"']+")
 SWAGGER_UI_ASSET = re.compile(
     rf"https://unpkg\.com/swagger-ui-dist@(?P<version>{EXACT_VERSION})/(?P<asset>[\w.-]+)"
@@ -103,6 +108,31 @@ def _shell_lint_pins() -> list[re.Match[str]]:
 
 def _workflow_files() -> list[Path]:
     return sorted({*WORKFLOWS_DIR.glob("*.yml"), *WORKFLOWS_DIR.glob("*.yaml")})
+
+
+def _uvx_sources() -> dict[str, list[str]]:
+    """The lines of every file that can run a uvx tool, by path relative to
+    the repository root, without comment lines: the string values of the
+    workflows, and the scripts, the Git hooks, and the Makefile."""
+    sources = {
+        path.relative_to(REPO_ROOT).as_posix(): [
+            line
+            for value in string_values(load_yaml_file(path))
+            for line in value.splitlines()
+        ]
+        for path in _workflow_files()
+    }
+    for path in [
+        *sorted((REPO_ROOT / "scripts").glob("*.sh")),
+        *sorted(path for path in (REPO_ROOT / ".githooks").iterdir() if path.is_file()),
+        MAKEFILE_PATH,
+    ]:
+        relative = path.relative_to(REPO_ROOT).as_posix()
+        sources[relative] = path.read_text(encoding="utf-8").splitlines()
+    return {
+        relative: [line for line in lines if not line.lstrip().startswith("#")]
+        for relative, lines in sources.items()
+    }
 
 
 def _uvx_pins(text: str) -> list[tuple[str, str]]:
@@ -183,20 +213,59 @@ def test_shell_lint_job_and_pre_commit_hook_run_the_script() -> None:
 
 
 @pytest.mark.unit
-def test_uvx_tools_are_pinned_exactly_and_makefile_copy_matches_ci() -> None:
+def test_uvx_tools_are_pinned_exactly() -> None:
     # A bare `uvx <package>` resolves to the latest release and escapes
-    # tracking. The Makefile security target matches the CI bandit pin.
-    workflow_pins = [
-        pin
-        for path in _workflow_files()
-        for value in string_values(load_yaml_file(path))
-        for pin in _uvx_pins(value)
-    ]
-    makefile_pins = _uvx_pins(MAKEFILE_PATH.read_text(encoding="utf-8"))
+    # tracking.
+    packages = {
+        package
+        for lines in _uvx_sources().values()
+        for package, _ in _uvx_pins("\n".join(lines))
+    }
 
-    assert {package for package, _ in workflow_pins} >= {"bandit", "pip-audit"}
-    assert makefile_pins
-    assert set(makefile_pins) <= set(workflow_pins)
+    assert packages >= {"bandit", "pip-audit"}
+
+
+@pytest.mark.unit
+def test_uvx_manager_extracts_every_uvx_pin() -> None:
+    # A pin in a file that the manager does not read is silently dropped from
+    # dependency extraction rather than rejected.
+    manager = next(
+        manager
+        for manager in _renovate_config()["customManagers"]
+        if manager.get("datasourceTemplate") == "pypi"
+    )
+    for relative, lines in _uvx_sources().items():
+        pins = set(_uvx_pins("\n".join(lines)))
+        if not pins:
+            continue
+        text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+        extracted = {
+            (match["depName"], match["currentValue"])
+            for pattern in _match_strings(manager)
+            for match in pattern.finditer(text)
+        }
+
+        assert any(p.search(relative) for p in _file_patterns(manager)), relative
+        assert extracted == pins, relative
+
+
+@pytest.mark.unit
+def test_uvx_tools_run_on_the_project_python() -> None:
+    # A tool run through uvx gets the first interpreter that uv finds, not the
+    # one of backend/.python-version, so every invocation passes a version
+    # read at run time in UV_PYTHON, never a literal (docs/conventions.md,
+    # Runtime Version; issue #1103). That the value is the file's is tested
+    # for each caller: tests/test_bandit_scan_script.py and
+    # tests/test_ci_workflow.py.
+    without_project_python = [
+        f"{relative}: {line.strip()}"
+        for relative, lines in _uvx_sources().items()
+        for line in lines
+        for invocation in UVX_INVOCATION.finditer(line)
+        if not UVX_PROJECT_PYTHON.search(line[: invocation.start()])
+    ]
+
+    assert without_project_python == []
 
 
 @pytest.mark.unit

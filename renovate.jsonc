@@ -112,8 +112,11 @@
     },
     {
       "customType": "regex",
-      "description": "Python tools run as 'uvx <package>@<version>' (bandit and pip-audit in ci.yml, and the bandit copy of the Makefile security target)",
-      "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.ya?ml$/", "/^Makefile$/"],
+      "description": "Python tools run as 'uvx <package>@<version>' (pip-audit in ci.yml, and bandit in scripts/bandit-scan.sh, which ci.yml and the Makefile security target run)",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/[^/]+\\.ya?ml$/",
+        "/^scripts/bandit-scan\\.sh$/"
+      ],
       "matchStrings": [
         "uvx\\s+(?<depName>[A-Za-z0-9][A-Za-z0-9._-]*)@(?<currentValue>[^\\s\"']+)"
       ],
@@ -157,9 +160,13 @@
       "commitMessagePrefix": "ci(deps):"
     },
     {
-      "description": "Versions that the custom managers track in the workflows, in .github/sbom-tools.env, in the Makefile, and in scripts/lint-shell.sh — tools used only by CI and by the developer's local checks",
+      "description": "Versions that the custom managers track in the workflows, in .github/sbom-tools.env, in scripts/lint-shell.sh, and in scripts/bandit-scan.sh — tools used only by CI and by the developer's local checks",
       "matchManagers": ["custom.regex"],
-      "matchFileNames": [".github/**", "Makefile", "scripts/lint-shell.sh"],
+      "matchFileNames": [
+        ".github/**",
+        "scripts/lint-shell.sh",
+        "scripts/bandit-scan.sh"
+      ],
       "commitMessagePrefix": "ci(deps):"
     },
     {

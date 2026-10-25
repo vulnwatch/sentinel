@@ -20,6 +20,7 @@ whole-file absence checks read the workflow text.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -355,9 +356,119 @@ def test_codecov_patch_status_is_informational_and_project_status_disabled() -> 
 
 @pytest.mark.unit
 def test_bandit_and_security_job_run_unconditionally() -> None:
+    # The script runs bandit on the project's Python and fails on a skipped
+    # file (tests/test_bandit_scan_script.py); the Makefile security target
+    # runs it too. Issue #1103.
     job = _ci_jobs()["backend-security"]
     bandit_step = named_step(job, "Run bandit (static analysis)")
 
     assert "if" not in job
     assert "if" not in bandit_step
-    assert "uvx bandit@" in bandit_step["run"]
+    assert job["defaults"]["run"]["working-directory"] == "backend"
+    assert bandit_step["run"] == "../scripts/bandit-scan.sh"
+    assert "continue-on-error" not in bandit_step
+
+
+# Record their arguments, one per line. uv writes a requirements file to the
+# path after --output-file unless UV_STUB_EXIT selects a failure; uvx also
+# records UV_PYTHON.
+UV_STUB = """\
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$@" >"${UV_STUB_LOG}"
+if [[ "${UV_STUB_EXIT}" != 0 ]]; then
+    exit "${UV_STUB_EXIT}"
+fi
+while [[ $# -gt 0 ]]; do
+    if [[ "$1" == --output-file ]]; then
+        printf 'example==1.0 \\\\\\n    --hash=sha256:%s\\n' "${EXAMPLE_HASH}" >"$2"
+    fi
+    shift
+done
+"""
+UVX_STUB = """\
+#!/usr/bin/env bash
+set -euo pipefail
+{
+    printf 'UV_PYTHON=%s\\n' "${UV_PYTHON-}"
+    printf '%s\\n' "$@"
+} >"${UVX_STUB_LOG}"
+"""
+
+
+def _run_audit_step(
+    tmp_path: Path, *, export_exit: int = 0
+) -> tuple[subprocess.CompletedProcess[str], Path, Path, Path]:
+    """Run the pip-audit step's script against stubbed uv and uvx; return the
+    result, the runner's temporary directory, and the two stub logs."""
+    script = named_step(_ci_jobs()["backend-security"], AUDIT_STEP)["run"]
+    assert isinstance(script, str)
+    backend = tmp_path / "backend"
+    backend.mkdir()
+    (backend / ".python-version").write_text("3.14\n", encoding="utf-8")
+    runner_temp = tmp_path / "runner"
+    runner_temp.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, content in (("uv", UV_STUB), ("uvx", UVX_STUB)):
+        (bin_dir / name).write_text(content, encoding="utf-8")
+        (bin_dir / name).chmod(0o755)
+    uv_log = tmp_path / "uv.log"
+    uvx_log = tmp_path / "uvx.log"
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "RUNNER_TEMP": str(runner_temp),
+        "UV_STUB_LOG": str(uv_log),
+        "UV_STUB_EXIT": str(export_exit),
+        "UVX_STUB_LOG": str(uvx_log),
+        "EXAMPLE_HASH": "0" * 64,
+        # A host default that the step must not pass on to pip-audit.
+        "UV_PYTHON": "3.12",
+    }
+    result = subprocess.run(
+        ["bash", "-c", script],
+        cwd=backend,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result, runner_temp, uv_log, uvx_log
+
+
+@pytest.mark.unit
+def test_pip_audit_audits_the_hashed_locked_set_on_the_project_python(
+    tmp_path: Path,
+) -> None:
+    # With hashes, --disable-pip audits the exported set as it is, instead
+    # of installing it into an environment of the host interpreter where
+    # pip's own dependencies hide a locked package; --strict fails on a
+    # package that cannot be audited. Issue #1103.
+    result, runner_temp, uv_log, uvx_log = _run_audit_step(tmp_path)
+    uv_arguments = uv_log.read_text(encoding="utf-8").splitlines()
+    uv_python, *audit_arguments = uvx_log.read_text(encoding="utf-8").splitlines()
+    requirements = uv_arguments[uv_arguments.index("--output-file") + 1]
+    audited = audit_arguments[audit_arguments.index("--requirement") + 1]
+
+    assert result.returncode == 0, result.stderr
+    assert uv_arguments[0] == "export"
+    assert {"--no-dev", "--no-emit-project"} <= set(uv_arguments)
+    assert "--no-hashes" not in uv_arguments
+    assert Path(requirements).parent == runner_temp
+    assert "--hash=sha256:" in Path(requirements).read_text(encoding="utf-8")
+    assert uv_python == "UV_PYTHON=3.14"
+    assert re.fullmatch(r"pip-audit@\d+\.\d+\.\d+", audit_arguments[0])
+    assert {"--strict", "--disable-pip"} <= set(audit_arguments)
+    assert audited == requirements
+
+
+@pytest.mark.unit
+def test_failed_requirements_export_fails_the_pip_audit_step(tmp_path: Path) -> None:
+    # The regression of issue #1103: pip-audit read the export through a
+    # process substitution, whose failure left it an empty requirements
+    # list, and reported "No known vulnerabilities found".
+    result, _, _, uvx_log = _run_audit_step(tmp_path, export_exit=2)
+
+    assert result.returncode == 2
+    assert not uvx_log.exists()

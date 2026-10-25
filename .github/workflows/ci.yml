@@ -212,8 +212,11 @@ jobs:
         with:
           version: "0.13.5"
           enable-cache: true
+      # On the Python version of .python-version, and failing when bandit
+      # skips a file of app/; the Makefile security target runs the same
+      # script.
       - name: Run bandit (static analysis)
-        run: uvx bandit@1.9.4 -c pyproject.toml -r app/
+        run: ../scripts/bandit-scan.sh
       # The dependency vulnerability scan is blocking only where a run can
       # change or ship the locked dependency set — see
       # docs/features/platform/testing-strategy.md (CI Pipeline, gate 6).
@@ -228,9 +231,19 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           PUSH_BEFORE: ${{ github.event.before }}
         run: ../scripts/dependency-audit-scope.sh
+      # Audits exactly the locked runtime set: the exported requirements
+      # carry their hashes, so pip-audit resolves nothing again
+      # (--disable-pip), --strict fails on a package that it cannot audit,
+      # and a failed export fails the step. A tool run through uvx ignores
+      # .python-version, so UV_PYTHON passes it (docs/conventions.md,
+      # Runtime Version).
       - name: Run pip-audit (dependency vulnerabilities)
         if: steps.audit-scope.outputs.required == 'true'
-        run: uvx pip-audit@2.10.1 --requirement <(uv export --no-hashes --no-dev --no-emit-project)
+        run: |
+          set -euo pipefail
+          requirements="${RUNNER_TEMP}/backend-requirements.txt"
+          uv export --quiet --no-dev --no-emit-project --output-file "${requirements}"
+          UV_PYTHON="$(cat .python-version)" uvx pip-audit@2.10.1 --strict --disable-pip --requirement "${requirements}"
 
   shell-lint:
     name: Shell Lint

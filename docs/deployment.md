@@ -550,10 +550,13 @@ workflows and the files they read, Renovate tracks:
   through a custom manager matching a
   `# renovate: datasource=<datasource> depName=<name>` hint comment placed
   directly above the input.
-- **Python tools run as `uvx <package>@<version>`** (`bandit` and
-  `pip-audit` in `ci.yml`, and the `bandit` copy of the `Makefile`
-  `security` target), through a custom manager that looks the package up
-  on PyPI. Copies of the same pin are updated in one PR.
+- **Python tools run as `uvx <package>@<version>`** (`pip-audit` in
+  `ci.yml`, and `bandit` in `scripts/bandit-scan.sh`, which the `Backend
+  Security Scan` job of `ci.yml` and the `Makefile` `security` target
+  run), through a custom manager that looks the package up on PyPI.
+  `uvx` ignores `backend/.python-version` and would run the tool on the
+  first interpreter that `uv` finds, so each invocation passes the file's
+  value in `UV_PYTHON` (`docs/conventions.md`, Runtime Version).
 - **Browser assets loaded from `https://unpkg.com/<package>@<version>/`**
   (the Swagger UI of `deploy-api-docs.yml`), through a custom manager that
   looks the package up on npm. The same manager tracks the Swagger UI of the
@@ -572,12 +575,12 @@ workflows and the files they read, Renovate tracks:
 
 A new pin uses one of these forms, so that Renovate tracks it from the
 start. Updates of the dependencies that these custom managers find under
-`.github/`, in the `Makefile`, or in `scripts/lint-shell.sh` use the
-`ci(deps):` title prefix, like GitHub Actions updates, and each tool gets
-its own PR. The `ci` type carries no release signal (`docs/conventions.md`,
-Versioning). Swagger UI updates use `chore(deps):` instead, because the
-image ships the copy of the `/api/docs` page; that type carries no release
-signal either.
+`.github/`, in `scripts/lint-shell.sh`, or in `scripts/bandit-scan.sh`
+use the `ci(deps):` title prefix, like GitHub Actions updates, and each
+tool gets its own PR. The `ci` type carries no release signal
+(`docs/conventions.md`, Versioning). Swagger UI updates use `chore(deps):`
+instead, because the image ships the copy of the `/api/docs` page; that
+type carries no release signal either.
 
 `renovate-validation.yml` is a separate, advisory repository check. It runs
 on every pull request rather than maintaining a whitelist of Renovate-managed
@@ -661,7 +664,13 @@ three complementary mechanisms:
 - **`pip-audit`** in `ci.yml` (`Backend Security Scan`) audits the set
   locked in `backend/uv.lock` and blocks every change to
   `backend/pyproject.toml` or `backend/uv.lock` and every Release PR — see
-  `docs/features/platform/testing-strategy.md` (CI Pipeline, gate 6).
+  `docs/features/platform/testing-strategy.md` (CI Pipeline, gate 6). It
+  audits the runtime requirements exported with their hashes as they are,
+  without resolving them again, and fails on a package that it cannot
+  audit or when the export fails. Resolving them again would install them
+  into an environment of the runner's interpreter, where the packages that
+  `pip` itself needs hide a locked package of the same version from the
+  audit.
   Other changes skip it, so a disclosure against an unchanged lockfile
   surfaces as an alert and a fix PR rather than as a failure of unrelated
   work, while a Release PR cannot pass CI with a known vulnerability in
