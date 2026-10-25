@@ -712,12 +712,18 @@ settings with the same duration implement the cooldown:
   a digest by the last push of its tag, so the digest of a tag republished
   more often than the cooldown, such as `python:3.14-slim`, would never
   qualify, and its refresh is the remediation path of Image Vulnerability
-  Monitoring. A version update to such a floating tag, such as
-  `postgres:18` to `postgres:19`, is held until it is requested from the
-  Dashboard. The uv version group (see Container Build Conventions, uv
+  Monitoring. A version update to a floating tag republished as often is
+  held until it is requested from the Dashboard. Renovate reads Docker Hub
+  timestamps from its tag API, which refuses the pages beyond a
+  repository's first 1,000 tags; an image with more tags, such as
+  `renovate/renovate`, `anchore/syft`, `postgres`, or `redis`, therefore
+  has no timestamp. `minimumReleaseAgeBehaviour: timestamp-optional` for
+  the `docker` datasource lets such an image update without the cooldown,
+  with a warning on the Dependency Dashboard, rather than holding it
+  indefinitely. The uv version group (see Container Build Conventions, uv
   image pinning) is exempt, because `ghcr.io` publishes no release
-  timestamps: its image would be held indefinitely while the other members
-  of the group moved on, so `uv` itself has no cooldown. A GitHub Action is
+  timestamps: its image cannot be held like the other members of the group,
+  which would split, so `uv` itself has no cooldown. A GitHub Action is
   aged by the date of its tagged commit, which its publisher controls, so
   the cooldown holds an Action only as reliably as that date.
 

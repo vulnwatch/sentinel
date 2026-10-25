@@ -156,6 +156,11 @@
       "minimumReleaseAge": "7 days"
     },
     {
+      "description": "Renovate reads Docker Hub release timestamps from its tag API, which refuses the pages beyond a repository's first 1,000 tags (renovate/renovate, anchore/syft, postgres, redis, and python have more). Such an image is updated without the release-age cooldown, with a warning on the Dependency Dashboard, instead of being held indefinitely",
+      "matchDatasources": ["docker"],
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
+    },
+    {
       "description": "Python (backend) requirements are open-ended floors (>=), so the default rangeStrategy never proposes an in-range update. update-lockfile refreshes backend/uv.lock (what CI and the image install via uv sync --locked) for in-range updates and replaces the range only when a new version falls outside it",
       "matchManagers": ["pep621"],
       "rangeStrategy": "update-lockfile"
@@ -207,7 +212,7 @@
       "commitMessagePrefix": "chore(deps):"
     },
     {
-      "description": "Keep the uv version used by astral-sh/setup-uv (CI), the uv binary copied into the Docker image (COPY --from), and the uv_build range in backend/pyproject.toml [build-system] (the backend bundled in that binary; pep621 normalizes the name to uv-build) in sync — see backend/Dockerfile comment. Exempt from the release-age cooldown: ghcr.io publishes no release timestamps, so the image would be held indefinitely while the other two moved on",
+      "description": "Keep the uv version used by astral-sh/setup-uv (CI), the uv binary copied into the Docker image (COPY --from), and the uv_build range in backend/pyproject.toml [build-system] (the backend bundled in that binary; pep621 normalizes the name to uv-build) in sync — see backend/Dockerfile comment. Exempt from the release-age cooldown: ghcr.io publishes no release timestamps, so the image cannot be held like the other two, and the group would split",
       "matchPackageNames": ["astral-sh/uv", "ghcr.io/astral-sh/uv", "uv-build"],
       "groupName": "uv version (CI + Docker image)",
       "minimumReleaseAge": null

@@ -126,6 +126,26 @@ def test_renovate_holds_every_new_version_for_the_backend_cooldown() -> None:
 
 
 @pytest.mark.unit
+def test_renovate_admits_only_docker_releases_without_a_timestamp() -> None:
+    # Docker Hub timestamps are missing for an image with more than 1,000
+    # tags; such an image updates without the cooldown instead of never. A
+    # missing timestamp of any other datasource keeps holding the update.
+    config = renovate_config()
+    optional = [
+        rule for rule in config["packageRules"] if "minimumReleaseAgeBehaviour" in rule
+    ]
+
+    assert "minimumReleaseAgeBehaviour" not in config
+    assert optional == [
+        {
+            "description": optional[0]["description"],
+            "matchDatasources": ["docker"],
+            "minimumReleaseAgeBehaviour": "timestamp-optional",
+        }
+    ]
+
+
+@pytest.mark.unit
 def test_renovate_cooldown_exempts_only_the_uv_version_group() -> None:
     # ghcr.io publishes no release timestamps, so the uv image would be held
     # indefinitely and the group would split; the exemption must follow the
