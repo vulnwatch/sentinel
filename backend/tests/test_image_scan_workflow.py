@@ -57,9 +57,10 @@ CLOSE_ISSUE_STEP = "Close tracking issue when the scan is clean"
 FINDINGS_EXIT_CODE = 3
 
 # Records each call, one argument per tab-separated field. A `docker run`
-# prints the report named in FIXABLE_REPORT or FULL_REPORT and exits with
-# DOCKER_STUB_FIXABLE_EXIT for the fixable-only scan, the one with
-# --ignore-unfixed, and with DOCKER_STUB_FULL_EXIT for the complete report.
+# logs a line on stderr, as Trivy does, prints the report named in
+# FIXABLE_REPORT or FULL_REPORT, and exits with DOCKER_STUB_FIXABLE_EXIT for
+# the fixable-only scan, the one with --ignore-unfixed, and with
+# DOCKER_STUB_FULL_EXIT for the complete report.
 FIXABLE_REPORT = "fixable-only report"
 FULL_REPORT = "complete report"
 DOCKER_STUB = f"""\
@@ -67,6 +68,7 @@ DOCKER_STUB = f"""\
 set -euo pipefail
 (IFS=$'\\t'; printf '%s\\n' "$*") >> "${{DOCKER_STUB_LOG}}"
 if [[ "$1" == run ]]; then
+    echo "INFO scan log" >&2
     for argument in "$@"; do
         if [[ "${{argument}}" == --ignore-unfixed ]]; then
             echo "{FIXABLE_REPORT}"

@@ -122,7 +122,7 @@ jobs:
       # capabilities or privilege escalation, and reads the archive
       # read-only; it receives neither the Docker socket, the registry
       # credentials, a token, nor an environment variable of the runner.
-      # It writes only into its database cache, which the runner never
+      # It writes only into its cache directory, which the runner never
       # reads, and prints each report, which the runner's shell saves: no
       # file that a later step reads, such as a symbolic link to a file of
       # the runner, comes from the container. The commands stay inline

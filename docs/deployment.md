@@ -2397,8 +2397,8 @@ and digest (see Workflow Conventions), in a disposable container with the
 runner's user and group IDs and without capabilities or privilege escalation,
 which reads the archive read-only and receives neither the Docker socket, the
 registry credentials, a token, nor an environment variable of the runner. The
-container writes only into its vulnerability database cache, which the runner
-never reads; the runner saves the reports that Trivy prints, so no file that a
+container writes only into its cache directory, which the runner never reads;
+the runner saves the reports that Trivy prints, so no file that a
 later step reads comes from the container. The complete report reuses the
 database that the fixable-only scan downloads, so both reports come from the
 same database.
