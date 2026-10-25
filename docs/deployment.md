@@ -554,7 +554,11 @@ workflows and the files they read, Renovate tracks:
   `ci.yml`), through a custom manager that looks the package up on PyPI.
   `uvx` ignores `backend/.python-version` and would run the tool on the
   first interpreter that `uv` finds, so each invocation passes the file's
-  value in `UV_PYTHON` (`docs/conventions.md`, Runtime Version).
+  value in `UV_PYTHON` (`docs/conventions.md`, Runtime Version). It also
+  ignores the `[tool.uv]` settings of `backend/pyproject.toml` and resolves
+  the tool's dependencies without a lock file, so each invocation passes the
+  release-age cooldown in `UV_EXCLUDE_NEWER` (see Release-age cooldown
+  below).
 - **Browser assets loaded from `https://unpkg.com/<package>@<version>/`**
   (the Swagger UI of `deploy-api-docs.yml`), through a custom manager that
   looks the package up on npm. The same manager tracks the Swagger UI of the
@@ -639,11 +643,13 @@ three complementary mechanisms:
   updates stay disabled so that Renovate remains the only component that
   creates dependency PRs.
 - **Renovate vulnerability-fix PRs** (`vulnerabilityAlerts`) are raised
-  from those alerts immediately, outside the weekly schedule, and labelled
-  `security`. This requires the Mend Renovate App to have read access to
-  Dependabot alerts. A fix Renovate cannot express as a direct-dependency
-  update is delivered by the next lock file maintenance PR or by a manual
-  PR.
+  from those alerts immediately, outside the weekly schedule and Renovate's
+  release-age hold, and labelled `security`. This requires the Mend
+  Renovate App to have read access to Dependabot alerts. A fix Renovate
+  cannot express as a direct-dependency update is delivered by the next lock
+  file maintenance PR or by a manual PR. A fix uploaded less than seven days
+  earlier gets no PR that updates `backend/uv.lock`, because uv cannot lock
+  it yet; see Security fixes under the cooldown below.
 - **Release signal.** A security fix is a patch release under the
   Semantic Versioning Policy, so it is merged as `fix(deps):` —
   `renovate.jsonc` sets this prefix on vulnerability-fix PRs. Routine
@@ -671,6 +677,91 @@ three complementary mechanisms:
   surfaces as an alert and a fix PR rather than as a failure of unrelated
   work, while a Release PR cannot pass CI with a known vulnerability in
   the locked set.
+
+**Release-age cooldown.** A new release of a dependency, direct or
+transitive, enters the repository only once it is seven days old. A
+malicious or broken release is usually detected and removed from its
+registry within days of its upload, so the wait keeps it out of the image,
+out of CI, and out of developer environments, which `uv sync` updates
+automatically after a checkout or merge (see
+`docs/features/platform/testing-strategy.md`, Pre-Commit Hooks). Two
+settings with the same duration implement the cooldown:
+
+- **uv.** `[tool.uv] exclude-newer = "7 days"` in `backend/pyproject.toml`
+  limits every resolution of the backend project to distribution files
+  uploaded at least seven days earlier. It therefore governs every way a
+  version enters `backend/uv.lock`: the `uv lock --upgrade-package` of a
+  Renovate update, the `uv lock --upgrade` of lock file maintenance, which
+  the Renovate setting below does not cover, and a local `uv lock` or
+  `uv add`. It also applies to the unlocked resolution of the Python
+  Forward-Compatibility Check. `backend/uv.lock` records the duration
+  (`exclude-newer-span`), not a timestamp, so `uv sync --locked` and
+  `uv lock --check` keep accepting the lock file as time passes; uv
+  computes a new cutoff only when it resolves again. Standalone scripts
+  declare the same setting in the `[tool.uv]` table of their PEP 723
+  metadata, and every `uvx` invocation passes it in `UV_EXCLUDE_NEWER`,
+  because neither reads the backend's settings.
+- **Renovate.** A `packageRules` entry in `renovate.jsonc` sets
+  `minimumReleaseAge` to the same duration for the major, minor, and patch
+  updates of every manager, so Renovate proposes a version only once it is
+  seven days old; otherwise a Python update PR could propose a version that
+  uv cannot lock. An update that is still too young is listed under
+  "Pending Status Checks" on the Dependency Dashboard, where a maintainer
+  can request it early, except a Python dependency (see Security fixes
+  under the cooldown below). Digest updates are not held: Docker Hub dates
+  a digest by the last push of its tag, so the digest of a frequently
+  republished tag would never qualify, and the base image's digest refresh
+  is the remediation path of Image Vulnerability Monitoring. A version
+  update of an image without a release timestamp is held indefinitely, and
+  so is one to a floating tag that is republished more often than the
+  cooldown, until it is requested from the Dashboard. Renovate reads Docker
+  Hub timestamps from its tag API, which refuses anonymous requests for the
+  pages beyond a repository's first 1,000 tags, so without Docker Hub
+  credentials an image with more tags has no timestamp. A rule names those
+  that Renovate updates by version (`anchore/syft`, `postgres`, `redis`,
+  and `renovate/renovate`) and sets `minimumReleaseAgeBehaviour:
+  timestamp-optional` for them, so they update without the cooldown, with a
+  warning on the Dependency Dashboard, rather than never. Another image
+  that lacks a timestamp stays held, so a lookup failure never admits a
+  release early. The uv version
+  group (see Container Build Conventions, uv image pinning) is exempt,
+  because `ghcr.io` publishes no release timestamps: its image would be held
+  indefinitely while the other members of the group moved on, so `uv` itself
+  has no cooldown. A GitHub Action is aged by the date of its tagged
+  commit, which its publisher controls, so the cooldown holds an Action
+  only as reliably as that date.
+
+**Security fixes under the cooldown.** Renovate does not hold a
+vulnerability-fix PR for the cooldown, and a fix is often older than seven
+days by the time its advisory is published. uv, however, cannot lock a
+Python fix uploaded less than seven days earlier. Renovate's lock file
+update for it then changes nothing, so Renovate raises no PR that updates
+`backend/uv.lock` until the fix is seven days old, and neither lock file
+maintenance nor a plain `uv lock` locks it. The Dependabot alert is then
+what starts the fix: a maintainer opens a `fix(deps):` PR that adds the
+package to `[tool.uv.exclude-newer-package]` in `backend/pyproject.toml`
+with an RFC 3339 UTC timestamp just after the upload of the fixed version's
+last file, and runs `uv lock --upgrade-package <package>`. A script pin of
+the package moves in the same PR, with the same entry in the script's
+metadata. Renovate may meanwhile raise a fix PR that changes only that
+script pin; it fixes nothing in the backend and `pip-audit` does not run on
+it, so it is closed in favor of the manual PR. The absolute cutoff admits
+the fix and nothing uploaded after it. Once the fixed version is seven days
+old, a later PR removes the entry: uv keeps the locked version, so
+`backend/uv.lock` changes only in its `[options]`. Removing it earlier
+would return the package to its newest version uploaded before the
+cooldown cutoff, which `uv lock --dry-run` shows as an update, and
+`pip-audit` blocks a PR that locks a vulnerable version. An entry is never
+`false` or a future date, either of which would keep admitting new releases
+of the package instead of a single version. The same entry admits any
+other version that must be locked before it is seven days old.
+
+An Action, an image, or Swagger UI can instead be requested early from the
+Dependency Dashboard. A `uvx` tool or a script pin cannot, because uv
+resolves it under the cooldown, so its update waits until it is seven days
+old. A dependency that only a custom manager tracks, such as Swagger UI,
+receives no vulnerability alert, so its security fix waits for the cooldown
+unless it can be requested early as above.
 
 **Testcontainers image references.** The `testcontainers`-provisioned
 PostgreSQL and Redis images used by `backend/tests/conftest.py` (see
