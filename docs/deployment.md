@@ -614,13 +614,12 @@ sets no limit on the PRs that Renovate opens in an hour or keeps open
 (`prHourlyLimit` and `prConcurrentLimit` are `0`), so every update that is
 ready opens in the first run of the window. The window may hold a single run,
 in which Renovate's default hourly limit of two would defer the others to a
-later night. Lock file maintenance keeps a
-weekly schedule of its own (see below). Vulnerability-fix PRs and updates
-requested from the Dependency Dashboard open in the next run, at any hour.
-Outside the window, Renovate still updates and rebases the PRs that are
-already open. `master` requires up-to-date branches, so each merge makes
-Renovate rebase its other open PRs in its next run, and each rebase runs CI
-again.
+later night. Lock file maintenance keeps a weekly schedule of its own (see
+below). Vulnerability-fix PRs and updates requested from the Dependency
+Dashboard open in the next run, at any hour. Outside the window, Renovate
+still updates and rebases the PRs that are already open. `master` requires
+up-to-date branches, so each merge makes Renovate rebase its other open PRs
+in its next run, and each rebase runs CI again.
 
 **Python dependency updates and vulnerability response.** Renovate's
 `pep621` manager reads `backend/pyproject.toml` together with
