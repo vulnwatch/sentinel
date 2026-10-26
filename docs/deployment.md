@@ -604,6 +604,23 @@ control. The `aquasecurity` organization enforces such a list, so
 Hub, rather than through `aquasecurity/trivy-action` (see Image Vulnerability
 Monitoring).
 
+**Update schedule.** Renovate opens the branch and PR of a routine update
+only between 00:00 and 05:59 UTC (`"schedule": ["* 0-5 * * *"]`), every
+night, so an update opens within a day of reaching the release-age cooldown
+below. The Mend Renovate App schedules a run of the repository every four
+hours, but its runs drift: a six-hour window holds a run even when one is
+late, and a night without a run delays the updates by a day. `renovate.jsonc`
+sets no limit on the PRs that Renovate opens in an hour or keeps open
+(`prHourlyLimit` and `prConcurrentLimit` are `0`), so every update that is
+ready opens in the first run of the window. The window may hold a single run,
+in which Renovate's default hourly limit of two would defer the others to a
+later night. Lock file maintenance keeps a weekly schedule of its own (see
+below). Vulnerability-fix PRs and updates requested from the Dependency
+Dashboard open in the next run, at any hour. Outside the window, Renovate
+still updates and rebases the PRs that are already open. `master` requires
+up-to-date branches, so each merge makes Renovate rebase its other open PRs
+in its next run, and each rebase runs CI again.
+
 **Python dependency updates and vulnerability response.** Renovate's
 `pep621` manager reads `backend/pyproject.toml` together with
 `backend/uv.lock`. The declared requirements are open-ended floors
@@ -612,12 +629,16 @@ this manager: an update inside the declared range refreshes only
 `backend/uv.lock` — the file that CI and the image install from with
 `uv sync --locked` — and the floor in `pyproject.toml` changes only when a
 new version falls outside it. Minor and patch updates are grouped into one
-weekly PR; each major update gets its own PR. Weekly lock file
-maintenance regenerates `backend/uv.lock` in a separate PR, which keeps
-transitive dependencies current because the manager extracts only direct
-dependencies. The `[build-system]` `uv_build` requirement is the exception:
-it is a bounded range outside `backend/uv.lock`, updated together with the
-`uv` binary (see Container Build Conventions, uv image pinning).
+PR; each major update gets its own PR. Lock file maintenance regenerates
+`backend/uv.lock` in a separate PR, which keeps transitive dependencies
+current because the manager extracts only direct dependencies. It runs
+weekly, on Monday in the hours of the update schedule, because a nightly
+regeneration would open, almost every night, a PR that conflicts with the
+grouped PR on the same file. `renovate.jsonc` sets that schedule on lock
+file maintenance itself, whose default schedule does not follow the root
+one. The `[build-system]` `uv_build` requirement is the exception: it is a
+bounded range outside `backend/uv.lock`, updated together with the `uv`
+binary (see Container Build Conventions, uv image pinning).
 
 Standalone Python scripts under `scripts/` that run through
 `uv run --script` (for example `scripts/capture-ibs-rabbitmq.py`) declare
@@ -643,7 +664,7 @@ three complementary mechanisms:
   updates stay disabled so that Renovate remains the only component that
   creates dependency PRs.
 - **Renovate vulnerability-fix PRs** (`vulnerabilityAlerts`) are raised
-  from those alerts immediately, outside the weekly schedule and Renovate's
+  from those alerts immediately, outside the update schedule and Renovate's
   release-age hold, and labelled `security`. This requires the Mend
   Renovate App to have read access to Dependabot alerts. A fix Renovate
   cannot express as a direct-dependency update is delivered by the next lock
