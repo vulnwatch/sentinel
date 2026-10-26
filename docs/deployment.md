@@ -27,6 +27,7 @@ For architectural decisions and design constraints, see
   - [Semantic Versioning Policy](#semantic-versioning-policy)
   - [Pre-1.0 Policy](#pre-10-policy)
   - [1.0.0 Graduation](#100-graduation)
+  - [Consumer Compatibility](#consumer-compatibility)
   - [How It Works](#how-it-works)
   - [Creating a Release](#creating-a-release)
   - [Squash Merge](#squash-merge)
@@ -432,7 +433,7 @@ Before the first production deployment:
 - [ ] Reverse proxy / ingress of `sentinel.suse.de` routes `/api` to the API
       and every other path to the UI image, serves HTTPS only, and sets
       `Strict-Transport-Security` (see [Sentinel Host](#sentinel-host))
-- [ ] UI image deployed at the release that supports the deployed Sentinel
+- [ ] UI image deployed at a release that supports the deployed Sentinel
       version (see [Sentinel Host](#sentinel-host))
 - [ ] Reverse proxy / ingress forwards the `Host`, `Origin`, and
       `Sec-Fetch-Site` request headers to the backend unchanged
@@ -675,7 +676,10 @@ three complementary mechanisms:
   Semantic Versioning Policy, so it is merged as `fix(deps):` —
   `renovate.jsonc` sets this prefix on vulnerability-fix PRs. Routine
   updates and lock file maintenance use `chore(deps):` and never create a
-  release on their own. A security fix delivered by a lock file
+  release on their own, unless the update breaks consumers of earlier
+  releases. A Renovate PR whose update breaks them, a vulnerability-fix PR
+  included, is merged with a `fix(deps)!:` subject (see Squash Merge and
+  Consumer Compatibility). A security fix delivered by a lock file
   maintenance PR or a manually opened PR lands on `master` with a
   `fix(deps):` commit subject — the title of a manually opened PR, or for
   a lock file maintenance PR the subject set when squash-merging (see
@@ -1019,9 +1023,14 @@ Only `feat` and `fix` appear in generated release notes, under Features and Bug
 Fixes. The other accepted repository commit types are hidden, so a set
 containing only those types does not create or keep a non-empty Release PR.
 Sentinel uses `!` as its only supported breaking-change marker and permits it
-only on `feat` and `fix` in PR titles and local commit subjects. Maintainers
-review every generated Release PR before merge; that review is the final check
-that the proposed version and release notes match the merged changes.
+only on `feat` and `fix` in PR titles and local commit subjects. Every change
+that breaks consumers of earlier releases carries it, before `1.0.0` as after
+it (Consumer Compatibility). The marker goes on the `feat` or `fix` commit that
+ships the change, the one that changes `backend/` (Platform Version and Source
+of Truth). A specification change merged ahead of its implementation carries
+no marker; the implementing commit does. Maintainers review every generated
+Release PR before merge; that review is the final check that the proposed
+version and release notes match the merged changes.
 
 ### Pre-1.0 Policy
 
@@ -1030,7 +1039,8 @@ While the version is `0.x.y`:
 - the API is not considered stable;
 - breaking `feat!` and `fix!` changes advance the minor version and never
   produce `1.0.0` automatically; and
-- consumers should pin exact versions rather than version ranges.
+- the range of releases that a consumer can rely on therefore ends before the
+  next minor version (Consumer Compatibility).
 
 No ordinary Conventional Commit can graduate Sentinel to `1.0.0`. Graduation
 is an intentional operator decision using the procedure below.
@@ -1075,6 +1085,37 @@ After that PR reaches `master`, review and merge the generated `1.0.0` Release
 PR through the normal explicit merge-authorization gate. From `1.0.0` onward,
 breaking changes require a major version and the API versioning policy in
 `docs/api-spec.md` (Versioning) takes full effect.
+
+### Consumer Compatibility
+
+The guarantee of this section applies to a consumer of the API that is built
+and tested against one exact published version: it takes the contract of that
+version from its GitHub Release (API Documentation Publication) and tests
+against the image of that version by digest (Consumer discovery and
+verification). The web UI that the separate `sentinel-aura` repository
+releases is such a consumer (Sentinel Host).
+
+Breaking for a consumer is a breaking API change (`docs/api-spec.md`,
+Versioning) or a change of an obligation that the contracts of this repository
+place on clients (`docs/architecture.md`, System Boundary). Every such change
+carries the `!` marker (Semantic Versioning Policy), so the release that ships
+it advances the minor version before `1.0.0` (Pre-1.0 Policy) and the major
+version from `1.0.0` on.
+
+A consumer built and tested against version `V` therefore works with `V` and
+with every later release:
+
+- of the same minor version while `V` is below `1.0.0`, for example from
+  `0.12.0` up to, but excluding, `0.13.0`; and
+- of the same major version from `1.0.0` on, for example from `1.2.0` up to,
+  but excluding, `2.0.0`.
+
+It may not work with a release earlier than `V`, whose contract can lack what
+the consumer uses.
+
+Each consumer declares which Sentinel versions its releases support, within
+this range; the `sentinel-aura` repository declares them for the UI (Sentinel
+Host).
 
 ### How It Works
 
@@ -1148,19 +1189,22 @@ this document requires a release signal that the PR title cannot carry:
 
 - a Renovate lock file maintenance PR that delivers a security fix (see
   Workflow Conventions, Python dependency updates and vulnerability
-  response); and
+  response);
 - a Renovate base-digest refresh that remediates an open image-scan
-  tracking issue (see Image Vulnerability Monitoring, Remediation path).
+  tracking issue (see Image Vulnerability Monitoring, Remediation path); and
+- a Renovate PR whose update breaks consumers of earlier releases (see
+  Consumer Compatibility).
 
-Both require a `fix(deps):` subject, but renaming the PR does not last:
-Renovate restores its own `chore(deps):` title when it next processes a PR
-whose title differs from the one it generates. The maintainer therefore
-sets the subject when squash-merging, for example
+The first two require a `fix(deps):` subject and the third a `fix(deps)!:`
+subject, which prevails when a PR also falls under one of the first two.
+Renaming the PR does not last: Renovate restores the title that it generates
+when it next processes a PR whose title differs from that title. The
+maintainer therefore sets the subject when squash-merging, for example
 `gh pr merge <number> --squash --subject "fix(deps): <description> (#<number>)"`.
 The replacement follows the same Conventional Commits format and length
 limit; CI validates only the PR title, so the maintainer checks the
-subject before confirming the merge. A manually opened PR carries
-`fix(deps):` in its title instead.
+subject before confirming the merge. A manually opened PR carries that
+subject in its title instead.
 
 ### Changelog
 
@@ -1932,10 +1976,14 @@ headers unchanged, and no component of the host logs the `Cookie` header
 and Session cookie); the
 [Pre-Production Checklist](#pre-production-checklist) verifies both.
 
-**Versions.** Each UI release supports one exact Sentinel version, which the
-`sentinel-aura` repository declares. The UI release deployed on a host is the
-one that supports the Sentinel version deployed there, so an upgrade of
-Sentinel moves both.
+**Versions.** The `sentinel-aura` repository declares the Sentinel versions
+that each UI release supports, within the range of
+[Consumer Compatibility](#consumer-compatibility). The UI release deployed on
+a host is one that supports the Sentinel version deployed there. A UI release
+built against a later Sentinel version than the deployed one is deployed
+after Sentinel is upgraded to a version that it supports. An upgrade of
+Sentinel to a version that the deployed UI release does not support moves the
+UI to a release that supports the new version, in the same deployment.
 
 ### Kubernetes Workloads
 
@@ -2587,7 +2635,8 @@ the same release signal as a Python security fix (see Workflow
 Conventions, Python dependency updates and vulnerability response). A
 manually opened PR carries it in its title; for a Renovate PR it is set
 when squash-merging (see Squash Merge). Refreshes merged while no tracking
-issue is open keep `chore(deps):`. The scan that runs after the release
+issue is open keep `chore(deps):`, unless they break consumers of earlier
+releases (see Squash Merge). The scan that runs after the release
 confirms the remediation: it closes the tracking issue, or updates it if a
 fixable finding remains.
 
