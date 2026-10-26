@@ -31,6 +31,7 @@ For architectural decisions and design constraints, see
   - [Creating a Release](#creating-a-release)
   - [Squash Merge](#squash-merge)
   - [Changelog](#changelog)
+  - [Consumer Compatibility](#consumer-compatibility)
   - [Pipeline Chain](#pipeline-chain)
   - [Version Locations](#version-locations)
   - [Image Tag Semantics](#image-tag-semantics)
@@ -432,7 +433,7 @@ Before the first production deployment:
 - [ ] Reverse proxy / ingress of `sentinel.suse.de` routes `/api` to the API
       and every other path to the UI image, serves HTTPS only, and sets
       `Strict-Transport-Security` (see [Sentinel Host](#sentinel-host))
-- [ ] UI image deployed at the release that supports the deployed Sentinel
+- [ ] UI image deployed at a release that supports the deployed Sentinel
       version (see [Sentinel Host](#sentinel-host))
 - [ ] Reverse proxy / ingress forwards the `Host`, `Origin`, and
       `Sec-Fetch-Site` request headers to the backend unchanged
@@ -1016,12 +1017,15 @@ The semantic meaning of the three release levels is:
 | Patch | Bug fixes, security patches, performance improvements, or operational fixes |
 
 Only `feat` and `fix` appear in generated release notes, under Features and Bug
-Fixes. The other accepted repository commit types are hidden, so a set
+Fixes, and a breaking one also under BREAKING CHANGES (Changelog). The other
+accepted repository commit types are hidden, so a set
 containing only those types does not create or keep a non-empty Release PR.
 Sentinel uses `!` as its only supported breaking-change marker and permits it
-only on `feat` and `fix` in PR titles and local commit subjects. Maintainers
-review every generated Release PR before merge; that review is the final check
-that the proposed version and release notes match the merged changes.
+only on `feat` and `fix` in PR titles and local commit subjects. Every change
+that breaks consumers of earlier releases carries it, before `1.0.0` as after
+it (Consumer Compatibility). Maintainers review every generated Release PR
+before merge; that review is the final check that the proposed version and
+release notes match the merged changes.
 
 ### Pre-1.0 Policy
 
@@ -1030,7 +1034,9 @@ While the version is `0.x.y`:
 - the API is not considered stable;
 - breaking `feat!` and `fix!` changes advance the minor version and never
   produce `1.0.0` automatically; and
-- consumers should pin exact versions rather than version ranges.
+- the version number therefore does not show which minor release has
+  breaking changes: a consumer reads that from the release notes (Consumer
+  Compatibility).
 
 No ordinary Conventional Commit can graduate Sentinel to `1.0.0`. Graduation
 is an intentional operator decision using the procedure below.
@@ -1148,11 +1154,14 @@ this document requires a release signal that the PR title cannot carry:
 
 - a Renovate lock file maintenance PR that delivers a security fix (see
   Workflow Conventions, Python dependency updates and vulnerability
-  response); and
+  response);
 - a Renovate base-digest refresh that remediates an open image-scan
-  tracking issue (see Image Vulnerability Monitoring, Remediation path).
+  tracking issue (see Image Vulnerability Monitoring, Remediation path); and
+- a Renovate PR whose update breaks consumers of earlier releases (see
+  Consumer Compatibility).
 
-Both require a `fix(deps):` subject, but renaming the PR does not last:
+The first two require a `fix(deps):` subject and the third a `fix(deps)!:`
+subject, but renaming the PR does not last:
 Renovate restores its own `chore(deps):` title when it next processes a PR
 whose title differs from the one it generates. The maintainer therefore
 sets the subject when squash-merging, for example
@@ -1166,12 +1175,54 @@ subject before confirming the merge. A manually opened PR carries
 
 `CHANGELOG.md` (repository root) is maintained automatically by
 release-please. Do not edit it manually. New release entries contain only
-Features and Bug Fixes and link to commits and PRs; historical entries are not
-rewritten when this policy changes. The changelog lives at
+Features and Bug Fixes, and BREAKING CHANGES when the release has a breaking
+change, and link to commits and PRs; historical entries are not rewritten when
+this policy changes. The changelog lives at
 the repository root while the version bump it accompanies
 (`backend/pyproject.toml`, `backend/uv.lock`) stays scoped to the
 `backend` release-please package — see `changelog-path` in
 `release-please-config.json`.
+
+An entry that includes a commit with the `!` marker also lists that commit
+under BREAKING CHANGES, ahead of Features and Bug Fixes. The notes of the
+version's GitHub Release repeat the entry, that section included. Consumers
+rely on that section to recognize a release with breaking changes (Consumer
+Compatibility).
+
+### Consumer Compatibility
+
+This guarantee applies to a consumer of the API, such as the web UI that the
+separate `sentinel-aura` repository releases (Sentinel Host), that is built
+and tested against one exact published version: it takes the contract of that
+version from its GitHub Release (API Documentation Publication) and tests
+against the image of that version by digest (Consumer discovery and
+verification).
+
+Breaking for a consumer is a breaking API change (`docs/api-spec.md`,
+Versioning) or a change of an obligation that the contracts of this repository
+place on clients (`docs/architecture.md`, System Boundary). Such a change
+carries the `!` marker on the `feat` or `fix` commit that ships it, the one
+that changes `backend/` (Platform Version and Source of Truth; Semantic
+Versioning Policy), so its release lists it under BREAKING CHANGES
+(Changelog). A specification change merged ahead of its implementation
+carries no marker; the implementing commit does.
+
+A release whose notes list no BREAKING CHANGES therefore does not break a
+consumer built against an earlier release. A consumer built against version
+`V` works with `V` and with every later release up to, but excluding, the
+first later release whose notes list BREAKING CHANGES. That section can also
+list changes that break no consumer, such as a database migration that
+requires operator intervention (Semantic Versioning Policy), so the limit is
+conservative. A consumer may not work with a release earlier than `V`, whose
+contract can lack what it uses.
+
+From `1.0.0` on, the first release with BREAKING CHANGES is the next major
+version. Before `1.0.0`, a breaking change advances the minor version, as an
+additive one does (Pre-1.0 Policy): a consumer recognizes that release by its
+BREAKING CHANGES section, not by its version number.
+
+Each consumer declares which versions its releases support; the
+`sentinel-aura` repository declares them for the UI (Sentinel Host).
 
 ### Pipeline Chain
 
@@ -1932,10 +1983,14 @@ headers unchanged, and no component of the host logs the `Cookie` header
 and Session cookie); the
 [Pre-Production Checklist](#pre-production-checklist) verifies both.
 
-**Versions.** Each UI release supports one exact Sentinel version, which the
-`sentinel-aura` repository declares. The UI release deployed on a host is the
-one that supports the Sentinel version deployed there, so an upgrade of
-Sentinel moves both.
+**Versions.** The `sentinel-aura` repository declares the Sentinel versions
+that each UI release supports, within the range that Consumer Compatibility
+guarantees. The UI release deployed on a host is one that supports the
+Sentinel version deployed there. A UI release built against a later Sentinel
+version than the deployed one is deployed after Sentinel is upgraded to a
+version that it supports. An upgrade of Sentinel to a version that the
+deployed UI release does not support moves the UI to a release that supports
+the new version in the same deployment.
 
 ### Kubernetes Workloads
 
