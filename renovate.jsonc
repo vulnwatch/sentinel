@@ -151,15 +151,9 @@
   ],
   "packageRules": [
     {
-      "description": "Release-age cooldown: Renovate proposes a new version, of any manager, only once it is seven days old, the cooldown that backend/pyproject.toml sets for uv (exclude-newer) — see docs/deployment.md (Workflow Conventions, Release-age cooldown). Digest updates are not held: Docker Hub dates a digest by the last push of its tag. Vulnerability-fix PRs are not held either (see vulnerabilityAlerts above)",
+      "description": "Release-age cooldown: Renovate proposes a new version, of any manager, only once it is seven days old, the cooldown that backend/pyproject.toml sets for uv (exclude-newer) — see docs/deployment.md (Workflow Conventions, Release-age cooldown). Digest updates are not held: Docker Hub dates a digest by the last push of its tag. Vulnerability-fix PRs are not held either (see vulnerabilityAlerts above). A version without a release timestamp, such as one of a Docker Hub image whose tags a lookup could not read in full, is held until it is requested from the Dependency Dashboard, so a lookup failure never admits a release early",
       "matchUpdateTypes": ["major", "minor", "patch"],
       "minimumReleaseAge": "7 days"
-    },
-    {
-      "description": "Renovate reads Docker Hub release timestamps from its tag API, which refuses anonymous requests for the pages beyond a repository's first 1,000 tags. Without Docker Hub credentials these images, which have more tags, have no timestamp, so they update without the release-age cooldown, with a warning on the Dependency Dashboard, instead of being held indefinitely. Any other image without a timestamp stays held",
-      "matchDatasources": ["docker"],
-      "matchPackageNames": ["anchore/syft", "postgres", "redis", "renovate/renovate"],
-      "minimumReleaseAgeBehaviour": "timestamp-optional"
     },
     {
       "description": "Python (backend) requirements are open-ended floors (>=), so the default rangeStrategy never proposes an in-range update. update-lockfile refreshes backend/uv.lock (what CI and the image install via uv sync --locked) for in-range updates and replaces the range only when a new version falls outside it",
