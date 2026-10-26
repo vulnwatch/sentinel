@@ -612,8 +612,9 @@ hours, but its runs drift: a six-hour window holds a run even when one is
 late, and a night without a run delays the updates by a day. `renovate.jsonc`
 sets no limit on the PRs that Renovate opens in an hour or keeps open
 (`prHourlyLimit` and `prConcurrentLimit` are `0`), so every update that is
-ready opens in the first run of the window; Renovate's default hourly limit
-of two would defer the others to a later night. Lock file maintenance keeps a
+ready opens in the first run of the window. The window may hold a single run,
+in which Renovate's default hourly limit of two would defer the others to a
+later night. Lock file maintenance keeps a
 weekly schedule of its own (see below). Vulnerability-fix PRs and updates
 requested from the Dependency Dashboard open in the next run, at any hour.
 Outside the window, Renovate still updates and rebases the PRs that are
@@ -633,7 +634,7 @@ PR; each major update gets its own PR. Lock file maintenance regenerates
 `backend/uv.lock` in a separate PR, which keeps transitive dependencies
 current because the manager extracts only direct dependencies. It runs
 weekly, on Monday in the hours of the update schedule, because a nightly
-regeneration would open a PR almost every night that conflicts with the
+regeneration would open, almost every night, a PR that conflicts with the
 grouped PR on the same file. `renovate.jsonc` sets that schedule on lock
 file maintenance itself, whose default schedule does not follow the root
 one. The `[build-system]` `uv_build` requirement is the exception: it is a

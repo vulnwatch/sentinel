@@ -3,10 +3,10 @@
 `docs/deployment.md` (Workflow Conventions, Update schedule) opens the routine
 updates every night between 00:00 and 05:59 UTC, without a limit on the pull
 requests that Renovate opens in an hour or keeps open, and keeps lock file
-maintenance weekly, on Monday in the same hours. Renovate's defaults differ
-without a warning: two pull requests an hour, and a schedule of lock file
-maintenance's own ("before 4am on monday") that does not follow the root one.
-See issue #1111.
+maintenance weekly, on Monday in the same hours. Without these settings,
+Renovate silently falls back to its defaults: two pull requests an hour, and
+lock file maintenance's own schedule ("before 4am on monday"), which does not
+follow the root one. See issue #1111.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ def _window(schedule: list[str]) -> tuple[str, str]:
     """The hours and the weekdays of a schedule of one cron expression."""
     assert len(schedule) == 1
     match = CRON_SCHEDULE.fullmatch(schedule[0])
-    assert match is not None
+    assert match is not None, schedule[0]
     return match["hours"], match["weekdays"]
 
 
@@ -41,8 +41,8 @@ def test_renovate_schedule_opens_routine_updates_every_night() -> None:
 
 @pytest.mark.unit
 def test_lock_file_maintenance_runs_weekly_in_the_update_window() -> None:
-    # A nightly regeneration of backend/uv.lock would open a pull request
-    # almost every night that conflicts with the Python group on the same file.
+    # A nightly regeneration of backend/uv.lock would open, almost every night,
+    # a pull request that conflicts with the Python group on the same file.
     config = renovate_config()
     hours, weekdays = _window(config["lockFileMaintenance"]["schedule"])
 
@@ -51,7 +51,7 @@ def test_lock_file_maintenance_runs_weekly_in_the_update_window() -> None:
 
 
 @pytest.mark.unit
-def test_renovate_limits_no_pull_requests() -> None:
+def test_renovate_sets_no_pull_request_limit() -> None:
     # The window may hold a single run, so a limit would defer the updates
     # that are ready beyond it to a later night. A limit set by a package rule
     # would do the same for the branches that it matches.

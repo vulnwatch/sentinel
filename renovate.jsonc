@@ -22,7 +22,7 @@
   // this is what keeps transitive dependencies current. Its own schedule
   // holds it to the hours of the schedule above, on Monday only: its
   // default ("before 4am on monday") never follows the root schedule, and
-  // a nightly regeneration would open a PR almost every night that
+  // a nightly regeneration would open, almost every night, a PR that
   // conflicts with the Python group on the same file. minimumReleaseAge
   // does not apply to it: the exclude-newer cooldown in
   // backend/pyproject.toml limits what it locks.
