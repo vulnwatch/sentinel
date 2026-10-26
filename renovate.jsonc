@@ -2,24 +2,37 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended",
-    "schedule:earlyMondays",
     "helpers:pinGitHubActionDigests"
   ],
   "labels": ["dependencies"],
+  // Routine updates open every night before 06:00 UTC, within a day of
+  // reaching the release-age cooldown below. The Mend Renovate App
+  // schedules a run of the repository every four hours, but its runs
+  // drift, so the window is six hours long, enough to hold a run even when
+  // one is late — see docs/deployment.md (Workflow Conventions, Update
+  // schedule).
+  "schedule": ["* 0-5 * * *"],
+  // No limit on the PRs that Renovate opens in an hour (2 by default) or
+  // keeps open: the window may hold a single run, so a limit would defer
+  // the other updates that are ready to a later night.
+  "prHourlyLimit": 0,
   "prConcurrentLimit": 0,
   // Weekly regeneration of backend/uv.lock (the only lock file in this
   // repository). The pep621 manager extracts direct dependencies only, so
-  // this is what keeps transitive dependencies current. Runs on the
-  // default "before 4am on monday" schedule, aligned with
-  // schedule:earlyMondays above. minimumReleaseAge does not apply to it:
-  // the exclude-newer cooldown in backend/pyproject.toml limits what it
-  // locks.
+  // this is what keeps transitive dependencies current. Its own schedule
+  // holds it to the hours of the schedule above, on Monday only: its
+  // default ("before 4am on monday") never follows the root schedule, and
+  // a nightly regeneration would open, almost every night, a PR that
+  // conflicts with the Python group on the same file. minimumReleaseAge
+  // does not apply to it: the exclude-newer cooldown in
+  // backend/pyproject.toml limits what it locks.
   "lockFileMaintenance": {
     "enabled": true,
-    "commitMessagePrefix": "chore(deps):"
+    "commitMessagePrefix": "chore(deps):",
+    "schedule": ["* 0-5 * * 1"]
   },
   // Fix PRs raised from GitHub vulnerability (Dependabot) alerts. They
-  // bypass the weekly schedule by design. Requires the Dependency graph
+  // bypass the schedule by design. Requires the Dependency graph
   // and Dependabot alerts to be enabled and the Mend Renovate App to have
   // read access to Dependabot alerts — see docs/deployment.md (Workflow
   // Conventions, Python dependency updates and vulnerability response).
