@@ -59,6 +59,21 @@ def _script_uv_settings() -> dict[str, dict[str, Any]]:
     return settings
 
 
+def _paths_of_setting(node: object, name: str, path: str = "") -> list[str]:
+    """The paths at which a parsed configuration sets `name`, at any depth."""
+    found: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            child = f"{path}.{key}" if path else str(key)
+            if key == name:
+                found.append(child)
+            found.extend(_paths_of_setting(value, name, child))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            found.extend(_paths_of_setting(value, name, f"{path}[{index}]"))
+    return found
+
+
 @pytest.mark.unit
 def test_backend_cooldown_is_a_relative_duration() -> None:
     # A duration moves the cutoff with every resolution, and uv records it in
@@ -126,25 +141,14 @@ def test_renovate_holds_every_new_version_for_the_backend_cooldown() -> None:
 
 
 @pytest.mark.unit
-def test_renovate_admits_only_the_named_docker_images_without_a_timestamp() -> None:
-    # Anonymous Docker Hub lookups have no timestamps for an image with more
-    # than 1,000 tags; the named ones update without the cooldown instead of
-    # never. Any other release without a timestamp, of any image or
-    # datasource, keeps holding its update, so a lookup failure fails closed.
-    config = renovate_config()
-    optional = [
-        rule for rule in config["packageRules"] if "minimumReleaseAgeBehaviour" in rule
-    ]
-
-    assert "minimumReleaseAgeBehaviour" not in config
-    assert len(optional) == 1
-    assert {
-        key: value for key, value in optional[0].items() if key != "description"
-    } == {
-        "matchDatasources": ["docker"],
-        "matchPackageNames": ["anchore/syft", "postgres", "redis", "renovate/renovate"],
-        "minimumReleaseAgeBehaviour": "timestamp-optional",
-    }
+def test_renovate_holds_every_release_without_a_timestamp() -> None:
+    # Renovate's default, timestamp-required, holds a release without a
+    # timestamp until it is requested from the Dependency Dashboard. A lookup
+    # can lack the timestamps of a Docker Hub image with more than 1,000 tags,
+    # and timestamp-optional would then admit its releases without the
+    # cooldown, so no part of the configuration sets minimumReleaseAgeBehaviour.
+    # Issue #1109.
+    assert _paths_of_setting(renovate_config(), "minimumReleaseAgeBehaviour") == []
 
 
 @pytest.mark.unit
