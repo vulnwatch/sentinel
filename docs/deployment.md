@@ -676,7 +676,8 @@ three complementary mechanisms:
   Semantic Versioning Policy, so it is merged as `fix(deps):` —
   `renovate.jsonc` sets this prefix on vulnerability-fix PRs. Routine
   updates and lock file maintenance use `chore(deps):` and never create a
-  release on their own. A security fix delivered by a lock file
+  release on their own, unless the update breaks consumers of earlier
+  releases (see Squash Merge). A security fix delivered by a lock file
   maintenance PR or a manually opened PR lands on `master` with a
   `fix(deps):` commit subject — the title of a manually opened PR, or for
   a lock file maintenance PR the subject set when squash-merging (see
@@ -1161,15 +1162,14 @@ this document requires a release signal that the PR title cannot carry:
   Consumer Compatibility).
 
 The first two require a `fix(deps):` subject and the third a `fix(deps)!:`
-subject, but renaming the PR does not last:
-Renovate restores its own `chore(deps):` title when it next processes a PR
-whose title differs from the one it generates. The maintainer therefore
-sets the subject when squash-merging, for example
+subject, but renaming the PR does not last: Renovate restores the title that
+it generates when it next processes a PR whose title differs from it. The
+maintainer therefore sets the subject when squash-merging, for example
 `gh pr merge <number> --squash --subject "fix(deps): <description> (#<number>)"`.
 The replacement follows the same Conventional Commits format and length
 limit; CI validates only the PR title, so the maintainer checks the
-subject before confirming the merge. A manually opened PR carries
-`fix(deps):` in its title instead.
+subject before confirming the merge. A manually opened PR carries that
+subject in its title instead.
 
 ### Changelog
 
@@ -1208,9 +1208,9 @@ Versioning Policy), so its release lists it under BREAKING CHANGES
 carries no marker; the implementing commit does.
 
 A release whose notes list no BREAKING CHANGES therefore does not break a
-consumer built against an earlier release. A consumer built against version
-`V` works with `V` and with every later release up to, but excluding, the
-first later release whose notes list BREAKING CHANGES. That section can also
+consumer that works with the release before it. A consumer built against
+version `V` works with `V` and with every later release up to, but excluding,
+the first later release whose notes list BREAKING CHANGES. That section can also
 list changes that break no consumer, such as a database migration that
 requires operator intervention (Semantic Versioning Policy), so the limit is
 conservative. A consumer may not work with a release earlier than `V`, whose
