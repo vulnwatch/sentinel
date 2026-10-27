@@ -66,7 +66,8 @@ RELEASE_GUARD_ENV = {
 OPENAPI_ARTIFACT = "${{ env.OPENAPI_ARTIFACT_NAME }}"
 RELEASE_OPENAPI_DIR = "${{ runner.temp }}/release-openapi"
 
-# The digest that the stub registry serves for every tag but `*different*`.
+# The digest that the stub registry serves for every tag but `*different*`
+# and `*malformed*`.
 TESTED_DIGEST = f"sha256:{'a' * 64}"
 OCI_MANIFEST_DESCRIPTOR = (
     '{"mediaType":"application/vnd.oci.image.manifest.v1+json",'
@@ -301,12 +302,13 @@ def test_push_loop_outputs_the_image_name_and_the_tested_digest(
 
 @pytest.mark.unit
 def test_push_loop_rejects_malformed_registry_digest(tmp_path: Path) -> None:
-    result, _ = _run_push_loop(
+    result, log_file = _run_push_loop(
         tmp_path, image_tags="ghcr.io/example/sentinel:malformed"
     )
 
     assert result.returncode != 0
-    assert "invalid digest" in result.stderr
+    assert "Registry returned an invalid digest" in result.stderr
+    assert _pushed_tags(log_file) == ["ghcr.io/example/sentinel:malformed"]
 
 
 @pytest.mark.unit

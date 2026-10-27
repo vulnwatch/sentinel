@@ -537,7 +537,7 @@ express carries a comment beside it stating why it is updated manually.
 The software that the GitHub-hosted runner image (`ubuntu-latest`) itself
 provides, such as the Docker Engine with its built-in BuildKit, the Buildx
 and Compose plugins, and `jq`, is outside this rule: its versions follow the
-runner image, which every job already trusts to run it.
+runner image, which every job already trusts.
 
 Dependency updates are managed by the hosted Mend Renovate GitHub App
 reading `renovate.jsonc` from the repository root; no workflow in this
@@ -748,9 +748,11 @@ settings with the same duration implement the cooldown:
   Hub's tag API, which serves the pages beyond a repository's first 1,000
   tags only to a signed-in user, and Renovate does not sign in to it, so a
   lookup can lack the timestamps of an image with more tags, such as
-  `postgres`. A GitHub Action is aged by the date of its tagged commit,
-  which its publisher controls, so the cooldown holds an Action only as
-  reliably as that date.
+`postgres`. A GitHub Action is aged by the date of its tagged commit,
+which its publisher controls, so the cooldown holds an Action only as
+reliably as that date. The software of the runner image, such as the
+Docker Engine whose BuildKit builds the image, is outside the cooldown, as
+it is outside the pinning rule (see Pinned action references above).
 
 **Digest updates.** Docker Hub dates a digest by the last push of its tag,
 so the release-age cooldown cannot age a digest update: the digest of a
