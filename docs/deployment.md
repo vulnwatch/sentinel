@@ -2478,13 +2478,14 @@ ingestion):
 
 This signal is derivable from `GET /api/v1/fetchers` without any code
 changes to Sentinel. The endpoint requires authentication, so the monitoring
-system presents the API key of a role-less account, the read-only profile
-(`docs/features/identity/rbac.md`, Access Levels;
-`docs/features/identity/api-key-management.md`). The signal detects not only
-empty schedules but also dead workers, database unavailability, or any other
-cause of stalled processing. Runs still in progress (`status` is `queued` or
-`running`) have `last_run.finished_at = null` and are covered by the
-`last_run.stale` condition once the respective threshold is reached —
+system authenticates with an API key
+(`docs/features/identity/api-key-management.md`). The key of a role-less
+account, the read-only profile (`docs/features/identity/rbac.md`, Access
+Levels), suffices and grants no capability. The signal detects
+not only empty schedules but also dead workers, database unavailability, or
+any other cause of stalled processing. Runs still in progress (`status` is
+`queued` or `running`) have `last_run.finished_at = null` and are covered by
+the `last_run.stale` condition once the respective threshold is reached —
 600 seconds for a `queued` run awaiting worker adoption,
 `hard_time_limit_seconds + 60` seconds for a `running` run (where
 `hard_time_limit_seconds` is the per-run effective hard limit persisted
