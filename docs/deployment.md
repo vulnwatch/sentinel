@@ -738,8 +738,8 @@ settings with the same duration implement the cooldown:
   an image without a release timestamp is held indefinitely, and so is one
   to a floating tag that is republished more often than the cooldown, until
   it is requested from the Dashboard. A lookup failure therefore never
-  admits a release early. Renovate reads the release timestamps of images only
-  from Docker Hub, which is why the uv image comes from there (see
+  admits a release early. Renovate reads the release timestamps of images
+  only from Docker Hub, which is why the uv image comes from there (see
   Container Build Conventions, uv image pinning). It reads them from Docker
   Hub's tag API, which serves the pages beyond a repository's first 1,000
   tags only to a signed-in user, and Renovate does not sign in to it, so a
@@ -759,8 +759,8 @@ the pinned version to other content, which is also what a hijacked tag
 does; a maintainer approves it only once the reason for the move is known,
 such as a rebuild that the publisher announced. Approval admits the branch
 only: while its PR is open, Renovate moves it to a later digest of the same
-tag without a new approval, so the digest is checked again before merge. A
-vulnerability-fix PR needs no approval, as it needs no cooldown, so a
+tag without a new approval, so the merging maintainer checks the digest
+again. A vulnerability-fix PR needs no approval, as it needs no cooldown, so a
 digest-only PR labelled `security` signals a moved tag too. The `python`
 base image is exempt: its tag is republished with every Debian or Python
 fix, and its digest refresh is the remediation path of Image Vulnerability

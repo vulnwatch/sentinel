@@ -95,6 +95,13 @@ def _paths_of_setting(node: object, name: str, path: str = "") -> list[str]:
     return found
 
 
+def _dockerfile_uv_image() -> re.Match[str]:
+    """The uv image reference that backend/Dockerfile copies the binary from."""
+    match = UV_IMAGE.search(DOCKERFILE_PATH.read_text(encoding="utf-8"))
+    assert match is not None, f"no line of the form {UV_IMAGE.pattern}"
+    return match
+
+
 @pytest.mark.unit
 def test_backend_cooldown_is_a_relative_duration() -> None:
     # A duration moves the cutoff with every resolution, and uv records it in
@@ -175,13 +182,6 @@ def test_renovate_holds_every_release_without_a_timestamp() -> None:
     assert _paths_of_setting(renovate_config(), "minimumReleaseAgeBehaviour") == []
 
 
-def _dockerfile_uv_image() -> re.Match[str]:
-    """The uv image reference that backend/Dockerfile copies the binary from."""
-    match = UV_IMAGE.search(DOCKERFILE_PATH.read_text(encoding="utf-8"))
-    assert match is not None, f"no line of the form {UV_IMAGE.pattern}"
-    return match
-
-
 @pytest.mark.unit
 def test_dockerfile_copies_uv_from_docker_hub_in_the_uv_group() -> None:
     # From a registry without release timestamps, such as ghcr.io, the cooldown
@@ -217,7 +217,7 @@ def test_dockerfile_uv_tag_matches_every_setup_uv_version() -> None:
     ]
 
     assert versions
-    assert [version for version in versions if version[2] != tag] == []
+    assert [version for version in versions if version[2] != tag] == [], tag
 
 
 @pytest.mark.unit
