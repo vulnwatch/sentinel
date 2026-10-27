@@ -19,14 +19,58 @@ The API uses URL-path versioning (`/api/v1/`). Only v1 exists at this time.
 
 Rules:
 
-- Additive changes (new fields in responses, new endpoints, new optional
-  query parameters) are NOT breaking changes and are added to v1 directly
-- Removal or renaming of fields, changes to response structure, changes to
-  error codes, or semantic changes to existing behavior are breaking changes
+- Additive changes (new fields in responses, new values of response enums,
+  new endpoints, new optional query parameters) are NOT breaking changes and
+  are added to v1 directly; clients tolerate them (see Client Tolerance of
+  Additive Changes)
+- Removal or renaming of fields or of values of response enums, changes to
+  response structure, changes to error codes, or semantic changes to existing
+  behavior are breaking changes
 - A v2 will only be considered after a stable production instance is
   confirmed — until then, all work happens on v1
 - When a new version is eventually introduced, the previous version will
   include a `Sunset` response header indicating the deprecation date
+
+#### Response Enums
+
+A response enum is a set of values that the contract lists for a field of a
+successful response:
+
+- an `enum` of the OpenAPI document, such as `CVESourceDerivedStatusValue`;
+- the values of the discriminator of a union, such as `cvss_version` of a
+  CVSS assessment; or
+- the values that a specification lists for a field whose values the OpenAPI
+  document does not enumerate, such as audit event types, fetcher names, and
+  the reasons that the `detail` of an audit event carries.
+
+Two kinds of field have no response enum. A field whose contract fixes one
+value, such as an OpenAPI `const` that does not select the variant of a union,
+keeps that value: returning another value is a semantic change to existing
+behavior. A field for which a specification lists only known or example
+values, such as a value stored as received from an external source, can carry
+any value of its type.
+
+A new value of a response enum is additive when it describes only situations
+that neither an existing value of the enum nor, for a nullable field, `null`
+describes. Returning a new value in a situation that an existing value or
+`null` describes, for example a new status for fetcher runs that earlier
+releases report as `running`, is a semantic change to existing behavior and
+therefore breaking. Error responses are outside this section: Response Format
+and Error Code Categories govern their codes.
+
+#### Client Tolerance of Additive Changes
+
+A client receives the additive changes of the later releases that it supports
+(`docs/deployment.md`, Consumer Compatibility), which the contract of the
+version that it is built against does not list. A client therefore:
+
+- ignores a field of a response that the contract of its version does not
+  list; and
+- tolerates a value of a response enum that the contract of its version does
+  not list, for example by presenting it as an unknown value, instead of
+  failing. It does not reject a response because the OpenAPI document of its
+  version lacks the value in an `enum` or among the discriminator values of a
+  union.
 
 ### OpenAPI Document and Interactive Documentation
 
