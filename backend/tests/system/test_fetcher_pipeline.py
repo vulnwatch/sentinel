@@ -5,7 +5,8 @@ See `docs/features/platform/testing-strategy.md` (Local Process System
 Testing) for the full behavioral contract this test proves: real worker
 and Beat processes, real PostgreSQL and Redis, registration → config
 bootstrap → RedBeat scheduling → broker delivery → worker execution →
-`FetcherRun` finalization → Public API visibility, with no domain-table
+`FetcherRun` finalization → read API visibility to an authenticated
+caller, with no domain-table
 mutation and no `FetcherAuditEvent` for a scheduled run. The fixture
 also guards against a leftover terminal `FetcherRun` from an
 interrupted prior invocation being mistaken for this invocation's own
@@ -163,10 +164,10 @@ async def test_scheduled_fetcher_pipeline_end_to_end(
     audit_events = await harness.list_audit_events()
     assert audit_events == []
 
-    # 5. The finalized run is visible through the Public fetcher
-    # observation API, via the in-process ASGI client with an
-    # independently connecting database session and the isolated test
-    # Celery/Redis instance.
+    # 5. The finalized run is visible through the fetcher observation API
+    # to an authenticated caller (the harness's role-less reader), via the
+    # in-process ASGI client with an independently connecting database
+    # session and the isolated test Celery/Redis instance.
     monkeypatch.setattr(fetchers_module, "celery_app", harness.celery_app)
 
     async def _override_get_db() -> AsyncIterator[AsyncSession]:
@@ -178,7 +179,10 @@ async def test_scheduled_fetcher_pipeline_end_to_end(
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
-            response = await client.get("/api/v1/fetchers")
+            response = await client.get(
+                "/api/v1/fetchers",
+                headers={"Authorization": f"Bearer {harness.reader_token}"},
+            )
     finally:
         app.dependency_overrides.pop(get_db, None)
 

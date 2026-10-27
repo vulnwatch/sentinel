@@ -352,12 +352,6 @@ def classify_reference_tags(tags: Sequence[object] | None) -> ReferenceType | No
 # ---------------------------------------------------------------------------
 
 
-def _require_authenticated(caller: TicketCaller) -> uuid.UUID:
-    if caller.user_id is None:
-        raise ValueError("Manual reference mutations require an authenticated caller.")
-    return caller.user_id
-
-
 def _validate_text(value: object, *, field: str, max_length: int) -> str | None:
     """Validate a nullable title or description; never trims."""
     if value is None:
@@ -700,11 +694,11 @@ async def create_reference(
     `create_reference()`; Manual Mutation Ordering).
 
     Q1: `ticket_id` is the public `SNTL-{n}` locator; `caller` is the
-    request-resolved caller, which must be authenticated (its user is the
-    audit actor); `input` is the semantic create input.
+    request-resolved authenticated caller (its user is the audit actor);
+    `input` is the semantic create input.
 
-    Q2: input-only validation (caller, URL normalization, title,
-    description, type) precedes any database access. The Ticket is then
+    Q2: input-only validation (URL normalization, title, description,
+    type) precedes any database access. The Ticket is then
     locked `FOR UPDATE` as the first persistent read, followed by
     locked-current accessibility and the normalized-URL conflict check.
     The type is the explicit supplied value (including `None`) or, when
@@ -716,13 +710,13 @@ async def create_reference(
 
     Q4: returns the persisted projection.
 
-    Q6: `ValueError` for an anonymous caller or invalid semantic input
-    (before database access); `TicketNotFoundError` for a malformed,
-    missing, or inaccessible Ticket; `ReferenceConflictError` when any
-    reference (manual or automatic) owns the normalized URL. Audit
-    validation and database errors propagate.
+    Q6: `ValueError` for invalid semantic input (before database access);
+    `TicketNotFoundError` for a malformed, missing, or inaccessible
+    Ticket; `ReferenceConflictError` when any reference (manual or
+    automatic) owns the normalized URL. Audit validation and database
+    errors propagate.
     """
-    actor_id = _require_authenticated(caller)
+    actor_id = caller.user_id
     url = normalize_reference_url(input.url)
     title = _validate_text(input.title, field="title", max_length=TITLE_MAX_LENGTH)
     description = _validate_text(
@@ -771,8 +765,8 @@ async def update_reference(
     `update_reference()`; Manual Mutation Ordering).
 
     Q1: `ticket_id` is the public `SNTL-{n}` locator; `reference_id` is
-    the nested reference UUID; `caller` must be authenticated; `input`
-    preserves supplied-field information.
+    the nested reference UUID; `caller` is the request-resolved
+    authenticated caller; `input` preserves supplied-field information.
 
     Q2: input-only validation precedes database access. Under the Ticket
     lock, in order: locked-current accessibility; scoped lookup of
@@ -789,13 +783,13 @@ async def update_reference(
 
     Q4: returns the persisted projection (current state for a no-op).
 
-    Q6: `ValueError` for an anonymous caller or invalid semantic input;
-    `TicketNotFoundError`; `ReferenceNotFoundError` for a missing or
-    wrong-parent reference; `ReferenceNotEditableError` for an automatic
-    reference; `ReferenceConflictError`. Audit validation and database
-    errors propagate.
+    Q6: `ValueError` for invalid semantic input; `TicketNotFoundError`;
+    `ReferenceNotFoundError` for a missing or wrong-parent reference;
+    `ReferenceNotEditableError` for an automatic reference;
+    `ReferenceConflictError`. Audit validation and database errors
+    propagate.
     """
-    actor_id = _require_authenticated(caller)
+    actor_id = caller.user_id
     if all(
         isinstance(value, Unset)
         for value in (input.url, input.title, input.description, input.type)
@@ -900,18 +894,17 @@ async def delete_reference(
     Category A consumer mutation (ticket-references.md,
     `delete_reference()`; Manual Mutation Ordering).
 
-    Q2: after the caller check, under the Ticket lock, in order:
-    locked-current accessibility, scoped `(ticket, reference_id)` lookup,
-    and `source = manual`. The row is deleted and exactly one
-    `reference_deleted` event (acting user, `old_value` = normalized URL,
-    `new_value`, `comment`, and `detail` `NULL`) is flushed with it.
+    Q2: under the Ticket lock, in order: locked-current accessibility,
+    scoped `(ticket, reference_id)` lookup, and `source = manual`. The row
+    is deleted and exactly one `reference_deleted` event (acting user,
+    `old_value` = normalized URL, `new_value`, `comment`, and `detail`
+    `NULL`) is flushed with it.
 
-    Q6: `ValueError` for an anonymous caller; `TicketNotFoundError`;
-    `ReferenceNotFoundError` (including after a committed delete);
-    `ReferenceNotEditableError`. Audit validation and database errors
-    propagate.
+    Q6: `TicketNotFoundError`; `ReferenceNotFoundError` (including after a
+    committed delete); `ReferenceNotEditableError`. Audit validation and
+    database errors propagate.
     """
-    actor_id = _require_authenticated(caller)
+    actor_id = caller.user_id
     ticket = await lock_accessible_ticket_by_locator(session, ticket_id, caller)
     reference = await _load_editable_reference(
         session, ticket_id=ticket.id, reference_id=reference_id
@@ -958,7 +951,7 @@ async def list_references(
     Category B read (ticket-references.md, `list_references()`).
 
     Q1: `ticket_id` is the public `SNTL-{n}` locator; `caller` is the
-    request-resolved caller (anonymous allowed); `source` is an optional
+    request-resolved authenticated caller; `source` is an optional
     exact, case-sensitive source; `type` an optional valid type;
     `type_was_supplied = True` with `type = None` represents a supplied
     value that was not a valid `ReferenceType`.

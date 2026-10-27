@@ -1,9 +1,9 @@
-"""End-to-end tests for public user directory/profile, current-user, and
+"""End-to-end tests for user directory/profile read, current-user, and
 ticket-independent admin user mutation endpoints
 (`backend/app/api/v1/users.py`).
 
-See `docs/features/identity/user-management.md` (List Users, Get User,
-Admin API endpoints) and `docs/features/identity/authentication.md`
+See `docs/features/identity/user-management.md` (Read API endpoints, Admin
+API endpoints) and `docs/features/identity/authentication.md`
 (Get Current User) for the authoritative endpoint contracts under test.
 Filter/sort/pagination combination coverage and lifecycle/audit/rollback
 coverage for the underlying `user_service` functions already lives in
@@ -45,6 +45,7 @@ from app.models.user import User
 from app.models.user_role import UserRole
 from app.services import api_key_service, user_service
 from app.services.session_service import create_session
+from tests.support.ticket_api import UNAUTHENTICATED
 
 # ---------------------------------------------------------------------------
 # Shared helpers and fixtures
@@ -199,12 +200,22 @@ class TestParseRoleFilters:
 
 @pytest.mark.e2e
 class TestListUsers:
-    async def test_public_access_without_credentials(self, client: AsyncClient) -> None:
+    async def test_request_without_credential_returns_401(
+        self, client: AsyncClient
+    ) -> None:
+        """See `docs/features/identity/user-management.md` (Read API
+        endpoints): every caller must be authenticated."""
         response = await client.get("/api/v1/users")
-        assert response.status_code == 200
+        assert response.status_code == 401
+        assert response.json() == UNAUTHENTICATED
 
-    async def test_empty_result_has_correct_envelope(self, client: AsyncClient) -> None:
-        response = await client.get("/api/v1/users")
+    async def test_empty_result_has_correct_envelope(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        # The authenticated caller is itself a user; the search matches none.
+        response = await authenticated_client.get(
+            "/api/v1/users", params={"search": "no-such-user"}
+        )
         assert response.status_code == 200
         body = response.json()
         assert body["data"] == []
@@ -212,12 +223,12 @@ class TestListUsers:
 
     async def test_full_profile_item_shape(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
         await user_factory(username="jdoe", email="jdoe@example.com")
 
-        response = await client.get("/api/v1/users")
+        response = await authenticated_client.get("/api/v1/users")
 
         item = response.json()["data"][0]
         assert set(item.keys()) == {
@@ -236,65 +247,85 @@ class TestListUsers:
 
     async def test_datetimes_end_with_z(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
         await user_factory()
 
-        response = await client.get("/api/v1/users")
+        response = await authenticated_client.get("/api/v1/users")
 
         item = response.json()["data"][0]
         assert item["created_at"].endswith("Z")
         assert item["updated_at"].endswith("Z")
 
     async def test_search_below_minimum_length_returns_422(
-        self, client: AsyncClient
+        self, authenticated_client: AsyncClient
     ) -> None:
-        response = await client.get("/api/v1/users", params={"search": "j"})
+        response = await authenticated_client.get(
+            "/api/v1/users", params={"search": "j"}
+        )
         assert response.status_code == 422
 
     async def test_invalid_active_boolean_returns_422(
-        self, client: AsyncClient
+        self, authenticated_client: AsyncClient
     ) -> None:
-        response = await client.get("/api/v1/users", params={"active": "maybe"})
+        response = await authenticated_client.get(
+            "/api/v1/users", params={"active": "maybe"}
+        )
         assert response.status_code == 422
 
-    async def test_page_below_one_returns_422(self, client: AsyncClient) -> None:
-        response = await client.get("/api/v1/users", params={"page": 0})
+    async def test_page_below_one_returns_422(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        response = await authenticated_client.get("/api/v1/users", params={"page": 0})
         assert response.status_code == 422
 
-    async def test_per_page_out_of_range_returns_422(self, client: AsyncClient) -> None:
-        response = await client.get("/api/v1/users", params={"per_page": 101})
+    async def test_per_page_out_of_range_returns_422(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        response = await authenticated_client.get(
+            "/api/v1/users", params={"per_page": 101}
+        )
         assert response.status_code == 422
 
-    async def test_invalid_sort_by_returns_422(self, client: AsyncClient) -> None:
-        response = await client.get("/api/v1/users", params={"sort_by": "password"})
+    async def test_invalid_sort_by_returns_422(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        response = await authenticated_client.get(
+            "/api/v1/users", params={"sort_by": "password"}
+        )
         assert response.status_code == 422
 
-    async def test_invalid_sort_order_returns_422(self, client: AsyncClient) -> None:
-        response = await client.get("/api/v1/users", params={"sort_order": "ascending"})
+    async def test_invalid_sort_order_returns_422(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        response = await authenticated_client.get(
+            "/api/v1/users", params={"sort_order": "ascending"}
+        )
         assert response.status_code == 422
 
     async def test_invalid_type_filter_returns_empty_result(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
         await user_factory()
 
-        response = await client.get("/api/v1/users", params={"type": "bogus"})
+        response = await authenticated_client.get(
+            "/api/v1/users", params={"type": "bogus"}
+        )
 
         assert response.status_code == 200
         assert response.json()["meta"]["total"] == 0
 
     async def test_all_invalid_role_values_return_empty_result(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
         await user_factory()
 
-        response = await client.get(
+        response = await authenticated_client.get(
             "/api/v1/users", params=[("role", "not-a-real-role")]
         )
 
@@ -303,7 +334,7 @@ class TestListUsers:
 
     async def test_repeatable_role_filter_uses_or_semantics(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         user_factory: Callable[..., Awaitable[User]],
         user_role_factory: Callable[..., Awaitable[UserRole]],
     ) -> None:
@@ -315,7 +346,7 @@ class TestListUsers:
         )
         await user_factory(username="repeatnorole")
 
-        response = await client.get(
+        response = await authenticated_client.get(
             "/api/v1/users",
             params=[("role", "admin"), ("role", "vulnerability_analyst")],
         )
@@ -326,26 +357,27 @@ class TestListUsers:
 
     async def test_page_beyond_result_set_returns_empty_data_with_correct_total(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
         await user_factory()
 
-        response = await client.get("/api/v1/users", params={"page": 2})
+        response = await authenticated_client.get("/api/v1/users", params={"page": 2})
 
         assert response.status_code == 200
         body = response.json()
         assert body["data"] == []
-        assert body["meta"]["total"] == 1
+        # The created user and the authenticated caller.
+        assert body["meta"]["total"] == 2
 
     async def test_no_undocumented_fields_leak(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
         await user_factory()
 
-        response = await client.get("/api/v1/users")
+        response = await authenticated_client.get("/api/v1/users")
 
         item = response.json()["data"][0]
         assert "password_hash" not in item
@@ -356,9 +388,9 @@ class TestListUsers:
         self,
         authenticated_user_and_client: tuple[User, AsyncClient],
     ) -> None:
-        """See `docs/api-spec.md` (Optional Authentication on Public
-        Endpoints): a valid selected credential authenticates the
-        caller with no change to the public response."""
+        """See `docs/features/identity/user-management.md` (Read API
+        endpoints): a role-less caller with a valid session reads the
+        directory."""
         _user, client = authenticated_user_and_client
 
         response = await client.get("/api/v1/users")
@@ -391,8 +423,7 @@ class TestListUsers:
         self, client: AsyncClient
     ) -> None:
         """A selected but rejected credential is never silently ignored
-        — see `docs/api-spec.md` (Optional Authentication on Public
-        Endpoints)."""
+        — see `docs/api-spec.md` (Authentication and Authorization)."""
         response = await client.get(
             "/api/v1/users",
             headers={"Authorization": "Bearer not-a-real-token"},
@@ -410,11 +441,9 @@ class TestListUsers:
         session_factory: Callable[..., Awaitable[Session]],
         redis_client: redis_asyncio.Redis,
     ) -> None:
-        """Proves optional authentication is actually wired on this
-        Public endpoint end-to-end, not merely accepted as a no-op —
-        see `docs/api-spec.md` (Optional Authentication on Public
-        Endpoints): "so browser activity on those endpoints
-        participates in sliding session refresh"."""
+        """Proves browser activity on this read participates in sliding
+        session refresh end-to-end — see
+        `docs/features/identity/authentication.md` (Token refresh)."""
         session = await session_factory()
         old_iat = datetime.now(UTC) - timedelta(hours=settings.jwt_expiry_hours * 0.6)
         issued = issue_token(
@@ -442,58 +471,61 @@ class TestListUsers:
 
 @pytest.mark.e2e
 class TestGetUser:
-    async def test_public_access_without_credentials(
+    async def test_request_without_credential_returns_401(
         self,
         client: AsyncClient,
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
-        user = await user_factory(username="publicaccess")
+        """See `docs/features/identity/user-management.md` (Read API
+        endpoints): every caller must be authenticated."""
+        user = await user_factory(username="nocredentialtarget")
 
         response = await client.get(f"/api/v1/users/{user.username}")
 
-        assert response.status_code == 200
+        assert response.status_code == 401
+        assert response.json() == UNAUTHENTICATED
 
     async def test_resolves_by_uuid(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
         user = await user_factory(username="byuuidtest")
 
-        response = await client.get(f"/api/v1/users/{user.id}")
+        response = await authenticated_client.get(f"/api/v1/users/{user.id}")
 
         assert response.status_code == 200
         assert response.json()["data"]["username"] == "byuuidtest"
 
     async def test_resolves_by_exact_username(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
         user = await user_factory(username="byusernametest")
 
-        response = await client.get(f"/api/v1/users/{user.username}")
+        response = await authenticated_client.get(f"/api/v1/users/{user.username}")
 
         assert response.status_code == 200
         assert response.json()["data"]["id"] == str(user.id)
 
     async def test_missing_uuid_returns_404_user_not_found(
-        self, client: AsyncClient
+        self, authenticated_client: AsyncClient
     ) -> None:
-        response = await client.get(f"/api/v1/users/{uuid4()}")
+        response = await authenticated_client.get(f"/api/v1/users/{uuid4()}")
         assert response.status_code == 404
         assert response.json()["code"] == "USER_NOT_FOUND"
 
     async def test_missing_username_returns_404_user_not_found(
-        self, client: AsyncClient
+        self, authenticated_client: AsyncClient
     ) -> None:
-        response = await client.get("/api/v1/users/no-such-user")
+        response = await authenticated_client.get("/api/v1/users/no-such-user")
         assert response.status_code == 404
         assert response.json()["code"] == "USER_NOT_FOUND"
 
     async def test_manager_and_roles_are_fully_rendered(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         user_factory: Callable[..., Awaitable[User]],
         user_role_factory: Callable[..., Awaitable[UserRole]],
     ) -> None:
@@ -501,7 +533,7 @@ class TestGetUser:
         user = await user_factory(username="profiletarget", manager_id=manager.id)
         await user_role_factory(user_id=user.id, role=Role.ADMIN.value)
 
-        response = await client.get(f"/api/v1/users/{user.username}")
+        response = await authenticated_client.get(f"/api/v1/users/{user.username}")
 
         data = response.json()["data"]
         assert data["manager"]["username"] == "managerforprofile"
@@ -516,34 +548,40 @@ class TestGetUser:
         ]
 
     async def test_external_user_has_external_source(
-        self, client: AsyncClient, user_factory: Callable[..., Awaitable[User]]
+        self,
+        authenticated_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
     ) -> None:
         external_id = uuid4()
         user = await user_factory(
             username="externaltest", external_id=external_id, password_hash=None
         )
 
-        response = await client.get(f"/api/v1/users/{user.username}")
+        response = await authenticated_client.get(f"/api/v1/users/{user.username}")
 
         data = response.json()["data"]
         assert data["source"] == "external"
         assert data["external_id"] == str(external_id)
 
     async def test_last_login_at_is_never_exposed(
-        self, client: AsyncClient, user_factory: Callable[..., Awaitable[User]]
+        self,
+        authenticated_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
     ) -> None:
         user = await user_factory(username="loginhiddentest")
 
-        response = await client.get(f"/api/v1/users/{user.username}")
+        response = await authenticated_client.get(f"/api/v1/users/{user.username}")
 
         assert "last_login_at" not in response.json()["data"]
 
     async def test_password_hash_is_never_exposed(
-        self, client: AsyncClient, user_factory: Callable[..., Awaitable[User]]
+        self,
+        authenticated_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
     ) -> None:
         user = await user_factory(username="passwordhiddentest")
 
-        response = await client.get(f"/api/v1/users/{user.username}")
+        response = await authenticated_client.get(f"/api/v1/users/{user.username}")
 
         assert "password_hash" not in response.json()["data"]
 
@@ -552,9 +590,9 @@ class TestGetUser:
         authenticated_user_and_client: tuple[User, AsyncClient],
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
-        """See `docs/api-spec.md` (Optional Authentication on Public
-        Endpoints): a valid selected credential authenticates the
-        caller with no change to the public response."""
+        """See `docs/features/identity/user-management.md` (Read API
+        endpoints): a role-less caller with a valid session reads another
+        user's profile."""
         _actor, client = authenticated_user_and_client
         target = await user_factory(username="jwttargetuser")
 
@@ -592,8 +630,7 @@ class TestGetUser:
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
         """A selected but rejected credential is never silently ignored
-        — see `docs/api-spec.md` (Optional Authentication on Public
-        Endpoints)."""
+        — see `docs/api-spec.md` (Authentication and Authorization)."""
         target = await user_factory(username="rejectedcredentialtarget")
 
         response = await client.get(
@@ -614,10 +651,9 @@ class TestGetUser:
         session_factory: Callable[..., Awaitable[Session]],
         redis_client: redis_asyncio.Redis,
     ) -> None:
-        """Proves optional authentication is actually wired on this
-        Public endpoint end-to-end, not merely accepted as a no-op —
-        see `docs/api-spec.md` (Optional Authentication on Public
-        Endpoints)."""
+        """Proves browser activity on this read participates in sliding
+        session refresh end-to-end — see
+        `docs/features/identity/authentication.md` (Token refresh)."""
         target = await user_factory(username="refreshtargetuser")
         session = await session_factory()
         old_iat = datetime.now(UTC) - timedelta(hours=settings.jwt_expiry_hours * 0.6)

@@ -3,8 +3,8 @@
 
 See docs/features/tickets/cve-service.md (CVE Source Status: Response
 schema, Status values, Service contract, Redis graceful degradation;
-Transaction Ownership), docs/api-spec.md (Optional Authentication on Public
-Endpoints; Infrastructure Dependency Errors; CVE Accessibility Check;
+Transaction Ownership), docs/api-spec.md (Authentication and
+Authorization; Infrastructure Dependency Errors; CVE Accessibility Check;
 Anti-Enumeration Boundary; CVE Identifier Resolution), and
 docs/features/platform/testing-strategy.md (CVE and Source Reads >
 Per-CVE source status).
@@ -12,7 +12,7 @@ Per-CVE source status).
 The status derivation, KEV projection, ordering, accessibility races, and
 Redis I/O placement matrix lives in
 tests/test_services/test_cve_source_status.py; these tests cover the HTTP
-contract: wire format, optional authentication, anti-enumeration, the
+contract: wire format, authentication, anti-enumeration, the
 status-reporting exception for Redis failures, handler delegation, and
 OpenAPI. `TestCVESourceStatus` clears the registries and defines test-only
 fetchers; `TestProductionKevSource` instead reads the `kev` entry of the
@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionm
 
 from app.api.dependencies import SESSION_COOKIE_NAME
 from app.api.v1 import cves as cves_module
-from app.core.enums import CVESourceType, Scope
+from app.core.enums import CVESourceType, Role, Scope
 from app.database import async_session_factory
 from app.main import app
 from app.models.cve import CVE
@@ -51,7 +51,7 @@ from app.services.cve_service import (
     CVESourceStatusResult,
     fetch_pending_key,
 )
-from app.services.ticket_visibility import ANONYMOUS_CALLER, TicketCaller
+from app.services.ticket_visibility import TicketCaller
 from app.services.tickets.sync_cisa_kev import SyncCisaKev
 from tests.support.cve_source_status import (
     clear_fetcher_registries,
@@ -211,9 +211,9 @@ _ROSTER: Final = [
 @pytest.mark.e2e
 @pytest.mark.usefixtures("status_sessions", "registry")
 class TestCVESourceStatus:
-    async def test_anonymous_request_returns_the_complete_roster(
+    async def test_role_less_caller_receives_the_complete_roster(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         redis_client: redis_asyncio.Redis,
         cve_factory: Factory,
         cve_source_factory: Factory,
@@ -228,7 +228,7 @@ class TestCVESourceStatus:
             fetcher_run_factory=fetcher_run_factory,
         )
 
-        response = await client.get(_url(cve.cve_id))
+        response = await authenticated_client.get(_url(cve.cve_id))
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/json"
@@ -270,22 +270,26 @@ class TestCVESourceStatus:
         assert str(ticket.id) not in response.text
 
     async def test_accessible_cve_without_any_source_returns_an_empty_list(
-        self, client: AsyncClient, cve_factory: Factory
+        self, authenticated_client: AsyncClient, cve_factory: Factory
     ) -> None:
         cve: CVE = await cve_factory(cve_id=_random_cve_id())
 
-        response = await client.get(_url(cve.cve_id))
+        response = await authenticated_client.get(_url(cve.cve_id))
 
         assert response.status_code == 200
         assert response.json() == {"data": []}
 
-    async def test_every_not_found_cause_is_identical_for_both_callers(
+    async def test_every_not_found_cause_is_identical_for_role_less_and_scope_all(
         self,
         authenticated_client: AsyncClient,
+        authenticated_user: User,
         cve_factory: Factory,
         ticket_factory: Factory,
         cve_source_factory: Factory,
+        user_role_factory: Factory,
     ) -> None:
+        """The confidential CVE is inaccessible only to the role-less
+        caller; the scope-`all` caller reads it."""
         define_cve_fetcher(CVESourceType.NVD)
         visible: CVE = await cve_factory(cve_id="CVE-2099-62001")
         confidential: CVE = await cve_factory(cve_id="CVE-2099-62002")
@@ -298,33 +302,41 @@ class TestCVESourceStatus:
             "CVE-2099-" + "1" * 12,
             str(visible.id),
             "CVE-2099-99999",
-            confidential.cve_id,
         ]
-        token = authenticated_client.cookies[SESSION_COOKIE_NAME]
 
-        authenticated = [await authenticated_client.get(_url(t)) for t in targets]
-        authenticated_client.cookies.delete(SESSION_COOKIE_NAME)
-        anonymous = [await authenticated_client.get(_url(t)) for t in targets]
-        authenticated_client.cookies.set(SESSION_COOKIE_NAME, token)
+        role_less = [
+            await authenticated_client.get(_url(t))
+            for t in [*targets, confidential.cve_id]
+        ]
+        await user_role_factory(
+            user_id=authenticated_user.id, role=Role.VULNERABILITY_ANALYST.value
+        )
+        scope_all = [await authenticated_client.get(_url(t)) for t in targets]
 
         for target, response in zip(
-            targets * 2, authenticated + anonymous, strict=True
+            [*targets, confidential.cve_id, *targets],
+            role_less + scope_all,
+            strict=True,
         ):
             assert response.status_code == 404, target
             assert response.json() == _NOT_FOUND, target
             assert response.headers["content-type"] == "application/json"
-        assert len({r.content for r in authenticated + anonymous}) == 1
+        assert len({r.content for r in role_less + scope_all}) == 1
+        for cve in (visible, confidential):
+            response = await authenticated_client.get(_url(cve.cve_id))
+            assert response.status_code == 200, cve.cve_id
 
     @pytest.mark.parametrize(
         "credential",
         [
+            {},
             {"headers": {"Authorization": "Bearer invalid-token"}},
             {"cookies": {SESSION_COOKIE_NAME: "invalid-session-token"}},
         ],
-        ids=["bearer", "cookie"],
+        ids=["missing", "bearer", "cookie"],
     )
     @pytest.mark.parametrize("cve_id", ["CVE-2099-80001", "x"])
-    async def test_invalid_selected_credential_returns_401_before_any_read(
+    async def test_missing_or_invalid_credential_returns_401_before_any_read(
         self,
         client: AsyncClient,
         cve_factory: Factory,
@@ -346,7 +358,7 @@ class TestCVESourceStatus:
 
     async def test_redis_failure_returns_200_with_the_durable_view(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         redis_client: redis_asyncio.Redis,
         cve_factory: Factory,
         cve_source_factory: Factory,
@@ -367,7 +379,7 @@ class TestCVESourceStatus:
         failing.mget.side_effect = RedisConnectionError("fictional refusal")
         monkeypatch.setattr(cve_service, "_new_redis_client", lambda: failing)
 
-        response = await client.get(_url(cve.cve_id))
+        response = await authenticated_client.get(_url(cve.cve_id))
 
         assert response.status_code == 200
         assert response.json() == {
@@ -392,7 +404,7 @@ class TestProductionKevSource:
     @pytest.mark.parametrize("enabled", [True, False])
     async def test_kev_entry_reflects_registration_and_configuration(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         cve_factory: Factory,
         fetcher_config_factory: Factory,
         enabled: bool,
@@ -402,7 +414,7 @@ class TestProductionKevSource:
         await fetcher_config_factory(fetcher_name=SyncCisaKev.name, enabled=enabled)
         cve: CVE = await cve_factory(cve_id=_random_cve_id())
 
-        response = await client.get(_url(cve.cve_id))
+        response = await authenticated_client.get(_url(cve.cve_id))
 
         assert response.status_code == 200
         body = response.json()["data"]
@@ -415,18 +427,14 @@ class TestProductionKevSource:
 @pytest.mark.e2e
 @pytest.mark.usefixtures("status_sessions")
 class TestHandlerDelegation:
-    @pytest.mark.parametrize("authenticated", [False, True])
     async def test_raw_path_caller_and_session_factory_reach_the_service(
         self,
         authenticated_client: AsyncClient,
         authenticated_user: User,
         monkeypatch: pytest.MonkeyPatch,
-        authenticated: bool,
     ) -> None:
         spy = AsyncMock(return_value=CVESourceStatusResult(entries=()))
         monkeypatch.setattr(cve_service, "get_cve_source_status", spy)
-        if not authenticated:
-            authenticated_client.cookies.delete(SESSION_COOKIE_NAME)
 
         response = await authenticated_client.get(_url("cve-2099-1"))
 
@@ -435,13 +443,10 @@ class TestHandlerDelegation:
         override = app.dependency_overrides[
             cves_module.get_cve_source_status_session_factory
         ]()
-        expected_caller = (
-            TicketCaller.authenticated(authenticated_user.id, Scope.NON_CONFIDENTIAL)
-            if authenticated
-            else ANONYMOUS_CALLER
-        )
         spy.assert_awaited_once_with(
-            "cve-2099-1", expected_caller, session_factory=override
+            "cve-2099-1",
+            TicketCaller.authenticated(authenticated_user.id, Scope.NON_CONFIDENTIAL),
+            session_factory=override,
         )
 
 

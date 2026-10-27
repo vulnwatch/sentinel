@@ -5,8 +5,8 @@ Covers `GET /api/v1/cves`, `GET /api/v1/cves/{cve_id}`, and
 CVEs; Get CVE; Security), docs/features/tickets/cve-service.md (CVE Read
 and Accessibility Boundary; Service Read Contracts; Global CVE Source
 Listing), docs/features/tickets/tickets.md (Shared Sub-Schemas:
-`CVEDetail`), docs/api-spec.md (Request Conventions; Optional
-Authentication on Public Endpoints; CVE Accessibility Check;
+`CVEDetail`), docs/api-spec.md (Request Conventions; Authentication
+and Authorization; CVE Accessibility Check;
 Anti-Enumeration Boundary; CVE Identifier Resolution), and
 docs/features/platform/testing-strategy.md (CVE and Source Reads; Ticket
 Accessibility).
@@ -16,11 +16,12 @@ independent-session race coverage lives in
 tests/test_services/test_cve_reads.py and
 tests/test_services/test_cve_source_listing.py; these tests cover the HTTP
 contract: envelopes and wire format, query parsing and validation,
-optional authentication, anti-enumeration, and handler delegation.
+authentication, anti-enumeration, and handler delegation.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Final
@@ -38,6 +39,7 @@ from app.core.enums import (
     CVESourceSortField,
     CveState,
     Role,
+    Scope,
     Severity,
     SortOrder,
 )
@@ -55,7 +57,7 @@ from app.services.cve_service import (
     CVEListResult,
     CVESourceListResult,
 )
-from app.services.ticket_visibility import ANONYMOUS_CALLER, TicketCaller
+from app.services.ticket_visibility import TicketCaller
 
 Factory = Callable[..., Awaitable[Any]]
 
@@ -113,6 +115,9 @@ UPDATED_AT: Final = datetime(2099, 1, 11, 9, 30, tzinfo=UTC)
 MAR_1: Final = datetime(2099, 3, 1, 12, 0, tzinfo=UTC)
 ONE_US: Final = timedelta(microseconds=1)
 
+_CALLER_RESOLUTION: Final = re.compile(r'\bFROM (?:session|"user"|user_role|api_key)\s')
+"""A statement of the authentication dependency's caller resolution."""
+
 
 def _detail_url(cve_id: str) -> str:
     return _DETAIL.format(cve_id=cve_id)
@@ -141,6 +146,12 @@ class _StatementRecorder:
     def __init__(self, db: AsyncSession) -> None:
         self._engine = db.get_bind().engine
         self.statements: list[str] = []
+
+    @property
+    def handler_statements(self) -> list[str]:
+        """The recorded statements other than the authentication
+        dependency's credential and role resolution."""
+        return [s for s in self.statements if not _CALLER_RESOLUTION.search(s)]
 
     def _record(self, *args: Any) -> None:
         self.statements.append(args[2])
@@ -181,7 +192,10 @@ def _spy_all(monkeypatch: pytest.MonkeyPatch) -> dict[str, AsyncMock]:
 @pytest.mark.e2e
 class TestCVEList:
     async def test_paginated_envelope_and_wire_format(
-        self, client: AsyncClient, cve_factory: Factory, ticket_factory: Factory
+        self,
+        authenticated_client: AsyncClient,
+        cve_factory: Factory,
+        ticket_factory: Factory,
     ) -> None:
         with_ticket: CVE = await cve_factory(
             cve_id="CVE-2099-50001",
@@ -202,7 +216,7 @@ class TestCVEList:
             updated_at=UPDATED_AT,
         )
 
-        response = await client.get(
+        response = await authenticated_client.get(
             _CVES, params={"sort_by": "cve_id", "sort_order": "asc"}
         )
 
@@ -248,31 +262,30 @@ class TestCVEList:
         ticket_access_grant_factory: Factory,
         user_role_factory: Factory,
     ) -> None:
+        """The same caller, read role-less, then with a grant, then with
+        scope `all`."""
         ticketless = await cve_factory(cve_id="CVE-2099-51001")
-        public = await cve_factory(cve_id="CVE-2099-51002")
-        await ticket_factory(cve_id=public.id)
+        non_confidential = await cve_factory(cve_id="CVE-2099-51002")
+        await ticket_factory(cve_id=non_confidential.id)
         granted = await cve_factory(cve_id="CVE-2099-51003")
         granted_ticket = await ticket_factory(cve_id=granted.id, is_confidential=True)
-        await ticket_access_grant_factory(
-            ticket_id=granted_ticket.id, user_id=authenticated_user.id
-        )
         hidden = await cve_factory(cve_id="CVE-2099-51004")
         await ticket_factory(cve_id=hidden.id, is_confidential=True)
 
-        token = authenticated_client.cookies[SESSION_COOKIE_NAME]
-        authenticated_client.cookies.delete(SESSION_COOKIE_NAME)
-        anonymous = await _cve_ids(authenticated_client)
-        authenticated_client.cookies.set(SESSION_COOKIE_NAME, token)
-        restricted = await _cve_ids(authenticated_client)
+        role_less = await _cve_ids(authenticated_client)
+        await ticket_access_grant_factory(
+            ticket_id=granted_ticket.id, user_id=authenticated_user.id
+        )
+        with_grant = await _cve_ids(authenticated_client)
         await user_role_factory(
             user_id=authenticated_user.id, role=Role.VULNERABILITY_ANALYST.value
         )
         scope_all = await _cve_ids(authenticated_client)
 
-        assert anonymous == ["CVE-2099-51001", "CVE-2099-51002"]
-        assert restricted == ["CVE-2099-51001", "CVE-2099-51002", "CVE-2099-51003"]
+        assert role_less == ["CVE-2099-51001", "CVE-2099-51002"]
+        assert with_grant == ["CVE-2099-51001", "CVE-2099-51002", "CVE-2099-51003"]
         assert scope_all == [
-            cve.cve_id for cve in (ticketless, public, granted, hidden)
+            cve.cve_id for cve in (ticketless, non_confidential, granted, hidden)
         ]
 
     @pytest.mark.parametrize(
@@ -289,7 +302,7 @@ class TestCVEList:
     )
     async def test_repeatable_severity_is_parsed_from_wire_values(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         cve_factory: Factory,
         severity: list[str],
         expected: list[str],
@@ -306,24 +319,29 @@ class TestCVEList:
             for i, (name, value) in enumerate(names.items())
         }
 
-        assert await _cve_ids(client, severity=severity) == [
+        assert await _cve_ids(authenticated_client, severity=severity) == [
             ids[name] for name in expected
         ]
 
     @pytest.mark.parametrize("cve_state", ["bogus", "PUBLISHED", "Rejected", ""])
     async def test_undocumented_cve_state_returns_an_empty_page(
-        self, client: AsyncClient, cve_factory: Factory, cve_state: str
+        self, authenticated_client: AsyncClient, cve_factory: Factory, cve_state: str
     ) -> None:
         await cve_factory()
         await cve_factory(cve_state=CveState.REJECTED.value)
 
-        response = await client.get(_CVES, params={"cve_state": cve_state})
+        response = await authenticated_client.get(
+            _CVES, params={"cve_state": cve_state}
+        )
 
         assert response.status_code == 200
         assert response.json() == _EMPTY_PAGE
 
     async def test_documented_cve_state_and_has_ticket_filter(
-        self, client: AsyncClient, cve_factory: Factory, ticket_factory: Factory
+        self,
+        authenticated_client: AsyncClient,
+        cve_factory: Factory,
+        ticket_factory: Factory,
     ) -> None:
         rejected = await cve_factory(
             cve_id="CVE-2099-53001", cve_state=CveState.REJECTED.value
@@ -331,42 +349,56 @@ class TestCVEList:
         with_ticket = await cve_factory(cve_id="CVE-2099-53002")
         await ticket_factory(cve_id=with_ticket.id)
 
-        assert await _cve_ids(client, cve_state="rejected") == [rejected.cve_id]
-        assert await _cve_ids(client, cve_state="published") == [with_ticket.cve_id]
-        assert await _cve_ids(client, has_ticket="true") == [with_ticket.cve_id]
-        assert await _cve_ids(client, has_ticket="false") == [rejected.cve_id]
+        assert await _cve_ids(authenticated_client, cve_state="rejected") == [
+            rejected.cve_id
+        ]
+        assert await _cve_ids(authenticated_client, cve_state="published") == [
+            with_ticket.cve_id
+        ]
+        assert await _cve_ids(authenticated_client, has_ticket="true") == [
+            with_ticket.cve_id
+        ]
+        assert await _cve_ids(authenticated_client, has_ticket="false") == [
+            rejected.cve_id
+        ]
 
     async def test_date_only_to_date_includes_the_whole_utc_day(
-        self, client: AsyncClient, cve_factory: Factory
+        self, authenticated_client: AsyncClient, cve_factory: Factory
     ) -> None:
         end_of_day = datetime(2099, 3, 1, 23, 59, 59, 999999, tzinfo=UTC)
         await cve_factory(cve_id="CVE-2099-54001", published_date=end_of_day)
         await cve_factory(cve_id="CVE-2099-54002", published_date=end_of_day + ONE_US)
         await cve_factory(cve_id="CVE-2099-54003", published_date=None)
 
-        assert await _cve_ids(client, to_date="2099-03-01") == ["CVE-2099-54001"]
-        assert await _cve_ids(client, from_date="2099-03-01", to_date="2099-03-01") == [
+        assert await _cve_ids(authenticated_client, to_date="2099-03-01") == [
             "CVE-2099-54001"
         ]
-        assert await _cve_ids(client, from_date="2099-03-02") == ["CVE-2099-54002"]
+        assert await _cve_ids(
+            authenticated_client, from_date="2099-03-01", to_date="2099-03-01"
+        ) == ["CVE-2099-54001"]
+        assert await _cve_ids(authenticated_client, from_date="2099-03-02") == [
+            "CVE-2099-54002"
+        ]
 
     async def test_offset_datetime_is_converted_to_utc(
-        self, client: AsyncClient, cve_factory: Factory
+        self, authenticated_client: AsyncClient, cve_factory: Factory
     ) -> None:
         await cve_factory(cve_id="CVE-2099-55001", published_date=MAR_1 - ONE_US)
         await cve_factory(cve_id="CVE-2099-55002", published_date=MAR_1)
 
         # 14:00+02:00 is MAR_1 (12:00Z); a naive value is read as UTC.
-        assert await _cve_ids(client, from_date="2099-03-01T14:00:00+02:00") == [
-            "CVE-2099-55002"
-        ]
-        assert await _cve_ids(client, to_date="2099-03-01T14:00:00+02:00") == [
+        assert await _cve_ids(
+            authenticated_client, from_date="2099-03-01T14:00:00+02:00"
+        ) == ["CVE-2099-55002"]
+        assert await _cve_ids(
+            authenticated_client, to_date="2099-03-01T14:00:00+02:00"
+        ) == [
             "CVE-2099-55001",
             "CVE-2099-55002",
         ]
-        assert await _cve_ids(client, to_date="2099-03-01T11:59:59.999999") == [
-            "CVE-2099-55001"
-        ]
+        assert await _cve_ids(
+            authenticated_client, to_date="2099-03-01T11:59:59.999999"
+        ) == ["CVE-2099-55001"]
 
 
 # ---------------------------------------------------------------------------
@@ -378,7 +410,7 @@ class TestCVEList:
 class TestCVEDetail:
     async def test_returns_the_resource_detail_in_the_wire_format(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         cve_factory: Factory,
         ticket_factory: Factory,
         cve_external_identifier_factory: Factory,
@@ -431,7 +463,7 @@ class TestCVEDetail:
             await cve_cwe_factory(cve_id=cve.id, cwe_id=cwe_id, source=source)
         await cve_cvss_assessment_factory(cve_id=cve.id, provider_name="SUSE")
 
-        response = await client.get(_detail_url(cve.cve_id))
+        response = await authenticated_client.get(_detail_url(cve.cve_id))
 
         assert response.status_code == 200
         body = response.json()
@@ -476,12 +508,12 @@ class TestCVEDetail:
         for secret in (str(cve.id), str(ticket.id), "priority", "cvss", "SUSE"):
             assert secret not in response.text
 
-    async def test_ticketless_cve_is_visible_anonymously_with_absent_evidence(
-        self, client: AsyncClient, cve_factory: Factory
+    async def test_ticketless_cve_is_visible_to_a_role_less_caller_with_no_evidence(
+        self, authenticated_client: AsyncClient, cve_factory: Factory
     ) -> None:
         cve: CVE = await cve_factory(cve_id="CVE-2099-61001")
 
-        response = await client.get(_detail_url(cve.cve_id))
+        response = await authenticated_client.get(_detail_url(cve.cve_id))
 
         assert response.status_code == 200
         assert response.json() == {
@@ -503,12 +535,16 @@ class TestCVEDetail:
             }
         }
 
-    async def test_every_not_found_cause_is_identical_for_both_callers(
+    async def test_every_not_found_cause_is_identical_for_role_less_and_scope_all(
         self,
         authenticated_client: AsyncClient,
+        authenticated_user: User,
         cve_factory: Factory,
         ticket_factory: Factory,
+        user_role_factory: Factory,
     ) -> None:
+        """The confidential CVE is inaccessible only to the role-less
+        caller; the scope-`all` caller reads it."""
         visible: CVE = await cve_factory(cve_id="CVE-2099-62001")
         confidential: CVE = await cve_factory(cve_id="CVE-2099-62002")
         await ticket_factory(cve_id=confidential.id, is_confidential=True)
@@ -519,26 +555,29 @@ class TestCVEDetail:
             "CVE-2099-" + "1" * 12,
             str(visible.id),
             "CVE-2099-99999",
-            confidential.cve_id,
         ]
-        token = authenticated_client.cookies[SESSION_COOKIE_NAME]
 
-        authenticated = [
-            await authenticated_client.get(_detail_url(t)) for t in targets
+        role_less = [
+            await authenticated_client.get(_detail_url(t))
+            for t in [*targets, confidential.cve_id]
         ]
-        authenticated_client.cookies.delete(SESSION_COOKIE_NAME)
-        anonymous = [await authenticated_client.get(_detail_url(t)) for t in targets]
-        authenticated_client.cookies.set(SESSION_COOKIE_NAME, token)
+        await user_role_factory(
+            user_id=authenticated_user.id, role=Role.VULNERABILITY_ANALYST.value
+        )
+        scope_all = [await authenticated_client.get(_detail_url(t)) for t in targets]
 
         for target, response in zip(
-            targets * 2, authenticated + anonymous, strict=True
+            [*targets, confidential.cve_id, *targets],
+            role_less + scope_all,
+            strict=True,
         ):
             assert response.status_code == 404, target
             assert response.json() == _NOT_FOUND, target
             assert response.headers["content-type"] == "application/json"
-        assert len({r.content for r in authenticated + anonymous}) == 1
-        visible_response = await authenticated_client.get(_detail_url(visible.cve_id))
-        assert visible_response.status_code == 200
+        assert len({r.content for r in role_less + scope_all}) == 1
+        for cve in (visible, confidential):
+            response = await authenticated_client.get(_detail_url(cve.cve_id))
+            assert response.status_code == 200, cve.cve_id
 
     @pytest.mark.parametrize("path", ["scope-all", "grant"])
     async def test_confidential_cve_is_visible_through_a_qualifying_path(
@@ -575,9 +614,9 @@ class TestCVEDetail:
 
 @pytest.mark.e2e
 class TestCVESourceList:
-    async def test_anonymous_listing_includes_a_confidential_ticket_cve(
+    async def test_role_less_listing_includes_a_confidential_ticket_cve(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         cve_factory: Factory,
         ticket_factory: Factory,
         cve_source_factory: Factory,
@@ -598,7 +637,7 @@ class TestCVESourceList:
             updated_at=UPDATED_AT,
         )
 
-        response = await client.get(_SOURCES)
+        response = await authenticated_client.get(_SOURCES)
 
         assert response.status_code == 200
         assert response.json() == {
@@ -636,11 +675,14 @@ class TestCVESourceList:
         ],
     )
     async def test_malformed_or_overlength_source_returns_422(
-        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch, source: str
+        self,
+        authenticated_client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+        source: str,
     ) -> None:
         spies = _spy_all(monkeypatch)
 
-        response = await client.get(_SOURCES, params={"source": source})
+        response = await authenticated_client.get(_SOURCES, params={"source": source})
 
         assert response.status_code == 422
         body = response.json()
@@ -649,29 +691,37 @@ class TestCVESourceList:
         spies["list_cve_sources"].assert_not_awaited()
 
     async def test_longest_well_formed_absent_source_returns_an_empty_page(
-        self, client: AsyncClient, cve_source_factory: Factory
+        self, authenticated_client: AsyncClient, cve_source_factory: Factory
     ) -> None:
         await cve_source_factory(source="nvd")
 
-        response = await client.get(_SOURCES, params={"source": "a" + "_9" * 49 + "z"})
+        response = await authenticated_client.get(
+            _SOURCES, params={"source": "a" + "_9" * 49 + "z"}
+        )
 
         assert response.status_code == 200
         assert response.json() == _EMPTY_PAGE
 
     @pytest.mark.parametrize("status", ["bogus", "FAILURE", "pending", "not_attempted"])
     async def test_non_persisted_status_returns_an_empty_page(
-        self, client: AsyncClient, cve_source_factory: Factory, status: str
+        self,
+        authenticated_client: AsyncClient,
+        cve_source_factory: Factory,
+        status: str,
     ) -> None:
         await cve_source_factory(status="failure")
         await cve_source_factory(status="success")
 
-        response = await client.get(_SOURCES, params={"status": status})
+        response = await authenticated_client.get(_SOURCES, params={"status": status})
 
         assert response.status_code == 200
         assert response.json() == _EMPTY_PAGE
 
     async def test_source_status_and_stalled_filters_reach_the_service(
-        self, client: AsyncClient, cve_factory: Factory, cve_source_factory: Factory
+        self,
+        authenticated_client: AsyncClient,
+        cve_factory: Factory,
+        cve_source_factory: Factory,
     ) -> None:
         stalled_cve = await cve_factory(cve_id="CVE-2099-71001")
         healthy_cve = await cve_factory(cve_id="CVE-2099-71002")
@@ -685,7 +735,7 @@ class TestCVESourceList:
         await cve_source_factory(cve_id=healthy_cve.id, source="mitre")
 
         async def cve_ids(**params: str) -> list[str]:
-            response = await client.get(_SOURCES, params=params)
+            response = await authenticated_client.get(_SOURCES, params=params)
             assert response.status_code == 200, response.text
             return [item["cve_id"] for item in response.json()["data"]]
 
@@ -696,7 +746,7 @@ class TestCVESourceList:
 
 
 # ---------------------------------------------------------------------------
-# Optional authentication and access changes during the request
+# Authentication and access changes during the request
 # ---------------------------------------------------------------------------
 
 
@@ -705,15 +755,16 @@ class TestAuthenticationAndAccessChanges:
     @pytest.mark.parametrize(
         "credential",
         [
+            {},
             {"headers": {"Authorization": "Bearer invalid-token"}},
             {"cookies": {SESSION_COOKIE_NAME: "invalid-session-token"}},
         ],
-        ids=["bearer", "cookie"],
+        ids=["missing", "bearer", "cookie"],
     )
     @pytest.mark.parametrize(
         "path", [_CVES, _SOURCES, _detail_url("CVE-2099-80001"), _detail_url("x")]
     )
-    async def test_invalid_selected_credential_returns_401_before_any_read(
+    async def test_missing_or_invalid_credential_returns_401_before_any_read(
         self,
         client: AsyncClient,
         cve_factory: Factory,
@@ -876,7 +927,7 @@ class TestRequestValidation:
     @pytest.mark.parametrize(("path", "params", "field"), _INVALID_CASES)
     async def test_invalid_parameter_returns_422_before_the_service(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         monkeypatch: pytest.MonkeyPatch,
         path: str,
         params: dict[str, Any],
@@ -884,7 +935,7 @@ class TestRequestValidation:
     ) -> None:
         spies = _spy_all(monkeypatch)
 
-        response = await client.get(path, params=params)
+        response = await authenticated_client.get(path, params=params)
 
         assert response.status_code == 422
         body = response.json()
@@ -898,7 +949,7 @@ class TestRequestValidation:
     )
     async def test_every_sort_field_and_order_is_accepted(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         cve_source_factory: Factory,
         path: str,
         sort_fields: list[str],
@@ -907,7 +958,7 @@ class TestRequestValidation:
 
         for sort_by in sort_fields:
             for sort_order in ("asc", "desc"):
-                response = await client.get(
+                response = await authenticated_client.get(
                     path, params={"sort_by": sort_by, "sort_order": sort_order}
                 )
                 assert response.status_code == 200, (sort_by, sort_order)
@@ -924,7 +975,7 @@ class TestRequestValidation:
     )
     async def test_inverted_range_returns_400(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         monkeypatch: pytest.MonkeyPatch,
         path: str,
         from_date: str,
@@ -932,7 +983,7 @@ class TestRequestValidation:
     ) -> None:
         spies = _spy_all(monkeypatch)
 
-        response = await client.get(
+        response = await authenticated_client.get(
             path, params={"from_date": from_date, "to_date": to_date}
         )
 
@@ -943,14 +994,14 @@ class TestRequestValidation:
     @pytest.mark.parametrize("path", _LISTS)
     @pytest.mark.parametrize(("field", "value"), _OUT_OF_RANGE_BOUNDS)
     async def test_out_of_range_bound_returns_422_without_error_log(
-        self, client: AsyncClient, path: str, field: str, value: str
+        self, authenticated_client: AsyncClient, path: str, field: str, value: str
     ) -> None:
-        """An anonymous request whose single bound's offset moves its UTC
+        """A request whose single bound's offset moves its UTC
         instant outside the representable range is malformed
         (`docs/api-spec.md`, Date Range Interpretation): the global `422`,
         never a logged `500`."""
         with capture_logs() as logs:
-            response = await client.get(path, params={field: value})
+            response = await authenticated_client.get(path, params={field: value})
 
         assert response.status_code == 422
         assert response.json() == {
@@ -969,7 +1020,7 @@ class TestRequestValidation:
     @pytest.mark.parametrize("path", _LISTS)
     async def test_representable_extreme_bounds_reach_the_database(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         cve_factory: Factory,
         cve_source_factory: Factory,
         path: str,
@@ -988,13 +1039,13 @@ class TestRequestValidation:
                 "to_date": "9999-12-31T23:59:59+23:59",
             },
         ):
-            response = await client.get(path, params=params)
+            response = await authenticated_client.get(path, params=params)
             assert response.status_code == 200, (params, response.text)
             assert response.json()["meta"]["total"] == 1, params
 
     @pytest.mark.parametrize("path", _LISTS)
     async def test_equal_bounds_and_boundary_page_sizes_are_accepted(
-        self, client: AsyncClient, path: str
+        self, authenticated_client: AsyncClient, path: str
     ) -> None:
         for params in (
             {"per_page": 1},
@@ -1006,15 +1057,15 @@ class TestRequestValidation:
                 "to_date": "2099-03-01T14:00:00+02:00",
             },
         ):
-            response = await client.get(path, params=params)
+            response = await authenticated_client.get(path, params=params)
             assert response.status_code == 200, (params, response.text)
 
     async def test_search_of_500_characters_is_accepted(
-        self, client: AsyncClient, cve_factory: Factory
+        self, authenticated_client: AsyncClient, cve_factory: Factory
     ) -> None:
         await cve_factory()
 
-        response = await client.get(_CVES, params={"search": "x" * 500})
+        response = await authenticated_client.get(_CVES, params={"search": "x" * 500})
 
         assert response.status_code == 200
         assert response.json() == _EMPTY_PAGE
@@ -1033,7 +1084,7 @@ class TestRequestValidation:
     )
     async def test_undeclared_query_parameters_are_ignored(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         cve_factory: Factory,
         cve_source_factory: Factory,
         path: str,
@@ -1042,8 +1093,8 @@ class TestRequestValidation:
         cve = await cve_factory(cve_id="CVE-2099-81001")
         await cve_source_factory(cve_id=cve.id)
 
-        plain = await client.get(path)
-        with_params = await client.get(
+        plain = await authenticated_client.get(path)
+        with_params = await authenticated_client.get(
             path,
             params={"bogus": "1", "ticket_id": "x", "q": "y" * 600, **extra},
         )
@@ -1072,7 +1123,8 @@ def _utc(value: Any) -> datetime:
 class TestHandlerDelegation:
     async def test_cve_list_defaults_reach_the_service(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
+        authenticated_user: User,
         db_session: AsyncSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -1082,14 +1134,17 @@ class TestHandlerDelegation:
         monkeypatch.setattr(cve_service, "list_cves", spy)
 
         with _StatementRecorder(db_session) as recorder:
-            response = await client.get(_CVES)
+            response = await authenticated_client.get(_CVES)
 
         assert response.status_code == 200
         assert response.json() == _EMPTY_PAGE
-        assert recorder.statements == []
+        assert recorder.handler_statements == []
         spy.assert_awaited_once()
         assert spy.await_args is not None
-        assert spy.await_args.args == (db_session, ANONYMOUS_CALLER)
+        assert spy.await_args.args == (
+            db_session,
+            TicketCaller.authenticated(authenticated_user.id, Scope.NON_CONFIDENTIAL),
+        )
         kwargs = spy.await_args.kwargs
         assert kwargs == {
             "search": None,
@@ -1108,7 +1163,7 @@ class TestHandlerDelegation:
 
     async def test_cve_list_parsed_arguments_reach_the_service(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         db_session: AsyncSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -1118,7 +1173,7 @@ class TestHandlerDelegation:
         monkeypatch.setattr(cve_service, "list_cves", spy)
 
         with _StatementRecorder(db_session) as recorder:
-            response = await client.get(
+            response = await authenticated_client.get(
                 _CVES,
                 params={
                     "search": "  Fictional%  ",
@@ -1139,7 +1194,7 @@ class TestHandlerDelegation:
             "data": [],
             "meta": {"total": 7, "page": 2, "per_page": 5},
         }
-        assert recorder.statements == []
+        assert recorder.handler_statements == []
         assert spy.await_args is not None
         kwargs = dict(spy.await_args.kwargs)
         assert _utc(kwargs.pop("from_date")) == MAR_1
@@ -1161,7 +1216,8 @@ class TestHandlerDelegation:
     @pytest.mark.parametrize("cve_id", ["CVE-2099-82001", "not-a-cve", "cve-2099-1"])
     async def test_cve_detail_passes_the_raw_path_value_to_the_service(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
+        authenticated_user: User,
         db_session: AsyncSession,
         monkeypatch: pytest.MonkeyPatch,
         cve_id: str,
@@ -1187,17 +1243,21 @@ class TestHandlerDelegation:
         monkeypatch.setattr(cve_service, "get_cve_detail", spy)
 
         with _StatementRecorder(db_session) as recorder:
-            response = await client.get(_detail_url(cve_id))
+            response = await authenticated_client.get(_detail_url(cve_id))
 
         assert response.status_code == 200
         data = response.json()["data"]
         assert (data["severity"], data["ticket"]) == ("none", {"ticket_id": "SNTL-7"})
-        assert recorder.statements == []
-        spy.assert_awaited_once_with(db_session, ANONYMOUS_CALLER, cve_id)
+        assert recorder.handler_statements == []
+        spy.assert_awaited_once_with(
+            db_session,
+            TicketCaller.authenticated(authenticated_user.id, Scope.NON_CONFIDENTIAL),
+            cve_id,
+        )
 
     async def test_cve_source_list_arguments_reach_the_service_without_a_caller(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         db_session: AsyncSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -1207,8 +1267,8 @@ class TestHandlerDelegation:
         monkeypatch.setattr(cve_service, "list_cve_sources", spy)
 
         with _StatementRecorder(db_session) as recorder:
-            defaults = await client.get(_SOURCES)
-            parsed = await client.get(
+            defaults = await authenticated_client.get(_SOURCES)
+            parsed = await authenticated_client.get(
                 _SOURCES,
                 params={
                     "source": "retired_source",
@@ -1222,7 +1282,7 @@ class TestHandlerDelegation:
             )
 
         assert defaults.status_code == parsed.status_code == 200
-        assert recorder.statements == []
+        assert recorder.handler_statements == []
         default_call, parsed_call = spy.await_args_list
         assert default_call.args == parsed_call.args == (db_session,)
         assert default_call.kwargs == {

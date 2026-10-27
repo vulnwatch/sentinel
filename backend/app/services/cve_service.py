@@ -302,9 +302,8 @@ def _cve_accessibility_condition(caller: TicketCaller) -> ColumnElement[bool]:
 
     The enclosing statement must select from `CVE` outer-joined to `Ticket`
     on `Ticket.cve_id = CVE.id` (unique, so at most one Ticket). No joined
-    Ticket means a ticketless, public CVE; otherwise the canonical Ticket
-    predicate decides. For an anonymous caller that predicate evaluates no
-    grant or maintainer branch.
+    Ticket means a ticketless CVE, accessible to every caller; otherwise
+    the canonical Ticket predicate decides.
     """
     return or_(Ticket.id.is_(None), ticket_visibility_condition(caller))
 
@@ -802,8 +801,8 @@ async def list_cves(
     Category B read (cve-service.md, Service Read Contracts > CVE List;
     cve-tracking.md, List CVEs).
 
-    Q1: `caller` is the request-resolved caller information
-    (`ANONYMOUS_CALLER` for an anonymous request). `search` is the raw
+    Q1: `caller` is the request-resolved information of the
+    authenticated caller. `search` is the raw
     free-text input. `cve_state` and each `severity` entry are raw wire
     values; `None` means omitted and an empty `severity` sequence means
     supplied with no value. `from_date`/`to_date` are UTC-normalized
@@ -1571,8 +1570,8 @@ async def get_cve_source_status(
     Source Status; Transaction Ownership).
 
     Q1: `cve_id` is the raw path value; `caller` is the request-resolved
-    caller information (`ANONYMOUS_CALLER` for an anonymous request);
-    `session_factory` opens the one short-lived read session.
+    information of the authenticated caller; `session_factory` opens the
+    one short-lived read session.
 
     Q3 (Resolution algorithm):
     1. a value rejected by `core.identifiers.is_valid_cve_id()` runs no

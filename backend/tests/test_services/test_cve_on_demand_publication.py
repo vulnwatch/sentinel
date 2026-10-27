@@ -57,7 +57,7 @@ from app.services.cve_service import (
     get_cve_source_status,
     trigger_on_demand_fetch,
 )
-from app.services.ticket_visibility import ANONYMOUS_CALLER
+from tests.support.callers import ROLELESS_CALLER
 from tests.support.cve_catch_up import (
     CVEProbe,
     Publications,
@@ -731,7 +731,7 @@ class TestOverlayAgreement:
 
         async def status() -> CVESourceDerivedStatus:
             result = await get_cve_source_status(
-                cve.cve_id, ANONYMOUS_CALLER, session_factory=real_session_factory
+                cve.cve_id, ROLELESS_CALLER, session_factory=real_session_factory
             )
             return cast(CVESourceDerivedStatus, _nvd_status(result.entries))
 

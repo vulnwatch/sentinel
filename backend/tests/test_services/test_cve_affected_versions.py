@@ -39,7 +39,8 @@ from app.services.cve_service import (
     get_cve_affected_versions,
     upsert_cve,
 )
-from app.services.ticket_visibility import ANONYMOUS_CALLER, TicketCaller
+from app.services.ticket_visibility import TicketCaller
+from tests.support.callers import ROLELESS_CALLER
 from tests.support.cve_ingest import av_entry, remove, replace
 
 Factory = Callable[..., Awaitable[Any]]
@@ -157,14 +158,13 @@ class TestAccess:
             await cve_affected_version_factory(cve_id=cve.id, version="1.0")
         public = ["ticketless", "public"]
         expectations = {
-            ANONYMOUS_CALLER: public,
-            _restricted(uuid.uuid4()): public,
+            ROLELESS_CALLER: public,
             _restricted(user): [*public, "granted"],
             ALL_SCOPE: list(cves),
         }
         with pytest.raises(CVENotFoundError) as missing:
             await get_cve_affected_versions(
-                db_session, ANONYMOUS_CALLER, "CVE-2099-99999"
+                db_session, ROLELESS_CALLER, "CVE-2099-99999"
             )
 
         for caller, visible in expectations.items():
@@ -261,7 +261,7 @@ class TestProjection:
         cve: CVE = await cve_factory(cve_id="CVE-2099-30002")
 
         result = await get_cve_affected_versions(
-            db_session, ANONYMOUS_CALLER, cve.cve_id
+            db_session, ROLELESS_CALLER, cve.cve_id
         )
 
         assert result == CVEAffectedVersionsResult(groups=())
@@ -372,7 +372,7 @@ class TestProjection:
         await cve_affected_version_factory(cve_id=cve.id, version="1.0")
 
         result = await get_cve_affected_versions(
-            db_session, ANONYMOUS_CALLER, cve.cve_id
+            db_session, ROLELESS_CALLER, cve.cve_id
         )
 
         assert _versions(result) == {"cna": ["1.0"]}

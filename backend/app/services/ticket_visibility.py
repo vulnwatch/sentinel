@@ -13,13 +13,13 @@ The module imports only Models and Core, so every Ticket-domain service
 can import it without an import cycle.
 
 `TicketCaller` is the plain service-layer value that carries the
-request-resolved caller: anonymous, or an authenticated user ID plus the
-effective scope resolved once for the request
-(`docs/features/identity/rbac.md`, Optional Principal to Caller
-Context). Thin API dependencies build it; services never import API
-types. Trusted internal or system workflows are not consumer callers and
-never pass a `TicketCaller`; in particular they are never represented as
-`ANONYMOUS_CALLER`.
+request-resolved caller: the authenticated user ID plus the effective
+scope resolved once for the request (`docs/features/identity/rbac.md`,
+Principal to Caller Context). Every consumer caller is authenticated, so
+there is no anonymous caller value. Thin API dependencies build it;
+services never import API types. Trusted internal or system workflows
+are not consumer callers and never pass a `TicketCaller`; in particular
+they are never represented as a role-less user.
 """
 
 from __future__ import annotations
@@ -38,36 +38,16 @@ from app.models.ticket_package_maintainer import TicketPackageMaintainer
 
 @dataclass(frozen=True, slots=True)
 class TicketCaller:
-    """The consumer caller of a Ticket-derived operation.
+    """The authenticated consumer caller of a Ticket-derived operation:
+    the user ID and the effective scope of its current roles."""
 
-    Either anonymous (`user_id` and `scope` both `None`) or authenticated
-    (`user_id` and `scope` both set). Use `ANONYMOUS_CALLER` or
-    `TicketCaller.authenticated()`; any other combination raises
-    `ValueError`.
-    """
-
-    user_id: UUID | None = None
-    scope: Scope | None = None
-
-    def __post_init__(self) -> None:
-        if (self.user_id is None) != (self.scope is None):
-            raise ValueError(
-                "TicketCaller requires both user_id and scope, or neither."
-            )
+    user_id: UUID
+    scope: Scope
 
     @classmethod
     def authenticated(cls, user_id: UUID, scope: Scope) -> TicketCaller:
         """Build the caller for an authenticated user and effective scope."""
         return cls(user_id=user_id, scope=scope)
-
-    @property
-    def is_anonymous(self) -> bool:
-        """Whether the caller has no authenticated identity."""
-        return self.user_id is None
-
-
-ANONYMOUS_CALLER = TicketCaller()
-"""The caller of a request that selected no credential."""
 
 
 def ticket_visibility_condition(caller: TicketCaller) -> ColumnElement[bool]:
@@ -85,19 +65,15 @@ def ticket_visibility_condition(caller: TicketCaller) -> ColumnElement[bool]:
        `TicketPackage` of the Ticket whose `deleted_at IS NULL`.
 
     Branch 2 is resolved in Python from the request-resolved scope, so a
-    scope-`all` caller yields `TRUE` with no subquery. An anonymous
-    caller yields exactly branch 1: no grant or maintainer subquery is
-    built because there is no caller identity. Track and Product
+    scope-`all` caller yields `TRUE` with no subquery. Track and Product
     exclusion, lifecycle, affectedness, eligibility, delivery, and Ticket
     status are deliberately absent. Pure: builds an expression and
     performs no I/O.
     """
-    not_confidential = Ticket.is_confidential.is_(false())
-    if caller.user_id is None:
-        return not_confidential
     if caller.scope is Scope.ALL:
         return true()
 
+    not_confidential = Ticket.is_confidential.is_(false())
     has_grant = exists(
         select(TicketAccessGrant.ticket_id).where(
             TicketAccessGrant.ticket_id == Ticket.id,

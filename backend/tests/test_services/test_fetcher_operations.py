@@ -523,15 +523,15 @@ class TestListFetchersLastRun:
             triggered_by_user_id=actor.id,
         )
 
-        anonymous_items = await list_fetchers(
+        unprivileged_items = await list_fetchers(
             db_session, has_manage_fetchers=False, celery_app=celery_test_app
         )
         privileged_items = await list_fetchers(
             db_session, has_manage_fetchers=True, celery_app=celery_test_app
         )
 
-        assert anonymous_items[0].last_run is not None
-        assert anonymous_items[0].last_run.triggered_by_user is None
+        assert unprivileged_items[0].last_run is not None
+        assert unprivileged_items[0].last_run.triggered_by_user is None
         assert privileged_items[0].last_run is not None
         assert privileged_items[0].last_run.triggered_by_user is not None
         assert privileged_items[0].last_run.triggered_by_user.id == actor.id
@@ -1000,7 +1000,7 @@ class TestListFetcherRuns:
             triggered_by_user_id=actor.id,
         )
 
-        anonymous_page = await list_fetcher_runs(
+        unprivileged_page = await list_fetcher_runs(
             db_session,
             fetcher_name=config.fetcher_name,
             has_manage_fetchers=False,
@@ -1015,7 +1015,7 @@ class TestListFetcherRuns:
             per_page=20,
         )
 
-        assert anonymous_page.items[0].triggered_by_user is None
+        assert unprivileged_page.items[0].triggered_by_user is None
         assert privileged_page.items[0].triggered_by_user is not None
         assert privileged_page.items[0].triggered_by_user.id == actor.id
 
@@ -1638,7 +1638,7 @@ class TestDisabledPeriodDerivation:
             user_id=actor.id,
         )
 
-        anonymous_timeline = await get_fetcher_timeline(
+        unprivileged_timeline = await get_fetcher_timeline(
             db_session,
             fetcher_name=config.fetcher_name,
             has_manage_fetchers=False,
@@ -1653,8 +1653,8 @@ class TestDisabledPeriodDerivation:
             to_date=now,
         )
 
-        assert anonymous_timeline.disabled_periods[0].disabled_by is None
-        assert anonymous_timeline.disabled_periods[0].enabled_by is None
+        assert unprivileged_timeline.disabled_periods[0].disabled_by is None
+        assert unprivileged_timeline.disabled_periods[0].enabled_by is None
         assert privileged_timeline.disabled_periods[0].disabled_by is not None
         assert privileged_timeline.disabled_periods[0].disabled_by.id == actor.id
         assert privileged_timeline.disabled_periods[0].enabled_by is not None
@@ -1800,7 +1800,7 @@ class TestGetFetcherConfig:
         self, db_session: AsyncSession
     ) -> None:
         """A `FetcherConfig` row is a hard prerequisite for this
-        function — unlike the Public read functions, a registered
+        function — unlike the authenticated read functions, a registered
         fetcher with no row yet (bootstrap not run) still raises,
         consistent with `trigger_fetcher`/`update_fetcher_config`."""
         _register(_NoSettingsFetcher)

@@ -76,7 +76,7 @@ from app.services.packages.maintainer_workbench import (
     MaintainerWorkPage,
 )
 from app.services.ticket_convergence_registry import pending_ticket_convergence_effects
-from app.services.ticket_visibility import ANONYMOUS_CALLER, TicketCaller
+from app.services.ticket_visibility import TicketCaller
 from tests.support.maintainer_workbench import (
     ELIGIBLE,
     EOL,
@@ -428,18 +428,6 @@ class TestVisibilityAndOwnership:
             "in_progress": [],
             "completed": [],
         }
-
-    async def test_anonymous_caller_is_a_contract_violation(
-        self, db_session: AsyncSession, seed: WorkbenchSeed, owner: User
-    ) -> None:
-        ticket = await seed.ticket()
-        with StatementRecorder(db_session) as recorder:
-            for classification in CLASSIFICATIONS:
-                with pytest.raises(ValueError, match="authenticated caller"):
-                    await _list(db_session, classification, ANONYMOUS_CALLER)
-            with pytest.raises(ValueError, match="authenticated caller"):
-                await _ticket_work(db_session, ticket, ANONYMOUS_CALLER)
-        assert recorder.statements == []
 
 
 # ---------------------------------------------------------------------------

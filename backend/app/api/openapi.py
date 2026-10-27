@@ -42,7 +42,6 @@ from starlette.routing import BaseRoute
 
 from app.api.dependencies import (
     get_current_user,
-    get_optional_current_user,
     require_any_capability,
     require_capability,
 )
@@ -94,9 +93,6 @@ _REQUIRED_AUTHENTICATION: Final = DerivedResponse(
     "AUTH_NOT_AUTHENTICATED",
     "no credential was sent, or the credential is invalid.",
 )
-_OPTIONAL_AUTHENTICATION: Final = DerivedResponse(
-    "401", "AUTH_NOT_AUTHENTICATED", "a credential was sent and is invalid."
-)
 _CAPABILITY: Final = DerivedResponse(
     "403",
     "AUTH_INSUFFICIENT_PERMISSION",
@@ -131,8 +127,6 @@ def dependency_responses(dependant: Dependant) -> list[DerivedResponse]:
     responses: list[DerivedResponse] = []
     if get_current_user in calls:
         responses.append(_REQUIRED_AUTHENTICATION)
-    elif get_optional_current_user in calls:
-        responses.append(_OPTIONAL_AUTHENTICATION)
     if any(getattr(call, "__qualname__", None) in _CAPABILITY_CHECKS for call in calls):
         responses.append(_CAPABILITY)
     query_names = {param.alias for node in nodes for param in node.query_params}

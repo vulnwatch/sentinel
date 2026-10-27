@@ -29,7 +29,6 @@ from app.api.dependencies import (
     AuthenticatedPrincipal,
     AuthenticatedTicketCaller,
     CallerRoles,
-    OptionalTicketCaller,
     TicketIdPath,
     insufficient_permission_error,
     require_accessible_ticket,
@@ -197,8 +196,9 @@ def serialize_package(package: PackageProjection) -> PackageDetail:
         "phase. Fixed order: packages by name, tracks by reference, and "
         "Products by CPE, each in ascending Unicode code-point order. "
         "Unpaginated (the package count per Ticket is bounded). The Ticket is "
-        "identified by its canonical SNTL-{n} identity. Public; optional "
-        "authentication determines access to confidential Tickets."
+        "identified by its canonical SNTL-{n} identity. Requires "
+        "authentication (JWT session or API key); the caller's scope, grants, "
+        "and package maintainership determine access to confidential Tickets."
     ),
     responses={
         404: {
@@ -213,7 +213,7 @@ def serialize_package(package: PackageProjection) -> PackageDetail:
 async def list_ticket_packages(
     ticket_id: TicketIdPath,
     db: DatabaseSession,
-    caller: OptionalTicketCaller,
+    caller: AuthenticatedTicketCaller,
 ) -> TicketPackageListResponse:
     """List Ticket packages — see `docs/features/packages/package-model.md`
     (List Ticket Packages).
@@ -387,13 +387,14 @@ def _serialize_search_item(item: PackageSearchItem) -> PackageListItem:
         "actionable track) are always omitted. Supports a literal substring "
         "`search` or an exact `name`, a repeatable `ticket_status` filter, and "
         "sorting. Visibility is applied before every filter, sort, count, page, "
-        "and track aggregate. Public; optional authentication determines access "
-        "to confidential Tickets."
+        "and track aggregate. Requires authentication (JWT session or API "
+        "key); the caller's scope, grants, and package maintainership "
+        "determine access to confidential Tickets."
     ),
 )
 async def search_packages(
     db: DatabaseSession,
-    caller: OptionalTicketCaller,
+    caller: AuthenticatedTicketCaller,
     query: Annotated[PackageSearchQuery, Depends(_package_search_query)],
 ) -> PackageListResponse:
     """Search Packages Across Tickets — see

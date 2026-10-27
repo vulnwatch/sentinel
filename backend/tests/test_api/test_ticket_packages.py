@@ -5,8 +5,8 @@ See docs/features/packages/package-model.md (API Endpoints > List Ticket
 Packages) for the endpoint contract, docs/features/tickets/tickets.md
 (Response Schemas > ProductDetail, TrackDetail, TrackMilestones,
 PackageDetail), docs/features/tickets/ticket-deadlines.md (Evaluation
-Instant, API Surface), and docs/api-spec.md (Optional Authentication on
-Public Endpoints, Ticket Accessibility Check, Ticket Identifier Resolution,
+Instant, API Surface), and docs/api-spec.md (Authentication and
+Authorization, Ticket Accessibility Check, Ticket Identifier Resolution,
 Response Format). Tree projection, milestone, ordering, N+1, and
 independent-session race coverage lives in
 tests/test_services/test_package_service.py; these tests cover the HTTP
@@ -99,16 +99,33 @@ def fixed_clock(monkeypatch: pytest.MonkeyPatch) -> Clock:
 
 @pytest.mark.e2e
 class TestAuthentication:
-    async def test_anonymous_caller_reads_a_non_confidential_tree(
+    async def test_request_without_credential_returns_401_before_lookup(
         self,
         client: AsyncClient,
+        ticket_factory: Factory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ticket: Ticket = await ticket_factory()
+        spy = AsyncMock()
+        monkeypatch.setattr(package_service, "get_ticket_packages", spy)
+
+        for locator in (format_ticket_id(ticket.sequence_id), "not-a-ticket"):
+            response = await client.get(_url(locator))
+            assert response.status_code == 401
+            assert response.json() == _UNAUTHENTICATED
+
+        spy.assert_not_awaited()
+
+    async def test_roleless_caller_reads_a_non_confidential_tree(
+        self,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         ticket_package_factory: Factory,
     ) -> None:
         ticket: Ticket = await ticket_factory()
         package = await ticket_package_factory(ticket_id=ticket.id)
 
-        response = await client.get(_url(ticket))
+        response = await authenticated_client.get(_url(ticket))
 
         assert response.status_code == 200
         assert [p["id"] for p in response.json()["data"]] == [str(package.id)]
@@ -133,7 +150,7 @@ class TestAuthentication:
 class TestListTicketPackagesEndpoint:
     async def test_returns_the_complete_tree_in_the_wire_format(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         cve_factory: Factory,
@@ -175,7 +192,7 @@ class TestListTicketPackagesEndpoint:
             is_eligible_override=True,
         )
 
-        response = await client.get(_url(ticket))
+        response = await authenticated_client.get(_url(ticket))
 
         assert response.status_code == 200
         body = response.json()
@@ -251,7 +268,7 @@ class TestListTicketPackagesEndpoint:
 
     async def test_null_sla_and_unobservable_phases_serialize_as_null(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         ticket_package_factory: Factory,
@@ -269,10 +286,12 @@ class TestListTicketPackagesEndpoint:
             )
             await ticket_package_product_factory(ticket_package_track_id=track.id)
 
-        ignored_track = (await client.get(_url(ignored))).json()["data"][0]["tracks"][0]
-        cve_less_track = (await client.get(_url(cve_less))).json()["data"][0]["tracks"][
+        ignored_track = (await authenticated_client.get(_url(ignored))).json()["data"][
             0
-        ]
+        ]["tracks"][0]
+        cve_less_track = (await authenticated_client.get(_url(cve_less))).json()[
+            "data"
+        ][0]["tracks"][0]
 
         assert {
             key: ignored_track[key]
@@ -309,18 +328,18 @@ class TestListTicketPackagesEndpoint:
         assert cve_less_track["current_phase"] == "triage"
 
     async def test_ticket_without_packages_returns_an_empty_list(
-        self, client: AsyncClient, ticket_factory: Factory
+        self, authenticated_client: AsyncClient, ticket_factory: Factory
     ) -> None:
         ticket: Ticket = await ticket_factory()
 
-        response = await client.get(_url(ticket))
+        response = await authenticated_client.get(_url(ticket))
 
         assert response.status_code == 200
         assert response.json() == {"data": []}
 
     async def test_undeclared_query_parameters_are_ignored(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         ticket_package_factory: Factory,
     ) -> None:
@@ -328,7 +347,7 @@ class TestListTicketPackagesEndpoint:
         for name in ("b", "a"):
             await ticket_package_factory(ticket_id=ticket.id, package_name=name)
 
-        response = await client.get(
+        response = await authenticated_client.get(
             _url(ticket),
             params={"sort_by": "package_name", "sort_order": "desc", "page": 2},
         )
@@ -341,7 +360,7 @@ class TestListTicketPackagesEndpoint:
 class TestEvaluationInstant:
     async def test_one_instant_and_its_utc_date_across_midnight(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         product_factory: Factory,
@@ -376,8 +395,12 @@ class TestEvaluationInstant:
 
         monkeypatch.setattr(package_service, "get_ticket_packages", _spy)
 
-        first = (await client.get(_url(ticket))).json()["data"][0]["tracks"][0]
-        second = (await client.get(_url(ticket))).json()["data"][0]["tracks"][0]
+        first = (await authenticated_client.get(_url(ticket))).json()["data"][0][
+            "tracks"
+        ][0]
+        second = (await authenticated_client.get(_url(ticket))).json()["data"][0][
+            "tracks"
+        ][0]
 
         assert fixed_clock.calls == [before_midnight, after_midnight]
         assert received == [
@@ -398,7 +421,7 @@ class TestEvaluationInstant:
 class TestTicketAccessibility:
     async def test_every_not_found_cause_returns_the_identical_response(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         ticket_package_factory: Factory,
     ) -> None:
@@ -421,7 +444,7 @@ class TestTicketAccessibility:
             format_ticket_id(confidential.sequence_id),
         ]
 
-        responses = [await client.get(_url(loc)) for loc in locators]
+        responses = [await authenticated_client.get(_url(loc)) for loc in locators]
 
         for locator, response in zip(locators, responses, strict=True):
             assert response.status_code == 404, locator

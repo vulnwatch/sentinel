@@ -137,7 +137,7 @@ async def list_submission_requests(
     Requests).
 
     Q1: `ticket_id` is the public `SNTL-{n}` locator and `caller` the
-    request-resolved caller (anonymous allowed). `package_name` and
+    request-resolved authenticated caller. `package_name` and
     `codestream_name` are exact, case-sensitive filters on the action's
     logical package and codestream. `state` is an exact parent request
     state; `state_was_supplied = True` with `state = None` represents a

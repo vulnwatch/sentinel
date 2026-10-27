@@ -4,7 +4,7 @@
 See docs/features/packages/product-catalog.md (API Endpoints > List
 Products: query parameters, response, Product list item, Product Query
 Service, Test Requirements; Catalog Readiness and Freshness; Security),
-docs/api-spec.md (Optional Authentication on Public Endpoints; Query
+docs/api-spec.md (Authentication and Authorization; Query
 Parameter Length Limit; Undeclared Query Parameters; Pagination; Enum
 Filter Validation; Sort Parameter Validation; Response Format; Global
 Responses; Product Identifier Resolution), and
@@ -14,7 +14,7 @@ Responsibility and Proportionality).
 These tests cover the HTTP contract: the envelope and wire format,
 repeatable-filter parsing (defaults, invalid values, all-invalid),
 the one handler-captured UTC evaluation date, request validation,
-undeclared parameters, optional authentication, handler delegation, and
+undeclared parameters, authentication, handler delegation, and
 OpenAPI. Search, filter composition, lifecycle parity, sorting, tie-breaking,
 read-only, and independent-session snapshot-race coverage lives in
 `tests/test_services/test_product_list.py`.
@@ -26,6 +26,7 @@ rollback) and passes explicit `catalog_last_seen_at` values.
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, timedelta, timezone
@@ -98,6 +99,9 @@ _QUERY_PARAMETERS: Final = {
 
 _TOO_LONG_MSG: Final = "String should have at most 500 characters"
 
+_CALLER_RESOLUTION: Final = re.compile(r'\bFROM (?:session|"user"|user_role|api_key)\s')
+"""A statement of the authentication dependency's caller resolution."""
+
 
 async def _cpes(client: AsyncClient, **params: Any) -> list[str]:
     """CPEs of one complete page; the total must equal the page."""
@@ -121,6 +125,12 @@ class _StatementRecorder:
     def __init__(self, db: AsyncSession) -> None:
         self._engine = db.get_bind().engine
         self.statements: list[str] = []
+
+    @property
+    def handler_statements(self) -> list[str]:
+        """The recorded statements other than the authentication
+        dependency's credential and role resolution."""
+        return [s for s in self.statements if not _CALLER_RESOLUTION.search(s)]
 
     def _record(self, *args: Any) -> None:
         self.statements.append(args[2])
@@ -159,7 +169,10 @@ def _spy(monkeypatch: pytest.MonkeyPatch, page: ProductPage | None = None) -> As
 @pytest.mark.e2e
 class TestProductList:
     async def test_paginated_envelope_and_wire_format(
-        self, client: AsyncClient, fixed_clock: Clock, product_factory: ProductFactory
+        self,
+        authenticated_client: AsyncClient,
+        fixed_clock: Clock,
+        product_factory: ProductFactory,
     ) -> None:
         supported = await product_factory(
             name="Example Linux Enterprise Server",
@@ -185,7 +198,7 @@ class TestProductList:
             updated_at=_UPDATED_AT,
         )
 
-        response = await client.get(_PATH)
+        response = await authenticated_client.get(_PATH)
 
         assert response.status_code == 200
         body = response.json()
@@ -238,14 +251,14 @@ class TestProductList:
     )
     async def test_cvss_threshold_is_a_json_number(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         product_factory: ProductFactory,
         threshold: Decimal,
         wire: str,
     ) -> None:
         await product_factory(catalog_last_seen_at=_SNAPSHOT, cvss_threshold=threshold)
 
-        response = await client.get(_PATH)
+        response = await authenticated_client.get(_PATH)
 
         assert response.status_code == 200
         (item,) = response.json()["data"]
@@ -264,22 +277,24 @@ class TestProductList:
         ids=["default", "both", "unavailable", "empty-search"],
     )
     async def test_empty_catalog_returns_an_empty_page(
-        self, client: AsyncClient, params: dict[str, Any]
+        self, authenticated_client: AsyncClient, params: dict[str, Any]
     ) -> None:
         """Before the first complete snapshot: `200` and an empty page,
         never `PRODUCT_CATALOG_NOT_READY`."""
-        response = await client.get(_PATH, params=params)
+        response = await authenticated_client.get(_PATH, params=params)
 
         assert response.status_code == 200
         assert response.json() == _EMPTY_PAGE
 
     async def test_page_beyond_the_last_is_empty_with_the_correct_total(
-        self, client: AsyncClient, product_factory: ProductFactory
+        self, authenticated_client: AsyncClient, product_factory: ProductFactory
     ) -> None:
         for _ in range(3):
             await product_factory(catalog_last_seen_at=_SNAPSHOT)
 
-        response = await client.get(_PATH, params={"page": 3, "per_page": 2})
+        response = await authenticated_client.get(
+            _PATH, params={"page": 3, "per_page": 2}
+        )
 
         assert response.status_code == 200
         assert response.json() == {
@@ -353,19 +368,21 @@ class TestRepeatableFilters:
     )
     async def test_catalog_presence_is_parsed_from_wire_values(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         presence_world: None,
         presence: list[str] | None,
         expected: list[str],
     ) -> None:
         params = {} if presence is None else {"catalog_presence": presence}
 
-        assert await _cpes(client, **params, sort_by="cpe") == sorted(expected)
+        assert await _cpes(authenticated_client, **params, sort_by="cpe") == sorted(
+            expected
+        )
 
     async def test_catalog_presence_is_serialized_per_item(
-        self, client: AsyncClient, presence_world: None
+        self, authenticated_client: AsyncClient, presence_world: None
     ) -> None:
-        response = await client.get(
+        response = await authenticated_client.get(
             _PATH, params={"catalog_presence": ["historical", "current"]}
         )
 
@@ -397,7 +414,7 @@ class TestRepeatableFilters:
     )
     async def test_lifecycle_phase_is_parsed_from_wire_values(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         phase_world: None,
         phases: list[str] | None,
@@ -405,14 +422,14 @@ class TestRepeatableFilters:
     ) -> None:
         params = {} if phases is None else {"lifecycle_phase": phases}
 
-        assert await _cpes(client, **params, sort_by="cpe") == [
+        assert await _cpes(authenticated_client, **params, sort_by="cpe") == [
             f"cpe:/o:example:{label}" for label in expected
         ]
 
     async def test_unavailable_items_keep_a_null_lifecycle_phase(
-        self, client: AsyncClient, fixed_clock: Clock, phase_world: None
+        self, authenticated_client: AsyncClient, fixed_clock: Clock, phase_world: None
     ) -> None:
-        response = await client.get(
+        response = await authenticated_client.get(
             _PATH,
             params={"lifecycle_phase": ["unavailable", "general_support"]},
         )
@@ -454,7 +471,7 @@ class TestEvaluationDate:
     )
     async def test_rows_filters_and_phases_use_the_captured_utc_date(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         monkeypatch: pytest.MonkeyPatch,
         product_factory: ProductFactory,
         now: datetime,
@@ -471,9 +488,13 @@ class TestEvaluationDate:
         clock = Clock(now)
         monkeypatch.setattr(route, "_utc_now", clock.now)
 
-        listed = await client.get(_PATH)
-        selected = await client.get(_PATH, params={"lifecycle_phase": phase})
-        excluded = await client.get(_PATH, params={"lifecycle_phase": other})
+        listed = await authenticated_client.get(_PATH)
+        selected = await authenticated_client.get(
+            _PATH, params={"lifecycle_phase": phase}
+        )
+        excluded = await authenticated_client.get(
+            _PATH, params={"lifecycle_phase": other}
+        )
 
         assert [item["lifecycle_phase"] for item in listed.json()["data"]] == [phase]
         assert [item["lifecycle_phase"] for item in selected.json()["data"]] == [phase]
@@ -510,14 +531,14 @@ class TestRequestValidation:
     @pytest.mark.parametrize(("params", "field"), _INVALID_CASES)
     async def test_invalid_parameter_returns_422_before_the_service(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         monkeypatch: pytest.MonkeyPatch,
         params: dict[str, Any],
         field: str,
     ) -> None:
         spy = _spy(monkeypatch)
 
-        response = await client.get(_PATH, params=params)
+        response = await authenticated_client.get(_PATH, params=params)
 
         assert response.status_code == 422
         body = response.json()
@@ -528,7 +549,10 @@ class TestRequestValidation:
 
     @pytest.mark.parametrize("field", _STRING_PARAMETERS)
     async def test_a_501_character_value_is_a_422(
-        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch, field: str
+        self,
+        authenticated_client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+        field: str,
     ) -> None:
         """The global limit applies to each raw value, including one
         occurrence of a repeatable filter beside a valid one."""
@@ -537,7 +561,7 @@ class TestRequestValidation:
         if field in {"catalog_presence", "lifecycle_phase"}:
             value = ["current" if field == "catalog_presence" else "eol", "x" * 501]
 
-        response = await client.get(_PATH, params={field: value})
+        response = await authenticated_client.get(_PATH, params={field: value})
 
         assert response.status_code == 422
         assert response.json() == {
@@ -555,17 +579,20 @@ class TestRequestValidation:
 
     @pytest.mark.parametrize("field", _STRING_PARAMETERS)
     async def test_a_500_character_value_is_accepted(
-        self, client: AsyncClient, product_factory: ProductFactory, field: str
+        self,
+        authenticated_client: AsyncClient,
+        product_factory: ProductFactory,
+        field: str,
     ) -> None:
         await product_factory(catalog_last_seen_at=_SNAPSHOT)
 
-        response = await client.get(_PATH, params={field: "x" * 500})
+        response = await authenticated_client.get(_PATH, params={field: "x" * 500})
 
         assert response.status_code == 200
         assert response.json() == _EMPTY_PAGE
 
     async def test_boundary_page_values_are_accepted(
-        self, client: AsyncClient, product_factory: ProductFactory
+        self, authenticated_client: AsyncClient, product_factory: ProductFactory
     ) -> None:
         for _ in range(2):
             await product_factory(catalog_last_seen_at=_SNAPSHOT)
@@ -579,13 +606,13 @@ class TestRequestValidation:
                 0,
             ),
         ):
-            response = await client.get(_PATH, params=params)
+            response = await authenticated_client.get(_PATH, params=params)
             assert response.status_code == 200, (params, response.text)
             assert response.json()["meta"] == meta
             assert len(response.json()["data"]) == size
 
     async def test_every_sort_field_and_order_is_accepted(
-        self, client: AsyncClient, product_factory: ProductFactory
+        self, authenticated_client: AsyncClient, product_factory: ProductFactory
     ) -> None:
         """Ordering semantics are proven by the service tests; the wire
         accepts every documented value."""
@@ -593,17 +620,17 @@ class TestRequestValidation:
 
         for sort_by in ProductSortField:
             for sort_order in SortOrder:
-                response = await client.get(
+                response = await authenticated_client.get(
                     _PATH, params={"sort_by": sort_by, "sort_order": sort_order}
                 )
                 assert response.status_code == 200, (sort_by, sort_order)
                 assert response.json()["meta"]["total"] == 1
 
     async def test_undeclared_query_parameters_are_ignored(
-        self, client: AsyncClient, presence_world: None
+        self, authenticated_client: AsyncClient, presence_world: None
     ) -> None:
-        plain = await client.get(_PATH)
-        with_params = await client.get(
+        plain = await authenticated_client.get(_PATH)
+        with_params = await authenticated_client.get(
             _PATH,
             params={
                 "foo": "bar",
@@ -622,24 +649,30 @@ class TestRequestValidation:
 
 
 # ---------------------------------------------------------------------------
-# Optional authentication
+# Authentication
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.e2e
-class TestOptionalAuthentication:
-    async def test_anonymous_request_is_accepted(
-        self, client: AsyncClient, presence_world: None
+class TestAuthentication:
+    async def test_request_without_credential_returns_401_before_the_service(
+        self,
+        client: AsyncClient,
+        presence_world: None,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        assert await _cpes(client) == _CURRENT
+        spy = _spy(monkeypatch)
 
-    async def test_valid_session_cookie_is_accepted_with_the_same_listing(
+        response = await client.get(_PATH)
+
+        assert response.status_code == 401
+        assert response.json() == UNAUTHENTICATED
+        spy.assert_not_awaited()
+
+    async def test_role_less_session_cookie_is_accepted_with_the_listing(
         self, authenticated_client: AsyncClient, presence_world: None
     ) -> None:
-        response = await authenticated_client.get(_PATH)
-
-        assert response.status_code == 200
-        assert [item["cpe"] for item in response.json()["data"]] == _CURRENT
+        assert await _cpes(authenticated_client) == _CURRENT
 
     async def test_valid_api_key_is_accepted_and_processed(
         self,
@@ -717,7 +750,7 @@ class TestOptionalAuthentication:
 class TestHandlerDelegation:
     async def test_defaults_reach_the_service(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         db_session: AsyncSession,
         fixed_clock: Clock,
         monkeypatch: pytest.MonkeyPatch,
@@ -725,11 +758,11 @@ class TestHandlerDelegation:
         spy = _spy(monkeypatch)
 
         with _StatementRecorder(db_session) as recorder:
-            response = await client.get(_PATH)
+            response = await authenticated_client.get(_PATH)
 
         assert response.status_code == 200
         assert response.json() == _EMPTY_PAGE
-        assert recorder.statements == []
+        assert recorder.handler_statements == []
         assert fixed_clock.calls == 1
         spy.assert_awaited_once()
         assert spy.await_args is not None
@@ -753,7 +786,7 @@ class TestHandlerDelegation:
 
     async def test_parsed_arguments_reach_the_service_and_are_serialized(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         db_session: AsyncSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -781,7 +814,7 @@ class TestHandlerDelegation:
         monkeypatch.setattr(route, "_utc_now", clock.now)
 
         with _StatementRecorder(db_session) as recorder:
-            response = await client.get(
+            response = await authenticated_client.get(
                 _PATH,
                 params={
                     "search": "  Fictional%_\\  ",
@@ -828,7 +861,7 @@ class TestHandlerDelegation:
             "meta": {"total": 15, "page": 3, "per_page": 7},
         }
         assert '"cvss_threshold":7.0' in response.text
-        assert recorder.statements == []
+        assert recorder.handler_statements == []
         assert clock.calls == 1
         spy.assert_awaited_once()
         assert spy.await_args is not None
@@ -850,13 +883,13 @@ class TestHandlerDelegation:
 
     async def test_only_invalid_filter_values_reach_the_service_as_empty_tuples(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         spy = _spy(monkeypatch)
 
-        response = await client.get(
+        response = await authenticated_client.get(
             _PATH,
             params={
                 "catalog_presence": ["bogus", "current,historical"],

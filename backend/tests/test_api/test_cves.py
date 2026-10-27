@@ -3,7 +3,7 @@
 
 See docs/features/tickets/cvss-scoring.md (API Endpoints > Shared
 Assessment Item and Get CVSS Assessments for a CVE; Accepted Base
-Vectors), docs/api-spec.md (Optional Authentication on Public Endpoints,
+Vectors), docs/api-spec.md (Authentication and Authorization,
 CVE Accessibility Check, CVE Identifier Resolution), and
 docs/features/platform/testing-strategy.md (Ticket Accessibility >
 Authentication, authorization, and anti-enumeration). Service-level
@@ -136,9 +136,12 @@ def authenticated_user(
 
 @pytest.fixture
 async def transmitting_client(
-    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    authenticated_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncGenerator[AsyncClient]:
-    """An anonymous client that returns the transmitted 500 response.
+    """A client of the role-less user behind `authenticated_client` that
+    returns the transmitted 500 response.
 
     Starlette's `ServerErrorMiddleware` re-raises an unhandled exception
     after the application's generic handler has sent its response;
@@ -160,20 +163,23 @@ async def transmitting_client(
         transport=ASGITransport(app=app, raise_app_exceptions=False),
         base_url="http://test",
     ) as ac:
+        ac.cookies.set(
+            SESSION_COOKIE_NAME, authenticated_client.cookies[SESSION_COOKIE_NAME]
+        )
         yield ac
     app.dependency_overrides.pop(get_db, None)
 
 
 # ---------------------------------------------------------------------------
-# Optional authentication
+# Authentication
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.e2e
 class TestAuthentication:
-    async def test_anonymous_caller_reads_a_ticketless_cve(
+    async def test_role_less_caller_reads_a_ticketless_cve(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         default_setting: SystemSetting,
         cve_factory: Factory,
         cve_cvss_assessment_factory: Factory,
@@ -181,7 +187,7 @@ class TestAuthentication:
         cve: CVE = await cve_factory()
         await cve_cvss_assessment_factory(cve_id=cve.id, provider_name="SUSE")
 
-        response = await client.get(_url(cve))
+        response = await authenticated_client.get(_url(cve))
 
         assert response.status_code == 200
         data = response.json()["data"]
@@ -191,12 +197,13 @@ class TestAuthentication:
     @pytest.mark.parametrize(
         "credential",
         [
+            {},
             {"headers": {"Authorization": "Bearer invalid-token"}},
             {"cookies": {SESSION_COOKIE_NAME: "invalid-session-token"}},
         ],
-        ids=["bearer", "cookie"],
+        ids=["missing", "bearer", "cookie"],
     )
-    async def test_invalid_credential_returns_401_before_lookup(
+    async def test_missing_or_invalid_credential_returns_401_before_lookup(
         self,
         client: AsyncClient,
         cve_factory: Factory,
@@ -227,7 +234,7 @@ class TestAuthentication:
 class TestCVEAccessibility:
     async def test_every_not_found_cause_returns_the_identical_response(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         default_setting: SystemSetting,
         cve_factory: Factory,
         ticket_factory: Factory,
@@ -246,14 +253,14 @@ class TestCVEAccessibility:
             confidential.cve_id,
         ]
 
-        responses = [await client.get(_url(target)) for target in targets]
+        responses = [await authenticated_client.get(_url(target)) for target in targets]
 
         for target, response in zip(targets, responses, strict=True):
             assert response.status_code == 404, target
             assert response.json() == _NOT_FOUND, target
             assert response.headers["content-type"] == "application/json"
         assert len({response.content for response in responses}) == 1
-        assert (await client.get(_url(visible))).status_code == 200
+        assert (await authenticated_client.get(_url(visible))).status_code == 200
 
     async def test_authenticated_caller_without_access_gets_the_same_404(
         self,
@@ -349,7 +356,7 @@ class TestCVEAccessibility:
 class TestResponseContract:
     async def test_returns_the_complete_composite_in_the_wire_format(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         default_setting: SystemSetting,
         cve_factory: Factory,
         ticket_factory: Factory,
@@ -394,7 +401,7 @@ class TestResponseContract:
                 "updated_at": "2026-09-10T10:31:00Z",
             }
 
-        response = await client.get(_url(cve))
+        response = await authenticated_client.get(_url(cve))
 
         assert response.status_code == 200
         body = response.json()
@@ -451,11 +458,14 @@ class TestResponseContract:
         assert str(cve.id) not in response.text
 
     async def test_empty_set_returns_null_severity_and_fallback_eligibility(
-        self, client: AsyncClient, default_setting: SystemSetting, cve_factory: Factory
+        self,
+        authenticated_client: AsyncClient,
+        default_setting: SystemSetting,
+        cve_factory: Factory,
     ) -> None:
         cve: CVE = await cve_factory()
 
-        response = await client.get(_url(cve))
+        response = await authenticated_client.get(_url(cve))
 
         assert response.status_code == 200
         assert response.json() == {
@@ -469,7 +479,7 @@ class TestResponseContract:
 
     async def test_v2_zero_score_is_assessment_low_and_unified_none(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         default_setting: SystemSetting,
         cve_factory: Factory,
         cve_cvss_assessment_factory: Factory,
@@ -479,7 +489,7 @@ class TestResponseContract:
             cve_id=cve.id, provider_name="Example Vendor", **_unit(V20_ZERO)
         )
 
-        data = (await client.get(_url(cve))).json()["data"]
+        data = (await authenticated_client.get(_url(cve))).json()["data"]
 
         (assessment,) = data["assessments"]
         assert (assessment["score"], assessment["severity"]) == (0.0, "low")
@@ -501,7 +511,7 @@ class TestResponseContract:
 
     async def test_default_version_40_is_returned_and_applied(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         default_setting: SystemSetting,
         db_session: AsyncSession,
         cve_factory: Factory,
@@ -517,7 +527,7 @@ class TestResponseContract:
             cve_id=cve.id, provider_name="Example Vendor", **_unit(V40)
         )
 
-        data = (await client.get(_url(cve))).json()["data"]
+        data = (await authenticated_client.get(_url(cve))).json()["data"]
 
         assert data["default_cvss_version"] == "4.0"
         assert data["severity"] == {
@@ -530,7 +540,7 @@ class TestResponseContract:
 
     async def test_pagination_and_sort_parameters_are_ignored(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         default_setting: SystemSetting,
         cve_factory: Factory,
         cve_cvss_assessment_factory: Factory,
@@ -541,8 +551,8 @@ class TestResponseContract:
                 cve_id=cve.id, provider_name=provider, **_unit(vector)
             )
 
-        plain = await client.get(_url(cve))
-        with_params = await client.get(
+        plain = await authenticated_client.get(_url(cve))
+        with_params = await authenticated_client.get(
             _url(cve),
             params={"page": "2", "per_page": "1", "sort_by": "provider_name"},
         )

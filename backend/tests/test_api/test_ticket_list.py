@@ -4,8 +4,8 @@ See docs/features/tickets/tickets.md (List Tickets, Response Schemas >
 TicketSummary, CVESummary, UserSummary), docs/features/tickets/
 ticket-priority.md (API Surface; Testing Requirement 9),
 docs/features/tickets/ticket-deadlines.md (Ticket-Level Overdue Filter,
-Sorting, API Surface), docs/api-spec.md (Optional Authentication on
-Public Endpoints, Query Parameter Length Limit, Undeclared Query
+Sorting, API Surface), docs/api-spec.md (Authentication and
+Authorization, Query Parameter Length Limit, Undeclared Query
 Parameters, Pagination, Enum Filter Validation, Sort Parameter
 Validation, Response Format), and docs/features/platform/
 testing-strategy.md (API Endpoints; Ticket Accessibility). Search,
@@ -27,7 +27,6 @@ from httpx import AsyncClient
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import SESSION_COOKIE_NAME
 from app.api.v1 import tickets as route
 from app.core.enums import (
     MilestonePhase,
@@ -127,7 +126,7 @@ async def _ids(client: AsyncClient, **params: Any) -> list[str]:
 class TestListEndpoint:
     async def test_returns_the_paginated_summary_envelope_in_the_wire_format(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: list[datetime],
         ticket_factory: Factory,
         cve_factory: Factory,
@@ -154,7 +153,7 @@ class TestListEndpoint:
         await ticket_package_factory(ticket_id=ticket.id, package_name="openssl-3")
         await ticket_package_factory(ticket_id=ticket.id, package_name="curl")
 
-        response = await client.get(_PATH)
+        response = await authenticated_client.get(_PATH)
 
         assert response.status_code == 200
         body = response.json()
@@ -193,14 +192,17 @@ class TestListEndpoint:
         assert len(fixed_clock) == 1
 
     async def test_null_severity_priority_and_due_dates_serialize_as_null(
-        self, client: AsyncClient, fixed_clock: list[datetime], ticket_factory: Factory
+        self,
+        authenticated_client: AsyncClient,
+        fixed_clock: list[datetime],
+        ticket_factory: Factory,
     ) -> None:
         target = await ticket_factory()
         await ticket_factory(
             duplicate_of_id=target.id, severity_manual=Severity.NONE.value
         )
 
-        response = await client.get(
+        response = await authenticated_client.get(
             _PATH, params={"status": "duplicated", "severity": "none"}
         )
 
@@ -214,7 +216,10 @@ class TestListEndpoint:
         )
 
     async def test_repeatable_filters_parse_wire_values_and_ignore_invalid_ones(
-        self, client: AsyncClient, fixed_clock: list[datetime], ticket_factory: Factory
+        self,
+        authenticated_client: AsyncClient,
+        fixed_clock: list[datetime],
+        ticket_factory: Factory,
     ) -> None:
         new = await ticket_factory(
             status=TicketStatus.NEW.value,
@@ -223,14 +228,22 @@ class TestListEndpoint:
         )
         analysis = await ticket_factory(status=TicketStatus.ANALYSIS.value)
 
-        assert set(await _ids(client, status=["new", "analysis", "bogus"])) == {
+        assert set(
+            await _ids(authenticated_client, status=["new", "analysis", "bogus"])
+        ) == {
             _sntl(new),
             _sntl(analysis),
         }
-        assert await _ids(client, severity=["high", "HIGH"]) == [_sntl(new)]
-        assert await _ids(client, severity=["unresolved"]) == [_sntl(analysis)]
-        assert await _ids(client, priority=["p1"]) == [_sntl(new)]
-        assert await _ids(client, priority=["unresolved"]) == [_sntl(analysis)]
+        assert await _ids(authenticated_client, severity=["high", "HIGH"]) == [
+            _sntl(new)
+        ]
+        assert await _ids(authenticated_client, severity=["unresolved"]) == [
+            _sntl(analysis)
+        ]
+        assert await _ids(authenticated_client, priority=["p1"]) == [_sntl(new)]
+        assert await _ids(authenticated_client, priority=["unresolved"]) == [
+            _sntl(analysis)
+        ]
 
     @pytest.mark.parametrize(
         "params",
@@ -245,7 +258,7 @@ class TestListEndpoint:
     )
     async def test_all_invalid_supplied_filter_returns_an_empty_page(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: list[datetime],
         ticket_factory: Factory,
         params: dict[str, Any],
@@ -256,7 +269,7 @@ class TestListEndpoint:
             priority_auto=TicketPriority.P1.value,
         )
 
-        response = await client.get(_PATH, params=params)
+        response = await authenticated_client.get(_PATH, params=params)
 
         assert response.status_code == 200
         assert response.json() == {
@@ -266,7 +279,7 @@ class TestListEndpoint:
 
     async def test_overdue_filter_parses_phases(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -275,11 +288,13 @@ class TestListEndpoint:
         overdue = await ticket_factory(created_at=_CREATED_AT)
         await ticket_factory(created_at=late - timedelta(hours=1))
 
-        assert await _ids(client, overdue=["triage", "bogus"]) == [_sntl(overdue)]
+        assert await _ids(authenticated_client, overdue=["triage", "bogus"]) == [
+            _sntl(overdue)
+        ]
 
     async def test_assignee_and_maintainer_accept_uuid_username_and_unknown(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: list[datetime],
         ticket_factory: Factory,
         user_factory: Factory,
@@ -294,22 +309,33 @@ class TestListEndpoint:
             ticket_package_id=package.id, user_id=analyst.id
         )
 
-        assert await _ids(client, assignee=str(analyst.id)) == [_sntl(assigned)]
-        assert await _ids(client, assignee="fictional.va") == [_sntl(assigned)]
-        assert await _ids(client, assignee="none") == [_sntl(unassigned)]
-        assert await _ids(client, maintainer=str(analyst.id)) == [_sntl(unassigned)]
-        assert await _ids(client, maintainer="fictional.va") == [_sntl(unassigned)]
+        assert await _ids(authenticated_client, assignee=str(analyst.id)) == [
+            _sntl(assigned)
+        ]
+        assert await _ids(authenticated_client, assignee="fictional.va") == [
+            _sntl(assigned)
+        ]
+        assert await _ids(authenticated_client, assignee="none") == [_sntl(unassigned)]
+        assert await _ids(authenticated_client, maintainer=str(analyst.id)) == [
+            _sntl(unassigned)
+        ]
+        assert await _ids(authenticated_client, maintainer="fictional.va") == [
+            _sntl(unassigned)
+        ]
         for params in (
             {"assignee": "unknown.user"},
             {"maintainer": "unknown.user"},
             {"maintainer": "none"},
         ):
-            response = await client.get(_PATH, params=params)
+            response = await authenticated_client.get(_PATH, params=params)
             assert response.status_code == 200, params
             assert response.json()["meta"]["total"] == 0, params
 
     async def test_search_and_sort_reach_the_service(
-        self, client: AsyncClient, fixed_clock: list[datetime], ticket_factory: Factory
+        self,
+        authenticated_client: AsyncClient,
+        fixed_clock: list[datetime],
+        ticket_factory: Factory,
     ) -> None:
         first = await ticket_factory(sequence_id=42, created_at=_CREATED_AT)
         second = await ticket_factory(
@@ -317,21 +343,28 @@ class TestListEndpoint:
         )
         await ticket_factory(sequence_id=1042)
 
-        assert await _ids(client, search=" sntl-42 ", sort_by="created_at") == [
+        assert await _ids(
+            authenticated_client, search=" sntl-42 ", sort_by="created_at"
+        ) == [
             _sntl(second),
             _sntl(first),
         ]
         assert await _ids(
-            client, search="42", sort_by="ticket_id", sort_order="asc"
+            authenticated_client, search="42", sort_by="ticket_id", sort_order="asc"
         ) == [_sntl(first), _sntl(second)]
 
     async def test_page_beyond_the_last_is_empty_with_the_correct_total(
-        self, client: AsyncClient, fixed_clock: list[datetime], ticket_factory: Factory
+        self,
+        authenticated_client: AsyncClient,
+        fixed_clock: list[datetime],
+        ticket_factory: Factory,
     ) -> None:
         for _ in range(3):
             await ticket_factory()
 
-        response = await client.get(_PATH, params={"page": 3, "per_page": 2})
+        response = await authenticated_client.get(
+            _PATH, params={"page": 3, "per_page": 2}
+        )
 
         assert response.status_code == 200
         assert response.json() == {
@@ -357,7 +390,7 @@ class TestListEndpoint:
     )
     async def test_invalid_pagination_sort_and_length_return_422(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         params: dict[str, Any],
         field: str,
         monkeypatch: pytest.MonkeyPatch,
@@ -365,7 +398,7 @@ class TestListEndpoint:
         spy = AsyncMock()
         monkeypatch.setattr(ticket_service, "list_tickets", spy)
 
-        response = await client.get(_PATH, params=params)
+        response = await authenticated_client.get(_PATH, params=params)
 
         assert response.status_code == 422
         body = response.json()
@@ -374,11 +407,14 @@ class TestListEndpoint:
         spy.assert_not_awaited()
 
     async def test_limits_accept_boundary_values(
-        self, client: AsyncClient, fixed_clock: list[datetime], ticket_factory: Factory
+        self,
+        authenticated_client: AsyncClient,
+        fixed_clock: list[datetime],
+        ticket_factory: Factory,
     ) -> None:
         await ticket_factory()
 
-        response = await client.get(
+        response = await authenticated_client.get(
             _PATH, params={"per_page": 100, "search": "x" * 500, "page": 1}
         )
 
@@ -386,11 +422,14 @@ class TestListEndpoint:
         assert response.json()["meta"] == {"total": 0, "page": 1, "per_page": 100}
 
     async def test_undeclared_query_parameters_are_ignored(
-        self, client: AsyncClient, fixed_clock: list[datetime], ticket_factory: Factory
+        self,
+        authenticated_client: AsyncClient,
+        fixed_clock: list[datetime],
+        ticket_factory: Factory,
     ) -> None:
         ticket = await ticket_factory()
 
-        response = await client.get(
+        response = await authenticated_client.get(
             _PATH,
             params={"evaluation_date": "2020-01-01", "caller": "x", "q": "y" * 600},
         )
@@ -402,7 +441,7 @@ class TestListEndpoint:
 
     async def test_every_sort_field_and_order_is_accepted(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: list[datetime],
         ticket_factory: Factory,
     ) -> None:
@@ -410,7 +449,7 @@ class TestListEndpoint:
 
         for sort_by in TicketSortField:
             for sort_order in SortOrder:
-                response = await client.get(
+                response = await authenticated_client.get(
                     _PATH,
                     params={"sort_by": sort_by.value, "sort_order": sort_order.value},
                 )
@@ -420,6 +459,18 @@ class TestListEndpoint:
 
 @pytest.mark.e2e
 class TestAuthenticationAndVisibility:
+    async def test_request_without_credential_returns_401_before_the_query(
+        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        spy = AsyncMock()
+        monkeypatch.setattr(ticket_service, "list_tickets", spy)
+
+        response = await client.get(_PATH)
+
+        assert response.status_code == 401
+        assert response.json() == _UNAUTHENTICATED
+        spy.assert_not_awaited()
+
     async def test_invalid_credential_returns_401_before_the_query(
         self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -445,31 +496,28 @@ class TestAuthenticationAndVisibility:
         ticket_package_factory: Factory,
         ticket_package_maintainer_factory: Factory,
     ) -> None:
+        """The role-less caller first holds no grant or maintainership, then
+        gains both, then the `all` scope of a role."""
         public = await ticket_factory()
         granted = await ticket_factory(is_confidential=True)
-        await ticket_access_grant_factory(
-            ticket_id=granted.id, user_id=authenticated_user.id
-        )
         maintained = await ticket_factory(is_confidential=True)
         package = await ticket_package_factory(ticket_id=maintained.id)
-        await ticket_package_maintainer_factory(
-            ticket_package_id=package.id, user_id=authenticated_user.id
-        )
         excluded_maintained = await ticket_factory(is_confidential=True)
         excluded = await ticket_package_factory(
             ticket_id=excluded_maintained.id, deleted_at=_NOW
         )
+        hidden = await ticket_factory(is_confidential=True)
+
+        assert await _ids(authenticated_client) == [_sntl(public)]
+        await ticket_access_grant_factory(
+            ticket_id=granted.id, user_id=authenticated_user.id
+        )
+        await ticket_package_maintainer_factory(
+            ticket_package_id=package.id, user_id=authenticated_user.id
+        )
         await ticket_package_maintainer_factory(
             ticket_package_id=excluded.id, user_id=authenticated_user.id
         )
-        hidden = await ticket_factory(is_confidential=True)
-
-        # `authenticated_client` is the shared client with a session cookie;
-        # drop it for one anonymous request.
-        token = authenticated_client.cookies[SESSION_COOKIE_NAME]
-        authenticated_client.cookies.delete(SESSION_COOKIE_NAME)
-        assert await _ids(authenticated_client) == [_sntl(public)]
-        authenticated_client.cookies.set(SESSION_COOKIE_NAME, token)
         assert set(await _ids(authenticated_client)) == {
             _sntl(public),
             _sntl(granted),

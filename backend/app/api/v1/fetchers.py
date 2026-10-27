@@ -5,8 +5,8 @@ Fetcher Runs, Get Fetcher Run Detail, Get Fetcher Run Timeline Data,
 Trigger Fetcher, Get Fetcher Config, Update Fetcher Config, Get Fetcher
 Audit Log) for the authoritative endpoint contracts this module
 implements. Handlers stay thin: they validate, derive
-`has_manage_fetchers` from the optional principal (Public endpoints) or
-require the `manage_fetchers` capability outright (admin endpoints),
+`has_manage_fetchers` from the authenticated principal (read endpoints)
+or require the `manage_fetchers` capability outright (admin endpoints),
 delegate to `app.services.fetcher_operations`, and map the result to
 the documented response — no business logic or database query lives
 here. `trigger_fetcher` is the sole exception to the `DatabaseSession`
@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.dependencies import (
     AuthenticatedPrincipal,
-    OptionalCurrentUser,
+    CurrentUser,
     require_capability,
 )
 from app.celery_app import celery_app
@@ -117,15 +117,13 @@ _DEREGISTERED_DESCRIPTION = (
 
 
 async def _resolve_has_manage_fetchers(
-    db: DatabaseSession, principal: OptionalCurrentUser
+    db: DatabaseSession, principal: CurrentUser
 ) -> bool:
     """Derive `has_manage_fetchers` per fetcher-operations.md (Access
-    Control, `has_manage_fetchers` derivation): `False` for an
-    anonymous caller, else whether the caller's current roles grant
-    `manage_fetchers`. Never produces a 401/403 on these Public
-    endpoints — it only controls field-level visibility."""
-    if principal is None:
-        return False
+    Control, `has_manage_fetchers` derivation): whether the
+    authenticated caller's current roles grant `manage_fetchers`. Never
+    produces a 403 on these read endpoints — it only controls
+    field-level visibility."""
     roles = await user_service.get_user_roles(db, principal.user.id)
     return Capability.MANAGE_FETCHERS in get_capabilities(roles)
 
@@ -424,13 +422,14 @@ def _fetcher_audit_query(
     description=(
         "Returns every fetcher — registered and deregistered — merged with "
         "its latest run and, for enabled registered fetchers, its next "
-        "scheduled run time. Optional authentication: anonymous callers "
-        "see sanitized fields only; callers with manage_fetchers "
-        "additionally see the manual-trigger actor."
+        "scheduled run time. Requires authentication (JWT session or API "
+        "key): callers without manage_fetchers see sanitized fields only; "
+        "callers with manage_fetchers additionally see the manual-trigger "
+        "actor."
     ),
 )
 async def list_fetchers(
-    principal: OptionalCurrentUser,
+    principal: CurrentUser,
     db: DatabaseSession,
 ) -> FetcherListResponse:
     """List all fetchers — see
@@ -448,13 +447,14 @@ async def list_fetchers(
     summary="List fetcher run history",
     description=(
         "Returns a paginated, fixed reverse-chronological list of runs for "
-        "the named fetcher. Supports filtering by status and date range."
+        "the named fetcher. Supports filtering by status and date range. "
+        "Requires authentication (JWT session or API key)."
     ),
     responses=_NOT_FOUND_RESPONSE,
 )
 async def list_fetcher_runs(
     fetcher_name: str,
-    principal: OptionalCurrentUser,
+    principal: CurrentUser,
     db: DatabaseSession,
     query: Annotated[FetcherRunListQuery, Depends(_fetcher_run_list_query)],
 ) -> FetcherRunListResponse:
@@ -488,7 +488,8 @@ async def list_fetcher_runs(
     summary="Get fetcher run detail",
     description=(
         "Returns full detail for a single run. Raw error detail and "
-        "traceback are present only for callers with manage_fetchers."
+        "traceback are present only for callers with manage_fetchers. "
+        "Requires authentication (JWT session or API key)."
     ),
     responses={
         404: {
@@ -503,7 +504,7 @@ async def list_fetcher_runs(
 async def get_fetcher_run(
     fetcher_name: str,
     run_id: UUID,
-    principal: OptionalCurrentUser,
+    principal: CurrentUser,
     db: DatabaseSession,
 ) -> FetcherRunDetailResponse:
     """Get fetcher run detail — see
@@ -536,7 +537,8 @@ async def get_fetcher_run(
     summary="Get fetcher run timeline data",
     description=(
         "Returns time-series run data and disabled periods for chart "
-        "rendering, bounded by an optional date range (maximum 1825 days)."
+        "rendering, bounded by an optional date range (maximum 1825 days). "
+        "Requires authentication (JWT session or API key)."
     ),
     responses={
         400: {
@@ -550,7 +552,7 @@ async def get_fetcher_run(
 )
 async def get_fetcher_timeline(
     fetcher_name: str,
-    principal: OptionalCurrentUser,
+    principal: CurrentUser,
     db: DatabaseSession,
     query: Annotated[FetcherTimelineQuery, Depends(_fetcher_timeline_query)],
 ) -> FetcherTimelineResponse:

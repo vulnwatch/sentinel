@@ -130,8 +130,8 @@ class TestMethodNotAllowed:
     ) -> None:
         """No endpoint serves `PUT` (`docs/api-spec.md`, Mutation Patterns),
         so it reaches the 405 on every registered path, before
-        authentication and capability checks, which this anonymous client
-        would otherwise fail. A concrete path is expected to allow every
+        authentication and capability checks, which this client without a
+        credential would otherwise fail. A concrete path is expected to allow every
         method of every registered pattern that matches it, so a new
         endpoint is covered without changing this test."""
         registered = _registered_methods()
@@ -225,8 +225,8 @@ class TestUndecodableBody:
         assert await redis_client.keys("login_attempts:*") == []
 
     async def test_rejection_precedes_authentication(self, client: AsyncClient) -> None:
-        """Ticket creation requires a capability; this anonymous request
-        would otherwise receive `401 AUTH_NOT_AUTHENTICATED`."""
+        """Ticket creation requires a capability; this request without a
+        credential would otherwise receive `401 AUTH_NOT_AUTHENTICATED`."""
         response = await client.post(
             "/api/v1/tickets",
             content=b'{"title": "fictional\xfftitle"}',

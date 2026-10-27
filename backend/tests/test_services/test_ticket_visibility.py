@@ -28,7 +28,6 @@ from app.models.ticket import Ticket
 from app.models.ticket_package import TicketPackage
 from app.models.user import User
 from app.services.ticket_visibility import (
-    ANONYMOUS_CALLER,
     TicketCaller,
     ticket_visibility_condition,
 )
@@ -56,26 +55,11 @@ def _compiled(caller: TicketCaller, dialect: Dialect) -> str:
 
 @pytest.mark.unit
 class TestTicketCaller:
-    def test_anonymous_caller_has_no_identity_or_scope(self) -> None:
-        assert ANONYMOUS_CALLER.user_id is None
-        assert ANONYMOUS_CALLER.scope is None
-        assert ANONYMOUS_CALLER.is_anonymous is True
-
     def test_authenticated_caller_carries_user_and_scope(self) -> None:
         user_id = uuid.uuid4()
         caller = TicketCaller.authenticated(user_id, Scope.ALL)
         assert caller.user_id == user_id
         assert caller.scope is Scope.ALL
-        assert caller.is_anonymous is False
-
-    @pytest.mark.parametrize(
-        "kwargs",
-        [{"user_id": uuid.uuid4()}, {"scope": Scope.ALL}],
-        ids=["user-without-scope", "scope-without-user"],
-    )
-    def test_partial_caller_is_rejected(self, kwargs: dict[str, Any]) -> None:
-        with pytest.raises(ValueError, match="both user_id and scope"):
-            TicketCaller(**kwargs)
 
     def test_is_frozen(self) -> None:
         caller = TicketCaller.authenticated(uuid.uuid4(), Scope.ALL)
@@ -86,15 +70,6 @@ class TestTicketCaller:
 @pytest.mark.integration
 class TestPredicateShape:
     """Compiled with the PostgreSQL dialect of the test session."""
-
-    def test_anonymous_predicate_is_only_the_non_confidential_branch(
-        self, db_session: AsyncSession
-    ) -> None:
-        sql = _compiled(ANONYMOUS_CALLER, db_session.get_bind().dialect)
-        assert "is_confidential IS false" in sql
-        assert "EXISTS" not in sql
-        assert "ticket_access_grant" not in sql
-        assert "ticket_package_maintainer" not in sql
 
     def test_scope_all_predicate_needs_no_relationship_lookup(
         self, db_session: AsyncSession
@@ -114,6 +89,7 @@ class TestPredicateShape:
             .where(ticket_visibility_condition(caller))
             .compile(dialect=db_session.get_bind().dialect)
         )
+        assert "ticket.is_confidential IS false" in sql
         assert sql.count("EXISTS") == 2
         assert "ticket_access_grant.ticket_id = ticket.id" in sql
         assert "ticket_package.ticket_id = ticket.id" in sql
@@ -138,26 +114,29 @@ class TestCanonicalPredicate:
         ticket = await ticket_factory(is_confidential=False)
         user = await user_factory()
         for caller in (
-            ANONYMOUS_CALLER,
             _restricted(user),
             TicketCaller.authenticated(user.id, Scope.ALL),
         ):
             assert await _is_visible(db_session, caller, ticket)
 
-    async def test_anonymous_caller_never_sees_a_confidential_ticket(
+    async def test_roleless_caller_without_own_path_never_sees_a_confidential_ticket(
         self,
         db_session: AsyncSession,
         ticket_factory: Factory,
+        user_factory: Factory,
         ticket_access_grant_factory: Factory,
         ticket_package_factory: Factory,
         ticket_package_maintainer_factory: Factory,
     ) -> None:
+        """Another user's grant and maintainership never extend to the
+        role-less caller."""
         ticket = await ticket_factory(is_confidential=True)
+        user = await user_factory()
         await ticket_access_grant_factory(ticket_id=ticket.id)
         package = await ticket_package_factory(ticket_id=ticket.id)
         await ticket_package_maintainer_factory(ticket_package_id=package.id)
 
-        assert not await _is_visible(db_session, ANONYMOUS_CALLER, ticket)
+        assert not await _is_visible(db_session, _restricted(user), ticket)
 
     async def test_scope_all_sees_confidential_without_grant_or_maintainer(
         self, db_session: AsyncSession, ticket_factory: Factory, user_factory: Factory

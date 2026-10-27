@@ -72,7 +72,7 @@ from app.services.ticket_mutations import (
     delete_cvss_assessment,
     require_accepted_cvss_version,
 )
-from app.services.ticket_visibility import ANONYMOUS_CALLER, TicketCaller
+from app.services.ticket_visibility import TicketCaller
 from tests.support.cvss_chain import (
     FALLBACK,
     CallCounter,
@@ -686,9 +686,6 @@ class TestAuthority:
             pytest.param(
                 "other-caller", "must identify the acting user", id="other-caller"
             ),
-            pytest.param(
-                "anonymous-caller", "must identify the acting user", id="anonymous"
-            ),
         ],
     )
     async def test_contract_violation_raises_before_any_statement(
@@ -723,8 +720,6 @@ class TestAuthority:
             kwargs["acting_user_id"] = None
         elif violation == "other-caller":
             kwargs["ticket_caller"] = TicketCaller.authenticated(other.id, Scope.ALL)
-        elif violation == "anonymous-caller":
-            kwargs["ticket_caller"] = ANONYMOUS_CALLER
         else:
             kwargs["provider"] = violation
 

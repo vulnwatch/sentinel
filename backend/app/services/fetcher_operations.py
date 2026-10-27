@@ -7,8 +7,9 @@ Service, `list_fetchers`, `list_fetcher_runs`, `get_fetcher_run`,
 `list_fetcher_audit_events`, `trigger_fetcher`, Disabled Period
 Derivation) for the full specification this module implements.
 
-The four Public read functions (`list_fetchers`, `list_fetcher_runs`,
-`get_fetcher_run`, `get_fetcher_timeline`), the two capability-protected
+The four authenticated read functions (`list_fetchers`,
+`list_fetcher_runs`, `get_fetcher_run`, `get_fetcher_timeline`), the two
+capability-protected
 reads (`get_fetcher_config`, `list_fetcher_audit_events`), the
 capability-protected mutation (`update_fetcher_config`), and the
 capability-protected manual trigger orchestration (`trigger_fetcher`)
@@ -1030,8 +1031,8 @@ async def get_fetcher_config(
     """Return the merged configuration for `fetcher_name`.
 
     See `docs/features/platform/fetcher-operations.md`
-    (`get_fetcher_config`) for the full contract. Unlike the Public read
-    functions above, a `FetcherConfig` row is a hard prerequisite here —
+    (`get_fetcher_config`) for the full contract. Unlike the authenticated
+    read functions above, a `FetcherConfig` row is a hard prerequisite here —
     a registered fetcher with no row yet (bootstrap not run) raises
     `FetcherNotFoundError`, consistent with `trigger_fetcher` and
     `update_fetcher_config`.

@@ -5,7 +5,7 @@ Query Rules, List Submission Requests, List Release Requests) for the
 authoritative endpoint contracts.
 
 Both reads follow `docs/api-spec.md` (Authorization Chain Evaluation
-Order, flow 1): optional authentication resolves the caller once, and the
+Order, flow 1): authentication resolves the caller once, and the
 service selects the accessible parent Ticket, the distinct correlated
 actions, their total, and the page in one visibility-constrained
 statement, so there is no preliminary accessibility dependency. Handlers
@@ -24,7 +24,7 @@ from typing import Annotated, Final
 from fastapi import APIRouter, Depends, Query
 
 from app.api.dependencies import (
-    OptionalTicketCaller,
+    AuthenticatedTicketCaller,
     TicketIdPath,
     ticket_not_found_error,
 )
@@ -61,7 +61,8 @@ _LIST_DESCRIPTION_SUFFIX: Final = (
     "actionability. Filters combine with AND; an invalid `state` returns an "
     "empty page. Sorted by the selected upstream timestamp of the request "
     "(default `upstream_updated_at`, `desc`). The Ticket is identified by its "
-    "canonical SNTL-{n} identity. Public; optional authentication determines "
+    "canonical SNTL-{n} identity. Requires authentication (JWT session or API "
+    "key); the caller's scope, grants, and package maintainership determine "
     "access to confidential Tickets."
 )
 
@@ -178,7 +179,7 @@ def _item_fields(item: IBSRequestActionItem) -> dict[str, object]:
 async def list_submission_requests(
     ticket_id: TicketIdPath,
     db: DatabaseSession,
-    caller: OptionalTicketCaller,
+    caller: AuthenticatedTicketCaller,
     query: RequestListQuery,
 ) -> SubmissionRequestListResponse:
     """List Submission Requests — see
@@ -228,7 +229,7 @@ async def list_submission_requests(
 async def list_release_requests(
     ticket_id: TicketIdPath,
     db: DatabaseSession,
-    caller: OptionalTicketCaller,
+    caller: AuthenticatedTicketCaller,
     query: RequestListQuery,
     incident_number: Annotated[
         int | None,

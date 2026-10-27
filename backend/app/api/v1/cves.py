@@ -25,7 +25,8 @@ serializer, shared by `GET /cves/{cve_id}` and `TicketDetail.cve`.
 
 `GET /cve-sources` lives here because it lists CVE-source records; it is
 the intentional identifier-only exception to CVE accessibility and
-therefore resolves no caller. `GET /cves/{cve_id}/sources` and
+therefore authenticates the caller without resolving its Ticket caller
+information. `GET /cves/{cve_id}/sources` and
 `POST /cves/{cve_id}/refetch` are the handlers without a
 `DatabaseSession`: their services own a short-lived session (see
 `get_cve_source_status_session_factory` and
@@ -45,9 +46,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.api.dependencies import (
     AuthenticatedPrincipal,
     AuthenticatedTicketCaller,
+    CurrentUser,
     CVEIdPath,
-    OptionalCurrentUser,
-    OptionalTicketCaller,
     cve_not_found_error,
     require_accessible_cve,
     require_capability,
@@ -591,13 +591,14 @@ def _cve_source_list_query(
         "free-text search, state, repeatable severity, Ticket-presence, and "
         "publication-date filters, and sorting. A CVE without a Ticket is "
         "always listed; a CVE with a Ticket is listed only when that Ticket "
-        "is visible to the caller. Public; optional authentication "
-        "determines access to CVEs associated with confidential Tickets."
+        "is visible to the caller. Requires authentication (JWT session or "
+        "API key); the caller's scope, grants, and package maintainership "
+        "determine access to CVEs associated with confidential Tickets."
     ),
 )
 async def list_cves(
     db: DatabaseSession,
-    caller: OptionalTicketCaller,
+    caller: AuthenticatedTicketCaller,
     query: Annotated[CVEListQuery, Depends(_cve_list_query)],
 ) -> CVEListResponse:
     """List CVEs — see `docs/features/tickets/cve-tracking.md` (List CVEs).
@@ -636,8 +637,9 @@ async def list_cves(
         "exploitation (KEV, EPSS, SSVC) and weakness (CWE) evidence, its "
         "external identifiers, and the associated Ticket identity. Evidence "
         "only: no priority, no CVSS assessments (see `/cvss`), and no "
-        "affected versions (see `/affected-versions`). Public; "
-        "optional authentication determines access to CVEs associated with "
+        "affected versions (see `/affected-versions`). Requires "
+        "authentication (JWT session or API key); the caller's scope, grants, "
+        "and package maintainership determine access to CVEs associated with "
         "confidential Tickets."
     ),
     responses={
@@ -654,7 +656,7 @@ async def list_cves(
 async def get_cve(
     cve_id: CVEIdPath,
     db: DatabaseSession,
-    caller: OptionalTicketCaller,
+    caller: AuthenticatedTicketCaller,
 ) -> CVEResourceDetailResponse:
     """Get CVE — see `docs/features/tickets/cve-tracking.md` (Get CVE).
 
@@ -680,8 +682,9 @@ async def get_cve(
         "sortable: each scope is a complete snapshot in one fixed order "
         "(groups by `source_container`, entries by package coordinates then "
         "version fields, Unicode code-point order with absent values last). "
-        "A CVE without entries returns an empty list. Public; optional "
-        "authentication determines access to CVEs associated with "
+        "A CVE without entries returns an empty list. Requires "
+        "authentication (JWT session or API key); the caller's scope, grants, "
+        "and package maintainership determine access to CVEs associated with "
         "confidential Tickets."
     ),
     responses={
@@ -698,7 +701,7 @@ async def get_cve(
 async def get_cve_affected_versions(
     cve_id: CVEIdPath,
     db: DatabaseSession,
-    caller: OptionalTicketCaller,
+    caller: AuthenticatedTicketCaller,
 ) -> CVEAffectedVersionsResponse:
     """Get CVE Affected Versions — see `docs/features/tickets/cve-tracking.md`.
 
@@ -724,21 +727,20 @@ async def get_cve_affected_versions(
         "drill-down from fetcher runs; the result is a latest-state "
         "approximation and can differ from a run's failure count. Exposes "
         "public CVE IDs and operational metadata only, so no Ticket "
-        "visibility is applied. Public; optional authentication."
+        "visibility is applied. Requires authentication (JWT session or API "
+        "key)."
     ),
 )
 async def list_cve_sources(
     db: DatabaseSession,
-    principal: OptionalCurrentUser,
+    _principal: CurrentUser,
     query: Annotated[CVESourceListQuery, Depends(_cve_source_list_query)],
 ) -> CVESourceListResponse:
     """Global CVE Source Listing — see `docs/features/tickets/cve-service.md`.
 
-    `principal` processes optional authentication (sliding session
-    refresh, 401 for an invalid selected credential); the listing itself
-    does not vary by caller.
+    `_principal` exists solely to require authentication (`Access:
+    Authenticated`); the listing itself does not vary by caller.
     """
-    del principal
     result = await cve_service.list_cve_sources(
         db,
         source=query.source,
@@ -798,8 +800,9 @@ def get_cve_source_status_session_factory() -> async_sessionmaker[AsyncSession]:
         "historical source no longer registered. Not paginated and not "
         "sortable: one entry per source in fixed ascending `source` "
         "code-point order. `pending` is a best-effort transient overlay; "
-        "when it cannot be read, the persisted status is returned. Public; "
-        "optional authentication determines access to CVEs associated with "
+        "when it cannot be read, the persisted status is returned. Requires "
+        "authentication (JWT session or API key); the caller's scope, grants, "
+        "and package maintainership determine access to CVEs associated with "
         "confidential Tickets."
     ),
     responses={
@@ -815,7 +818,7 @@ def get_cve_source_status_session_factory() -> async_sessionmaker[AsyncSession]:
 )
 async def get_cve_source_status(
     cve_id: CVEIdPath,
-    caller: OptionalTicketCaller,
+    caller: AuthenticatedTicketCaller,
     session_factory: Annotated[
         async_sessionmaker[AsyncSession],
         Depends(get_cve_source_status_session_factory),
@@ -846,8 +849,9 @@ async def get_cve_source_status(
         "provider name), together with the configured default CVSS version, "
         "the resolved severity (null without assessments), and the "
         "eligibility score. Not paginated and not sortable: the set is "
-        "bounded and has one canonical order. Public; optional "
-        "authentication determines access to CVEs associated with "
+        "bounded and has one canonical order. Requires authentication (JWT "
+        "session or API key); the caller's scope, grants, and package "
+        "maintainership determine access to CVEs associated with "
         "confidential Tickets."
     ),
     responses={
@@ -864,7 +868,7 @@ async def get_cve_source_status(
 async def get_cve_cvss_assessments(
     cve_id: CVEIdPath,
     db: DatabaseSession,
-    caller: OptionalTicketCaller,
+    caller: AuthenticatedTicketCaller,
 ) -> CVECVSSAssessmentsResponse:
     """Get CVSS Assessments for a CVE — see
     `docs/features/tickets/cvss-scoring.md`.

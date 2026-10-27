@@ -82,7 +82,7 @@ class TestParseEventTypes:
 
 @pytest.mark.e2e
 class TestAuthentication:
-    async def test_anonymous_request_returns_401_before_lookup(
+    async def test_request_without_credential_returns_401_before_lookup(
         self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         resolver, lister = _spy_lookups(monkeypatch)

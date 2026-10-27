@@ -2,11 +2,10 @@
 
 See `docs/features/integrations/ibs-rabbitmq-integration.md` (Status API >
 Get IBS Consumer Status) for the authoritative contract, and
-`docs/api-spec.md` (Optional Authentication on Public Endpoints;
-Infrastructure Dependency Errors > Status-reporting exception) for the
-shared behavior.
+`docs/api-spec.md` (Authentication and Authorization; Infrastructure
+Dependency Errors > Status-reporting exception) for the shared behavior.
 
-The handler stays thin: it processes optional authentication, delegates the
+The handler stays thin: it requires authentication, delegates the
 observation to `ibs_consumer_status.get_ibs_consumer_status()`, and
 serializes it. Every operational status, including a Redis failure, is
 HTTP 200.
@@ -16,7 +15,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.dependencies import OptionalCurrentUser
+from app.api.dependencies import CurrentUser
 from app.schemas.ibs_consumer import IBSConsumerStatusData, IBSConsumerStatusResponse
 from app.services import ibs_consumer_status
 from app.services.ibs_consumer_status import IBSConsumerStatusView
@@ -71,19 +70,18 @@ def serialize_ibs_consumer_status(view: IBSConsumerStatusView) -> IBSConsumerSta
         "`disabled` when the consumer is configured off; `unreachable` when "
         "the heartbeat is absent, invalid, stale, or unreadable. Always HTTP "
         "200 for an operational status; `disabled` and `unreachable` return "
-        "every other field as `null`. Public; optional authentication."
+        "every other field as `null`. Requires authentication (JWT session "
+        "or API key)."
     ),
 )
 async def get_ibs_consumer_status(
-    principal: OptionalCurrentUser,
+    _principal: CurrentUser,
 ) -> IBSConsumerStatusResponse:
     """Get IBS Consumer Status — see
     `docs/features/integrations/ibs-rabbitmq-integration.md` (Status API).
 
-    `principal` processes optional authentication (sliding session
-    refresh, 401 for an invalid selected credential); the observation does
-    not vary by caller.
+    `_principal` exists solely to require authentication (`Access:
+    Authenticated`); the observation does not vary by caller.
     """
-    del principal
     view = await ibs_consumer_status.get_ibs_consumer_status()
     return IBSConsumerStatusResponse(data=serialize_ibs_consumer_status(view))

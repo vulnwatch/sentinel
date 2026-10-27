@@ -830,8 +830,7 @@ async def list_tickets(
     Q3: captures one UTC evaluation instant and derives the read
     `evaluation_date` from its UTC date. Then, in one SQL statement and
     therefore one PostgreSQL snapshot:
-    1. selects the Tickets satisfying the canonical visibility predicate
-       (anonymous callers evaluate no grant or maintainer branch);
+    1. selects the Tickets satisfying the canonical visibility predicate;
     2. trims `search` once and, when non-empty, matches it by the
        field-specific OR rules of tickets.md (Search) with `%`, `_`, and
        backslash literal: SNTL numeric prefix, case-insensitive CVE-ID

@@ -7,7 +7,7 @@ Reference (`DELETE /api/v1/tickets/{ticket_id}/references/{reference_id}`).
 
 See docs/features/tickets/ticket-references.md (API Schemas, API Endpoints,
 Manual-Zone Exception, Service Exceptions, Security and Privacy),
-docs/api-spec.md (Optional Authentication on Public Endpoints,
+docs/api-spec.md (Authentication and Authorization,
 Authorization Chain Evaluation Order flows 1 and 3, Undeclared Query
 Parameters, Query Parameter Length Limit, JSON Request Body Scalar Types,
 Enum Filter Validation, Response Format, Global Responses, Ticket
@@ -20,8 +20,8 @@ Proportionality; Ticket References; Ticket Accessibility > Authentication,
 authorization, and anti-enumeration and Ticket identifier and
 read-contract coverage).
 
-These tests cover only the HTTP boundary: authentication (optional on the
-read, mandatory on the mutations), `manage_references` before any lookup
+These tests cover only the HTTP boundary: authentication of the read and
+the mutations, `manage_references` before any lookup
 and before request validation, the identical `TICKET_NOT_FOUND` family and
 the identical nested `RESOURCE_NOT_FOUND`, each error mapping with its
 complete body, the global `422 VALIDATION_ERROR` bodies of the transport
@@ -283,7 +283,7 @@ class TestAuthentication:
     @pytest.mark.parametrize(
         "headers",
         [
-            pytest.param({}, id="anonymous"),
+            pytest.param({}, id="missing"),
             pytest.param({"Authorization": "Bearer invalid-token"}, id="invalid"),
         ],
     )
@@ -311,36 +311,42 @@ class TestAuthentication:
         assert await _references(db_session, ticket.id) == before
         assert await event_count(db_session, ticket.id) == 0
 
-    async def test_list_with_invalid_credential_returns_401_before_lookup(
+    @pytest.mark.parametrize(
+        "headers",
+        [
+            pytest.param({}, id="missing"),
+            pytest.param({"Authorization": "Bearer invalid-token"}, id="invalid"),
+        ],
+    )
+    async def test_list_without_valid_credential_returns_401_before_lookup(
         self,
         client: AsyncClient,
         ticket_factory: Factory,
         monkeypatch: pytest.MonkeyPatch,
+        headers: dict[str, str],
     ) -> None:
-        """A selected invalid optional credential never falls back to
-        anonymous access, even for a non-confidential Ticket."""
+        """The read has no unauthenticated result, even for a
+        non-confidential Ticket."""
         ticket: Ticket = await ticket_factory()
         spies = _forbid_service(monkeypatch)
 
         for path in (locator(ticket), "not-a-ticket"):
-            response = await LIST.send(
-                client, path, headers={"Authorization": "Bearer invalid-token"}
-            )
+            response = await LIST.send(client, path, headers=headers)
             assert response.status_code == 401
             assert response.json() == UNAUTHENTICATED
 
         _assert_unused(spies)
 
-    async def test_anonymous_list_of_a_non_confidential_ticket(
+    async def test_role_less_list_of_a_non_confidential_ticket_is_served(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         ticket_reference_factory: Factory,
     ) -> None:
         ticket: Ticket = await ticket_factory()
         reference = await ticket_reference_factory(ticket_id=ticket.id)
 
-        response = await LIST.send(client, ticket)
+        response = await LIST.send(authenticated_client, ticket)
 
         assert response.status_code == 200
         assert [item["id"] for item in response.json()["data"]] == [str(reference.id)]
@@ -529,17 +535,17 @@ class TestTicketNotFound:
         granted = await endpoint.send(authenticated_client, ticket, reference.id)
         assert granted.status_code == _SUCCESS[endpoint.method]
 
-    async def test_anonymous_list_of_a_confidential_ticket_is_the_identical_404(
+    async def test_role_less_list_of_a_confidential_ticket_is_the_identical_404(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         ticket_reference_factory: Factory,
     ) -> None:
         ticket: Ticket = await ticket_factory(is_confidential=True)
         await ticket_reference_factory(ticket_id=ticket.id)
 
-        inaccessible = await LIST.send(client, ticket)
-        missing = await LIST.send(client, f"SNTL-{MAX_SEQUENCE}")
+        inaccessible = await LIST.send(authenticated_client, ticket)
+        missing = await LIST.send(authenticated_client, f"SNTL-{MAX_SEQUENCE}")
 
         assert inaccessible.status_code == missing.status_code == 404
         assert inaccessible.content == missing.content == NOT_FOUND
@@ -1028,7 +1034,7 @@ class TestRequestValidation:
 
     async def test_list_source_over_500_characters_is_a_validation_error(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -1036,9 +1042,13 @@ class TestRequestValidation:
         accepted."""
         ticket: Ticket = await ticket_factory()
 
-        accepted = await client.get(LIST.url(ticket), params={"source": "s" * 500})
+        accepted = await authenticated_client.get(
+            LIST.url(ticket), params={"source": "s" * 500}
+        )
         spies = _forbid_service(monkeypatch)
-        rejected = await client.get(LIST.url(ticket), params={"source": "s" * 501})
+        rejected = await authenticated_client.get(
+            LIST.url(ticket), params={"source": "s" * 501}
+        )
 
         assert accepted.status_code == 200
         assert accepted.json() == {"data": []}
@@ -1569,21 +1579,21 @@ async def listed(ticket_factory: Factory, ticket_reference_factory: Factory) -> 
 @pytest.mark.e2e
 class TestListReferences:
     async def test_complete_unpaginated_list_in_fixed_order(
-        self, client: AsyncClient, listed: _Listed
+        self, authenticated_client: AsyncClient, listed: _Listed
     ) -> None:
         """`{"data": [...]}` without `meta`; type priority `advisory`,
         `patch`, `issue`, `article`, uncategorized, then `created_at`, then
         `id`; automatic and manual rows together."""
-        response = await LIST.send(client, listed.ticket)
+        response = await LIST.send(authenticated_client, listed.ticket)
 
         assert response.status_code == 200
         assert response.json() == {"data": listed.expected}
 
     async def test_undeclared_sort_and_pagination_parameters_are_ignored(
-        self, client: AsyncClient, listed: _Listed
+        self, authenticated_client: AsyncClient, listed: _Listed
     ) -> None:
-        plain = await LIST.send(client, listed.ticket)
-        decorated = await client.get(
+        plain = await LIST.send(authenticated_client, listed.ticket)
+        decorated = await authenticated_client.get(
             LIST.url(listed.ticket),
             params={
                 "sort_by": "url",
@@ -1615,12 +1625,14 @@ class TestListReferences:
     )
     async def test_filters_are_exact_and_combine_with_and(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         listed: _Listed,
         params: dict[str, str],
         match: dict[str, str],
     ) -> None:
-        response = await client.get(LIST.url(listed.ticket), params=params)
+        response = await authenticated_client.get(
+            LIST.url(listed.ticket), params=params
+        )
 
         expected = listed.subset(**match)
         assert expected
@@ -1639,9 +1651,11 @@ class TestListReferences:
         ],
     )
     async def test_non_matching_or_invalid_filter_is_an_empty_list(
-        self, client: AsyncClient, listed: _Listed, params: dict[str, str]
+        self, authenticated_client: AsyncClient, listed: _Listed, params: dict[str, str]
     ) -> None:
-        response = await client.get(LIST.url(listed.ticket), params=params)
+        response = await authenticated_client.get(
+            LIST.url(listed.ticket), params=params
+        )
 
         assert response.status_code == 200
         assert response.json() == {"data": []}
@@ -1667,14 +1681,14 @@ class TestListReferences:
 
     async def test_accessible_ticket_without_references_is_an_empty_list(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         ticket_reference_factory: Factory,
     ) -> None:
         ticket: Ticket = await ticket_factory()
         await ticket_reference_factory()
 
-        response = await LIST.send(client, ticket)
+        response = await LIST.send(authenticated_client, ticket)
 
         assert response.status_code == 200
         assert response.json() == {"data": []}

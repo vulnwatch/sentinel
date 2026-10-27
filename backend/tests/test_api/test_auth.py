@@ -441,14 +441,12 @@ class TestLogin:
         auth_client: AsyncClient,
         local_user_factory: Callable[..., Awaitable[tuple[User, str]]],
     ) -> None:
-        """Login is one of the documented exceptions to `Authentication:
-        Optional` (see `docs/api-spec.md`, Optional Authentication on
-        Public Endpoints): it ignores request credentials entirely, so a
-        stale `Authorization` header and a stale session cookie
-        presented alongside valid login credentials must not block
-        authentication bootstrap — see
-        `docs/features/platform/testing-strategy.md` (Optional
-        authentication mandatory scenarios)."""
+        """Login is a Public endpoint (see `docs/api-spec.md`, Public
+        Endpoints): it ignores request credentials entirely, so a stale
+        `Authorization` header and a stale session cookie presented
+        alongside valid login credentials must not block authentication
+        bootstrap — see `docs/features/platform/testing-strategy.md`
+        (Authentication and Session)."""
         user, password = await local_user_factory()
         auth_client.cookies.set(SESSION_COOKIE_NAME, "stale-cookie-value")
 

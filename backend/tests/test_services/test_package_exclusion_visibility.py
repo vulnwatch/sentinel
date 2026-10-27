@@ -25,7 +25,8 @@ Owning specifications:
   packages", "Authenticated user with no roles"; Locked mutations, including
   the self-loss case; Concurrency Testing for the committed self-loss case).
 
-The anonymous caller is rejected with `ValueError` before any statement
+An inconsistent actor/caller pairing is rejected with `ValueError` before
+any statement
 (`tests/test_services/test_package_exclusion_scope.py`,
 `TestCallerValidation`), and a missing Ticket UUID raises
 `TicketNotFoundError` at every level and direction (same module,

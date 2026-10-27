@@ -62,7 +62,8 @@ from app.services.packages.ibs_request_lists import (
     list_release_requests,
     list_submission_requests,
 )
-from app.services.ticket_visibility import ANONYMOUS_CALLER, TicketCaller
+from app.services.ticket_visibility import TicketCaller
+from tests.support.callers import ROLELESS_CALLER
 from tests.support.no_outbound import OutboundGuard
 
 pytest_plugins = ["tests.support.no_outbound_fixtures"]
@@ -114,7 +115,7 @@ async def _list(
     kind: _Kind,
     db: AsyncSession,
     ticket: Ticket,
-    caller: TicketCaller = ANONYMOUS_CALLER,
+    caller: TicketCaller = ROLELESS_CALLER,
     **kwargs: Any,
 ) -> IBSRequestActionPage:
     return await kind.lister(db, ticket_id=_sntl(ticket), caller=caller, **kwargs)
@@ -124,7 +125,7 @@ async def _ids(
     kind: _Kind,
     db: AsyncSession,
     ticket: Ticket,
-    caller: TicketCaller = ANONYMOUS_CALLER,
+    caller: TicketCaller = ROLELESS_CALLER,
     **kwargs: Any,
 ) -> list[uuid.UUID]:
     page = await _list(kind, db, ticket, caller, **kwargs)
@@ -236,7 +237,7 @@ class TestInputGuards:
             await kind.lister(
                 db,
                 ticket_id="SNTL-1",
-                caller=ANONYMOUS_CALLER,
+                caller=ROLELESS_CALLER,
                 page=page,
                 per_page=per_page,
             )
@@ -253,7 +254,7 @@ class TestInputGuards:
             await list_release_requests(
                 db,
                 ticket_id="SNTL-1",
-                caller=ANONYMOUS_CALLER,
+                caller=ROLELESS_CALLER,
                 incident_number=incident_number,
             )
 
@@ -281,7 +282,7 @@ class TestInputGuards:
         db = _session_without_queries()
 
         with pytest.raises(TicketNotFoundError):
-            await kind.lister(db, ticket_id=locator, caller=ANONYMOUS_CALLER)
+            await kind.lister(db, ticket_id=locator, caller=ROLELESS_CALLER)
 
         db.execute.assert_not_awaited()
 
@@ -292,7 +293,7 @@ class TestInputGuards:
         db.execute.side_effect = failure
 
         with pytest.raises(OperationalError) as excinfo:
-            await kind.lister(db, ticket_id="SNTL-1", caller=ANONYMOUS_CALLER)
+            await kind.lister(db, ticket_id="SNTL-1", caller=ROLELESS_CALLER)
 
         assert excinfo.value is failure
 
@@ -312,7 +313,7 @@ class TestInputBoundaries:
         result = await list_release_requests(
             db_session,
             ticket_id=_sntl(ticket),
-            caller=ANONYMOUS_CALLER,
+            caller=ROLELESS_CALLER,
             incident_number=_INT_MAX,
         )
 
@@ -724,19 +725,18 @@ class TestDeduplication:
             (await evidence.action(kind.action_type, *tracks[1:])).id,
         }
         await evidence.action(kind.action_type, *hidden_tracks)
-        callers = [ANONYMOUS_CALLER, _restricted(await user_factory())]
+        caller = _restricted(await user_factory())
 
-        for caller in callers:
-            result = await _list(kind, db_session, public, caller)
-            assert result.total == 2
-            assert {item.id for item in result.items} == visible
-            pages = [
-                await _list(kind, db_session, public, caller, page=page, per_page=1)
-                for page in (1, 2, 3)
-            ]
-            assert [page.total for page in pages] == [2, 2, 2]
-            assert [len(page.items) for page in pages] == [1, 1, 0]
-            assert {item.id for page in pages for item in page.items} == visible
+        result = await _list(kind, db_session, public, caller)
+        assert result.total == 2
+        assert {item.id for item in result.items} == visible
+        pages = [
+            await _list(kind, db_session, public, caller, page=page, per_page=1)
+            for page in (1, 2, 3)
+        ]
+        assert [page.total for page in pages] == [2, 2, 2]
+        assert [len(page.items) for page in pages] == [1, 1, 0]
+        assert {item.id for page in pages for item in page.items} == visible
 
 
 @pytest.mark.integration
@@ -1186,11 +1186,9 @@ class TestSortingAndPagination:
 @pytest.mark.integration
 class TestAccessibility:
     @pytest.mark.parametrize("kind", _KINDS)
-    @pytest.mark.parametrize("caller_kind", ["anonymous", "non_confidential"])
     async def test_non_confidential_ticket_is_visible(
         self,
         kind: _Kind,
-        caller_kind: str,
         db_session: AsyncSession,
         ticket_factory: _Factory,
         user_factory: _Factory,
@@ -1198,11 +1196,7 @@ class TestAccessibility:
     ) -> None:
         ticket: Ticket = await ticket_factory()
         action = await evidence.action(kind.action_type, await evidence.track(ticket))
-        caller = (
-            ANONYMOUS_CALLER
-            if caller_kind == "anonymous"
-            else _restricted(await user_factory())
-        )
+        caller = _restricted(await user_factory())
 
         assert await _ids(kind, db_session, ticket, caller) == [action.id]
 
@@ -1210,13 +1204,12 @@ class TestAccessibility:
     @pytest.mark.parametrize(
         ("branch", "visible"),
         [
-            ("anonymous", False),
             ("non_entitled", False),
             ("scope_all", True),
             ("grant", True),
             ("maintainer", True),
         ],
-        ids=["anonymous", "non-entitled", "scope-all", "grant", "maintainer"],
+        ids=["non-entitled", "scope-all", "grant", "maintainer"],
     )
     async def test_confidential_ticket_visibility_branches(
         self,
@@ -1238,9 +1231,7 @@ class TestAccessibility:
             kind.action_type, await evidence.track(ticket, package=package)
         )
         caller = _restricted(user)
-        if branch == "anonymous":
-            caller = ANONYMOUS_CALLER
-        elif branch == "scope_all":
+        if branch == "scope_all":
             caller = TicketCaller.authenticated(user.id, Scope.ALL)
         elif branch == "grant":
             await ticket_access_grant_factory(ticket_id=ticket.id, user_id=user.id)
@@ -1371,7 +1362,7 @@ class TestAccessibility:
         locator = "SNTL-2147483647" if locator_kind == "missing" else str(ticket.id)
 
         with pytest.raises(TicketNotFoundError):
-            await kind.lister(db_session, ticket_id=locator, caller=ANONYMOUS_CALLER)
+            await kind.lister(db_session, ticket_id=locator, caller=ROLELESS_CALLER)
 
     @pytest.mark.parametrize("kind", _KINDS)
     async def test_visible_ticket_without_correlations_returns_empty_page(

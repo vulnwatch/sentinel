@@ -119,12 +119,11 @@ class TestLivenessEndpoint:
         assert response.json() == {"status": "ok"}
 
     async def test_stale_credential_is_ignored(self, client: AsyncClient) -> None:
-        """`/health` is one of the documented exceptions to `Authentication:
-        Optional` (see `docs/api-spec.md`, Optional Authentication on
-        Public Endpoints): it ignores request credentials entirely, so a
+        """`/health` is a Public endpoint (see `docs/api-spec.md`, Public
+        Endpoints): it ignores request credentials entirely, so a
         malformed JWT or unknown API key must not affect its probe
         contract — see `docs/features/platform/testing-strategy.md`
-        (Optional authentication mandatory scenarios)."""
+        (Authentication and Session)."""
         response = await client.get(
             "/health",
             headers={"Authorization": "Bearer not-a-real-token"},
@@ -201,12 +200,11 @@ class TestReadinessEndpointSuccess:
         use_real_readiness_postgresql: None,
         redis_client: redis_asyncio.Redis,
     ) -> None:
-        """`/ready` is one of the documented exceptions to `Authentication:
-        Optional` (see `docs/api-spec.md`, Optional Authentication on
-        Public Endpoints): the result depends only on the readiness
-        checks, never on a stale or invalid credential — see
-        `docs/features/platform/testing-strategy.md` (Optional
-        authentication mandatory scenarios)."""
+        """`/ready` is a Public endpoint (see `docs/api-spec.md`, Public
+        Endpoints): the result depends only on the readiness checks,
+        never on a stale or invalid credential — see
+        `docs/features/platform/testing-strategy.md` (Authentication and
+        Session)."""
         response = await client.get(
             "/ready",
             headers={"Authorization": "Bearer not-a-real-token"},

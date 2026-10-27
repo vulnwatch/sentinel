@@ -11,7 +11,7 @@ Owning specifications:
 - docs/features/platform/testing-strategy.md (Ticket Accessibility: List
   and count reads; Single, nested, and assembled reads; Database Strategy
   > Concurrency Testing).
-- docs/features/identity/rbac.md (Optional Principal to Caller Context:
+- docs/features/identity/rbac.md (Principal to Caller Context:
   the caller is resolved once per request).
 
 Every scenario commits its rows through an independent session
@@ -60,7 +60,8 @@ from app.services.packages.ibs_request_lists import (
     list_submission_requests,
 )
 from app.services.ticket_service import resolve_ticket_locator
-from app.services.ticket_visibility import ANONYMOUS_CALLER, TicketCaller
+from app.services.ticket_visibility import TicketCaller
+from tests.support.callers import ROLELESS_CALLER
 
 _SessionFactory = Callable[[], Awaitable[AsyncSession]]
 _Lister = Callable[..., Awaitable[IBSRequestActionPage]]
@@ -468,13 +469,13 @@ class TestListRaces:
         writer = await db_session_factory()
 
         with pytest.raises(TicketNotFoundError):
-            await resolve_ticket_locator(reader, _sntl(ticket), ANONYMOUS_CALLER)
+            await resolve_ticket_locator(reader, _sntl(ticket), ROLELESS_CALLER)
         await _commit(
             writer,
             update(Ticket).where(Ticket.id == ticket.id).values(is_confidential=False),
         )
 
-        _assert_complete(await _list(kind, reader, ticket, ANONYMOUS_CALLER), expected)
+        _assert_complete(await _list(kind, reader, ticket, ROLELESS_CALLER), expected)
 
     async def test_actions_committed_between_reads_are_observed_whole(
         self,
@@ -493,14 +494,14 @@ class TestListRaces:
         reader = await db_session_factory()
         writer = await db_session_factory()
 
-        before = await _list(kind, reader, ticket, ANONYMOUS_CALLER)
-        await resolve_ticket_locator(reader, _sntl(ticket), ANONYMOUS_CALLER)
+        before = await _list(kind, reader, ticket, ROLELESS_CALLER)
+        await resolve_ticket_locator(reader, _sntl(ticket), ROLELESS_CALLER)
         track = await committed_world.track(package)
         added = {
             (await committed_world.action(kind.action_type, track, session=writer)).id
             for _ in range(3)
         }
-        after = await _list(kind, reader, ticket, ANONYMOUS_CALLER)
+        after = await _list(kind, reader, ticket, ROLELESS_CALLER)
 
         _assert_complete(before, initial)
         _assert_complete(after, initial | added)
@@ -513,7 +514,7 @@ class TestListRaces:
     ) -> None:
         """The caller's scope is resolved once per request; a committed
         role removal applies to the next resolution, not to the in-flight
-        request (rbac.md, Optional Principal to Caller Context)."""
+        request (rbac.md, Principal to Caller Context)."""
         user = await committed_world.user(role=Role.VULNERABILITY_ANALYST)
         ticket, _, expected = await _visible_world(
             committed_world, kind, is_confidential=True
