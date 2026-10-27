@@ -698,8 +698,8 @@ class CVEDetailResult:
 class CVESourceListItemProjection:
     """One persisted `CVESource` latest-state row of the global listing.
 
-    `cve_id` is the public CVE-ID string; `CVESource.id`, the CVE UUID,
-    and every Ticket attribute are deliberately absent.
+    `cve_id` is the CVE-ID string; `CVESource.id`, the CVE UUID, and
+    every Ticket attribute are deliberately absent.
     """
 
     cve_id: str
@@ -1136,6 +1136,7 @@ def _source_sort_key(sort_by: CVESourceSortField) -> ColumnElement[Any]:
 
 async def list_cve_sources(
     db: AsyncSession,
+    caller: TicketCaller,
     *,
     source: str | None,
     status: str | None,
@@ -1147,22 +1148,27 @@ async def list_cve_sources(
     sort_by: CVESourceSortField,
     sort_order: SortOrder,
 ) -> CVESourceListResult:
-    """List persisted `CVESource` latest-state rows, one page at a time.
+    """List the persisted `CVESource` latest-state rows of the accessible
+    CVEs, one page at a time.
 
     Category B read (cve-service.md, Global CVE Source Listing > Service
-    contract). The intentional identifier-only exception to CVE
-    accessibility: no caller, no Ticket visibility join.
+    contract).
 
-    Q1: `source` is an exact, grammar-bounded persisted source
-    identifier; `status` a raw persisted-status value; `stalled` the
-    stalled-predicate filter; `from_date`/`to_date` UTC-normalized
+    Q1: `caller` is the request-resolved information of the
+    authenticated caller. `source` is an exact, grammar-bounded persisted
+    source identifier; `status` a raw persisted-status value; `stalled`
+    the stalled-predicate filter; `from_date`/`to_date` UTC-normalized
     inclusive bounds over `fetched_at`; `page` positive and `per_page`
     1-100.
 
     Q3: in one SQL statement, and therefore one PostgreSQL observation
     whose `now()` is the single observation instant for the stalled
     boundary, the page, and the total:
-    1. selects one row per `CVESource` with no Ticket join;
+    1. selects the `CVESource` rows whose CVE, outer-joined to its at most
+       one Ticket, passes the CVE accessibility projection of the
+       canonical Ticket predicate, so the rows of inaccessible associated
+       CVEs are absent from rows and total; the Ticket join is unique by
+       `Ticket.cve_id`, so it never multiplies a row;
     2. applies `source` (exact; a well-formed absent value matches
        nothing), `status` (a value outside `success`/`failure`/`missing`
        matches nothing), `stalled` (`true` keeps only `failure` rows whose
@@ -1172,8 +1178,8 @@ async def list_cve_sources(
     3. orders by `source` or `status` (code point), `fetched_at`, or
        `first_failed_at` (`NULL` last in both directions), then by the
        internal `CVESource.id` in the same direction;
-    4. counts after every filter, before paging;
-    5. resolves `CVESource.cve_id` to the public `CVE.cve_id`.
+    4. counts after accessibility and every filter, before paging;
+    5. resolves `CVESource.cve_id` to `CVE.cve_id`.
     Creates no row or event, acquires no lock, and never flushes,
     commits, or rolls back.
 
@@ -1188,7 +1194,7 @@ async def list_cve_sources(
     """
     _validate_page(page, per_page)
 
-    conditions: list[ColumnElement[bool]] = []
+    conditions: list[ColumnElement[bool]] = [_cve_accessibility_condition(caller)]
     if source is not None:
         conditions.append(CVESource.source == source)
     if status is not None:
@@ -1204,6 +1210,9 @@ async def list_cve_sources(
 
     filtered = (
         select(CVESource.id.label("id"), _source_sort_key(sort_by).label("sort_key"))
+        .select_from(CVESource)
+        .join(CVE, CVE.id == CVESource.cve_id)
+        .outerjoin(Ticket, Ticket.cve_id == CVE.id)
         .where(*conditions)
         .cte("filtered")
     )

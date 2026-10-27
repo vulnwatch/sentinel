@@ -1017,8 +1017,9 @@ A 202 result cannot have both `sources_enqueued` and
 An unconfirmed publication may still have been accepted by the broker.
 
 The CVE boundary consumes the canonical Ticket predicate rather than
-implementing a second semantic predicate. `GET /api/v1/cves` applies the same
-association rule inside its service-owned list query.
+implementing a second semantic predicate. `GET /api/v1/cves` and
+`GET /api/v1/cve-sources` apply the same association rule inside their
+service-owned list queries.
 
 #### Maintainer Ticket Accessibility Check
 
@@ -1037,23 +1038,31 @@ shape.
 
 The not-found rules above conceal protected Ticket-derived content and direct
 resource reads: a caller cannot distinguish a missing Ticket/CVE from one made
-inaccessible by an associated confidential Ticket. This guarantee does not make
-`SNTL-{n}` identifiers or CVE IDs confidential data. A Ticket UUID is an
+inaccessible by an associated confidential Ticket. A Ticket UUID is an
 internal identifier and is not part of the API contract.
 
-Existing identifier-only contracts remain unchanged:
+The CVE ID of an inaccessible CVE is protected like its content: a CVE
+associated with a confidential Ticket can be RESERVED and unpublished, and its
+presence in Sentinel reveals that SUSE tracks it. Every list that returns CVE
+IDs selects only rows of accessible CVEs, so no list reveals a CVE that a
+direct read conceals: `GET /api/v1/cves` and `GET /api/v1/cve-sources` apply
+CVE accessibility, and a Ticket-derived list applies Ticket visibility, which
+covers the CVE of each listed Ticket.
+
+`SNTL-{n}` identifiers are not confidential data. These identifier-only
+contracts disclose one without applying the visibility of its Ticket:
 
 - a visible Duplicated Ticket may return `duplicate_of_ticket_id = SNTL-{n}`
-  even when following that target now returns `TICKET_NOT_FOUND`;
+  even when following that target now returns `TICKET_NOT_FOUND`; and
 - `TICKET_CVE_CONFLICT` retains `existing_ticket_id`, including when that
   Ticket is otherwise inaccessible; the value is the conflicting Ticket's
-  `SNTL-{n}` identifier; and
-- the global CVE-source listing may return CVE IDs without applying Ticket
-  visibility.
+  `SNTL-{n}` identifier. The response confirms that a Ticket tracks the CVE ID
+  that the request names, an accepted residual bounded in
+  `docs/features/tickets/tickets.md` (Identifier Disclosure Boundary).
 
-These bounded exceptions expose identifiers only. They do not expose protected
-Ticket content, authorize a direct read, add a capability, or change any
-resource-accessibility result.
+These bounded exceptions expose `SNTL-{n}` identifiers only. They do not expose
+protected Ticket content or a CVE ID that the request does not name, authorize
+a direct read, add a capability, or change any resource-accessibility result.
 
 #### Manual-Zone Mutability Guard
 

@@ -2579,9 +2579,21 @@ this complete matrix.
   is not treated as retryable.
 - Lexical `source`/`status` sort, nullable timestamp sort, coherent total, and
   the internal `CVESource.id` tie-breaker across pages.
-- A role-less caller receiving a source row whose CVE is associated with a
-  confidential Ticket, proving the identifier-only exception is preserved and
-  not over-restricted.
+- Role-less and scope-`all` callers, an explicit grant, and an included-package
+  maintainer, with the rows of ticketless CVEs and of CVEs associated with
+  non-confidential Tickets always listed. A confidential Ticket whose RESERVED
+  CVE has `missing` rows from several sources has none of them in the items or
+  `meta.total` of a role-less caller, including under the `source` and
+  `status=missing` filters, while scope `all`, a grant, or an included
+  maintained package lists them; excluding the caller's last maintained package
+  removes them. A caller who maintains two included packages of that Ticket
+  and also holds a grant receives each row exactly once, with an uninflated
+  `meta.total`.
+- An independent-session race that makes the Ticket confidential, revokes the
+  caller's grant, excludes the caller's last maintained package, or associates
+  a ticketless CVE with an inaccessible Ticket before the protected selection
+  never returns a row selected after access was lost, and items and
+  `meta.total` derive from one coherent view.
 - `CVESource.id` absent from the response, and no Ticket UUID, protected CVE
   content, user identity, or raw error exposed.
 - A latest-state result that can diverge from `FetcherRun.items_failed` without
@@ -2841,10 +2853,11 @@ visibility predicate.
 
 **List and count reads:**
 
-- Ticket lists, CVE lists, cross-Ticket package search, Ticket audit lists,
-  submission/release lists, and maintainer workbench lists are exercised with
-  mixed visible and invisible Tickets. No returned item may derive from an
-  invisible Ticket, and every paginated `meta.total` excludes invisible rows.
+- Ticket lists, CVE lists, the global CVE source listing, cross-Ticket package
+  search, Ticket audit lists, submission/release lists, and maintainer
+  workbench lists are exercised with mixed visible and invisible Tickets. No
+  returned item may derive from an invisible Ticket, and every paginated
+  `meta.total` excludes invisible rows.
   A scoped audit or submission/release request for an invisible Ticket returns
   the resource-appropriate 404 rather than an empty collection.
 - Visibility is part of the database selection before sorting and pagination.
@@ -2855,12 +2868,12 @@ visibility predicate.
 - At least one independent-session race per query shape changes
   confidentiality, revokes the caller's grant, or excludes the caller's last
   qualifying package after a preliminary resolution point but before the
-  protected selection. For a CVE list query, this also includes changing a
-  CVE-to-Ticket association so an initially ticketless or otherwise visible CVE
-  becomes inaccessible before protected selection. The response must not expose
-  a row selected after access was lost. This race must fail an implementation
-  that performs an unconstrained protected query after a stale split
-  accessibility check.
+  protected selection. For a CVE list or CVE source listing query, this also
+  includes changing a CVE-to-Ticket association so an initially ticketless or
+  otherwise visible CVE becomes inaccessible before protected selection. The
+  response must not expose a row selected after access was lost. This race must
+  fail an implementation that performs an unconstrained protected query after a
+  stale split accessibility check.
 
 **Single, nested, and assembled reads:**
 
@@ -2945,13 +2958,13 @@ visibility predicate.
   Ticket with no qualifying caller work returns the normal three empty
   collections rather than an alternate state.
 - Tests preserve only the documented identifier-only exceptions: a visible
-  Duplicated Ticket may retain `duplicate_of_ticket_id = SNTL-{n}` when its target later
-  becomes inaccessible; `TICKET_CVE_CONFLICT` may include
-  `existing_ticket_id` for an inaccessible conflicting Ticket; and the global
-  CVE-source listing may expose public CVE IDs without Ticket visibility
-  scoping. Following a protected Ticket/CVE identifier still applies ordinary
-  accessibility, and none of these exceptions may expose Ticket-derived
-  content or create another bypass.
+  Duplicated Ticket may retain `duplicate_of_ticket_id = SNTL-{n}` when its
+  target later becomes inaccessible; and `TICKET_CVE_CONFLICT` may include
+  `existing_ticket_id` for an inaccessible conflicting Ticket. Following a
+  protected Ticket identifier still applies ordinary accessibility, and none of
+  these exceptions may expose Ticket-derived content, the ID of an inaccessible
+  CVE, or create another bypass. No CVE list, the global CVE source listing
+  included, returns a row of an inaccessible CVE.
 
 **Ticket identifier and read-contract coverage:**
 

@@ -23,10 +23,9 @@ serializer, so every endpoint that returns an assessment item serializes
 the same schema. `serialize_cve_detail()` is likewise the one `CVEDetail`
 serializer, shared by `GET /cves/{cve_id}` and `TicketDetail.cve`.
 
-`GET /cve-sources` lives here because it lists CVE-source records; it is
-the intentional identifier-only exception to CVE accessibility and
-therefore authenticates the caller without resolving its Ticket caller
-information. `GET /cves/{cve_id}/sources` and
+`GET /cve-sources` lives here because it lists CVE-source records; like
+`GET /cves`, it applies CVE accessibility in its service-owned list
+query. `GET /cves/{cve_id}/sources` and
 `POST /cves/{cve_id}/refetch` are the handlers without a
 `DatabaseSession`: their services own a short-lived session (see
 `get_cve_source_status_session_factory` and
@@ -46,7 +45,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.api.dependencies import (
     AuthenticatedPrincipal,
     AuthenticatedTicketCaller,
-    CurrentUser,
     CVEIdPath,
     cve_not_found_error,
     require_accessible_cve,
@@ -722,27 +720,31 @@ async def get_cve_affected_versions(
     summary="List persisted CVE source records",
     description=(
         "Returns a paginated global listing of the persisted latest-state "
-        "CVE source records (CVE-ID, source, persisted status, timestamps), "
-        "filterable by source, status, stalled state, and fetch time. Enables "
-        "drill-down from fetcher runs; the result is a latest-state "
-        "approximation and can differ from a run's failure count. Exposes "
-        "public CVE IDs and operational metadata only, so no Ticket "
-        "visibility is applied. Requires authentication (JWT session or API "
-        "key)."
+        "CVE source records (CVE-ID, source, persisted status, timestamps) "
+        "of the CVEs accessible to the caller, filterable by source, status, "
+        "stalled state, and fetch time. A record of a CVE without a Ticket "
+        "is always listed; a record of a CVE with a Ticket is listed only "
+        "when that Ticket is visible to the caller. Enables drill-down from "
+        "fetcher runs; the result is a latest-state approximation and can "
+        "differ from a run's failure count. Requires authentication (JWT "
+        "session or API key); the caller's scope, grants, and package "
+        "maintainership determine access to the records of CVEs associated "
+        "with confidential Tickets."
     ),
 )
 async def list_cve_sources(
     db: DatabaseSession,
-    _principal: CurrentUser,
+    caller: AuthenticatedTicketCaller,
     query: Annotated[CVESourceListQuery, Depends(_cve_source_list_query)],
 ) -> CVESourceListResponse:
     """Global CVE Source Listing — see `docs/features/tickets/cve-service.md`.
 
-    `_principal` exists solely to require authentication (`Access:
-    Authenticated`); the listing itself does not vary by caller.
+    The service applies CVE accessibility inside its single listing
+    statement; rows and total come from one observation.
     """
     result = await cve_service.list_cve_sources(
         db,
+        caller,
         source=query.source,
         status=query.status,
         stalled=query.stalled,
