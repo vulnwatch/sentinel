@@ -2032,8 +2032,8 @@ transitions. The test must cover:
 - **Atomic consumer accessibility**: cover a role-less caller without a grant
   or maintainership, scope-`all`, explicit grant, included-package
   maintainer, package exclusion/restore, and multiple qualifying-package
-  branches. Read queries constrain returned trees, package
-  items, totals, pages, and aggregates in the same database result. Consumer
+  branches. Read queries constrain returned trees, package items, totals,
+  pages, and aggregates in the same database result. Consumer
   mutations re-evaluate accessibility after the Ticket lock and before every
   state-dependent guard or side effect; concurrent access loss returns
   `TICKET_NOT_FOUND` with no mutation, assignment, audit, reconciliation, or

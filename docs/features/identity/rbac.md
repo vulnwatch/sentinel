@@ -131,7 +131,8 @@ Public access is limited to:
 The OpenAPI document (`/api/openapi.json`) and the interactive documentation
 page (`/api/docs`) are also served without authentication; they are not
 operations (`docs/api-spec.md`, OpenAPI Document and Interactive
-Documentation). No other path is served without authentication.
+Documentation). No other operation or document is served without
+authentication.
 
 **Criterion for Public access**: an operation is Public only when its caller
 cannot hold a Sentinel credential yet (authentication bootstrap) or is
@@ -155,11 +156,10 @@ its owning specification that meets this criterion.
 ### Authenticated
 
 Any logged-in user, regardless of role. A user with no roles is the
-read-only profile, read-only with respect to application data: effective
-scope `non_confidential`, no capabilities, and
-visibility of confidential Tickets only through an explicit grant or package
-maintainership (see Scope and Confidential Ticket Visibility). Authenticated
-access covers:
+read-only profile (read-only for application data): effective scope
+`non_confidential`, no capabilities, and visibility of confidential Tickets
+only through an explicit grant or package maintainership (see Scope and
+Confidential Ticket Visibility). Authenticated access covers:
 - Logout (terminate own session)
 - View own profile (`/api/v1/users/me`)
 - Manage own API keys (list, create, revoke)
