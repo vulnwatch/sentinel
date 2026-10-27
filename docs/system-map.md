@@ -466,7 +466,7 @@ flowchart LR
     FRESH["Post-commit freshness<br/>publication (Redis + Celery)"]
 
     READ_PROT["Protected per-CVE source read<br/>CVE accessibility applied"]
-    READ_GLOBAL["Global identifier-only listing<br/>no Ticket visibility join"]
+    READ_GLOBAL["Global source listing<br/>CVE accessibility applied"]
 
     SRC --> PERIODIC
     PERIODIC --> UPSERT
@@ -511,9 +511,9 @@ Reading the diagram:
   fails, the per-CVE read falls back to the complete durable status.
 - The **protected per-CVE read** (`GET /api/v1/cves/{cve_id}/sources`) applies
   CVE accessibility and returns `404 CVE_NOT_FOUND` for missing or inaccessible
-  CVEs. The **global identifier-only listing** (`GET /api/v1/cve-sources`) is the
-  intentional exception: it applies no Ticket visibility join and exposes only
-  the public CVE ID and operational source metadata.
+  CVEs. The **global source listing** (`GET /api/v1/cve-sources`) applies the
+  same accessibility as a list: it returns only the records of accessible CVEs
+  and excludes the others from the page and the total.
 
 User-attributed creation or mutation paths that may assign first stabilize the
 acting User's active VA eligibility. System ingestion does not assign and omits

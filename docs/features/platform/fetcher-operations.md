@@ -1096,7 +1096,10 @@ latest `fetched_at` falls within the supplied window. Because `CVESource`
 stores only one latest-state row per `(cve_id, source)`, later periodic,
 catch-up, retry, or on-demand writes may add, remove, or reclassify rows
 relative to the original run, and the number of rows can differ from the run's
-counter. `FetcherRun.items_failed` remains the authoritative aggregate count.
+counter. The listing also applies CVE accessibility, so a caller without
+effective scope `all` does not see the rows of CVEs associated with Tickets
+invisible to that caller. `FetcherRun.items_failed` remains the authoritative
+aggregate count.
 For runs still in `running` status, omit `to_date` for a live view of
 accumulated failures. If `started_at` is `null` (a `queued` run finalized as
 `failure` before any worker adopted it, or a run still `queued`), omit

@@ -442,11 +442,10 @@ associated CVE consumes this exact Ticket predicate. Missing and inaccessible
 outcomes return `CVE_NOT_FOUND`, never a Ticket code. See `docs/api-spec.md`
 (CVE Accessibility Check).
 
-`GET /api/v1/cve-sources` is the intentional identifier-only exception: it
-applies no Ticket visibility join and exposes only public CVE IDs and source
-operational metadata. It does not authorize a direct CVE or Ticket content
-read. See `docs/features/tickets/cve-service.md` (Global CVE Source Listing)
-and `docs/api-spec.md` (Anti-Enumeration Boundary).
+CVE lists, `GET /api/v1/cves` and `GET /api/v1/cve-sources`, select only rows
+of accessible CVEs, so no list discloses the ID of an inaccessible CVE. See
+`docs/features/tickets/cve-service.md` (Global CVE Source Listing) and
+`docs/api-spec.md` (Anti-Enumeration Boundary).
 
 For CVE refetch, `triage_ticket` is checked before CVE lookup. The service then
 locks CVE followed by optional Ticket and applies accessibility before source

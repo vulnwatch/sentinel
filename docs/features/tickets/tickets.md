@@ -1082,6 +1082,12 @@ The service-owned list query includes Ticketless CVEs and CVEs whose associated
 Ticket satisfies the canonical predicate. Filtering, sorting, totals, and page
 slicing apply to that set.
 
+**CVE Source Listing (`GET /api/v1/cve-sources`)**:
+The service-owned listing includes only the source records of that same
+accessible CVE set. Filtering, sorting, totals, and page slicing apply to those
+records. See `docs/features/tickets/cve-service.md` (Global CVE Source
+Listing).
+
 #### Mutation Atomicity
 
 Consumer mutations authorize against the locked-current pre-mutation Ticket.
@@ -1117,10 +1123,16 @@ another visibility branch applies.
 
 #### Identifier Disclosure Boundary
 
-`SNTL-{n}` and CVE IDs are identifiers, not confidential Ticket content.
-Confidentiality still hides protected Ticket-derived content and direct reads,
-but it does not add identifier redaction, alternate states, or lookup
-machinery. Ticket UUIDs are internal and are not an API representation.
+`SNTL-{n}` identifiers are not confidential Ticket content. Confidentiality
+still hides protected Ticket-derived content and direct reads, but it does not
+add identifier redaction, alternate states, or lookup machinery. Ticket UUIDs
+are internal and are not an API representation.
+
+The CVE ID of a confidential Ticket is protected Ticket-derived content: it can
+identify a RESERVED, unpublished CVE under embargo. It reaches only callers who
+can see the Ticket: Ticket reads apply Ticket visibility, and every CVE read,
+lists included, selects only accessible CVEs (Confidentiality Filtering;
+`docs/api-spec.md`, Anti-Enumeration Boundary).
 
 **Accepted risk — `duplicate_of_ticket_id` and confidential targets**: A
 Duplicated ticket that is non-confidential may have a
@@ -1140,10 +1152,12 @@ created; and (d) the leak is limited to an identifier. Following that identifier
 may return `404 TICKET_NOT_FOUND`.
 
 The existing `409 TICKET_CVE_CONFLICT` response likewise retains
-`existing_ticket_id` even when that Ticket is not otherwise visible. The global
-CVE-source listing may expose CVE IDs without joining through Ticket visibility.
-These are bounded identifier-only exceptions; they do not permit protected
-Ticket content or direct inaccessible-resource reads.
+`existing_ticket_id` even when that Ticket is not otherwise visible. It answers
+a create or associate request that names the CVE and requires `create_ticket`
+or `triage_ticket`, so it discloses no CVE ID that the caller did not supply.
+These are bounded identifier-only exceptions that disclose only `SNTL-{n}`
+identifiers; they do not permit protected Ticket content or direct
+inaccessible-resource reads.
 
 ### Coordinated Release Date
 
