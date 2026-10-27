@@ -71,22 +71,23 @@ responses of `/health` and `/ready` follow
 
 A change is classified by the outcome that the contract of the earlier release
 states for each request that the change affects: success, or the error
-response of a condition. A change that falls under several of these cases is
-breaking when one of them is:
+response of a condition. Only the requests that a client sends under the
+obligations of that contract count (Client Tolerance of Non-Breaking Changes),
+so a request with a query parameter or request body member that the contract
+does not declare is not one of them. A change that falls under several of the
+following cases is breaking when one of them is. The cases are:
 
 - **New condition**, not breaking: the operation reports as an error,
   whatever its code and status, a condition for which the contract of the
-  earlier release states no outcome. Examples are a `409` for a state that the
+  earlier release states no outcome, for example a `409` for a state that the
   earlier release does not have, a `<DEPENDENCY>_UNAVAILABLE` for a dependency
-  that the operation did not use, and a `422` for an invalid value of a query
-  parameter or request body member that the earlier release did not declare:
-  that release ignores such an input (Undeclared Query Parameters) but states
-  no outcome for it.
-- **Changed code or status**, breaking: a request for which the contract of
-  the earlier release states an error response receives another code or
-  status, for example when its condition moves from `VALIDATION_ERROR` to a
-  dedicated code, or when the precedence that the contract states between two
-  conditions changes.
+  that the operation did not use, or a `422` for an invalid value of a newly
+  declared query parameter.
+- **Changed code or status**, breaking: a condition for which the contract of
+  the earlier release states an error response is reported with another code
+  or status, for example with a dedicated code in place of `VALIDATION_ERROR`,
+  or a request that meets two conditions receives the response of the other
+  one where the contract states their precedence.
 - **Rejected request**, breaking: the operation rejects with a `4xx` response
   a request for which the contract of the earlier release states success, for
   example through a stricter constraint on an existing input or a new check
@@ -95,12 +96,29 @@ breaking when one of them is:
   response that the contract of the earlier release states, where that release
   returned another response, success included.
 
+A later release can accept a request that the earlier release rejected
+because of an input that it did not know, such as a request to a new endpoint
+or method, or with a new fetcher name, fetcher setting, CVE source, or value of
+a request enum. The condition of that rejection no longer applies to the
+request, so each error response that the request can receive in the later
+release is a new condition.
+
 `500 INTERNAL_ERROR` reports an unhandled server error (Global Responses),
 even where a specification names it for a condition, such as a database
-failure. Reporting such an error with another code or status is therefore a
-new condition. A `5xx` response for a new reason, such as a new dependency, is
-a new condition too, not a rejected request: no contract guarantees that the
-server completes every request.
+failure. A `5xx` response is never a rejected request:
+
+- an error that the earlier release reported as `500 INTERNAL_ERROR` and that
+  a later release reports with another code or status is a new condition, or
+  a rejected request when the later release reports it with a `4xx` response
+  to a request for which the contract of the earlier release states success;
+  and
+- a `5xx` response that reports a failure for which the contract of the
+  earlier release states no outcome, such as the unavailability of a new
+  dependency, is a new condition, whatever that contract states for the
+  request otherwise. Where that contract states the outcome of the failure,
+  for example a successful response that reports an unavailable dependency
+  (Infrastructure Dependency Errors), another outcome is a semantic change to
+  existing behavior and therefore breaking.
 
 #### Client Tolerance of Non-Breaking Changes
 
