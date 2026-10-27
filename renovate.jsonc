@@ -164,9 +164,15 @@
   ],
   "packageRules": [
     {
-      "description": "Release-age cooldown: Renovate proposes a new version, of any manager, only once it is seven days old, the cooldown that backend/pyproject.toml sets for uv (exclude-newer) — see docs/deployment.md (Workflow Conventions, Release-age cooldown). Digest updates are not held: Docker Hub dates a digest by the last push of its tag. Vulnerability-fix PRs are not held either (see vulnerabilityAlerts above). A version without a release timestamp, such as one of a Docker Hub image whose tags a lookup could not read in full, is held until it is requested from the Dependency Dashboard, so a lookup failure never admits a release early",
+      "description": "Release-age cooldown: Renovate proposes a new version, of any manager, only once it is seven days old, the cooldown that backend/pyproject.toml sets for uv (exclude-newer) — see docs/deployment.md (Workflow Conventions, Release-age cooldown). Digest updates are not held: Docker Hub dates a digest by the last push of its tag, so the next rule makes them wait for approval instead. Vulnerability-fix PRs are not held either (see vulnerabilityAlerts above). A version without a release timestamp, such as one of a Docker Hub image whose tags a lookup could not read in full, is held until it is requested from the Dependency Dashboard, so a lookup failure never admits a release early",
       "matchUpdateTypes": ["major", "minor", "patch"],
       "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "A digest update of an image pinned by version and digest, or of an Action pinned by commit SHA, means that the publisher moved the tag of the pinned version to other content, which is also what a hijacked tag does. It opens only once a maintainer approves it under Pending Approval on the Dependency Dashboard — see docs/deployment.md (Workflow Conventions, Digest updates). The python base image is the exception: its tag is republished with every Debian or Python fix, and its digest refresh is the remediation path of the image scan",
+      "matchUpdateTypes": ["digest"],
+      "matchPackageNames": ["!python"],
+      "dependencyDashboardApproval": true
     },
     {
       "description": "Python (backend) requirements are open-ended floors (>=), so the default rangeStrategy never proposes an in-range update. update-lockfile refreshes backend/uv.lock (what CI and the image install via uv sync --locked) for in-range updates and replaces the range only when a new version falls outside it",
@@ -220,10 +226,9 @@
       "commitMessagePrefix": "chore(deps):"
     },
     {
-      "description": "Keep the uv version used by astral-sh/setup-uv (CI), the uv binary copied into the Docker image (COPY --from), and the uv_build range in backend/pyproject.toml [build-system] (the backend bundled in that binary; pep621 normalizes the name to uv-build) in sync — see backend/Dockerfile comment. Exempt from the release-age cooldown: ghcr.io publishes no release timestamps, so the image would be held indefinitely while the other two moved on",
-      "matchPackageNames": ["astral-sh/uv", "ghcr.io/astral-sh/uv", "uv-build"],
-      "groupName": "uv version (CI + Docker image)",
-      "minimumReleaseAge": null
+      "description": "Keep the uv version used by astral-sh/setup-uv (CI), the uv binary copied into the Docker image (COPY --from), and the uv_build range in backend/pyproject.toml [build-system] (the backend bundled in that binary; pep621 normalizes the name to uv-build) in sync — see backend/Dockerfile comment. The image comes from Docker Hub (astral/uv), the only registry from which Renovate reads the release timestamps of images, so the whole group waits for the release-age cooldown",
+      "matchPackageNames": ["astral-sh/uv", "astral/uv", "uv-build"],
+      "groupName": "uv version (CI + Docker image)"
     }
   ]
 }
