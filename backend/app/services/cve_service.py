@@ -698,8 +698,8 @@ class CVEDetailResult:
 class CVESourceListItemProjection:
     """One persisted `CVESource` latest-state row of the global listing.
 
-    `cve_id` is the public CVE-ID string; `CVESource.id`, the CVE UUID,
-    and every Ticket attribute are deliberately absent.
+    `cve_id` is the CVE-ID string; `CVESource.id`, the CVE UUID, and
+    every Ticket attribute are deliberately absent.
     """
 
     cve_id: str

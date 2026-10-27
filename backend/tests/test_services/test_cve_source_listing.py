@@ -945,11 +945,15 @@ class TestBoundedReadAndDivergence:
         total: int,
     ) -> None:
         """Six of the twelve CVEs have a Ticket, three of them confidential
-        and hidden from the role-less caller."""
+        and hidden from the role-less caller. The hidden rows sort first, so
+        removing them after paging would empty or shorten every page."""
         for index in range(12):
-            row = await make_row(status=FAILURE, first_failed_at=APR)
+            confidential = index % 4 == 1
+            row = await make_row(
+                status=FAILURE, first_failed_at=FEB if confidential else APR
+            )
             if index % 2:
-                await ticket_factory(cve_id=row.cve.id, is_confidential=index % 4 == 1)
+                await ticket_factory(cve_id=row.cve.id, is_confidential=confidential)
         before = await _persisted_state(db_session)
 
         counts = []
@@ -1361,10 +1365,11 @@ class TestListingAccessRaces:
     ) -> None:
         loss = await _prepare_loss(race, case)
         control = await race.row("missing")
-        added = race.new("missing")
+        added = (race.new("missing"), race.new("missing"))
 
         async def change() -> None:
-            await _commit(race.writer, *loss.change, *added.inserts)
+            inserts = [insert for row in added for insert in row.inserts]
+            await _commit(race.writer, *loss.change, *inserts)
 
         calls = _commit_after_first_statement(monkeypatch, race.reader, change)
         result = await _list(race.reader, loss.caller, source=race.source)
@@ -1376,4 +1381,7 @@ class TestListingAccessRaces:
             control.key,
         }
         fresh = await race.sessions()
-        assert await race.keys(fresh, loss.caller) == ({control.key, added.key}, 2)
+        assert await race.keys(fresh, loss.caller) == (
+            {control.key, *(row.key for row in added)},
+            3,
+        )
