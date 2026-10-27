@@ -1478,9 +1478,9 @@ external identity provider (see
 or created locally via the authenticated administrator API or
 bootstrap/recovery CLI. Users can hold zero, one, or multiple roles via the
 UserRole junction table. Authenticated users with no roles have an effective
-scope of `non_confidential` and no capabilities; unlike unauthenticated users,
-they can access specific confidential tickets via `TicketAccessGrant` or an
-included `TicketPackageMaintainer` association.
+scope of `non_confidential` and no capabilities; they can access specific
+confidential tickets via `TicketAccessGrant` or an included
+`TicketPackageMaintainer` association.
 
 | Column           | Type        | Constraints              | Description                      |
 |------------------|-------------|--------------------------|----------------------------------|

@@ -32,7 +32,6 @@ UI surfaces.
                            ▼
               ┌───────────────────────────────┐
               │ get_current_user()            │◄─── API Key (no session)
-              │ get_optional_current_user()   │
               └───────────────────────────────┘
 ```
 
@@ -124,11 +123,10 @@ failure; callers do not receive the failed condition.
   recomputed from the current setting.
 - The server transparently refreshes the token via **sliding session**
   (see Token refresh below) whenever a request processes a valid JWT through
-  mandatory or optional authentication. For browser sessions that retain the
-  refreshed cookie, continued use of endpoints that process authentication
-  prevents expiration at the shorter JWT `exp` boundary, but never extends the
-  immutable `session_deadline`. Bearer-only behavior is defined under Token
-  refresh.
+  `get_current_user`. For browser sessions that retain the refreshed cookie,
+  continued use of endpoints that process authentication prevents expiration
+  at the shorter JWT `exp` boundary, but never extends the immutable
+  `session_deadline`. Bearer-only behavior is defined under Token refresh.
 - An inactive user whose token expires without renewal (no requests for
   longer than `JWT_EXPIRY_HOURS`) is redirected to the login page.
 - After `SESSION_MAX_LIFETIME_DAYS` from login (`session_deadline`), the
@@ -702,15 +700,16 @@ authorization dependencies.
 
 ## Authentication Dependencies
 
-`get_current_user` and `get_optional_current_user` share one credential
-selection and validation path. They differ only when no credential is
-selected; validation behavior and successful-authentication side effects MUST
-NOT diverge between them.
+`get_current_user` authenticates every endpoint that is not Public
+(`docs/api-spec.md`, Public Endpoints), directly or through the authorization
+dependencies that consume its principal, except logout, which uses its own
+credential handling (see Logout). Its credential selection and validation path
+is Shared Credential Resolution below.
 
 ### Shared Credential Resolution
 
-Both dependencies receive the incoming FastAPI `Request`, outgoing `Response`,
-and request `DatabaseSession`. They apply this credential selection and
+The dependency receives the incoming FastAPI `Request`, outgoing `Response`,
+and request `DatabaseSession`. It applies this credential selection and
 validation contract:
 
 1. Check the `Authorization` header:
@@ -728,18 +727,16 @@ validation contract:
      determination, lookup, or log record.
    - If the cookie has a non-empty value: extract its value as the token and go
      to step 3. A whitespace-only value is non-empty and therefore selects an
-     invalid credential rather than anonymous access (after parsing, a value
-     of only spaces and horizontal tabs is empty).
-   - If the cookie is absent or empty: no credential is selected. The
-     dependency-specific behavior below applies.
+     invalid credential (after parsing, a value of only spaces and horizontal
+     tabs is empty).
+   - If the cookie is absent or empty: no credential is selected (see
+     `get_current_user` below).
 3. Determine credential type:
    - If the token starts with `stl_ak_`: treat as **API key**
    - Otherwise: treat as **JWT**
 4. Validate according to the credential type (see below). Any credential
    validation failure results in HTTP 401 with the standard generic body
-   (described below). Optional authentication does not convert a selected but
-   rejected credential into anonymous access. Only the success path is
-   described in the sub-flows.
+   (described below). Only the success path is described in the sub-flows.
 5. Load the `User` record by the `user_id` returned from the credential
    sub-flow. If the user does not exist or is inactive (`active = false`),
    return HTTP 401.
@@ -759,8 +756,8 @@ select a credential and therefore retains the cookie fallback in steps 1-2.
 
 Only the documented credential rejection conditions are mapped to 401.
 Database failures and other infrastructure or unexpected exceptions propagate
-through normal error handling; neither dependency converts them to anonymous
-access or reports them as invalid credentials.
+through normal error handling; the dependency does not report them as invalid
+credentials.
 
 All HTTP 401 responses return a generic body `{"code":
 "AUTH_NOT_AUTHENTICATED", "detail": "Authentication required"}` regardless
@@ -780,45 +777,15 @@ require authentication.
 **Return type**: `AuthenticatedPrincipal`.
 
 If no credential is selected at shared step 2, return the standard generic
-HTTP 401. Every other outcome is defined by the shared flow.
+HTTP 401 without loading a user, checking a session, or looking up an API key.
+Every other outcome is defined by the shared flow.
 
-### `get_optional_current_user`
-
-`get_optional_current_user` applies Shared Credential Resolution to Public
-endpoints that explicitly declare `Authentication: Optional` per
-`docs/api-spec.md`.
-
-**Return type**: `AuthenticatedPrincipal | None`. The FastAPI type alias is
-`OptionalCurrentUser`. No separate anonymous-principal type exists.
-
-If no credential is selected at shared step 2, return `None` without loading a
-user, checking a session, refreshing a JWT, looking up an API key, touching
-`last_used_at`, or emitting `api_key_validation_failed` or `api_key_rejected`.
-The endpoint proceeds as an anonymous request.
-
-If a credential is selected, execute shared steps 3-7 without modification:
-
-- a valid JWT returns an `AuthenticatedPrincipal` and performs sliding refresh
-  when eligible;
-- a valid API key returns an `AuthenticatedPrincipal` and performs the same
-  debounced `last_used_at` touch;
-- an unknown API key executes the same rate-limited
-  `api_key_validation_failed` WARNING path before returning 401;
-- a revoked or expired API key, or one whose owner is missing or inactive,
-  executes the same rate-limited `api_key_rejected` WARNING path before
-  returning 401;
-- malformed, invalid, expired, or otherwise rejected JWTs, and JWTs whose user
-  is missing or inactive, return the same generic 401 as mandatory
-  authentication, and the rejection is not logged (see JWT validation).
-
-The optional dependency creates no audit event. Its successful JWT and API-key
-effects retain the audit boundaries specified by their shared sub-flows.
-
-Public endpoints without the `Authentication: Optional` declaration do not
-invoke this dependency and ignore request credentials. In particular,
-`/health`, `/ready`, local login, SSO authorization and callback, and
-authentication-provider discovery remain independent of credential validation;
-stale credentials cannot block those probe, bootstrap, or recovery paths.
+Public endpoints (`docs/api-spec.md`, Public Endpoints) do not invoke this
+dependency and ignore request credentials: `/health`, `/ready`, local login,
+SSO authorization and callback, and authentication-provider discovery remain
+independent of credential validation, so stale credentials cannot block those
+probe, bootstrap, or recovery paths. No other dependency resolves an optional
+principal: there is no anonymous caller of an application endpoint.
 
 ### JWT validation
 

@@ -671,8 +671,7 @@ an untyped abbreviation map.
 GET /api/v1/cves/{cve_id}/cvss
 ```
 
-**`Access: Public`**
-**`Authentication: Optional`**
+**`Access: Authenticated`**
 
 The path uses the CVE Identifier Resolution contract in `docs/api-spec.md`.
 The endpoint returns one bounded composite resource and is not paginated.
@@ -1018,7 +1017,7 @@ testing strategy.
 - POST returns 201 only to the serialized create winner and 200 to update and
   unchanged outcomes. DELETE covers each accepted path version, not found,
   and manual-zone rejection.
-- Public optional-auth GET behavior, `manage_cvss` authorization on mutations,
+- Authenticated GET behavior, `manage_cvss` authorization on mutations,
   ticketless and associated-CVE accessibility, coherent composite GET
   selection, missing/inaccessible anti-enumeration, global Pydantic validation
   responses, and the domain `CVSS_INVALID_VECTOR` response without changing

@@ -485,7 +485,7 @@ is created manually. The table states the final state after the load.
 
 The dataset holds more than one page of Tickets at the default page size of
 20 (`docs/api-spec.md`) for every caller: 23 Tickets are not confidential and
-are visible without authentication.
+are visible to every authenticated user.
 
 | Ticket | CVE | Created by | Status | Assignee | Confidential | Severity |
 |---|---|---|---|---|---|---|

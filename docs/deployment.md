@@ -2312,9 +2312,11 @@ timeouts (2s per dependency, checks concurrent; 5s provides margin for network o
 These are generic API-process probes; their PostgreSQL-plus-Redis readiness
 semantics are unchanged by the standalone consumer's dependency model. Monitor
 the IBS consumer through process supervision and
-`GET /api/v1/ibs-consumer/status`. That endpoint reports `disabled` when the
-consumer is configured off and `unreachable` when Redis cannot provide a valid
-fresh heartbeat; both are HTTP 200 operational observations.
+`GET /api/v1/ibs-consumer/status`, which requires authentication like every
+application read (see Monitoring Scheduler Liveness for the monitoring
+credential). That endpoint reports `disabled` when the consumer is configured
+off and `unreachable` when Redis cannot provide a valid fresh heartbeat; both
+are HTTP 200 operational observations.
 
 ### Redis Durability, Memory, and Persistence
 
@@ -2475,11 +2477,15 @@ ingestion):
 > has never run (`last_run = null`), or has `last_run.stale = true`.
 
 This signal is derivable from `GET /api/v1/fetchers` without any code
-changes to Sentinel. It detects not only empty schedules but also dead
-workers, database unavailability, or any other cause of stalled
-processing. Runs still in progress (`status` is `queued` or `running`)
-have `last_run.finished_at = null` and are covered by the
-`last_run.stale` condition once the respective threshold is reached —
+changes to Sentinel. The endpoint requires authentication, so the monitoring
+system authenticates with an API key
+(`docs/features/identity/api-key-management.md`). The key of a role-less
+account, the read-only profile (`docs/features/identity/rbac.md`, Access
+Levels), suffices and grants no capability. The signal detects
+not only empty schedules but also dead workers, database unavailability, or
+any other cause of stalled processing. Runs still in progress (`status` is
+`queued` or `running`) have `last_run.finished_at = null` and are covered by
+the `last_run.stale` condition once the respective threshold is reached —
 600 seconds for a `queued` run awaiting worker adoption,
 `hard_time_limit_seconds + 60` seconds for a `running` run (where
 `hard_time_limit_seconds` is the per-run effective hard limit persisted

@@ -770,17 +770,17 @@ stderr.
 
 ## Access Level Requirements
 
-User listing and user detail are accessible to all authenticated and
-unauthenticated users (read-only). Administrator API operations (create, edit,
-deactivate, reactivate, reset password, unlock, role management) require the
+User listing and user detail are accessible to every authenticated user
+(read-only). Administrator API operations (create, edit, deactivate,
+reactivate, reset password, unlock, role management) require the
 `manage_users` capability. CLI commands are authorized by direct shell or
 container access and pass `acting_user_id = None`; they do not evaluate an HTTP
 caller capability.
 
-### Public API endpoints
+### Read API endpoints
 
-These endpoints are publicly accessible (read-only) and do not require
-authentication.
+These read-only endpoints are accessible to every authenticated user,
+regardless of role.
 
 #### List Users
 
@@ -788,8 +788,7 @@ authentication.
 GET /api/v1/users
 ```
 
-**`Access: Public`**
-**`Authentication: Optional`**
+**`Access: Authenticated`**
 
 User search and autocomplete. Returns a paginated list of users.
 The route delegates filtering, sorting, pagination, and relationship loading to
@@ -831,8 +830,7 @@ object). Each user object follows the same schema as
 GET /api/v1/users/{user}
 ```
 
-**`Access: Public`**
-**`Authentication: Optional`**
+**`Access: Authenticated`**
 
 Returns full user profile. Response uses the standard single-resource
 envelope:
@@ -1032,7 +1030,7 @@ in `docs/features/identity/user-service.md`).
 | 409 | `USER_ALREADY_EXISTS` | Normalized email is already used |
 
 **Response**: user profile in `{"data": {...}}` envelope (see
-`GET /api/v1/users/{user}` in Public API endpoints above for the full
+`GET /api/v1/users/{user}` in Read API endpoints above for the full
 response schema).
 
 #### Set User Roles
@@ -1123,7 +1121,7 @@ overlapping input first.
 
 **Response**: HTTP 200 with updated user profile including all roles,
 wrapped in the standard `{"data": ...}` envelope (see
-`GET /api/v1/users/{user}` in Public API endpoints above for the full
+`GET /api/v1/users/{user}` in Read API endpoints above for the full
 response schema).
 
 #### Reset User Password
@@ -1254,7 +1252,7 @@ deactivation). Deactivation creates no grant event and the impact response does
 not count grants or maintainership rows because neither is mutated.
 
 **Response**: user profile in `{"data": {...}}` envelope (see
-`GET /api/v1/users/{user}` in Public API endpoints above for the full
+`GET /api/v1/users/{user}` in Read API endpoints above for the full
 response schema).
 
 #### Reactivate User
@@ -1293,7 +1291,7 @@ Ticket grant event.
   Ownership, "Evaluation point differs by function")
 
 **Response**: user profile in `{"data": {...}}` envelope (see
-`GET /api/v1/users/{user}` in Public API endpoints above for the full
+`GET /api/v1/users/{user}` in Read API endpoints above for the full
 response schema).
 
 #### Get Deactivation Impact

@@ -89,10 +89,10 @@ eligibility recalculation use their dedicated system boundaries instead.
 Consumer-facing operations receive enough caller context to evaluate the
 canonical Ticket visibility predicate from `docs/features/identity/rbac.md`
 (Scope and Confidential Ticket Visibility). The exact typed representation is
-an implementation choice. A caller context identifies an anonymous request, an
-authenticated user's ID and effective scope, or an explicit internal system
-invocation; it is not a pre-built ORM expression. Anonymous callers cannot
-satisfy grant or maintainership branches.
+an implementation choice. A caller context identifies an authenticated user's
+ID and effective scope, or an explicit internal system invocation; it is not a
+pre-built ORM expression. Every consumer caller is authenticated (see
+`docs/features/identity/rbac.md`, Access Levels).
 Consumer-facing calls additionally supply this request-resolved caller
 information through an implementation-chosen typed boundary. The specification
 does not require a class, tuple, helper interface, parameter layout, or
@@ -2029,10 +2029,11 @@ transitions. The test must cover:
   mutation validates the complete declared path under the Ticket lock; test a
   correct path, each missing level, and each child-belongs-to-another-parent
   mismatch, all without mutating or revealing the other occurrence
-- **Atomic consumer accessibility**: cover anonymous, scope-`all`, explicit
-  grant, included-package maintainer, package exclusion/restore, and multiple
-  qualifying-package branches. Read queries constrain returned trees, package
-  items, totals, pages, and aggregates in the same database result. Consumer
+- **Atomic consumer accessibility**: cover a role-less caller without a grant
+  or maintainership, scope-`all`, explicit grant, included-package
+  maintainer, package exclusion/restore, and multiple qualifying-package
+  branches. Read queries constrain returned trees, package items, totals,
+  pages, and aggregates in the same database result. Consumer
   mutations re-evaluate accessibility after the Ticket lock and before every
   state-dependent guard or side effect; concurrent access loss returns
   `TICKET_NOT_FOUND` with no mutation, assignment, audit, reconciliation, or

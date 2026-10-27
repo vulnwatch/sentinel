@@ -310,9 +310,8 @@ WHERE TicketPackageMaintainer.user_id = caller_user_id
 This document does not own or repeat the complete formula. Every Ticket-derived
 consumer query combines this branch through the canonical predicate in its
 Service-owned model-aware query. API handlers do not build or pass ORM
-expressions. Authentication already guarantees that an authenticated caller's
-current User is active; anonymous evaluation performs no grant or
-maintainership lookup.
+expressions. Every consumer caller is authenticated, and authentication
+already guarantees that the caller's current User is active.
 
 Package exclusion disables every association below that package immediately.
 Access remains if another included package qualifies. Package restore
@@ -320,7 +319,8 @@ reactivates retained associations without SMELT I/O. Track or Product exclusion
 does not affect access because maintainership is package-wide. A later SMELT
 omission, Ticket resolution, or user/profile email change does not revoke the
 persisted user-ID association. Removing confidentiality makes all
-maintainer-based restriction inert because the Ticket is public.
+maintainer-based restriction inert because a non-confidential Ticket is
+visible to every authenticated caller.
 
 Maintainership grants visibility only. Capability checks remain orthogonal:
 "full access" means normal Ticket visibility plus whatever operations the
@@ -457,7 +457,7 @@ Implementation coverage must include:
   preserving its locked inactive-Ticket skip;
 - confidential visibility for each scope/grant/maintainer branch, package
   exclusion/later restore, another qualifying package, track/Product exclusion,
-  Resolved Tickets, non-confidential Tickets, and unauthenticated callers;
+  Resolved Tickets, and non-confidential Tickets;
 - independent-session exclusion/restore races proving locked-current
   authorization, `TICKET_NOT_FOUND` with zero side effects after concurrent
   access loss, and successful self-removal of the actor's last path;

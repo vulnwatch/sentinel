@@ -61,9 +61,9 @@ capabilities control *what you can do*.
 **Scope resolution**: if any of the user's roles has scope `all`, the
 effective scope is `all`. Otherwise, the effective scope is
 `non_confidential`. Authenticated users with no roles have an effective
-scope of `non_confidential`. Unauthenticated users have no scope (treated
-as `None` — only non-confidential tickets visible, no grant/maintainership
-checks).
+scope of `non_confidential`. Every consumer-facing operation that evaluates
+Ticket visibility requires authentication (see Access Levels), so every such
+caller has an effective scope.
 
 > **Design note — consumer caller scope**: scope is part of the caller
 > information consumed by service-owned, model-aware accessibility queries for
@@ -72,10 +72,10 @@ checks).
 > Core do not build Ticket ORM predicates. Internal system workflows such as
 > Celery workers, fetchers, and event consumers do not act as a consumer caller
 > and do not use HTTP scope; their Ticket selection follows their owning
-> workflow contracts. They MUST NOT be silently treated as anonymous or routed
-> through a consumer accessibility operation that would narrow their selection
-> to non-confidential Tickets. Scope is an access-control concept, not a
-> data-partitioning concept.
+> workflow contracts. They MUST NOT be silently treated as a consumer caller,
+> such as a role-less user, or routed through a consumer accessibility
+> operation that would narrow their selection to non-confidential Tickets.
+> Scope is an access-control concept, not a data-partitioning concept.
 
 ### Predefined Roles
 
@@ -121,24 +121,56 @@ not carry capabilities or scope.
 
 ### Public
 
-No authentication required. Public endpoints that declare optional
-authentication resolve a caller when a valid credential is selected and
-otherwise apply their anonymous behavior. Read-only access to platform data:
-- View users (list and detail)
-- View tickets, CVEs, products, packages, and ticket package trees
-- View ticket references, CVSS assessments, and submission/release requests
-- View fetcher dashboard (list, detail, charts, run history, error messages)
-- View IBS consumer status
+No authentication required. A Public endpoint ignores request credentials
+(`docs/api-spec.md`, Public Endpoints), so a stale credential cannot block it.
+Public access is limited to:
+- Liveness and readiness probes
+- Local login, SSO authorization and callback, and authentication-provider
+  discovery
+
+The OpenAPI document (`/api/openapi.json`) and the interactive documentation
+page (`/api/docs`) are also served without authentication; they are not
+operations (`docs/api-spec.md`, OpenAPI Document and Interactive
+Documentation). No other operation or document is served without
+authentication.
+
+**Criterion for Public access**: an operation is Public only when its caller
+cannot hold a Sentinel credential yet (authentication bootstrap) or is
+infrastructure that does not authenticate (orchestrator probes). Every other
+operation, including every read of application data, requires at least
+Authenticated access. A new Public operation requires an explicit contract in
+its owning specification that meets this criterion.
+
+> **Design note — no anonymous reads**: every legitimate reader of Sentinel
+> holds a user account, and automation uses the API key of a user account.
+> The application data includes personal data (the user directory),
+> internal workflow state that is not published elsewhere (triage status,
+> assignees, unfixed packages and codestreams, overdue deadlines, IBS
+> requests), and operational metadata. Requiring authentication keeps this
+> data out of reach of every unauthenticated client on the network, makes
+> every read depend on a credential that an administrator can revoke, and
+> leaves one authentication path for all application operations. A role-less
+> user, for example the account behind a read-only automation API key, is the
+> read-only profile (see Authenticated).
 
 ### Authenticated
 
-Any logged-in user, regardless of role. Includes all Public access plus:
+Any logged-in user, regardless of role. A user with no roles is the
+read-only profile (read-only for application data): effective scope
+`non_confidential`, no capabilities, and visibility of confidential Tickets
+only through an explicit grant or package maintainership (see Scope and
+Confidential Ticket Visibility). Authenticated access covers:
 - Logout (terminate own session)
 - View own profile (`/api/v1/users/me`)
 - Manage own API keys (list, create, revoke)
 - View own identity audit log (`/api/v1/users/me/audit-log`)
 - View maintainer workbench (own pending, in-progress, and completed packages)
+- View users (list and detail)
+- View tickets, CVEs, products, packages, and ticket package trees
+- View ticket references, CVSS assessments, and submission/release requests
 - View ticket audit logs
+- View fetcher dashboard (list, detail, charts, run history, error messages)
+- View IBS consumer status
 
 ## Permission Matrix
 
@@ -210,24 +242,27 @@ Any logged-in user, regardless of role. Includes all Public access plus:
 | View own identity audit log | Authenticated |
 | View maintainer workbench | Authenticated |
 | View ticket audit log | Authenticated |
+| View users (list and detail) | Authenticated |
+| View tickets / CVEs | Authenticated |
+| View packages and ticket package trees | Authenticated |
+| View products | Authenticated |
+| View ticket references | Authenticated |
+| View CVSS assessments | Authenticated |
+| View submission/release requests | Authenticated |
+| View fetcher dashboard | Authenticated |
+| View IBS consumer status | Authenticated |
 
 ### Public Operations
 
 | Action | Access |
 |---|---|
-| View users (list and detail) | Public |
-| View tickets / CVEs | Public |
-| View packages and ticket package trees | Public |
-| View products | Public |
-| View ticket references | Public |
-| View CVSS assessments | Public |
-| View submission/release requests | Public |
-| View fetcher dashboard | Public |
-| View IBS consumer status | Public |
+| Liveness and readiness probes | Public |
+| Local login | Public |
+| SSO authorization and callback (deferred) | Public |
+| Authentication-provider discovery (deferred) | Public |
 
-These application read operations use optional authentication. Authentication
-bootstrap/recovery endpoints and infrastructure probes remain Public without
-optional authentication.
+These operations ignore request credentials, so their probe, bootstrap, and
+recovery contracts remain independent of stale credentials.
 
 ## Scope and Confidential Ticket Visibility
 
@@ -235,8 +270,9 @@ This section is the single normative definition of Ticket visibility. Other
 specifications identify consumers and atomicity requirements but MUST NOT define
 another semantic predicate.
 
-For an authenticated caller, a Ticket is visible exactly when at least one of
-these additive branches is true:
+Every consumer-facing operation that consumes this predicate requires
+authentication. For the authenticated caller, a Ticket is visible exactly when
+at least one of these additive branches is true:
 
 ```text
 Ticket.is_confidential IS FALSE
@@ -253,11 +289,9 @@ OR EXISTS TicketPackageMaintainer
      AND TicketPackage.deleted_at IS NULL
 ```
 
-For an anonymous caller, visibility is exactly
-`Ticket.is_confidential IS FALSE`. The query does not evaluate a grant or
-maintainer branch because there is no caller identity. A selected invalid
-credential is not anonymous: optional and mandatory authentication return 401
-before visibility evaluation.
+There is no anonymous caller: a request without a credential, or with a
+selected credential that fails validation, returns 401 before visibility
+evaluation.
 
 Authentication guarantees that an authenticated caller's current User is
 active. Deactivation therefore makes an existing explicit grant temporarily
@@ -309,23 +343,19 @@ are independent:
 
 Both checks must pass for a write operation to succeed.
 
-### Optional Principal to Caller Context
+### Principal to Caller Context
 
-Public endpoints that depend on caller identity obtain
-`AuthenticatedPrincipal | None` from `get_optional_current_user` before
+Endpoints that depend on caller identity obtain the `AuthenticatedPrincipal`
+from `get_current_user`, directly or through `require_capability()`, before
 delegating visibility or field-level authorization to a consumer-facing
-service.
+service. Resolve the user's current roles and effective scope once for the
+request and provide that information, together with the authenticated user ID,
+to every consumer-facing service operation that needs Ticket visibility.
 
-- For `None`, the request is anonymous. No roles are loaded and the service
-  evaluates only the non-confidential branch.
-- For an `AuthenticatedPrincipal`, resolve the user's current roles and
-  effective scope once for the request and provide that information, together
-  with the authenticated user ID, to every consumer-facing service operation
-  that needs Ticket visibility.
-
-Only a completely validated principal reaches this mapping. A selected invalid
-credential returns 401 at the authentication boundary before confidentiality,
-resource accessibility, or optional field-level capability checks execute.
+Only a completely validated principal reaches this mapping. A missing or
+invalid credential returns 401 at the authentication boundary before
+confidentiality, resource accessibility, or field-level capability checks
+execute.
 
 The concrete in-memory representation of this caller information is an
 implementation choice; this specification does not require a new caller-context
@@ -387,8 +417,8 @@ guard).
 
 ### Authorization Chain Evaluation Order
 
-The exact optional-authentication read, authenticated/capability read, mutation
-without external pre-lock I/O, and mutation with external pre-lock I/O flows are
+The exact authenticated read, capability-protected read, mutation without
+external pre-lock I/O, and mutation with external pre-lock I/O flows are
 defined in `docs/api-spec.md` (Authorization Chain Evaluation Order). They all
 apply this section's one visibility predicate. Capability failure precedes
 protected-resource lookup; reads constrain the selected result by visibility;
@@ -407,10 +437,10 @@ manage_fetchers`. Neither capability grants visibility. The service then checks
 locked-current accessibility before locked-current status eligibility; this
 asynchronous dispatch action does not use `ensure_ticket_operable()`.
 
-For CVE endpoints, a ticketless CVE is public and an associated CVE consumes
-this exact Ticket predicate. Missing and inaccessible outcomes return
-`CVE_NOT_FOUND`, never a Ticket code. See `docs/api-spec.md` (CVE Accessibility
-Check).
+For CVE endpoints, a ticketless CVE is accessible to every caller and an
+associated CVE consumes this exact Ticket predicate. Missing and inaccessible
+outcomes return `CVE_NOT_FOUND`, never a Ticket code. See `docs/api-spec.md`
+(CVE Accessibility Check).
 
 `GET /api/v1/cve-sources` is the intentional identifier-only exception: it
 applies no Ticket visibility join and exposes only public CVE IDs and source
@@ -453,8 +483,8 @@ here with the required authorization level and a link to the owning spec.
 |--------|----------|---------------|-------------|
 | GET | `/api/v1/users/me` | Authenticated | [authentication](authentication.md#get-current-user) |
 | GET | `/api/v1/users/me/audit-log` | Authenticated | [identity-audit-log](identity-audit-log.md#list-my-identity-audit-events) |
-| GET | `/api/v1/users` | Public (optional auth) | [user-management](user-management.md#list-users) |
-| GET | `/api/v1/users/{user}` | Public (optional auth) | [user-management](user-management.md#get-user) |
+| GET | `/api/v1/users` | Authenticated | [user-management](user-management.md#list-users) |
+| GET | `/api/v1/users/{user}` | Authenticated | [user-management](user-management.md#get-user) |
 
 ### API Keys
 
@@ -468,8 +498,8 @@ here with the required authorization level and a link to the owning spec.
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/tickets` | Public (optional auth) | [tickets](../tickets/tickets.md#list-tickets) |
-| GET | `/api/v1/tickets/{ticket_id}` | Public (optional auth) | [tickets](../tickets/tickets.md#get-ticket) |
+| GET | `/api/v1/tickets` | Authenticated | [tickets](../tickets/tickets.md#list-tickets) |
+| GET | `/api/v1/tickets/{ticket_id}` | Authenticated | [tickets](../tickets/tickets.md#get-ticket) |
 | POST | `/api/v1/tickets` | `create_ticket` †manage_confidentiality | [tickets](../tickets/tickets.md#create-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/associate-cve` | `triage_ticket` | [tickets](../tickets/tickets.md#associate-cve) |
 | PATCH | `/api/v1/tickets/{ticket_id}/severity` | `triage_ticket` | [tickets](../tickets/tickets.md#set-severity-manual) |
@@ -490,8 +520,8 @@ here with the required authorization level and a link to the owning spec.
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/packages` | Public (optional auth) | [package-model](../packages/package-model.md#search-packages-across-tickets) |
-| GET | `/api/v1/tickets/{ticket_id}/packages` | Public (optional auth) | [package-model](../packages/package-model.md#list-ticket-packages) |
+| GET | `/api/v1/packages` | Authenticated | [package-model](../packages/package-model.md#search-packages-across-tickets) |
+| GET | `/api/v1/tickets/{ticket_id}/packages` | Authenticated | [package-model](../packages/package-model.md#list-ticket-packages) |
 | POST | `/api/v1/tickets/{ticket_id}/packages` | `manage_packages` | [package-model](../packages/package-model.md#add-package-to-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/exclude` | `manage_packages` | [package-model](../packages/package-model.md#soft-delete-package-from-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/restore` | `manage_packages` | [package-model](../packages/package-model.md#restore-package) |
@@ -506,13 +536,13 @@ here with the required authorization level and a link to the owning spec.
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/products` | Public (optional auth) | [product-catalog](../packages/product-catalog.md#list-products) |
+| GET | `/api/v1/products` | Authenticated | [product-catalog](../packages/product-catalog.md#list-products) |
 
 ### Ticket References
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/tickets/{ticket_id}/references` | Public (optional auth) | [references](../tickets/ticket-references.md#list-references) |
+| GET | `/api/v1/tickets/{ticket_id}/references` | Authenticated | [references](../tickets/ticket-references.md#list-references) |
 | POST | `/api/v1/tickets/{ticket_id}/references` | `manage_references` | [references](../tickets/ticket-references.md#add-reference) |
 | PATCH | `/api/v1/tickets/{ticket_id}/references/{reference_id}` | `manage_references` | [references](../tickets/ticket-references.md#update-reference) |
 | DELETE | `/api/v1/tickets/{ticket_id}/references/{reference_id}` | `manage_references` | [references](../tickets/ticket-references.md#delete-reference) |
@@ -521,15 +551,15 @@ here with the required authorization level and a link to the owning spec.
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/cves` | Public (optional auth) | [cve-tracking](../tickets/cve-tracking.md#list-cves) |
-| GET | `/api/v1/cves/{cve_id}` | Public (optional auth) | [cve-tracking](../tickets/cve-tracking.md#get-cve) |
-| GET | `/api/v1/cves/{cve_id}/cvss` | Public (optional auth) | [cvss-scoring](../tickets/cvss-scoring.md#get-cvss-assessments-for-a-cve) |
-| GET | `/api/v1/cves/{cve_id}/affected-versions` | Public (optional auth) | [cve-tracking](../tickets/cve-tracking.md#get-cve-affected-versions) |
-| GET | `/api/v1/cves/{cve_id}/sources` | Public (optional auth) | [cve-service](../tickets/cve-service.md#cve-source-status) |
+| GET | `/api/v1/cves` | Authenticated | [cve-tracking](../tickets/cve-tracking.md#list-cves) |
+| GET | `/api/v1/cves/{cve_id}` | Authenticated | [cve-tracking](../tickets/cve-tracking.md#get-cve) |
+| GET | `/api/v1/cves/{cve_id}/cvss` | Authenticated | [cvss-scoring](../tickets/cvss-scoring.md#get-cvss-assessments-for-a-cve) |
+| GET | `/api/v1/cves/{cve_id}/affected-versions` | Authenticated | [cve-tracking](../tickets/cve-tracking.md#get-cve-affected-versions) |
+| GET | `/api/v1/cves/{cve_id}/sources` | Authenticated | [cve-service](../tickets/cve-service.md#cve-source-status) |
 | POST | `/api/v1/cves/{cve_id}/cvss/suse` | `manage_cvss` | [cvss-scoring](../tickets/cvss-scoring.md#set-or-update-suse-cvss-assessment) |
 | DELETE | `/api/v1/cves/{cve_id}/cvss/suse/{cvss_version}` | `manage_cvss` | [cvss-scoring](../tickets/cvss-scoring.md#delete-suse-cvss-assessment) |
 | POST | `/api/v1/cves/{cve_id}/refetch` | `triage_ticket` | [cve-tracking](../tickets/cve-tracking.md#re-fetch-cve-data) |
-| GET | `/api/v1/cve-sources` | Public (optional auth) | [cve-service](../tickets/cve-service.md#global-cve-source-listing) |
+| GET | `/api/v1/cve-sources` | Authenticated | [cve-service](../tickets/cve-service.md#global-cve-source-listing) |
 
 ### Ticket Events
 
@@ -541,17 +571,17 @@ here with the required authorization level and a link to the owning spec.
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/tickets/{ticket_id}/submission-requests` | Public (optional auth) | [ibs-submission-tracking](../packages/ibs-submission-tracking.md#list-submission-requests) |
-| GET | `/api/v1/tickets/{ticket_id}/release-requests` | Public (optional auth) | [ibs-submission-tracking](../packages/ibs-submission-tracking.md#list-release-requests) |
+| GET | `/api/v1/tickets/{ticket_id}/submission-requests` | Authenticated | [ibs-submission-tracking](../packages/ibs-submission-tracking.md#list-submission-requests) |
+| GET | `/api/v1/tickets/{ticket_id}/release-requests` | Authenticated | [ibs-submission-tracking](../packages/ibs-submission-tracking.md#list-release-requests) |
 
 ### Fetchers
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/fetchers` | Public (optional auth) | [fetcher-operations](../platform/fetcher-operations.md#list-fetchers) |
-| GET | `/api/v1/fetchers/{fetcher_name}/runs` | Public (optional auth) | [fetcher-operations](../platform/fetcher-operations.md#list-fetcher-runs) |
-| GET | `/api/v1/fetchers/{fetcher_name}/runs/{run_id}` | Public (optional auth) | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-run-detail) |
-| GET | `/api/v1/fetchers/{fetcher_name}/timeline` | Public (optional auth) | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-run-timeline-data) |
+| GET | `/api/v1/fetchers` | Authenticated | [fetcher-operations](../platform/fetcher-operations.md#list-fetchers) |
+| GET | `/api/v1/fetchers/{fetcher_name}/runs` | Authenticated | [fetcher-operations](../platform/fetcher-operations.md#list-fetcher-runs) |
+| GET | `/api/v1/fetchers/{fetcher_name}/runs/{run_id}` | Authenticated | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-run-detail) |
+| GET | `/api/v1/fetchers/{fetcher_name}/timeline` | Authenticated | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-run-timeline-data) |
 | POST | `/api/v1/fetchers/{fetcher_name}/trigger` | `manage_fetchers` | [fetcher-operations](../platform/fetcher-operations.md#trigger-fetcher) |
 | GET | `/api/v1/fetchers/{fetcher_name}/config` | `manage_fetchers` | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-config) |
 | PATCH | `/api/v1/fetchers/{fetcher_name}/config` | `manage_fetchers` | [fetcher-operations](../platform/fetcher-operations.md#update-fetcher-config) |
@@ -561,7 +591,7 @@ here with the required authorization level and a link to the owning spec.
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/ibs-consumer/status` | Public (optional auth) | [ibs-rabbitmq-integration](../integrations/ibs-rabbitmq-integration.md#get-ibs-consumer-status) |
+| GET | `/api/v1/ibs-consumer/status` | Authenticated | [ibs-rabbitmq-integration](../integrations/ibs-rabbitmq-integration.md#get-ibs-consumer-status) |
 
 ### Maintainer Operations
 
@@ -605,8 +635,8 @@ here with the required authorization level and a link to the owning spec.
 | GET | `/ready` | Public | [health-endpoints](../platform/health-endpoints.md#readiness--get-ready) |
 
 **Notes**:
-- "Public" = no authentication required; "Public (optional auth)" additionally
-  processes a selected credential per `docs/api-spec.md`
+- "Public" = no authentication required; the endpoint ignores request
+  credentials (see Access Levels)
 - "Authenticated" = any logged-in user regardless of role
 - Capability names (e.g., `create_ticket`, `manage_users`) = requires the
   specified capability; see Predefined Roles for which roles include each
@@ -690,15 +720,16 @@ here with the required authorization level and a link to the owning spec.
    processing and Matching rules). A rejected Sentinel session JWT is not
    logged; see `docs/features/identity/authentication.md` (JWT validation)
 7. Session duration: JWT expires after 72 hours without a request that
-   processes authentication. Valid JWT requests using mandatory or optional
-   authentication refresh it transparently when eligible. Maximum session
+   processes authentication. Valid JWT requests processed by
+   `get_current_user` refresh it transparently when eligible. Maximum session
    lifetime is `SESSION_MAX_LIFETIME_DAYS` (default 30 days) regardless of
    activity. See `docs/features/identity/authentication.md`
 8. Authenticated users with no roles have an effective scope of
-   `non_confidential` and no capabilities. They can access specific
-   confidential tickets via `TicketAccessGrant` or package maintainership —
-   unlike unauthenticated users, who see only non-confidential tickets
-   with no per-ticket override mechanisms
+   `non_confidential` and no capabilities. They can read every
+   non-confidential ticket and access specific confidential tickets via
+   `TicketAccessGrant` or package maintainership. They are the read-only
+   profile; unauthenticated clients read no application data (see Access
+   Levels)
 9. Admin bootstrap:
    - **Without external provisioning**: create a local admin via
      `sentinel manage-user create --username bootstrap-admin
@@ -797,8 +828,11 @@ API key lifecycle behavior.
   checks whether the current user holds the required capability through
   any of their roles
 - Example: `Depends(require_capability(Capability.CREATE_TICKET))`
-- Public endpoints (ticket list, CVE list, product list, fetcher dashboard)
-  do not require authentication
+- Only the Public endpoints (probes and authentication bootstrap) skip
+  authentication. Every other endpoint, including every read of application
+  data, authenticates the caller through `get_current_user`, directly or
+  through `require_capability()`; logout alone uses its own credential
+  handling (`docs/features/identity/authentication.md`, Logout)
 - The `require_capability()` check loads the user's roles from the
   `UserRole` junction table, then checks each role's static capability set
 - Consumer-facing services apply this section's canonical Ticket visibility
@@ -908,7 +942,7 @@ is responsible for ensuring the mapping is intentional.
 - `docs/features/tickets/tickets.md` — confidentiality rules, status transitions
 - `docs/features/tickets/ticket-mutations.md` — service-layer mutation contracts
 - `docs/features/identity/authentication.md` — authenticated principal and
-  mandatory/optional authentication dependencies
+  authentication dependencies
 - `docs/features/identity/identity-provisioning.md` — external sync, role mappings
 - `docs/features/identity/user-service.md` — centralized user lifecycle operations
 - `docs/data-model.md` — Role enum, UserRole table

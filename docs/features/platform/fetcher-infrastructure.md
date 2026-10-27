@@ -907,16 +907,16 @@ work to the Git worker.
 ## Error Message Sanitization
 
 The `error_message` field in `FetcherRun` is visible to **all users**
-(including unauthenticated callers via the fetcher dashboard). Raw Python
-exception messages often contain infrastructure details — internal
-hostnames, IP addresses, file paths, connection strings, or service
-names — that MUST NOT be exposed publicly.
+(every authenticated user, regardless of role, via the fetcher dashboard).
+Raw Python exception messages often contain infrastructure details —
+internal hostnames, IP addresses, file paths, connection strings, or service
+names — that MUST NOT be exposed to that audience.
 
 Sentinel uses a **three-tier error field architecture**:
 
 | Field | Audience | Content |
 |-------|----------|---------|
-| `error_message` | All users (public) | Intentional, sanitized message written by the developer or by BaseFetcher's generic fallback |
+| `error_message` | All authenticated users (the public tier) | Intentional, sanitized message written by the developer or by BaseFetcher's generic fallback |
 | `error_detail` | `manage_fetchers` only | Raw exception message (`str(exception)`) |
 | `error_traceback` | `manage_fetchers` only | Full Python traceback |
 
@@ -1441,9 +1441,9 @@ of `run()`:
 - **`error_traceback`** (restricted): full traceback.
 
 This follows the same three-tier error architecture as all fetcher
-errors (see "Error Message Sanitization"). The sanitized public
-message avoids exposing potentially sensitive configuration values
-to unauthenticated dashboard users.
+errors (see "Error Message Sanitization"). The sanitized message avoids
+exposing potentially sensitive configuration values to dashboard users
+without `manage_fetchers`.
 
 ### Referencing custom settings in fetcher specifications
 
@@ -2588,7 +2588,8 @@ Configuration"), when calculating `next_run_at` for the fetcher list:
 - A WARNING-level log is emitted: `fetcher_redbeat_next_run_unavailable`
   with `error_type` (the exception class name only — never the
   exception message or connection details, since this data would
-  otherwise reach logs from an anonymously-reachable endpoint)
+  otherwise reach logs from an endpoint that every authenticated user can
+  reach)
 
 A hung connection is not distinguishable from an unreachable one at this
 layer: both surface as a `RedisError` (a socket timeout raises

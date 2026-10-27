@@ -400,10 +400,11 @@ Most audit trail endpoints require a specific capability (typically
 exist:
 
 - **Ticket audit log** (`GET /api/v1/tickets/{ticket_id}/audit-log`):
-  **Authenticated**, because the response includes actor details
-  (username, full name, UUID) that could aid reconnaissance if exposed
-  publicly. This endpoint is entity-scoped (always filtered by
-  `ticket_id`) and does not expose cross-entity audit data.
+  **Authenticated**, like every read of Ticket data (see
+  `docs/features/identity/rbac.md`, Access Levels), although the response
+  includes actor details (username, full name, UUID). This endpoint is
+  entity-scoped (always filtered by `ticket_id`) and does not expose
+  cross-entity audit data.
 
 - **Identity audit log — self-service** (`GET /api/v1/users/me/audit-log`):
   **Authenticated**, scoped to `target_user_id = current_user.id`. Users can
