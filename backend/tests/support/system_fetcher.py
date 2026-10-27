@@ -34,7 +34,7 @@ class EvaluateTestPipeline(BaseFetcher):
     """No-op fetcher used exclusively to validate the generic scheduled
     fetcher pipeline (registration, bootstrap, RedBeat scheduling,
     broker delivery, worker execution, `FetcherRun` finalization,
-    Public API visibility) end-to-end with real infrastructure.
+    read API visibility) end-to-end with real infrastructure.
 
     `execute()` performs no database writes, network calls, metric
     reporting, or cursor assignment — the expected finalized run has

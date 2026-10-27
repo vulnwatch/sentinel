@@ -240,18 +240,18 @@ def _build_test_app() -> FastAPI:
     ) -> dict[str, str]:
         return {"user_id": str(principal.user.id)}
 
-    def _caller_body(caller: TicketCaller) -> dict[str, str | None]:
+    def _caller_body(caller: TicketCaller) -> dict[str, str]:
         return {"user_id": str(caller.user_id), "scope": caller.scope.value}
 
     @test_app.get("/ticket-caller")
-    async def ticket_caller(caller: AuthenticatedTicketCaller) -> dict[str, str | None]:
+    async def ticket_caller(caller: AuthenticatedTicketCaller) -> dict[str, str]:
         return _caller_body(caller)
 
     @test_app.get("/tickets/{ticket_id}/accessible")
     async def accessible_ticket(
         caller: AuthenticatedTicketCaller,
         ticket: Annotated[ResolvedTicket, Depends(require_accessible_ticket)],
-    ) -> dict[str, int | str | None]:
+    ) -> dict[str, int | str]:
         return {"sequence_id": ticket.sequence_id, **_caller_body(caller)}
 
     @test_app.get("/triage-caller")
@@ -261,7 +261,7 @@ def _build_test_app() -> FastAPI:
             Depends(require_capability(Capability.TRIAGE_TICKET)),
         ],
         caller: AuthenticatedTicketCaller,
-    ) -> dict[str, str | None]:
+    ) -> dict[str, str]:
         return _caller_body(caller)
 
     @test_app.get("/tickets/{ticket_id}/triage")
@@ -272,7 +272,7 @@ def _build_test_app() -> FastAPI:
         ],
         caller: AuthenticatedTicketCaller,
         ticket: Annotated[ResolvedTicket, Depends(require_accessible_ticket)],
-    ) -> dict[str, int | str | None]:
+    ) -> dict[str, int | str]:
         return {"sequence_id": ticket.sequence_id, **_caller_body(caller)}
 
     @test_app.get("/session-only")
