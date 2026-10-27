@@ -223,7 +223,7 @@ def test_pull_request_image_job_smokes_loaded_image_without_override() -> None:
     assert len(build_steps) == 1
     assert build_steps[0]["name"] == BUILD_STEP
     assert build_steps[0]["with"]["push"] is False
-    assert build_steps[0]["with"]["load"] is True
+    assert build_steps[0]["with"]["outputs"] == "type=docker,oci-mediatypes=true"
     assert smoke_step["env"]["SENTINEL_IMAGE"] == "${{ env.SMOKE_IMAGE }}"
     assert smoke_step["run"] == "./scripts/image-smoke.sh --no-build"
     assert "COMPOSE_CMD" not in WORKFLOW_PATH.read_text(encoding="utf-8")
@@ -244,6 +244,38 @@ def test_ci_and_release_workflows_share_sbom_gate() -> None:
         assert len(gate_runs) == 1, path.name
         assert gate_runs[0].startswith("./scripts/sbom-gate.sh "), path.name
         assert mentions == 1, path.name
+
+
+@pytest.mark.unit
+def test_image_builds_use_the_engine_builder_without_attestations() -> None:
+    # docs/deployment.md (Container Build Conventions, Image builder and
+    # format): no workflow sets up a BuildKit builder of its own, and both
+    # image builds keep the gha cache and add no attestation, which would
+    # turn the image into an index. See issue #1121.
+    for path in sorted(WORKFLOW_PATH.parent.glob("*.yml")):
+        values = list(string_values(load_yaml_file(path)))
+
+        assert not any(
+            value.startswith("docker/setup-buildx-action@") for value in values
+        ), path.name
+        assert not any("buildx create" in value for value in values), path.name
+
+    for path in (WORKFLOW_PATH, RELEASE_WORKFLOW_PATH):
+        build_steps = [
+            step
+            for job in workflow_jobs(load_yaml_file(path)).values()
+            for step in job_steps(job)
+            if _uses(step, "docker/build-push-action")
+        ]
+
+        assert len(build_steps) == 1, path.name
+        inputs = build_steps[0]["with"]
+        assert inputs["provenance"] is False, path.name
+        assert inputs["cache-from"] == "type=gha", path.name
+        assert inputs["cache-to"] == "type=gha,mode=max", path.name
+        # `load` would add a second export, `builder` would select another
+        # builder, and `attests` or `sbom` would add an attestation.
+        assert not {"load", "builder", "attests", "sbom"} & inputs.keys(), path.name
 
 
 @pytest.mark.unit

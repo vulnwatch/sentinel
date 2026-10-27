@@ -71,18 +71,20 @@ jobs:
         id: python-version
         run: echo "version=$(cat backend/.python-version)" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-
-      # Build the image ONCE into the local Docker daemon (push: false,
-      # load: true). This is the single build invocation; the smoke gate
-      # tests this exact artifact and the push step below re-tags and
-      # publishes the very same local image (identical digest).
+      # Build the image ONCE into the local Docker daemon (push: false),
+      # with the BuildKit of the runner's Docker Engine, as one OCI image
+      # manifest without an attestation (docs/deployment.md, Container
+      # Build Conventions → Image builder and format). This is the single
+      # build invocation; the smoke gate tests this exact artifact and the
+      # push step below re-tags and publishes the very same local image
+      # (identical digest).
       - name: Build backend image (load only, no push)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: backend
           push: false
-          load: true
+          outputs: type=docker,oci-mediatypes=true
+          provenance: false
           tags: ${{ env.SMOKE_IMAGE }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: PYTHON_VERSION=${{ steps.python-version.outputs.version }}
@@ -163,7 +165,9 @@ jobs:
       # Only reached if the smoke and SBOM gates passed. Publish the SAME local
       # image artifact by re-tagging it with each metadata-action tag and
       # pushing. No second docker/build-push-action build is performed, so
-      # the published digest is identical to the tested one.
+      # the published digest is identical to the tested one; the script
+      # fails unless the tested image is one OCI image manifest and the
+      # registry serves every tag under its digest.
       #
       # IMAGE_TAGS is passed via env (not interpolated directly into the
       # script) to avoid shell-injection risk from untrusted ref/tag

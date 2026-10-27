@@ -274,13 +274,17 @@ jobs:
       - name: Read Python version from .python-version
         id: python-version
         run: echo "version=$(cat backend/.python-version)" >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # Built by the BuildKit of the runner's Docker Engine, loaded into its
+      # image store as one OCI image manifest without an attestation, as in
+      # build-images.yml (docs/deployment.md, Container Build Conventions →
+      # Image builder and format).
       - name: Build backend image (load only, no push)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: backend
           push: false
-          load: true
+          outputs: type=docker,oci-mediatypes=true
+          provenance: false
           tags: ${{ env.SMOKE_IMAGE }}
           build-args: PYTHON_VERSION=${{ steps.python-version.outputs.version }}
           cache-from: type=gha

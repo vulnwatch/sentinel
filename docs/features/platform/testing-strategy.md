@@ -1702,7 +1702,7 @@ successful run fail. Passing phases do not perform diagnostic collection.
 
 `.github/workflows/build-images.yml` wraps the smoke suite as a
 **blocking gate** between build and publish: the image is built once and
-loaded locally (`push: false, load: true`), the smoke script runs
+loaded locally without a push (`push: false`), the smoke script runs
 against that exact artifact, and only on success is the **same image
 digest** re-tagged and pushed. A failing smoke test prevents `latest`
 and semver tags from ever being published. The tested and published
