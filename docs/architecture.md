@@ -77,7 +77,7 @@ coordination across multiple maintained distribution versions.
 specifications (in `docs/features/` and the cross-cutting documents). These
 specifications include the obligations that their contracts place on clients,
 such as session cookie handling, error handling by the `code` field, tolerance
-of additive API changes, and non-disclosure semantics.
+of non-breaking API changes, and non-disclosure semantics.
 
 The `sentinel-aura` repository owns the UI and its specifications: navigation,
 screens, presentation, and client-side behavior. The UI uses Sentinel only

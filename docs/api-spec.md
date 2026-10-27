@@ -20,12 +20,13 @@ The API uses URL-path versioning (`/api/v1/`). Only v1 exists at this time.
 Rules:
 
 - Additive changes (new fields in responses, new values of response enums,
-  new endpoints, new optional query parameters) are NOT breaking changes and
-  are added to v1 directly; clients tolerate them (see Client Tolerance of
-  Additive Changes)
+  new endpoints, new optional query parameters, error responses for new
+  conditions) are NOT breaking changes and are added to v1 directly; clients
+  tolerate them (see Client Tolerance of Non-Breaking Changes)
 - Removal or renaming of fields or of values of response enums, changes to
-  response structure, changes to error codes, or semantic changes to existing
-  behavior are breaking changes
+  response structure, semantic changes to existing behavior, and the changes
+  to error responses that Error Responses classifies as breaking are breaking
+  changes
 - A v2 will only be considered after a stable production instance is
   confirmed — until then, all work happens on v1
 - When a new version is eventually introduced, the previous version will
@@ -56,21 +57,94 @@ nullable field, or the absence of an optional field. Returning a new value in a
 situation that one of them describes, for example a new status for fetcher runs
 that earlier releases report as `running`, is a semantic change to existing
 behavior and therefore breaking. Error responses are outside this section:
-Response Format and Error Code Categories govern their codes.
+Error Responses classifies the changes to them.
 
-#### Client Tolerance of Additive Changes
+#### Error Responses
 
-A client receives the additive changes of the later releases that it supports
-(`docs/deployment.md`, Consumer Compatibility), which the contract of the
-version that it is built against does not list. A client therefore:
+This section classifies the changes to the error responses of an operation
+that an earlier release already has: its global, scoped, query-shape, method,
+and endpoint-specific responses (Response Applicability Derivation) and the
+routing responses (Routing Responses). It covers their status and `code`; a
+new field of an error response is a new field in a response. The probe
+responses of `/health` and `/ready` follow
+`docs/features/platform/health-endpoints.md`.
+
+A change is classified by the outcome that the contract of the earlier release
+states for each request that the change affects: success, or the error
+response of a condition. Only the requests that a client sends under the
+obligations of that contract count (Client Tolerance of Non-Breaking Changes),
+so a request with a query parameter or request body member that the contract
+does not declare is not one of them. A change that falls under several of the
+following cases is breaking when one of them is. The cases are:
+
+- **New condition**, not breaking: the operation reports as an error,
+  whatever its code and status, a condition for which the contract of the
+  earlier release states no outcome, for example a `409` for a state that the
+  earlier release does not have, a `<DEPENDENCY>_UNAVAILABLE` for a dependency
+  that the operation did not use, or a `422` for an invalid value of a newly
+  declared query parameter.
+- **Changed code or status**, breaking: a condition for which the contract of
+  the earlier release states an error response is reported with another code
+  or status, for example with a dedicated code in place of `VALIDATION_ERROR`,
+  or a request that meets two conditions whose precedence the contract states
+  receives the response of the condition that does not take precedence.
+- **Rejected request**, breaking: the operation rejects with a `4xx` response
+  a request for which the contract of the earlier release states success, for
+  example through a stricter constraint on an existing input or a new check
+  that applies to every operation. A security fix is no exception.
+- **Conformance fix**, not breaking: the implementation returns the error
+  response that the contract of the earlier release states, where that release
+  returned another response, success included.
+
+A later release can accept a request that the earlier release rejected
+because of an input that it did not know, such as a request to a new endpoint
+or method, or with a new fetcher name, fetcher setting, CVE source, or value of
+a request enum. The condition of that rejection no longer applies to the
+request, so each error response that the request can receive in the later
+release is a new condition.
+
+`500 INTERNAL_ERROR` reports an unhandled server error (Global Responses),
+even where a specification names it for a condition, such as a database
+failure, and a `5xx` response is never a rejected request. Therefore:
+
+- an error that the earlier release reported as `500 INTERNAL_ERROR` and that
+  a later release reports with another code or status is a new condition, or
+  a rejected request when the later release reports it with a `4xx` response
+  to a request for which the contract of the earlier release states success;
+  and
+- a `5xx` response that reports a failure for which the contract of the
+  earlier release states no outcome, such as the unavailability of a new
+  dependency, is a new condition, whatever that contract states for the
+  request otherwise. Where that contract states the outcome of the failure,
+  for example a successful response that reports an unavailable dependency
+  (Infrastructure Dependency Errors), another outcome is a semantic change to
+  existing behavior and therefore breaking.
+
+#### Client Tolerance of Non-Breaking Changes
+
+A client also works with the later releases that it supports
+(`docs/deployment.md`, Consumer Compatibility), which can contain every change
+that is not breaking. A client therefore:
 
 - ignores a field of a response that the contract of its version does not
-  list; and
+  list;
 - tolerates a value of a response enum that the contract of its version does
   not list, for example by presenting it as an unknown value, instead of
   failing. It does not reject a response because the OpenAPI document of its
   version lacks the value in an `enum` or among the discriminator values of a
-  union.
+  union;
+- handles an error response whose status or code the contract of its version
+  does not list for the operation by its HTTP status, for example with a
+  default presentation for that status, instead of failing. It does not reject
+  the response because the OpenAPI document of its version lacks that status
+  or code for the operation;
+- sends only the query parameters and request body members that the contract
+  of its version declares for the operation, because a later release can
+  declare one of them and reject its invalid values (Error Responses); and
+- relies only on the outcomes that the contract of its version states: not on
+  a response of a release that departs from that contract, on `500
+  INTERNAL_ERROR` for a condition, or on which of two conditions a request
+  reports where the contract does not state their precedence.
 
 ### OpenAPI Document and Interactive Documentation
 
@@ -281,7 +355,10 @@ Query parameters not declared by an endpoint are ignored and are absent from
 its OpenAPI contract. This preserves FastAPI's standard handling of undeclared
 query input. A parameter name used by another endpoint does not become valid
 globally; for example, an endpoint that declares fixed ordering but no
-`sort_by` parameter ignores a supplied `sort_by` value.
+`sort_by` parameter ignores a supplied `sort_by` value. A later release can
+declare such a parameter and reject its invalid values without a breaking
+change (Error Responses), so a client sends only the parameters that the
+contract of its version declares (Client Tolerance of Non-Breaking Changes).
 
 ### JSON Request Body Decoding
 
@@ -717,7 +794,8 @@ Rules:
   with the appropriate prefix
 - Every code except a reserved one is defined as a Python enum in the backend
   (`app/core/errors.py`) and is part of the API contract — removing or
-  renaming it is a breaking change
+  renaming it is a breaking change; Error Responses (Versioning) classifies
+  the other changes to the error responses of an operation
 - A reserved code, listed after "reserved:" above and marked "(reserved)" in
   Infrastructure Dependency Errors, is defined by a deferred specification
   (`docs/features/identity/sso-authentication.md` or
