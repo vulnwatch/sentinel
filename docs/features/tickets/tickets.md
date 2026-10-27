@@ -1002,13 +1002,12 @@ and the `is_confidential` column on the Ticket table.
 
 ### Authorization Rules
 
-Every consumer-facing Ticket-derived operation applies the canonical predicate
-from `rbac.md`. Every such operation requires authentication, its branches are
+Every consumer-facing Ticket-derived operation requires authentication and
+applies the canonical predicate from `rbac.md`. The predicate's branches are
 additive, and visibility never grants capability. Package exclusion disables
-only the maintainership branch
-through that package and restore reactivates it. Track/Product exclusion,
-lifecycle or EOL, affectedness, eligibility, delivery, and Ticket status have no
-visibility effect.
+only the maintainership branch through that package and restore reactivates
+it. Track/Product exclusion, lifecycle or EOL, affectedness, eligibility,
+delivery, and Ticket status have no visibility effect.
 
 Internal system workflows outside a consumer caller context, including Celery
 fetchers and event consumers, do not use HTTP scope. Their selection and status
@@ -1074,10 +1073,9 @@ no qualifying caller work returns the normal three empty collections.
 **CVE Detail (`GET /api/v1/cves/{cve_id}/...`)**:
 `GET /api/v1/cves/{cve_id}` and all endpoints under `/api/v1/cves/{cve_id}/`
 use the service-delegated CVE accessibility role in `docs/api-spec.md`.
-Ticketless CVEs are accessible to every caller. An
-associated CVE is selected only when its Ticket satisfies the canonical
-predicate. Missing and inaccessible outcomes both return `404 CVE_NOT_FOUND`,
-never a Ticket code.
+Ticketless CVEs are accessible to every caller. An associated CVE is selected
+only when its Ticket satisfies the canonical predicate. Missing and
+inaccessible outcomes both return `404 CVE_NOT_FOUND`, never a Ticket code.
 
 **CVE List (`GET /api/v1/cves`)**:
 The service-owned list query includes Ticketless CVEs and CVEs whose associated

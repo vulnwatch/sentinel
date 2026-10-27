@@ -115,10 +115,9 @@ predicate from `docs/features/identity/rbac.md` (Scope and Confidential Ticket
 Visibility) without defining another semantic variant. Every consumer caller is
 authenticated, so every consumer operation evaluates the grant and
 maintainership branches for the caller's user ID. Services own every
-model-aware query or operation needed to
-apply the predicate; Core and API handlers do not construct business ORM
-queries. The concrete caller-context representation, helper shape, and SQL
-formulation are implementation choices.
+model-aware query or operation needed to apply the predicate; Core and API
+handlers do not construct business ORM queries. The concrete caller-context
+representation, helper shape, and SQL formulation are implementation choices.
 
 API capability checks complete before the first service resource lookup. For a
 consumer-facing mutation, an API accessibility decision may reject early but is

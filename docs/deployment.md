@@ -2312,9 +2312,11 @@ timeouts (2s per dependency, checks concurrent; 5s provides margin for network o
 These are generic API-process probes; their PostgreSQL-plus-Redis readiness
 semantics are unchanged by the standalone consumer's dependency model. Monitor
 the IBS consumer through process supervision and
-`GET /api/v1/ibs-consumer/status`. That endpoint reports `disabled` when the
-consumer is configured off and `unreachable` when Redis cannot provide a valid
-fresh heartbeat; both are HTTP 200 operational observations.
+`GET /api/v1/ibs-consumer/status`, which requires authentication like every
+application read (see Monitoring Scheduler Liveness for the monitoring
+credential). That endpoint reports `disabled` when the consumer is configured
+off and `unreachable` when Redis cannot provide a valid fresh heartbeat; both
+are HTTP 200 operational observations.
 
 ### Redis Durability, Memory, and Persistence
 
@@ -2476,8 +2478,9 @@ ingestion):
 
 This signal is derivable from `GET /api/v1/fetchers` without any code
 changes to Sentinel. The endpoint requires authentication, so the monitoring
-system presents the API key of an account without roles
-(`docs/features/identity/api-key-management.md`). The signal detects not only
+system presents the API key of a role-less account, the read-only profile
+(`docs/features/identity/rbac.md`, Access Levels;
+`docs/features/identity/api-key-management.md`). The signal detects not only
 empty schedules but also dead workers, database unavailability, or any other
 cause of stalled processing. Runs still in progress (`status` is `queued` or
 `running`) have `last_run.finished_at = null` and are covered by the

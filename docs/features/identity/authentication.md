@@ -123,11 +123,10 @@ failure; callers do not receive the failed condition.
   recomputed from the current setting.
 - The server transparently refreshes the token via **sliding session**
   (see Token refresh below) whenever a request processes a valid JWT through
-  `get_current_user`. For browser sessions that retain the
-  refreshed cookie, continued use of endpoints that process authentication
-  prevents expiration at the shorter JWT `exp` boundary, but never extends the
-  immutable `session_deadline`. Bearer-only behavior is defined under Token
-  refresh.
+  `get_current_user`. For browser sessions that retain the refreshed cookie,
+  continued use of endpoints that process authentication prevents expiration
+  at the shorter JWT `exp` boundary, but never extends the immutable
+  `session_deadline`. Bearer-only behavior is defined under Token refresh.
 - An inactive user whose token expires without renewal (no requests for
   longer than `JWT_EXPIRY_HOURS`) is redirected to the login page.
 - After `SESSION_MAX_LIFETIME_DAYS` from login (`session_deadline`), the
@@ -703,8 +702,9 @@ authorization dependencies.
 
 `get_current_user` authenticates every endpoint that is not Public
 (`docs/api-spec.md`, Public Endpoints), directly or through the authorization
-dependencies that consume its principal. Its credential selection and
-validation path is Shared Credential Resolution below.
+dependencies that consume its principal, except logout, which uses its own
+credential handling (see Logout). Its credential selection and validation path
+is Shared Credential Resolution below.
 
 ### Shared Credential Resolution
 

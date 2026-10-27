@@ -771,8 +771,8 @@ stderr.
 ## Access Level Requirements
 
 User listing and user detail are accessible to every authenticated user
-(read-only). Administrator API operations (create, edit,
-deactivate, reactivate, reset password, unlock, role management) require the
+(read-only). Administrator API operations (create, edit, deactivate,
+reactivate, reset password, unlock, role management) require the
 `manage_users` capability. CLI commands are authorized by direct shell or
 container access and pass `acting_user_id = None`; they do not evaluate an HTTP
 caller capability.

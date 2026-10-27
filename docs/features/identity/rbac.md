@@ -61,9 +61,9 @@ capabilities control *what you can do*.
 **Scope resolution**: if any of the user's roles has scope `all`, the
 effective scope is `all`. Otherwise, the effective scope is
 `non_confidential`. Authenticated users with no roles have an effective
-scope of `non_confidential`. Every consumer-facing operation requires
-authentication (see Access Levels), so every consumer caller has an
-effective scope.
+scope of `non_confidential`. Every consumer-facing operation that evaluates
+Ticket visibility requires authentication (see Access Levels), so every such
+caller has an effective scope.
 
 > **Design note — consumer caller scope**: scope is part of the caller
 > information consumed by service-owned, model-aware accessibility queries for
@@ -128,9 +128,10 @@ Public access is limited to:
 - Local login, SSO authorization and callback, and authentication-provider
   discovery
 
-The OpenAPI document and the interactive documentation page are also served
-without authentication; they are not operations (`docs/api-spec.md`, OpenAPI
-Document and Interactive Documentation).
+The OpenAPI document (`/api/openapi.json`) and the interactive documentation
+page (`/api/docs`) are also served without authentication; they are not
+operations (`docs/api-spec.md`, OpenAPI Document and Interactive
+Documentation). No other path is served without authentication.
 
 **Criterion for Public access**: an operation is Public only when its caller
 cannot hold a Sentinel credential yet (authentication bootstrap) or is
@@ -154,7 +155,8 @@ its owning specification that meets this criterion.
 ### Authenticated
 
 Any logged-in user, regardless of role. A user with no roles is the
-read-only profile: effective scope `non_confidential`, no capabilities, and
+read-only profile, read-only with respect to application data: effective
+scope `non_confidential`, no capabilities, and
 visibility of confidential Tickets only through an explicit grant or package
 maintainership (see Scope and Confidential Ticket Visibility). Authenticated
 access covers:
@@ -718,8 +720,8 @@ here with the required authorization level and a link to the owning spec.
    processing and Matching rules). A rejected Sentinel session JWT is not
    logged; see `docs/features/identity/authentication.md` (JWT validation)
 7. Session duration: JWT expires after 72 hours without a request that
-   processes authentication. Valid JWT requests to authenticated endpoints
-   refresh it transparently when eligible. Maximum session
+   processes authentication. Valid JWT requests processed by
+   `get_current_user` refresh it transparently when eligible. Maximum session
    lifetime is `SESSION_MAX_LIFETIME_DAYS` (default 30 days) regardless of
    activity. See `docs/features/identity/authentication.md`
 8. Authenticated users with no roles have an effective scope of

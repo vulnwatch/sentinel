@@ -2030,9 +2030,9 @@ transitions. The test must cover:
   correct path, each missing level, and each child-belongs-to-another-parent
   mismatch, all without mutating or revealing the other occurrence
 - **Atomic consumer accessibility**: cover a role-less caller without a grant
-  or maintainership, scope-`all`, explicit
-  grant, included-package maintainer, package exclusion/restore, and multiple
-  qualifying-package branches. Read queries constrain returned trees, package
+  or maintainership, scope-`all`, explicit grant, included-package
+  maintainer, package exclusion/restore, and multiple qualifying-package
+  branches. Read queries constrain returned trees, package
   items, totals, pages, and aggregates in the same database result. Consumer
   mutations re-evaluate accessibility after the Ticket lock and before every
   state-dependent guard or side effect; concurrent access loss returns

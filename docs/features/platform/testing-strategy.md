@@ -1772,9 +1772,9 @@ artifact facts without duplicating focused behavior tests:
   consumer role from the same image, with representative worker task
   registration, the queue each worker role consumes, Beat post-reconciliation
   readiness, the consumer's startup event, and the consumer-written
-  `reconnecting` status observed through `GET /api/v1/ibs-consumer/status`,
-  which proves the consumer and API roles share the heartbeat through the
-  packaged Redis topology;
+  `reconnecting` status observed by an authenticated caller through
+  `GET /api/v1/ibs-consumer/status`, which proves the consumer and API roles
+  share the heartbeat through the packaged Redis topology;
 - one representative broker-delivered task producing a durable PostgreSQL
   outcome without a Celery result backend; and
 - only the smallest justified process-command-specific startup failure, in a
@@ -3584,11 +3584,11 @@ scenarios are required:
 - Public endpoints are exercised with a stale credential to prove their probe
   or authentication-bootstrap contract remains independent of credential
   validation
-- A test derives every operation under `/api/v1/` from the registered
-  application and proves that each one, except the Public operations listed
-  in `docs/api-spec.md` (Public Endpoints), returns the generic 401 to a
-  request without a credential, so a new endpoint is covered without a new
-  test
+- A test derives every route and method from the registered application and
+  proves that each one returns the generic 401 to a request without a
+  credential, except an explicit allowlist: the Public operations listed in
+  `docs/api-spec.md` (Public Endpoints), `/api/openapi.json`, and `/api/docs`.
+  A new route is therefore covered without a new test
 
 **Session liveness and invalidation:**
 
@@ -3641,15 +3641,15 @@ scenarios are required:
 - A valid JWT in a cookie with any other name, including `sentinel_session`,
   `__HOST-sentinel_session`, and the exact name preceded by the single octet
   `0x85` or `0xA0` in the raw header (not their UTF-8 encodings), selects no
-  credential: authentication returns the generic 401
+  credential: `get_current_user` returns the generic 401
 - When such a cookie carrying another user's valid JWT accompanies the
   session cookie, before or after it, the session cookie alone authenticates
   the request
 - Without an `Authorization` header, a `Cookie` header containing the exact
-  name twice returns the generic 401 under authentication and at logout, even
-  when both values are valid JWTs, and
-  emits no API key warning even when the values start with `stl_ak_`; with a
-  valid Bearer JWT the duplicated cookie is not considered
+  name twice returns the generic 401 through `get_current_user` and at
+  logout, even when both values are valid JWTs, and emits no API key warning
+  even when the values start with `stl_ak_`; with a valid Bearer JWT the
+  duplicated cookie is not considered
 
 **Cross-origin request protection:**
 
@@ -3757,9 +3757,8 @@ scenarios are required:
 - `user_id` (UUID) is present in session lifecycle logs when the actor
   is known
 - A rejected JWT (failed validation, missing or inactive session, missing or
-  inactive user) emits no rejection log record under mandatory and optional
-  authentication, and neither does a JWT that the logout endpoint fails to
-  decode
+  inactive user) emits no rejection log record under `get_current_user`, and
+  neither does a JWT that the logout endpoint fails to decode
 
 **Audit trail boundaries:**
 
