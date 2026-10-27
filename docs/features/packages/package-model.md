@@ -2520,8 +2520,7 @@ a standalone endpoint for clients that only need package data.
 
 | Aspect | Design |
 |--------|--------|
-| **`Access: Public`** | Consistent with `GET /api/v1/tickets/{ticket_id}` |
-| **`Authentication: Optional`** | Resolves caller identity for ticket accessibility |
+| **`Access: Authenticated`** | Consistent with `GET /api/v1/tickets/{ticket_id}`; the authenticated caller's identity drives ticket accessibility |
 | **Accessibility** | `package_service.get_ticket_packages()` selects the complete tree through a Ticket satisfying the canonical visibility predicate in the same database result/view. Missing and inaccessible both return `404 TICKET_NOT_FOUND`; a preliminary shared dependency cannot authorize an unconstrained follow-up query |
 | **Pagination** | No — package count per ticket is bounded (typically 1-5, rarely >20) |
 | **Envelope** | `{"data": [...]}` (unpaginated list) |
@@ -2557,8 +2556,7 @@ once per ticket in the results.
 
 | Aspect | Design |
 |--------|--------|
-| **`Access: Public`** | Consistent with `GET /api/v1/tickets` |
-| **`Authentication: Optional`** | Resolves caller identity for confidentiality filtering |
+| **`Access: Authenticated`** | Consistent with `GET /api/v1/tickets`; the authenticated caller's identity drives confidentiality filtering |
 | **Confidentiality** | `package_service.search_packages()` receives caller context and constructs the canonical Ticket visibility predicate in the Service layer. The endpoint builds no ORM filter. Returned items, `meta.total`, pagination, and track aggregates derive from the same visible candidate set |
 | **Non-actionable packages** | Always excluded. This includes directly excluded packages and packages with no actionable tracks |
 | **Pagination** | Yes — `page` (default 1), `per_page` (default 20, max 100) |
@@ -2688,8 +2686,7 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
   requires `manage_packages`
 - Changing a track to `FIXED` requires `admin_ticket_ops` for an unrestricted
   change, or `manage_packages` when the locked-current Ticket is CVE-less
-- Viewing affectedness data is publicly accessible (no authentication
-  required):
+- Viewing affectedness data requires authentication, with no capability:
   - `GET /api/v1/tickets/{ticket_id}/packages` selects the returned tree through
     an accessible Ticket in the same database result/view
   - `GET /api/v1/packages` applies the canonical Ticket visibility predicate in

@@ -1109,9 +1109,9 @@ current request actions and their exact states; the workbench does not select or
 label one effective SR, proving RR, or authoritative historical submission
 chain from them.
 
-Both endpoints inherit the ticket accessibility check. Anonymous callers can
-read non-confidential Tickets; confidential Ticket existence and data remain
-hidden according to the shared visibility contract.
+Both endpoints require authentication and inherit the ticket accessibility
+check. Confidential Ticket existence and data remain hidden according to the
+shared visibility contract.
 
 The service query for each endpoint selects distinct actions through the parent
 Ticket constrained by the canonical visibility predicate from
@@ -1157,9 +1157,7 @@ Invalid sort values return the shared `422 VALIDATION_ERROR`.
 GET /api/v1/tickets/{ticket_id}/submission-requests
 ```
 
-**`Access: Public`**
-
-**`Authentication: Optional`**
+**`Access: Authenticated`**
 
 Returns distinct correlated `maintenance_incident` actions.
 
@@ -1222,9 +1220,7 @@ Returns distinct correlated `maintenance_incident` actions.
 GET /api/v1/tickets/{ticket_id}/release-requests
 ```
 
-**`Access: Public`**
-
-**`Authentication: Optional`**
+**`Access: Authenticated`**
 
 Returns distinct correlated `maintenance_release` actions. RR actions are
 queried through their direct `IBSRequestActionTrack` correlation, not inferred
@@ -1411,7 +1407,7 @@ Implementation coverage must include:
 
 ## Security and Privacy
 
-- The public read endpoints process optional authentication, and their service
+- The read endpoints require authentication, and their service
   queries select actions through an accessible parent Ticket in the same
   database result used for deduplication, counts, pages, and projection.
 - IBS HTTP requests use existing configured credentials and the shared TLS and
@@ -1468,7 +1464,7 @@ status, metrics, and sanitized logs, never by another delivery state.
 
 ## Cross-References
 
-- `docs/api-spec.md` - API envelopes, optional authentication, filtering,
+- `docs/api-spec.md` - API envelopes, authentication, filtering,
   pagination, deterministic sorting, and derived responses.
 - `docs/data-model.md` - canonical database schema.
 - `docs/features/identity/rbac.md` - confidential Ticket visibility and the

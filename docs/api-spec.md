@@ -192,8 +192,8 @@ management.
 Every endpoint definition in a feature specification MUST declare its
 authorization level using one of the following formats:
 
-- **`Access: Public`** — no authentication required; the endpoint additionally
-  declares `Authentication: Optional` when it processes a presented credential
+- **`Access: Public`** — no authentication required; the endpoint ignores
+  request credentials (see Public Endpoints)
 - **`Access: Authenticated`** — any logged-in user regardless of role
 - **`Capability: <capability_name>`** — requires the specified capability
   (e.g., `Capability: create_ticket`)
@@ -206,41 +206,22 @@ only", `Capability` means "specific authorization check required". See
 `docs/features/identity/rbac.md` for the full list of capabilities and
 which roles include them.
 
-#### Optional Authentication on Public Endpoints
+#### Public Endpoints
 
-Every normal Public application endpoint under `/api/v1` MUST process optional
-authentication, including reads whose response does not otherwise vary by
-caller, so browser activity on those endpoints participates in sliding session
-refresh. Place this declaration immediately after the endpoint's access
-declaration:
+A Public endpoint does not invoke the authentication dependency and ignores
+request credentials, so a stale credential cannot block it. `Access: Public` is
+reserved for exactly `/health`, `/ready`, local login, SSO authorization and
+callback, and authentication-provider discovery, whose probe, bootstrap, or
+recovery contracts must remain independent of stale credentials
+(`docs/features/identity/rbac.md`, Access Levels, Criterion for Public
+access). The OpenAPI document and the interactive documentation page, which
+are not operations, ignore request credentials too (see OpenAPI Document and
+Interactive Documentation).
 
-```text
-**`Authentication: Optional`**
-```
-
-The declaration invokes `get_optional_current_user` from
-`docs/features/identity/authentication.md`. Its result is a fully validated
-`AuthenticatedPrincipal` or `None`; a partially authenticated caller is never
-exposed to endpoint or visibility logic.
-
-- No selected credential is accepted as anonymous and produces no
-  authentication side effect.
-- A valid selected credential authenticates the caller and executes the same
-  JWT refresh or API-key operational effects as mandatory authentication.
-- A selected credential that fails validation returns the global `401
-  AUTH_NOT_AUTHENTICATED`; it is not silently ignored.
-- A selected non-empty Bearer credential never falls back to a cookie after
-  validation failure.
-
-A Public endpoint without this declaration ignores request credentials. This
-form is reserved for exactly `/health`, `/ready`, local login, SSO authorization
-and callback, and authentication-provider discovery, whose probe, bootstrap,
-or recovery contracts must remain independent of stale credentials. The OpenAPI
-document and the interactive documentation page, which are not operations,
-ignore request credentials too (see OpenAPI Document and Interactive
-Documentation). Adding another exception requires an explicit contract in its
-owning specification; endpoint authors MUST NOT infer optional authentication
-from `Access: Public`.
+Every other endpoint, including every read of application data under
+`/api/v1`, declares `Access: Authenticated` or a `Capability`. Adding another
+Public endpoint requires an explicit contract in its owning specification that
+meets that criterion.
 
 **Scope** is an orthogonal visibility input, not an endpoint capability.
 Consumer-facing services receive request-resolved caller information and apply
@@ -261,22 +242,20 @@ flows. In every flow, authentication resolves caller information once for the
 request. Services consume that information; they do not reload roles or
 reconstruct the caller during later query or mutation phases.
 
-1. **Optional-authentication public read**:
-   1. Run `get_optional_current_user`. No selected credential yields the
-      anonymous caller; a selected invalid credential returns 401 before any
-      resource query.
+1. **Authenticated read**:
+   1. Authenticate the caller. A missing or invalid credential returns 401
+      before any resource query.
    2. A service selects the requested Ticket-, CVE-, or nested resource with
       accessibility constraining the same database result that is returned.
       Missing and inaccessible resources have the resource-specific not-found
       outcome.
-2. **Authenticated or capability-protected read**:
+2. **Capability-protected read**:
    1. Authenticate the caller.
-   2. If the operation declares a capability, check it without loading the
-      protected resource. Failure returns 403
-      `AUTH_INSUFFICIENT_PERMISSION` regardless of resource existence.
+   2. Check the declared capability without loading the protected resource.
+      Failure returns 403 `AUTH_INSUFFICIENT_PERMISSION` regardless of
+      resource existence.
    3. A service performs one visibility-constrained resource selection and
-      returns that selected result. Authenticated operations without a
-      capability begin with step 1 and continue directly to this step.
+      returns that selected result.
 3. **Mutation without external pre-lock I/O**:
    1. Authenticate and check every declared resource-independent capability
       before resource lookup.
@@ -862,9 +841,8 @@ endpoint-specific errors; global responses are not repeated.
 
 Notes:
 
-- **Public endpoints without optional authentication** are exempt from 401;
-  Public endpoints with `Authentication: Optional` accept absence but return
-  401 when a selected credential fails validation
+- **Public endpoints** are exempt from 401 because they ignore request
+  credentials (see Public Endpoints)
 - The 401 response body is always `{"code": "AUTH_NOT_AUTHENTICATED",
   "detail": "Authentication required"}` regardless of the specific failure
   reason — no information about the failure cause is disclosed
@@ -997,7 +975,7 @@ router-level preliminary query.
 The service parses CVE-ID syntax through the pure Core parser, then resolves the
 database resource and applies these semantics in the selected result:
 
-1. A CVE with no associated Ticket is public.
+1. A CVE with no associated Ticket is accessible to every caller.
 2. A CVE with an associated Ticket is accessible exactly when that Ticket
    satisfies the canonical Ticket visibility predicate.
 3. A malformed, missing, or inaccessible CVE returns `404 CVE_NOT_FOUND`.
@@ -1038,11 +1016,9 @@ A 202 result cannot have both `sources_enqueued` and
 `sources_already_pending` empty. Every error uses the standard error envelope.
 An unconfirmed publication may still have been accepted by the broker.
 
-Anonymous selection never performs grant or maintainer lookup and therefore
-includes an associated CVE only when its Ticket is non-confidential. The CVE
-boundary consumes the canonical Ticket predicate rather than implementing a
-second semantic predicate. `GET /api/v1/cves` applies the same association rule
-inside its service-owned list query.
+The CVE boundary consumes the canonical Ticket predicate rather than
+implementing a second semantic predicate. `GET /api/v1/cves` applies the same
+association rule inside its service-owned list query.
 
 #### Maintainer Ticket Accessibility Check
 
@@ -1128,7 +1104,6 @@ truth.
 | Access level | Applicable global responses |
 |---|---|
 | `Access: Public` | `422 VALIDATION_ERROR`, `500 INTERNAL_ERROR` |
-| `Access: Public` + `Authentication: Optional` | `401 AUTH_NOT_AUTHENTICATED`, `422 VALIDATION_ERROR`, `500 INTERNAL_ERROR` |
 | `Access: Authenticated` | `401 AUTH_NOT_AUTHENTICATED`, `422 VALIDATION_ERROR`, `500 INTERNAL_ERROR` |
 | `Capability: <any>` | `401 AUTH_NOT_AUTHENTICATED`, `403 AUTH_INSUFFICIENT_PERMISSION`, `422 VALIDATION_ERROR`, `500 INTERNAL_ERROR` |
 

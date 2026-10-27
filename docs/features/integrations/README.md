@@ -19,6 +19,6 @@ ibs-rabbitmq-integration.md   Standalone IBS RabbitMQ wake-up consumer, heartbea
 - `ibs-rabbitmq-integration.md` defines the standalone event consumer that uses
   package and request events only to accelerate the polling-owned track release
   and submission reconciliation workflows. It also owns the ephemeral
-  heartbeat and public consumer-status API.
+  heartbeat and consumer-status API.
 - Both specs are pure infrastructure — business logic lives in
   `packages/` and `tickets/` specs that consume these layers.

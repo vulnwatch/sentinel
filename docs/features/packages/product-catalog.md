@@ -831,8 +831,7 @@ snapshot time and reports no newly current Product.
 GET /api/v1/products
 ```
 
-**`Access: Public`**
-**`Authentication: Optional`**
+**`Access: Authenticated`**
 
 List Products synchronized from SMELT. The default result contains the current
 catalog snapshot; retained historical Products are available through an
@@ -990,8 +989,8 @@ Implementation tests for this endpoint and service MUST cover:
   pagination where primary sort values tie, and correct `meta.total`;
 - one-response snapshot consistency when a complete SMELT publication overlaps
   a list request; and
-- anonymous access, each valid optional credential kind, and selected invalid
-  credentials according to the optional-authentication contract.
+- `401 AUTH_NOT_AUTHENTICATED` for a request without a credential or with an
+  invalid one, and success with each valid credential kind.
 
 ---
 
@@ -1226,8 +1225,7 @@ with exact outcome and effect counters.
 
 ## Security
 
-- Listing Products is public with optional authentication. Selected invalid
-  credentials are rejected according to `docs/api-spec.md`.
+- Listing Products requires authentication, with no capability.
 - SMELT and AIMAAS base URLs are configured via environment variables
   (`SMELT_API_URL`, `AIMAAS_API_URL`). See [Configuration](#configuration)
 - Both SMELT and AIMAAS use anonymous HTTPS requests. Neither service

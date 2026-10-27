@@ -27,7 +27,7 @@ not a Celery worker.
 - Keep delivery failure bounded and observable without an unbounded AMQP
   redelivery loop.
 - Expose process liveness and activity through an ephemeral Redis heartbeat and
-  a public status endpoint.
+  a status endpoint open to every authenticated user.
 
 ### Non-Goals
 
@@ -628,9 +628,7 @@ changes domain processing or AMQP settlement.
 
 **`GET /api/v1/ibs-consumer/status`**
 
-**`Access: Public`**
-
-**`Authentication: Optional`**
+**`Access: Authenticated`**
 
 The endpoint has no query parameters. It returns the standard single-resource
 envelope and HTTP 200 for every operational status.
@@ -813,7 +811,7 @@ upstream or exception text. At minimum it distinguishes:
   contract.
 - Raw payloads, actor identities, comments, descriptions, file lists, and raw
   upstream errors are neither persisted nor logged.
-- The public status endpoint exposes only process state, timestamps, bounded
+- The status endpoint exposes only process state, timestamps, bounded
   categories, and aggregate process-scoped counters. It exposes no broker URL,
   credential, payload identity, request content, project, or package.
 
@@ -895,7 +893,7 @@ Implementation tests must cover:
 
 - `docs/architecture.md` — continuous event-driven integration and process
   boundaries
-- `docs/api-spec.md` — public optional authentication, response envelopes, and
+- `docs/api-spec.md` — authentication, response envelopes, and
   status-reporting behavior
 - `docs/conventions.md` — transaction hygiene, Redis keys/errors, external
   contract verification, and specification rules

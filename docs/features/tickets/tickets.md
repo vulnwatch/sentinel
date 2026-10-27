@@ -985,7 +985,7 @@ disclosure.
   Confidential Ticket Visibility) is the single normative definition. This
   specification applies it but does not restate or implement a second variant.
 - **Confidentiality Filtering**: Confidential tickets are excluded at
-  the database query level for unauthorized and unauthenticated users.
+  the database query level for unauthorized users.
   They do not appear in list results, are not returned by detail
   endpoints, and produce no placeholder or redacted resource representation.
   The identifier-only exceptions under Identifier Disclosure Boundary do not
@@ -1003,9 +1003,9 @@ and the `is_confidential` column on the Ticket table.
 ### Authorization Rules
 
 Every consumer-facing Ticket-derived operation applies the canonical predicate
-from `rbac.md`. Its branches are additive, visibility never grants capability,
-and anonymous access is limited to non-confidential Tickets without grant or
-maintainer lookup. Package exclusion disables only the maintainership branch
+from `rbac.md`. Every such operation requires authentication, its branches are
+additive, and visibility never grants capability. Package exclusion disables
+only the maintainership branch
 through that package and restore reactivates it. Track/Product exclusion,
 lifecycle or EOL, affectedness, eligibility, delivery, and Ticket status have no
 visibility effect.
@@ -1050,8 +1050,7 @@ lookup followed by an unconstrained resource query is insufficient.
 
 **Ticket List (`GET /api/v1/tickets`)**:
 The list query includes only non-confidential tickets plus confidential
-tickets satisfying the canonical predicate. For unauthenticated users, only
-non-confidential tickets are returned. Every filter, search term, sort,
+tickets satisfying the canonical predicate. Every filter, search term, sort,
 pagination operation, and total applies to that visible candidate set.
 
 **Package Search (`GET /api/v1/packages`)**:
@@ -1074,7 +1073,8 @@ no qualifying caller work returns the normal three empty collections.
 
 **CVE Detail (`GET /api/v1/cves/{cve_id}/...`)**:
 `GET /api/v1/cves/{cve_id}` and all endpoints under `/api/v1/cves/{cve_id}/`
-use the service-delegated CVE accessibility role in `docs/api-spec.md`. Ticketless CVEs are public. An
+use the service-delegated CVE accessibility role in `docs/api-spec.md`.
+Ticketless CVEs are accessible to every caller. An
 associated CVE is selected only when its Ticket satisfies the canonical
 predicate. Missing and inaccessible outcomes both return `404 CVE_NOT_FOUND`,
 never a Ticket code.
@@ -1127,7 +1127,7 @@ machinery. Ticket UUIDs are internal and are not an API representation.
 **Accepted risk — `duplicate_of_ticket_id` and confidential targets**: A
 Duplicated ticket that is non-confidential may have a
 `duplicate_of_id` pointing to a confidential ticket. The target
-identifier (`SNTL-{n}`) appears in public API responses. This
+identifier (`SNTL-{n}`) appears in the responses of the read API. This
 reveals the *existence* of the confidential target ticket but not
 its content (the detail endpoint returns 404 for unauthorized
 callers, indistinguishable from a non-existent ticket). This is an
@@ -1502,8 +1502,7 @@ no status or progress endpoint, and is not a `FetcherRun` identifier.
 GET /api/v1/tickets
 ```
 
-**`Access: Public`**
-**`Authentication: Optional`**
+**`Access: Authenticated`**
 - **Response schema**: `TicketSummary[]` (paginated)
 
 Lists tickets with filtering, search, pagination, and sorting.
@@ -1564,8 +1563,7 @@ Response: paginated `TicketSummary` array in standard
 GET /api/v1/tickets/{ticket_id}
 ```
 
-**`Access: Public`**
-**`Authentication: Optional`**
+**`Access: Authenticated`**
 - **Response schema**: `TicketDetail`
 
 Returns a single Ticket by canonical `SNTL-{n}` through
@@ -2263,13 +2261,11 @@ table:
 
 ## Security
 
-- Viewing ticket lists and details: publicly accessible (no
-  authentication required). Exceptions: (1) the ticket audit log
-  sub-resource (`/audit-log`) requires authentication — see
-  `docs/features/tickets/ticket-audit-log.md`; (2) confidential tickets
-  are invisible to users whose effective scope is not `all` (unless they
-  have an explicit `TicketAccessGrant` or included-package maintainer
-  association) — see
+- Viewing ticket lists and details, and the ticket audit log
+  (`docs/features/tickets/ticket-audit-log.md`): any authenticated user,
+  regardless of role. Confidential tickets are invisible
+  to users whose effective scope is not `all` (unless they have an explicit
+  `TicketAccessGrant` or included-package maintainer association) — see
   [Confidential Tickets](#confidential-tickets)
 - Creating tickets: `create_ticket` capability
 - Assigning, changing status, associating CVE, setting manual severity, and

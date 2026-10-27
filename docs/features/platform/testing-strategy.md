@@ -1805,7 +1805,7 @@ and the in-process ASGI API client.
 This suite is distinct from the image smoke suite: it does NOT
 exercise the built Docker image. It validates the scheduled pipeline
 path (registration → config bootstrap → Beat schedule → broker
-delivery → worker execution → FetcherRun finalization → Public API
+delivery → worker execution → FetcherRun finalization → read API
 visibility) using the local virtual environment and real
 infrastructure.
 
@@ -1923,9 +1923,9 @@ infrastructure:
    with the expected outcome. Exactly one finalized `FetcherRun` row
    MUST exist for the test fetcher after the assertion phase (no
    duplicates from concurrent dispatch).
-5. The finalized run is visible through the Public fetcher observation
-   API (exercised via the in-process ASGI client with independently
-   connecting database sessions).
+5. The finalized run is visible through the fetcher observation API to
+   an authenticated caller (exercised via the in-process ASGI client with
+   independently connecting database sessions).
 6. No domain tables are mutated (no rows created, modified, or
    deleted outside the fetcher infrastructure tables).
 
@@ -2099,11 +2099,11 @@ contract is mandatory:
   SQLAlchemy metadata and the forward migration. No nullable compatibility
   state or data backfill is expected because no live or production database
   exists.
-- **Public read shapes**: e2e and response-schema tests assert
+- **Fetcher read shapes**: e2e and response-schema tests assert
   `items_succeeded` in fetcher-list `last_run`, run list, run detail, and every
   timeline point. Include terminal examples where success is not equal to
   created plus updated and queued/running examples with all counters zero.
-  Existing paths, methods, filters, pagination, errors, optional authentication,
+  Existing paths, methods, filters, pagination, errors, authentication,
   field-level visibility, and authorization remain unchanged.
 - **Concrete mappings**: tests cover the selected unit, all successful
   terminal outcomes, all failed terminal outcomes, pre-scope exclusions, and
@@ -2462,7 +2462,7 @@ this complete matrix.
 **CVE detail:**
 
 - Malformed, missing, and inaccessible CVE paths producing identical
-  `404 CVE_NOT_FOUND` bodies for anonymous and authenticated callers, including
+  `404 CVE_NOT_FOUND` bodies for role-less and scope-`all` callers, including
   independent-session loss of access before the protected selection; ticketless
   CVEs always visible.
 - `severity`, `kev`, `epss`, `ssvc`, and `cwes` projected from persisted rows,
@@ -2477,7 +2477,7 @@ this complete matrix.
 
 **CVE list:**
 
-- Anonymous and authenticated callers, with ticketless CVEs always visible and
+- Role-less and scope-`all` callers, with ticketless CVEs always visible and
   associated CVEs visible or invisible according to the canonical Ticket
   predicate; an independent-session race changes confidentiality, revokes the
   caller's grant, excludes the caller's last qualifying package, or creates the
@@ -2509,7 +2509,7 @@ this complete matrix.
 **Per-CVE affected versions:**
 
 - Malformed, missing, and inaccessible CVE paths producing identical
-  `404 CVE_NOT_FOUND` bodies for anonymous and authenticated callers, including
+  `404 CVE_NOT_FOUND` bodies for role-less and scope-`all` callers, including
   independent-session loss of access before the protected selection; ticketless
   CVEs always visible.
 - A CVE without entries returning `{"data": []}`; several scopes grouped with
@@ -2579,7 +2579,7 @@ this complete matrix.
   is not treated as retryable.
 - Lexical `source`/`status` sort, nullable timestamp sort, coherent total, and
   the internal `CVESource.id` tie-breaker across pages.
-- An anonymous request returning a source row whose CVE is associated with a
+- A role-less caller receiving a source row whose CVE is associated with a
   confidential Ticket, proving the identifier-only exception is preserved and
   not over-restricted.
 - `CVESource.id` absent from the response, and no Ticket UUID, protected CVE
@@ -2826,9 +2826,9 @@ visibility predicate.
 
 | Case | Required assertion |
 |---|---|
-| Non-confidential Ticket | Visible to anonymous and authenticated callers regardless of scope, grant, or maintainership |
-| Anonymous caller | Confidential Ticket is invisible; no grant or maintainer lookup can authorize the caller |
-| Invalid selected optional credential | Returns the global 401 before visibility evaluation; it never falls back to anonymous access |
+| Non-confidential Ticket | Visible to every authenticated caller regardless of scope, grant, or maintainership |
+| Request without a credential or with an invalid selected credential | Returns the global 401 before visibility evaluation; no Ticket-derived operation has an anonymous result |
+| Role-less caller without a grant or maintainership | Confidential Ticket is invisible |
 | Effective scope `all` | Confidential Ticket is visible without a grant or maintainer association |
 | Explicit grant | An authenticated `non_confidential`-scope caller can see only the granted confidential Ticket |
 | Included-package maintainer | The persisted `TicketPackageMaintainer.user_id` association makes the confidential Ticket visible while its parent `TicketPackage.deleted_at IS NULL` |
@@ -3260,8 +3260,7 @@ requirements without defining another visibility rule.
   capability.
 - Exercise every canonical Ticket visibility branch: non-confidential, effective
   scope `all`, explicit grant, and included-package maintainership. Also cover
-  anonymous denial, selected-invalid-credential denial, and a confidential
-  Ticket with no qualifying branch.
+  a confidential Ticket with no qualifying branch.
 - Prove visibility and workbench ownership independently. Scope `all` or an
   explicit grant can make a Ticket visible but cannot return a package without
   the caller's persisted `TicketPackageMaintainer` association. Conversely, an
@@ -3458,8 +3457,8 @@ or Product state, gate reconciliation, manual-zone exit, and post-commit Ticket
 convergence remain unchanged. `Resolved` has the same non-gate behavior.
 
 Reference endpoint accessibility applies the canonical Ticket matrix above.
-GET tests cover anonymous access to non-confidential Tickets, denial for an
-anonymous confidential Ticket, denial for an authenticated
+GET tests cover `401 AUTH_NOT_AUTHENTICATED` without a credential, access by a
+role-less caller to non-confidential Tickets, denial for an authenticated
 `non_confidential`-scope caller without another visibility branch,
 authenticated effective scope `all`, explicit grant, included-package
 maintainership, and loss of each final visibility path. Mutation tests
@@ -3569,28 +3568,27 @@ scenarios are required:
   the 50% threshold; preservation of immutable claims; expiration capping;
   no refresh when the deadline cannot support a positive-lifetime token; and
   absence of database writes
-- Optional authentication returns `None` only when credential selection yields
-  no credential, with no user/session/API-key lookup, refresh, `last_used_at`
-  touch, or API-key WARNING
-- Optional authentication returns the same principal and performs the same JWT
-  refresh or API-key operational effects as mandatory authentication for a
-  valid selected credential
-- Every selected credential rejection produces the same generic 401 and the
-  same application log outcome under optional and mandatory authentication:
-  malformed/expired JWT, missing or inactive session, unknown/revoked/expired
-  API key, and missing/inactive user
+- A request without a selected credential returns the generic 401 with no
+  user/session/API-key lookup, refresh, `last_used_at` touch, or API-key
+  WARNING
+- Every selected credential rejection produces the same generic 401 and its
+  documented application log outcome: malformed/expired JWT, missing or
+  inactive session, unknown/revoked/expired API key, and missing/inactive user
 - A selected invalid non-empty Bearer credential never falls back to a valid
   cookie; empty/whitespace-only Bearer and non-Bearer/unparseable headers retain
   the documented cookie fallback
-- An absent or empty session cookie produces the same anonymous result as no
-  cookie; a non-empty whitespace-only cookie is a selected invalid credential
+- An absent or empty session cookie selects no credential; a non-empty
+  whitespace-only cookie is a selected invalid credential
 - Database and unexpected infrastructure failures propagate and are never
-  converted into an anonymous optional-authentication result
-- Public endpoints marked `Authentication: Optional` are exercised without a
-  credential, with each valid credential kind, and with a selected invalid
-  credential. Public endpoints without that marker are exercised with a stale
-  credential to prove their probe or authentication-bootstrap contract remains
-  independent of credential validation
+  reported as an invalid credential
+- Public endpoints are exercised with a stale credential to prove their probe
+  or authentication-bootstrap contract remains independent of credential
+  validation
+- A test derives every operation under `/api/v1/` from the registered
+  application and proves that each one, except the Public operations listed
+  in `docs/api-spec.md` (Public Endpoints), returns the generic 401 to a
+  request without a credential, so a new endpoint is covered without a new
+  test
 
 **Session liveness and invalidation:**
 
@@ -3643,14 +3641,13 @@ scenarios are required:
 - A valid JWT in a cookie with any other name, including `sentinel_session`,
   `__HOST-sentinel_session`, and the exact name preceded by the single octet
   `0x85` or `0xA0` in the raw header (not their UTF-8 encodings), selects no
-  credential: mandatory authentication returns the generic 401 and optional
-  authentication is anonymous
+  credential: authentication returns the generic 401
 - When such a cookie carrying another user's valid JWT accompanies the
   session cookie, before or after it, the session cookie alone authenticates
   the request
 - Without an `Authorization` header, a `Cookie` header containing the exact
-  name twice returns the generic 401 under mandatory and optional
-  authentication and at logout, even when both values are valid JWTs, and
+  name twice returns the generic 401 under authentication and at logout, even
+  when both values are valid JWTs, and
   emits no API key warning even when the values start with `stl_ak_`; with a
   valid Bearer JWT the duplicated cookie is not considered
 
@@ -4839,7 +4836,7 @@ comprehensive test coverage:
   contract
 - `docs/features/platform/fetcher-infrastructure.md` — FetcherAuditEvent
   contract, mutable-registry test isolation, test-only fetcher exception
-- `docs/features/platform/fetcher-operations.md` — Public fetcher API
+- `docs/features/platform/fetcher-operations.md` — fetcher read API
   fields (consumed by the system suite's API assertions)
 - `docs/features/packages/cpe-package-mapping.md` — canonical mapping
   file, parser, loader, cache, and resolver test contract

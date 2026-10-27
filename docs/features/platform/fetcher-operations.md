@@ -3,8 +3,8 @@
 ## Purpose
 
 Provide centralized monitoring and operational control for all data
-fetchers in Sentinel. All users have visibility into fetcher health and
-performance (no authentication required), while users with the
+fetchers in Sentinel. Every authenticated user has visibility into fetcher
+health and performance, regardless of role, while users with the
 `manage_fetchers` capability have operational control (manual trigger,
 enable/disable, configuration) and CLI commands for diagnostics and
 troubleshooting.
@@ -297,7 +297,8 @@ disabled, derived from `FetcherAuditEvent` records with
   return a User Reference Object
   (`{"id": "uuid", "username": "...", "full_name": "...", "active": bool}`).
   When `has_manage_fetchers` is `false`, both fields are `null`.
-- This ensures a Public endpoint does not expose admin identities.
+- This ensures a read endpoint open to every authenticated user does not
+  expose admin identities.
 
 #### `get_fetcher_config`
 
@@ -802,8 +803,7 @@ failure. Created in the first transaction.
 GET /api/v1/fetchers
 ```
 
-**`Access: Public`**
-**`Authentication: Optional`**
+**`Access: Authenticated`**
 
 Returns all fetchers — both registered (present in the in-memory
 `FETCHER_REGISTRY`) and deregistered (removed from the codebase but
@@ -935,8 +935,9 @@ distinction.
     Detection). Always `false` for a terminal status.
   - `triggered_by_user`: User Reference Object when `triggered_by` is
     `manual` AND the caller has `manage_fetchers`. Otherwise `null`.
-  - `error_message`: sanitized public message (never contains raw
-    broker, database, or system details). `null` for successful runs.
+  - `error_message`: sanitized message visible to every caller (never
+    contains raw broker, database, or system details). `null` for successful
+    runs.
   - `items_succeeded`: selected work units that reached a successful terminal
     outcome. `items_created` and `items_updated` are separate durable-effect
     counts and need not sum to this value.
@@ -952,8 +953,7 @@ distinction.
 GET /api/v1/fetchers/{fetcher_name}/runs
 ```
 
-**`Access: Public`**
-**`Authentication: Optional`**
+**`Access: Authenticated`**
 
 Returns paginated run history for a specific fetcher.
 
@@ -1044,8 +1044,7 @@ still appears in its correct chronological position.
 GET /api/v1/fetchers/{fetcher_name}/runs/{run_id}
 ```
 
-**`Access: Public`**
-**`Authentication: Optional`**
+**`Access: Authenticated`**
 
 Returns full detail for a single run.
 
@@ -1117,8 +1116,7 @@ Listing).
 GET /api/v1/fetchers/{fetcher_name}/timeline
 ```
 
-**`Access: Public`**
-**`Authentication: Optional`**
+**`Access: Authenticated`**
 
 Returns time-series data optimized for chart rendering. Each data point
 represents an individual `FetcherRun` record.
@@ -1141,8 +1139,8 @@ frequency (~1–4 runs/day yields ~7,300 points for a full 5-year window).
 Aggressive schedule overrides (e.g., `*/5 * * * *`) or frequent manual
 triggers can produce larger responses; this is an admin-created
 condition and the endpoint does not enforce a point-count ceiling.
-External rate limiting (proxy layer) mitigates abuse of the public
-endpoint.
+The endpoint requires authentication, and external rate limiting (proxy
+layer) mitigates abuse.
 
 **Response** (200 OK):
 
@@ -1528,10 +1526,10 @@ endpoints in the system (`identity-audit-log.md`,
 
 | Action | Required |
 |---|---|
-| View fetcher list | Public |
-| View fetcher run history | Public |
-| View fetcher timeline | Public |
-| View run error messages (sanitized) | Public |
+| View fetcher list | Authenticated |
+| View fetcher run history | Authenticated |
+| View fetcher timeline | Authenticated |
+| View run error messages (sanitized) | Authenticated |
 | View run error details (raw) | `manage_fetchers` |
 | View run error tracebacks | `manage_fetchers` |
 | View triggered_by_user identity | `manage_fetchers` |
@@ -1542,18 +1540,12 @@ endpoints in the system (`identity-audit-log.md`,
 | View fetcher config | `manage_fetchers` |
 | View audit log | `manage_fetchers` |
 
-**`has_manage_fetchers` derivation**: the four Public endpoints accept an
-optional principal (via the optional authentication mechanism defined in
-`docs/api-spec.md`, Optional Authentication on Public Endpoints). The
-`has_manage_fetchers` boolean passed to the service is derived as follows:
-- If no authenticated principal is present (anonymous request):
-  `has_manage_fetchers = false`.
-- If an authenticated principal is present: `has_manage_fetchers = true`
-  if and only if the capabilities resolved from the principal's current
-  roles include `manage_fetchers`.
-- This derivation never produces a 401 or 403 on Public endpoints — it
-  only controls field-level visibility (null vs populated, present vs
-  absent).
+**`has_manage_fetchers` derivation**: the four read endpoints above require
+authentication. The `has_manage_fetchers` boolean passed to the service is
+`true` if and only if the capabilities resolved from the authenticated
+principal's current roles include `manage_fetchers`. This derivation never
+produces a 403 — it only controls field-level visibility (null vs populated,
+present vs absent).
 
 ## Background Tasks
 

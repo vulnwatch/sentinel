@@ -503,12 +503,10 @@ Post-commit finalization exceptions cannot roll back reference rows that already
 committed. No function performs network I/O.
 
 Request-resolved `CallerContext` below means the authenticated user ID and
-effective scope for an authenticated caller, or the explicit anonymous caller.
-Its concrete in-memory representation is an implementation choice. Every manual
-mutation requires an authenticated caller and uses that caller's User UUID as
-the audit actor. An anonymous caller at this boundary is a programming error
-that raises `ValueError` before database access; an API handler must always
-satisfy this precondition after its `manage_references` check.
+effective scope of the authenticated caller; every consumer operation of this
+specification requires authentication. Its concrete in-memory representation
+is an implementation choice. Every manual mutation uses that caller's User UUID
+as the audit actor.
 
 ### Service Exceptions
 
@@ -765,9 +763,7 @@ endpoint tables below contain only endpoint-specific service errors.
 GET /api/v1/tickets/{ticket_id}/references
 ```
 
-**`Access: Public`**
-
-**`Authentication: Optional`**
+**`Access: Authenticated`**
 
 Returns every automatic and manual reference visible through the parent
 Ticket. The endpoint is intentionally unpaginated because references are a
@@ -943,9 +939,8 @@ ownership, authorization, conflict handling, classification, or idempotency.
 
 ## Security and Privacy
 
-- Public listing uses optional authentication and the canonical Ticket
-  visibility predicate. Anonymous callers see references only for
-  non-confidential Tickets.
+- Listing requires authentication and applies the canonical Ticket visibility
+  predicate.
 - Manual writes require `manage_references` before resource lookup and
   locked-current Ticket accessibility before nested state is disclosed.
 - Only `source = manual` rows are consumer-editable.

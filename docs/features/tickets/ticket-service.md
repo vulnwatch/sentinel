@@ -112,9 +112,10 @@ system-only and has no actor parameter.
 
 Consumer-facing service operations consume the one canonical Ticket visibility
 predicate from `docs/features/identity/rbac.md` (Scope and Confidential Ticket
-Visibility) without defining another semantic variant. Anonymous reads use the
-canonical anonymous behavior and therefore do not query grants or
-maintainership. Services own every model-aware query or operation needed to
+Visibility) without defining another semantic variant. Every consumer caller is
+authenticated, so every consumer operation evaluates the grant and
+maintainership branches for the caller's user ID. Services own every
+model-aware query or operation needed to
 apply the predicate; Core and API handlers do not construct business ORM
 queries. The concrete caller-context representation, helper shape, and SQL
 formulation are implementation choices.
@@ -322,7 +323,6 @@ The result contains a collection of Ticket summary projections plus `total`,
    `evaluation_date` from it
    ([ticket-deadlines.md](ticket-deadlines.md#evaluation-instant)). Build one
    candidate set of Tickets satisfying the canonical visibility predicate.
-   Anonymous calls evaluate no grant or maintainership branch.
 2. Normalize `search` by trimming outer whitespace once. An empty result means
    no search filter. Percent, underscore, and backslash remain literal input;
    they do not become SQL pattern syntax. Apply the field-specific OR matching

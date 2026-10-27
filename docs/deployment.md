@@ -2475,10 +2475,12 @@ ingestion):
 > has never run (`last_run = null`), or has `last_run.stale = true`.
 
 This signal is derivable from `GET /api/v1/fetchers` without any code
-changes to Sentinel. It detects not only empty schedules but also dead
-workers, database unavailability, or any other cause of stalled
-processing. Runs still in progress (`status` is `queued` or `running`)
-have `last_run.finished_at = null` and are covered by the
+changes to Sentinel. The endpoint requires authentication, so the monitoring
+system presents the API key of an account without roles
+(`docs/features/identity/api-key-management.md`). The signal detects not only
+empty schedules but also dead workers, database unavailability, or any other
+cause of stalled processing. Runs still in progress (`status` is `queued` or
+`running`) have `last_run.finished_at = null` and are covered by the
 `last_run.stale` condition once the respective threshold is reached —
 600 seconds for a `queued` run awaiting worker adoption,
 `hard_time_limit_seconds + 60` seconds for a `running` run (where
