@@ -1175,10 +1175,10 @@ version from its GitHub Release (API Documentation Publication) and tests
 against the image of that version by digest (Consumer discovery and
 verification). The consumer also honors the obligations that the contracts of
 that version place on clients (`docs/architecture.md`, System Boundary), among
-them the tolerance of the additive changes that later releases can contain
-(`docs/api-spec.md`, Client Tolerance of Additive Changes). The web UI that the
-separate `sentinel-aura` repository releases is such a consumer (Sentinel
-Host).
+them the tolerance of the changes that are not breaking, which later releases
+can contain (`docs/api-spec.md`, Client Tolerance of Non-Breaking Changes).
+The web UI that the separate `sentinel-aura` repository releases is such a
+consumer (Sentinel Host).
 
 Breaking for a consumer is a breaking API change (`docs/api-spec.md`,
 Versioning) or a change of an obligation that the contracts of this repository
