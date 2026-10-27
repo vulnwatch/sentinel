@@ -14,10 +14,12 @@ step in `tests/test_ci_workflow.py`.
 
 No package is exempt from Renovate's cooldown: the uv image comes from Docker
 Hub, the only registry from which Renovate reads the release timestamps of
-images, and the Dockerfile frontend is pinned to an exact version, so that its
-releases are version updates. The cooldown cannot age a digest update, so every
-digest update except the base image's waits for approval on the Dependency
-Dashboard instead (Workflow Conventions, Digest updates). See issue #1120.
+images, and its tag must match every `setup-uv` version, so a uv PR that lacks
+the image's update fails. The Dockerfile frontend is pinned to an exact
+version, so that its releases are version updates. The cooldown cannot age a
+digest update, so every digest update except the base image's waits for
+approval on the Dependency Dashboard instead (Workflow Conventions, Digest
+updates). See issue #1120.
 """
 
 from __future__ import annotations
@@ -35,10 +37,12 @@ from tests.support.dependency_config import (
     backend_uv_settings,
     renovate_config,
 )
+from tests.support.yaml_files import job_steps, load_yaml_file, workflow_jobs
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 DOCKERFILE_PATH = REPO_ROOT / "backend" / "Dockerfile"
+WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 
 # The reference regular expression of PEP 723 for an inline metadata block.
 PEP_723_BLOCK = re.compile(
@@ -48,7 +52,8 @@ UTC_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 UV_GROUP = "uv version (CI + Docker image)"
 # The image of the uv binary that backend/Dockerfile copies, by tag and digest.
 UV_IMAGE = re.compile(
-    r"(?m)^COPY --from=(?P<image>[^:\s]+):[^@\s]+@sha256:[0-9a-f]{64} /uv /bin/uv$"
+    r"(?m)^COPY --from=(?P<image>[^:\s]+):(?P<tag>[^@\s]+)@sha256:[0-9a-f]{64}"
+    r" /uv /bin/uv$"
 )
 # The parser directive that names the Dockerfile frontend, by tag and digest.
 FRONTEND_DIRECTIVE = re.compile(
@@ -142,9 +147,12 @@ def test_per_package_cutoffs_are_past_absolute_utc_timestamps() -> None:
 def test_renovate_holds_every_new_version_for_the_backend_cooldown() -> None:
     # One rule, matching only the update type, applies the cooldown to every
     # manager; digest, pin, and lock file maintenance updates are outside it.
+    # A later packageRules entry overrides an earlier one, so another rule
+    # that set minimumReleaseAge, to null or to a shorter duration, would
+    # exempt the packages that it matches.
     config = renovate_config()
     rules = config["packageRules"]
-    holding = [rule for rule in rules if rule.get("minimumReleaseAge")]
+    holding = [rule for rule in rules if "minimumReleaseAge" in rule]
 
     assert "minimumReleaseAge" not in config
     assert len(holding) == 1
@@ -167,40 +175,57 @@ def test_renovate_holds_every_release_without_a_timestamp() -> None:
     assert _paths_of_setting(renovate_config(), "minimumReleaseAgeBehaviour") == []
 
 
-@pytest.mark.unit
-def test_renovate_cooldown_exempts_no_package() -> None:
-    # A later packageRules entry overrides an earlier one, so a rule that set
-    # minimumReleaseAge again, to null or to a shorter duration, would exempt
-    # the packages that it matches.
-    rules = renovate_config()["packageRules"]
-
-    assert [
-        index for index, rule in enumerate(rules) if "minimumReleaseAge" in rule
-    ] == [0]
+def _dockerfile_uv_image() -> re.Match[str]:
+    """The uv image reference that backend/Dockerfile copies the binary from."""
+    match = UV_IMAGE.search(DOCKERFILE_PATH.read_text(encoding="utf-8"))
+    assert match is not None, f"no line of the form {UV_IMAGE.pattern}"
+    return match
 
 
 @pytest.mark.unit
 def test_dockerfile_copies_uv_from_docker_hub_in_the_uv_group() -> None:
     # From a registry without release timestamps, such as ghcr.io, the cooldown
     # would hold the image indefinitely while the rest of its group moved on.
-    match = UV_IMAGE.search(DOCKERFILE_PATH.read_text(encoding="utf-8"))
+    image = _dockerfile_uv_image()["image"]
     group = next(
-        rule
-        for rule in renovate_config()["packageRules"]
-        if rule.get("groupName") == UV_GROUP
+        (
+            rule
+            for rule in renovate_config()["packageRules"]
+            if rule.get("groupName") == UV_GROUP
+        ),
+        None,
     )
 
-    assert match is not None
-    assert match["image"] == "astral/uv"
-    assert match["image"] in group["matchPackageNames"]
+    assert group is not None, f"no packageRules entry for the {UV_GROUP!r} group"
+    assert image == "astral/uv"
+    assert image in group["matchPackageNames"]
+
+
+@pytest.mark.unit
+def test_dockerfile_uv_tag_matches_every_setup_uv_version() -> None:
+    # Renovate drops a member whose update is still pending from its group's
+    # PR, such as the image when a lookup lacks its timestamps. CI and the
+    # image would then run different uv versions.
+    tag = _dockerfile_uv_image()["tag"]
+    workflows = sorted([*WORKFLOWS_DIR.glob("*.yml"), *WORKFLOWS_DIR.glob("*.yaml")])
+    versions = [
+        (path.name, job_id, step.get("with", {}).get("version"))
+        for path in workflows
+        for job_id, job in workflow_jobs(load_yaml_file(path)).items()
+        for step in job_steps(job)
+        if str(step.get("uses", "")).startswith("astral-sh/setup-uv@")
+    ]
+
+    assert versions
+    assert [version for version in versions if version[2] != tag] == []
 
 
 @pytest.mark.unit
 def test_dockerfile_frontend_is_pinned_to_an_exact_version_and_digest() -> None:
     # BuildKit runs the frontend that the directive names in every build. A
-    # floating tag such as "1" would move to a new release on the day of its
-    # publication, outside the cooldown; an exact version makes each release a
-    # version update that the cooldown holds.
+    # floating tag such as "1" would change every build as soon as Docker moves
+    # it to a new release, outside the cooldown; an exact version makes each
+    # release a version update that the cooldown holds.
     first_line = DOCKERFILE_PATH.read_text(encoding="utf-8").splitlines()[0]
     match = FRONTEND_DIRECTIVE.fullmatch(first_line)
 

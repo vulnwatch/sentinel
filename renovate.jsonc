@@ -169,7 +169,7 @@
       "minimumReleaseAge": "7 days"
     },
     {
-      "description": "A digest update of an image pinned by version and digest, or of an Action pinned by commit SHA, means that the publisher moved the tag of the pinned version to other content, which is also what a hijacked tag does. It opens only once a maintainer approves it under Pending Approval on the Dependency Dashboard — see docs/deployment.md (Workflow Conventions, Digest updates). The python base image is the exception: its tag is republished with every Debian or Python fix, and its digest refresh is the remediation path of the image scan",
+      "description": "A digest update of an image pinned by version and digest, or of an Action pinned by commit SHA, means that the publisher moved the tag of the pinned version to other content, which is also what a hijacked tag does. It opens only once a maintainer approves it under Pending Approval on the Dependency Dashboard; an approved PR that is still open follows later digests without a new approval, and vulnerability-fix PRs need none — see docs/deployment.md (Workflow Conventions, Digest updates). The python base image is the exception: its tag is republished with every Debian or Python fix, and its digest refresh is the remediation path of the image scan",
       "matchUpdateTypes": ["digest"],
       "matchPackageNames": ["!python"],
       "dependencyDashboardApproval": true
@@ -226,7 +226,7 @@
       "commitMessagePrefix": "chore(deps):"
     },
     {
-      "description": "Keep the uv version used by astral-sh/setup-uv (CI), the uv binary copied into the Docker image (COPY --from), and the uv_build range in backend/pyproject.toml [build-system] (the backend bundled in that binary; pep621 normalizes the name to uv-build) in sync — see backend/Dockerfile comment. The image comes from Docker Hub (astral/uv), the only registry from which Renovate reads the release timestamps of images, so the whole group waits for the release-age cooldown",
+      "description": "Keep the uv version used by astral-sh/setup-uv (CI), the uv binary copied into the Docker image (COPY --from), and the uv_build range in backend/pyproject.toml [build-system] (the backend bundled in that binary; pep621 normalizes the name to uv-build) in sync — see backend/Dockerfile comment. The image comes from Docker Hub (astral/uv), the only registry from which Renovate reads the release timestamps of images, so the whole group waits for the release-age cooldown. A lookup that lacks the image's timestamps (it has more than 1,000 tags) holds its update, and the group's PR then opens without it: a unit test fails it until the Dockerfile tag matches the setup-uv version",
       "matchPackageNames": ["astral-sh/uv", "astral/uv", "uv-build"],
       "groupName": "uv version (CI + Docker image)"
     }

@@ -730,15 +730,15 @@ settings with the same duration implement the cooldown:
   `minimumReleaseAge` to the same duration for the major, minor, and patch
   updates of every manager, so Renovate proposes a version only once it is
   seven days old; otherwise a Python update PR could propose a version that
-  uv cannot lock. No package is exempt from it. An update that is still too
-  young is listed under "Pending Status Checks" on the Dependency
+  uv cannot lock. No package is exempt from this rule. An update that is
+  still too young is listed under "Pending Status Checks" on the Dependency
   Dashboard, where a maintainer can request it early, except a Python
   dependency (see Security fixes under the cooldown below). Digest updates
-  are not held by it (see Digest updates below). A version update of an
-  image without a release timestamp is held indefinitely, and so is one to
-  a floating tag that is republished more often than the cooldown, until it
-  is requested from the Dashboard. A lookup failure therefore never admits
-  a release early. Renovate reads the release timestamps of images only
+  are not held by this rule (see Digest updates below). A version update of
+  an image without a release timestamp is held indefinitely, and so is one
+  to a floating tag that is republished more often than the cooldown, until
+  it is requested from the Dashboard. A lookup failure therefore never
+  admits a release early. Renovate reads the release timestamps of images only
   from Docker Hub, which is why the uv image comes from there (see
   Container Build Conventions, uv image pinning). It reads them from Docker
   Hub's tag API, which serves the pages beyond a repository's first 1,000
@@ -757,12 +757,17 @@ Dashboard. For an image pinned by version and digest, or an Action pinned
 by commit SHA, a digest update means that the publisher moved the tag of
 the pinned version to other content, which is also what a hijacked tag
 does; a maintainer approves it only once the reason for the move is known,
-such as a rebuild that the publisher announced. The `python` base image is
-exempt: its tag is republished with every Debian or Python fix, and its
-digest refresh is the remediation path of Image Vulnerability Monitoring,
-so the refresh opens without the cooldown and without approval. That risk
-is accepted: the image build takes what Docker publishes under the tag in
-use within a day, and only CI and the image scan check it.
+such as a rebuild that the publisher announced. Approval admits the branch
+only: while its PR is open, Renovate moves it to a later digest of the same
+tag without a new approval, so the digest is checked again before merge. A
+vulnerability-fix PR needs no approval, as it needs no cooldown, so a
+digest-only PR labelled `security` signals a moved tag too. The `python`
+base image is exempt: its tag is republished with every Debian or Python
+fix, and its digest refresh is the remediation path of Image Vulnerability
+Monitoring, so the refresh opens without the cooldown and without approval.
+The accepted risk is that this PR opens within a day of Docker's push and
+that only CI and the merging maintainer check its content before merge; the
+image scan sees it only after the release that ships it.
 
 **Security fixes under the cooldown.** Renovate does not hold a
 vulnerability-fix PR for the cooldown, and a fix is often older than seven
@@ -959,6 +964,12 @@ Workflow Conventions, Release-age cooldown). The tag MUST match the
 Renovate's `dockerfile` manager updates the tag and digest together, and a
 `packageRule` in `renovate.jsonc` groups that update with the workflow
 `version:` inputs into a single PR so CI and the image never diverge.
+`astral/uv` has more than 1,000 tags, so an anonymous lookup, such as the
+one of `renovate-validation.yml`, lacks its timestamps; the Mend Renovate
+App has had them for other images with more tags. A lookup without them
+holds the image's update indefinitely, and Renovate then opens the group's
+PR without it; a unit test that compares the tag with every `version:`
+input fails that PR until a maintainer adds the image's update to it.
 
 The same binary is also the project's build backend:
 `backend/pyproject.toml` declares `uv_build` with a range bounded to the
@@ -978,8 +989,8 @@ first line of `backend/Dockerfile` names the BuildKit Dockerfile frontend,
 `docker/dockerfile`, which BuildKit pulls and runs to interpret the
 Dockerfile in every build. It is pinned by exact version and digest
 (`docker/dockerfile:<version>@sha256:...`): a floating tag such as `1`
-would let a new frontend release change every build on the day of its
-publication, outside the release-age cooldown. Renovate's `dockerfile`
+would let a new frontend release change every build as soon as Docker moves
+the tag to it, outside the release-age cooldown. Renovate's `dockerfile`
 manager tracks the directive, so a new frontend release is a version
 update like any other.
 

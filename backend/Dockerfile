@@ -21,10 +21,10 @@ FROM python:${PYTHON_VERSION}-slim@${PYTHON_BASE_DIGEST} AS builder
 
 # Pin the uv version used to build this image (keep in sync with the
 # `version:` input of astral-sh/setup-uv in .github/workflows/ci.yml).
-# The tag documents the version; the digest guarantees immutability. The
-# image comes from Docker Hub, where Astral publishes the same image as on
-# ghcr.io, because Renovate reads the release timestamps of images only
-# from Docker Hub and needs them for the release-age cooldown (see
+# The tag documents the version; the digest guarantees immutability.
+# Astral publishes the same image to Docker Hub and to ghcr.io. It comes
+# from Docker Hub because Renovate reads the release timestamps of images
+# only from there and needs them for the release-age cooldown (see
 # docs/deployment.md, Container Build Conventions → uv image pinning).
 # The binary also provides the uv_build backend that builds the project;
 # the uv_build range in pyproject.toml must stay compatible with it.
