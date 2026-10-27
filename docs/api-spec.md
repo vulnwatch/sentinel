@@ -47,16 +47,16 @@ Two kinds of field have no response enum. A field whose contract fixes one
 value, such as an OpenAPI `const` that does not select the variant of a union,
 keeps that value: returning another value is a semantic change to existing
 behavior. A field for which a specification lists only known or example
-values, such as a value stored as received from an external source, can carry
-any value of its type.
+values, such as a field that stores a value as received from an external
+source, can carry any value of its type.
 
 A new value of a response enum is additive when it describes only situations
-that neither an existing value of the enum nor, for a nullable field, `null`
-describes. Returning a new value in a situation that an existing value or
-`null` describes, for example a new status for fetcher runs that earlier
-releases report as `running`, is a semantic change to existing behavior and
-therefore breaking. Error responses are outside this section: Response Format
-and Error Code Categories govern their codes.
+that none of these describes: an existing value of the enum, `null` of a
+nullable field, or the absence of an optional field. Returning a new value in a
+situation that one of them describes, for example a new status for fetcher runs
+that earlier releases report as `running`, is a semantic change to existing
+behavior and therefore breaking. Error responses are outside this section:
+Response Format and Error Code Categories govern their codes.
 
 #### Client Tolerance of Additive Changes
 
