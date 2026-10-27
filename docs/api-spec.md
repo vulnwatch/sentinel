@@ -86,8 +86,8 @@ following cases is breaking when one of them is. The cases are:
 - **Changed code or status**, breaking: a condition for which the contract of
   the earlier release states an error response is reported with another code
   or status, for example with a dedicated code in place of `VALIDATION_ERROR`,
-  or a request that meets two conditions receives the response of the other
-  one where the contract states their precedence.
+  or a request that meets two conditions whose precedence the contract states
+  receives the response of the condition that does not take precedence.
 - **Rejected request**, breaking: the operation rejects with a `4xx` response
   a request for which the contract of the earlier release states success, for
   example through a stricter constraint on an existing input or a new check
@@ -105,7 +105,7 @@ release is a new condition.
 
 `500 INTERNAL_ERROR` reports an unhandled server error (Global Responses),
 even where a specification names it for a condition, such as a database
-failure. A `5xx` response is never a rejected request:
+failure, and a `5xx` response is never a rejected request. Therefore:
 
 - an error that the earlier release reported as `500 INTERNAL_ERROR` and that
   a later release reports with another code or status is a new condition, or
