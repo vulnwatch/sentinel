@@ -608,17 +608,30 @@ class TestCVEDetail:
 
 
 # ---------------------------------------------------------------------------
-# GET /cve-sources: envelope, wire format, parsing, identifier-only exception
+# GET /cve-sources: envelope, wire format, parsing, CVE accessibility
 # ---------------------------------------------------------------------------
+
+
+async def _source_keys(client: AsyncClient, **params: Any) -> set[tuple[str, str]]:
+    """`(cve_id, source)` keys of one complete `GET /cve-sources` page; the
+    total must equal the page and no key may repeat."""
+    response = await client.get(_SOURCES, params={"per_page": 100, **params})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    keys = [(item["cve_id"], item["source"]) for item in body["data"]]
+    assert body["meta"]["total"] == len(keys) == len(set(keys))
+    return set(keys)
 
 
 @pytest.mark.e2e
 class TestCVESourceList:
-    async def test_role_less_listing_includes_a_confidential_ticket_cve(
+    async def test_accessible_confidential_ticket_row_exposes_only_source_fields(
         self,
         authenticated_client: AsyncClient,
+        authenticated_user: User,
         cve_factory: Factory,
         ticket_factory: Factory,
+        ticket_access_grant_factory: Factory,
         cve_source_factory: Factory,
     ) -> None:
         cve: CVE = await cve_factory(
@@ -627,6 +640,9 @@ class TestCVESourceList:
             description="Fictional confidential description",
         )
         ticket: Ticket = await ticket_factory(cve_id=cve.id, is_confidential=True)
+        await ticket_access_grant_factory(
+            ticket_id=ticket.id, user_id=authenticated_user.id
+        )
         row = await cve_source_factory(
             cve_id=cve.id,
             source="nvd",
@@ -660,6 +676,63 @@ class TestCVESourceList:
             assert str(secret) not in response.text
         assert _sntl(ticket) not in response.text
         assert "Fictional confidential" not in response.text
+
+    async def test_reserved_cve_of_a_confidential_ticket_is_listed_only_when_visible(
+        self,
+        authenticated_client: AsyncClient,
+        authenticated_user: User,
+        cve_factory: Factory,
+        ticket_factory: Factory,
+        ticket_access_grant_factory: Factory,
+        user_role_factory: Factory,
+        cve_source_factory: Factory,
+    ) -> None:
+        """A confidential Ticket of a RESERVED CVE whose placeholder is
+        `missing` in several sources, and another confidential Ticket's CVE:
+        the same caller lists role-less, then with a grant on the first
+        Ticket, then with scope `all`. The rows of a ticketless CVE and of a
+        non-confidential Ticket's CVE are always listed."""
+        sources = ("mitre", "nvd", "redhat")
+        reserved = await cve_factory(cve_id="CVE-2099-73001")
+        reserved_ticket = await ticket_factory(cve_id=reserved.id, is_confidential=True)
+        hidden = await cve_factory(cve_id="CVE-2099-73002")
+        await ticket_factory(cve_id=hidden.id, is_confidential=True)
+        ticketless = await cve_factory(cve_id="CVE-2099-73003")
+        public = await cve_factory(cve_id="CVE-2099-73004")
+        await ticket_factory(cve_id=public.id)
+        keys: dict[str, set[tuple[str, str]]] = {}
+        for name, cve in (
+            ("reserved", reserved),
+            ("hidden", hidden),
+            ("ticketless", ticketless),
+            ("public", public),
+        ):
+            for source in sources:
+                await cve_source_factory(cve_id=cve.id, source=source, status="missing")
+            keys[name] = {(cve.cve_id, source) for source in sources}
+        always = keys["ticketless"] | keys["public"]
+        mitre_missing = {"source": "mitre", "status": "missing"}
+
+        def mitre(selected: set[tuple[str, str]]) -> set[tuple[str, str]]:
+            return {key for key in selected if key[1] == "mitre"}
+
+        role_less = await _source_keys(authenticated_client)
+        role_less_mitre = await _source_keys(authenticated_client, **mitre_missing)
+        await ticket_access_grant_factory(
+            ticket_id=reserved_ticket.id, user_id=authenticated_user.id
+        )
+        with_grant = await _source_keys(authenticated_client)
+        await user_role_factory(
+            user_id=authenticated_user.id, role=Role.VULNERABILITY_ANALYST.value
+        )
+        scope_all = await _source_keys(authenticated_client)
+        scope_all_mitre = await _source_keys(authenticated_client, **mitre_missing)
+
+        assert role_less == always
+        assert role_less_mitre == mitre(always)
+        assert with_grant == always | keys["reserved"]
+        assert scope_all == always | keys["reserved"] | keys["hidden"]
+        assert scope_all_mitre == mitre(scope_all)
 
     @pytest.mark.parametrize(
         "source",
@@ -816,6 +889,44 @@ class TestAuthenticationAndAccessChanges:
         monkeypatch.setattr(cve_service, "list_cves", _revoke_then_list)
 
         response = await authenticated_client.get(_CVES)
+
+        assert response.status_code == 200
+        assert response.json() == _EMPTY_PAGE
+
+    async def test_grant_revoked_before_the_protected_source_listing_selection(
+        self,
+        authenticated_client: AsyncClient,
+        authenticated_user: User,
+        cve_factory: Factory,
+        ticket_factory: Factory,
+        ticket_access_grant_factory: Factory,
+        cve_source_factory: Factory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The caller was resolved before the revocation; the one protected
+        selection alone decides rows and total."""
+        cve = await cve_factory()
+        ticket = await ticket_factory(cve_id=cve.id, is_confidential=True)
+        await ticket_access_grant_factory(
+            ticket_id=ticket.id, user_id=authenticated_user.id
+        )
+        await cve_source_factory(cve_id=cve.id, source="nvd", status="missing")
+        assert await _source_keys(authenticated_client) == {(cve.cve_id, "nvd")}
+        original = cve_service.list_cve_sources
+
+        async def _revoke_then_list(
+            db: AsyncSession, caller: TicketCaller, **kwargs: Any
+        ) -> CVESourceListResult:
+            await db.execute(
+                delete(TicketAccessGrant).where(
+                    TicketAccessGrant.ticket_id == ticket.id
+                )
+            )
+            return await original(db, caller, **kwargs)
+
+        monkeypatch.setattr(cve_service, "list_cve_sources", _revoke_then_list)
+
+        response = await authenticated_client.get(_SOURCES)
 
         assert response.status_code == 200
         assert response.json() == _EMPTY_PAGE
@@ -1255,9 +1366,10 @@ class TestHandlerDelegation:
             cve_id,
         )
 
-    async def test_cve_source_list_arguments_reach_the_service_without_a_caller(
+    async def test_cve_source_list_caller_and_arguments_reach_the_service(
         self,
         authenticated_client: AsyncClient,
+        authenticated_user: User,
         db_session: AsyncSession,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -1284,7 +1396,16 @@ class TestHandlerDelegation:
         assert defaults.status_code == parsed.status_code == 200
         assert recorder.handler_statements == []
         default_call, parsed_call = spy.await_args_list
-        assert default_call.args == parsed_call.args == (db_session,)
+        assert (
+            default_call.args
+            == parsed_call.args
+            == (
+                db_session,
+                TicketCaller.authenticated(
+                    authenticated_user.id, Scope.NON_CONFIDENTIAL
+                ),
+            )
+        )
         assert default_call.kwargs == {
             "source": None,
             "status": None,

@@ -1,18 +1,23 @@
 """Tests for `cve_service.list_cve_sources()` (global persisted-source listing).
 
-Owning specifications: docs/features/tickets/cve-service.md (Service Read
-Contracts; Global CVE Source Listing); docs/data-model.md (CVESource,
-Derived predicate "stalled"); docs/api-spec.md (Nullable Sort Field
-Ordering); docs/features/platform/testing-strategy.md (CVE and Source
-Reads > Global persisted-source listing; Concurrency Testing).
+Owning specifications: docs/features/tickets/cve-service.md (CVE Read and
+Accessibility Boundary; RESERVED CVEs; Service Read Contracts; Global CVE
+Source Listing); docs/data-model.md (CVESource, Derived predicate
+"stalled"); docs/api-spec.md (Nullable Sort Field Ordering;
+Anti-Enumeration Boundary); docs/features/identity/rbac.md (Scope and
+Confidential Ticket Visibility); docs/features/platform/testing-strategy.md
+(CVE and Source Reads > Global persisted-source listing; Ticket
+Accessibility; Concurrency Testing).
 
 Every `db_session` test starts from an empty `cve_source` table (per-test
 rollback), so a listing observes exactly the rows the test creates. Rows
 are written through `cve_source_factory`, which bypasses
 `record_source_status()` so arbitrary statuses and timestamps can be set.
 Each row gets a random `CVESource.id`, so the internal tie-breaker order is
-independent of insertion order. The independent-session races scope their
-listing by a unique source identifier and delete their committed rows.
+independent of insertion order. Unless a test is about accessibility, it
+lists as a scope-`all` caller, for whom every row is accessible. The
+independent-session races scope their listing by a unique source
+identifier and delete their committed rows.
 """
 
 from __future__ import annotations
@@ -30,21 +35,29 @@ from sqlalchemy import delete, event, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Executable
 
-from app.core.enums import CVESourceFetchStatus, CVESourceSortField, SortOrder
+from app.core.enums import CVESourceFetchStatus, CVESourceSortField, Scope, SortOrder
 from app.models.cve import CVE
 from app.models.cve_source import CVESource
 from app.models.fetcher_run import FetcherRun
 from app.models.ticket import Ticket
+from app.models.ticket_access_grant import TicketAccessGrant
 from app.models.ticket_audit_event import TicketAuditEvent
+from app.models.ticket_package import TicketPackage
+from app.models.ticket_package_maintainer import TicketPackageMaintainer
+from app.models.user import User
 from app.services.cve_service import (
     CVESourceListItemProjection,
     CVESourceListResult,
     list_cve_sources,
 )
+from app.services.ticket_visibility import TicketCaller
+from tests.support.callers import ROLELESS_CALLER
 
 Factory = Callable[..., Awaitable[Any]]
 SessionFactory = Callable[[], Awaitable[AsyncSession]]
 
+ALL_SCOPE: Final = TicketCaller.authenticated(uuid.uuid4(), Scope.ALL)
+EXCLUDED_AT = datetime(2099, 1, 2, 9, 0, tzinfo=UTC)
 FEB = datetime(2099, 2, 1, 12, 0, tzinfo=UTC)
 MAR = datetime(2099, 3, 1, 12, 0, tzinfo=UTC)
 APR = datetime(2099, 4, 1, 12, 0, tzinfo=UTC)
@@ -67,14 +80,22 @@ _DEFAULTS: Final[dict[str, Any]] = {
 }
 
 
-async def _list(db: AsyncSession, **overrides: Any) -> CVESourceListResult:
-    return await list_cve_sources(db, **{**_DEFAULTS, **overrides})
+def _restricted(user_id: uuid.UUID) -> TicketCaller:
+    return TicketCaller.authenticated(user_id, Scope.NON_CONFIDENTIAL)
 
 
-async def _keys(db: AsyncSession, **overrides: Any) -> set[tuple[str, str]]:
+async def _list(
+    db: AsyncSession, caller: TicketCaller = ALL_SCOPE, **overrides: Any
+) -> CVESourceListResult:
+    return await list_cve_sources(db, caller, **{**_DEFAULTS, **overrides})
+
+
+async def _keys(
+    db: AsyncSession, caller: TicketCaller = ALL_SCOPE, **overrides: Any
+) -> set[tuple[str, str]]:
     """`(cve_id, source)` keys of one complete page; the total must equal
     the page and no key may repeat."""
-    result = await _list(db, **overrides)
+    result = await _list(db, caller, **overrides)
     keys = [(item.cve_id, item.source) for item in result.items]
     assert result.total == len(keys) == len(set(keys))
     return set(keys)
@@ -144,7 +165,7 @@ async def _persisted_state(db: AsyncSession) -> tuple[Any, ...]:
 
 
 # ---------------------------------------------------------------------------
-# Identifier-only exception and projection
+# Signature and projection
 # ---------------------------------------------------------------------------
 
 ITEM_FIELDS: Final = {
@@ -158,6 +179,7 @@ ITEM_FIELDS: Final = {
 }
 PARAMETERS: Final = [
     "db",
+    "caller",
     "source",
     "status",
     "stalled",
@@ -171,8 +193,8 @@ PARAMETERS: Final = [
 
 
 @pytest.mark.integration
-class TestIdentifierOnlyException:
-    def test_no_caller_parameter_and_exact_projection_fields(self) -> None:
+class TestSignatureAndProjection:
+    def test_caller_parameter_and_exact_projection_fields(self) -> None:
         assert list(inspect.signature(list_cve_sources).parameters) == PARAMETERS
         fields = dataclasses.fields
         assert {f.name for f in fields(CVESourceListItemProjection)} == ITEM_FIELDS
@@ -183,7 +205,7 @@ class TestIdentifierOnlyException:
             "per_page",
         }
 
-    async def test_row_of_a_confidential_ticket_cve_exposes_only_the_cve_id(
+    async def test_accessible_confidential_ticket_row_projects_only_source_fields(
         self,
         db_session: AsyncSession,
         cve_factory: Factory,
@@ -231,6 +253,243 @@ class TestIdentifierOnlyException:
         secrets = (source.row.id, cve.id, ticket.id, f"SNTL-{ticket.sequence_id}")
         for secret in (*map(str, secrets), "Fictional confidential"):
             assert secret not in repr(item)
+
+
+# ---------------------------------------------------------------------------
+# CVE accessibility (canonical predicate over mixed visible and invisible rows)
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class _Make:
+    """The `tests/conftest.py` model factories of the accessibility tests."""
+
+    cve: Factory
+    ticket: Factory
+    user: Factory
+    grant: Factory
+    package: Factory
+    maintainer: Factory
+
+    async def maintained(
+        self, ticket: Ticket, user: User | None, *deleted: datetime | None
+    ) -> list[TicketPackage]:
+        """One package of `ticket` per `deleted` value, each maintained by
+        `user` (a fresh user when `None`) and excluded when its value is
+        set."""
+        packages = []
+        for deleted_at in deleted:
+            package: TicketPackage = await self.package(
+                ticket_id=ticket.id, deleted_at=deleted_at
+            )
+            owner = {} if user is None else {"user_id": user.id}
+            await self.maintainer(ticket_package_id=package.id, **owner)
+            packages.append(package)
+        return packages
+
+
+@pytest.fixture
+def make(request: pytest.FixtureRequest) -> _Make:
+    fixtures = {
+        "cve": "cve_factory",
+        "ticket": "ticket_factory",
+        "user": "user_factory",
+        "grant": "ticket_access_grant_factory",
+        "package": "ticket_package_factory",
+        "maintainer": "ticket_package_maintainer_factory",
+    }
+    return _Make(**{n: request.getfixturevalue(f) for n, f in fixtures.items()})
+
+
+@dataclasses.dataclass(frozen=True)
+class _VisibilityWorld:
+    """One row per canonical-predicate branch, keyed by name, and the
+    names accessible to each caller."""
+
+    rows: dict[str, _Row]
+    expectations: dict[TicketCaller, tuple[str, ...]]
+
+
+@pytest.fixture
+async def visibility_world(make: _Make, make_row: MakeRow) -> _VisibilityWorld:
+    """`hidden` has a grant and a maintained package of other users;
+    `excluded` only an excluded package maintained by the caller; `multi`
+    one excluded and one included package maintained by the caller."""
+    user: User = await make.user()
+    names = ("ticketless", "public", "hidden", "granted", "maintained")
+    rows = {name: await make_row() for name in (*names, "excluded", "multi")}
+    await make.ticket(cve_id=rows["public"].cve.id, is_confidential=False)
+    hidden = await make.ticket(cve_id=rows["hidden"].cve.id, is_confidential=True)
+    await make.grant(ticket_id=hidden.id)
+    await make.maintained(hidden, None, None)
+    granted = await make.ticket(cve_id=rows["granted"].cve.id, is_confidential=True)
+    await make.grant(ticket_id=granted.id, user_id=user.id)
+    for name, deleted in (
+        ("maintained", (None,)),
+        ("excluded", (EXCLUDED_AT,)),
+        ("multi", (EXCLUDED_AT, None)),
+    ):
+        ticket = await make.ticket(cve_id=rows[name].cve.id, is_confidential=True)
+        await make.maintained(ticket, user, *deleted)
+    public = ("ticketless", "public")
+    return _VisibilityWorld(
+        rows,
+        {
+            ROLELESS_CALLER: public,
+            _restricted(user.id): (*public, "granted", "maintained", "multi"),
+            ALL_SCOPE: tuple(rows),
+        },
+    )
+
+
+SOURCES_WITHOUT_DATA: Final = ("epss", "kernel", "mitre", "nvd", "osv", "redhat")
+"""Every single-CVE source; a RESERVED CVE has data in none of them."""
+
+
+@dataclasses.dataclass(frozen=True)
+class _ReservedWorld:
+    """A confidential Ticket created for a RESERVED CVE whose placeholder
+    has one `missing` row per source (cve-service.md, RESERVED CVEs), and
+    a ticketless control CVE missing from the same sources."""
+
+    ticket: Ticket
+    reserved: dict[str, tuple[str, str]]
+    control: dict[str, tuple[str, str]]
+
+    def keys(self, *, reserved: bool, source: str | None) -> set[tuple[str, str]]:
+        groups = (self.control, self.reserved) if reserved else (self.control,)
+        return {
+            key
+            for group in groups
+            for name, key in group.items()
+            if source in (None, name)
+        }
+
+
+@pytest.fixture
+async def reserved_world(make: _Make, make_row: MakeRow) -> _ReservedWorld:
+    placeholder: CVE = await make.cve(cve_id="CVE-2099-72001")
+    control: CVE = await make.cve(cve_id="CVE-2099-72002")
+    ticket: Ticket = await make.ticket(cve_id=placeholder.id, is_confidential=True)
+
+    async def missing(cve: CVE) -> dict[str, tuple[str, str]]:
+        return {
+            source: (await make_row(cve=cve, source=source, status="missing")).key
+            for source in SOURCES_WITHOUT_DATA
+        }
+
+    return _ReservedWorld(ticket, await missing(placeholder), await missing(control))
+
+
+@pytest.mark.integration
+class TestAccessibility:
+    async def test_rows_and_total_follow_the_canonical_predicate(
+        self, db_session: AsyncSession, visibility_world: _VisibilityWorld
+    ) -> None:
+        """`excluded` (only maintained package excluded) is invisible while
+        `multi` (one excluded, one included maintained package) stays
+        visible to its maintainer."""
+        rows = visibility_world.rows
+        for caller, names in visibility_world.expectations.items():
+            assert await _keys(db_session, caller) == {rows[n].key for n in names}
+            assert (await _list(db_session, caller, per_page=1)).total == len(names)
+
+    @pytest.mark.parametrize(
+        ("filters", "source"),
+        [
+            pytest.param({}, None, id="omitted"),
+            pytest.param({"status": "missing"}, None, id="status-missing"),
+            pytest.param({"source": "mitre"}, "mitre", id="source"),
+            pytest.param(
+                {"source": "redhat", "status": "missing"}, "redhat", id="source-status"
+            ),
+            pytest.param({"stalled": False}, None, id="not-stalled"),
+            pytest.param({"sort_by": CVESourceSortField.SOURCE}, None, id="sorted"),
+        ],
+    )
+    async def test_reserved_cve_of_a_confidential_ticket_is_hidden_from_roleless(
+        self,
+        db_session: AsyncSession,
+        reserved_world: _ReservedWorld,
+        filters: dict[str, Any],
+        source: str | None,
+    ) -> None:
+        """The role-less caller receives only the control rows, in the items
+        and in the total, whatever the filter; scope `all` receives both."""
+        hidden = reserved_world.keys(reserved=False, source=source)
+        visible = reserved_world.keys(reserved=True, source=source)
+
+        assert await _keys(db_session, ROLELESS_CALLER, **filters) == hidden
+        assert await _keys(db_session, ALL_SCOPE, **filters) == visible
+        assert (
+            await _list(db_session, ROLELESS_CALLER, per_page=1, **filters)
+        ).total == len(hidden)
+
+    @pytest.mark.parametrize("path", ["grant", "maintainer"])
+    async def test_grant_or_included_maintained_package_lists_the_reserved_rows(
+        self,
+        db_session: AsyncSession,
+        make: _Make,
+        reserved_world: _ReservedWorld,
+        path: str,
+    ) -> None:
+        user: User = await make.user()
+        caller = _restricted(user.id)
+        assert await _keys(db_session, caller) == reserved_world.keys(
+            reserved=False, source=None
+        )
+        if path == "grant":
+            await make.grant(ticket_id=reserved_world.ticket.id, user_id=user.id)
+        else:
+            await make.maintained(reserved_world.ticket, user, None)
+
+        assert await _keys(db_session, caller) == reserved_world.keys(
+            reserved=True, source=None
+        )
+
+    async def test_excluding_the_last_maintained_package_removes_the_reserved_rows(
+        self, db_session: AsyncSession, make: _Make, reserved_world: _ReservedWorld
+    ) -> None:
+        """Exclusion disables only the maintainership branch; restoring the
+        package reactivates the retained association."""
+        user: User = await make.user()
+        caller = _restricted(user.id)
+        (package,) = await make.maintained(reserved_world.ticket, user, None)
+        all_rows = reserved_world.keys(reserved=True, source=None)
+        control = reserved_world.keys(reserved=False, source=None)
+
+        async def exclude(deleted_at: datetime | None) -> None:
+            await db_session.execute(
+                update(TicketPackage)
+                .where(TicketPackage.id == package.id)
+                .values(deleted_at=deleted_at)
+            )
+
+        assert await _keys(db_session, caller) == all_rows
+        await exclude(EXCLUDED_AT)
+        assert await _keys(db_session, caller) == control
+        await exclude(None)
+        assert await _keys(db_session, caller) == all_rows
+
+    async def test_several_visibility_paths_list_each_row_once(
+        self, db_session: AsyncSession, make: _Make, reserved_world: _ReservedWorld
+    ) -> None:
+        """Two included maintained packages and a grant: every row once and
+        an uninflated total, on every page."""
+        user: User = await make.user()
+        caller = _restricted(user.id)
+        await make.maintained(reserved_world.ticket, user, None, None)
+        await make.grant(ticket_id=reserved_world.ticket.id, user_id=user.id)
+        expected = reserved_world.keys(reserved=True, source=None)
+
+        assert await _keys(db_session, caller) == expected
+        pages = [
+            await _list(db_session, caller, page=page, per_page=5)
+            for page in (1, 2, 3, 4)
+        ]
+        assert {page.total for page in pages} == {len(expected)}
+        paged = [(i.cve_id, i.source) for page in pages for i in page.items]
+        assert len(paged) == len(set(paged)) == len(expected)
 
 
 # ---------------------------------------------------------------------------
@@ -448,7 +707,7 @@ class TestDateBoundsAndConjunction:
         self,
         db_session: AsyncSession,
         make_row: MakeRow,
-        bounds: dict[str, datetime],
+        bounds: dict[str, Any],
         expected: list[str],
     ) -> None:
         instants = {
@@ -672,9 +931,21 @@ class TestPagination:
 
 @pytest.mark.integration
 class TestBoundedReadAndDivergence:
+    @pytest.mark.parametrize(
+        ("caller", "total"),
+        [(ALL_SCOPE, 12), (ROLELESS_CALLER, 9)],
+        ids=["all", "roleless"],
+    )
     async def test_one_read_only_statement_regardless_of_page_size(
-        self, db_session: AsyncSession, make_row: MakeRow, ticket_factory: Factory
+        self,
+        db_session: AsyncSession,
+        make_row: MakeRow,
+        ticket_factory: Factory,
+        caller: TicketCaller,
+        total: int,
     ) -> None:
+        """Six of the twelve CVEs have a Ticket, three of them confidential
+        and hidden from the role-less caller."""
         for index in range(12):
             row = await make_row(status=FAILURE, first_failed_at=APR)
             if index % 2:
@@ -682,22 +953,22 @@ class TestBoundedReadAndDivergence:
         before = await _persisted_state(db_session)
 
         counts = []
-        for per_page in (1, 5, 12):
+        for per_page in (1, 5, 9):
             with _StatementRecorder(db_session) as recorder:
                 result = await _list(
                     db_session,
+                    caller,
                     stalled=False,
                     per_page=per_page,
                     sort_by=CVESourceSortField.FIRST_FAILED_AT,
                 )
-            assert result.total == 12
+            assert result.total == total
             assert len(result.items) == per_page
             counts.append(len(recorder.statements))
             statement = recorder.statements[0]
             assert statement.lstrip().upper().startswith(("SELECT", "WITH"))
             for row_lock in ROW_LOCKS:
                 assert row_lock not in statement.upper()
-            assert "ticket" not in statement.lower()
 
         assert counts == [1, 1, 1]
         assert not db_session.new
@@ -770,9 +1041,11 @@ class _Committed:
 @dataclasses.dataclass
 class _Race:
     """Committed CVEs whose rows share one unique, grammar-valid source
-    identifier (xdist-safe), a reader session R, a writer session W, and
-    fresh sessions observing the committed state. Teardown deletes the
-    CVEs; their rows go with the `ON DELETE CASCADE`."""
+    identifier (xdist-safe), the Users, Tickets, packages, and grants of
+    their visibility, a reader session R, a writer session W, and fresh
+    sessions observing the committed state. Teardown deletes the
+    visibility rows, then the CVEs; their rows go with the
+    `ON DELETE CASCADE`."""
 
     owner: AsyncSession
     reader: AsyncSession
@@ -782,6 +1055,8 @@ class _Race:
         default_factory=lambda: f"fictional_race_{uuid.uuid4().hex[:12]}"
     )
     cve_pks: list[uuid.UUID] = dataclasses.field(default_factory=list)
+    user_pks: list[uuid.UUID] = dataclasses.field(default_factory=list)
+    ticket_pks: list[uuid.UUID] = dataclasses.field(default_factory=list)
 
     def new(self, status: str, streak_age: timedelta | None = None) -> _Committed:
         """Inserts of a fresh CVE and its row, registered for cleanup."""
@@ -816,15 +1091,88 @@ class _Race:
         )
 
     async def keys(
-        self, db: AsyncSession, **filters: Any
+        self, db: AsyncSession, caller: TicketCaller = ALL_SCOPE, **filters: Any
     ) -> tuple[set[tuple[str, str]], int]:
-        return await _keys(db, source=self.source, **filters), (
-            await _list(db, source=self.source, per_page=1, **filters)
+        return await _keys(db, caller, source=self.source, **filters), (
+            await _list(db, caller, source=self.source, per_page=1, **filters)
         ).total
+
+    async def user(self) -> uuid.UUID:
+        user_pk, suffix = uuid.uuid7(), uuid.uuid4().hex[:10]
+        self.user_pks.append(user_pk)
+        await _commit(
+            self.owner,
+            insert(User).values(
+                id=user_pk,
+                username=f"fictional.cvesource.{suffix}",
+                email=f"cvesource.{suffix}@example.com",
+                password_hash="$2b$12$" + "a" * 53,
+            ),
+        )
+        return user_pk
+
+    async def ticket(
+        self,
+        row: _Committed | None,
+        *,
+        is_confidential: bool,
+        maintainer: uuid.UUID | None = None,
+        packages: int = 0,
+    ) -> tuple[uuid.UUID, list[uuid.UUID]]:
+        """A Ticket of `row`'s CVE (CVE-less when `None`) with `packages`
+        included packages maintained by `maintainer`."""
+        ticket_pk = uuid.uuid7()
+        self.ticket_pks.append(ticket_pk)
+        cve_pk = row.cve_pk if row is not None else None
+        statements: list[Executable] = [
+            insert(Ticket).values(
+                id=ticket_pk, cve_id=cve_pk, is_confidential=is_confidential
+            )
+        ]
+        package_pks = [uuid.uuid7() for _ in range(packages)]
+        for index, package_pk in enumerate(package_pks):
+            statements.append(
+                insert(TicketPackage).values(
+                    id=package_pk,
+                    ticket_id=ticket_pk,
+                    package_name=f"fictional-cve-source-{index}",
+                )
+            )
+            statements.append(
+                insert(TicketPackageMaintainer).values(
+                    ticket_package_id=package_pk, user_id=maintainer
+                )
+            )
+        await _commit(self.owner, *statements)
+        return ticket_pk, package_pks
+
+    async def grant(self, ticket_pk: uuid.UUID, user_pk: uuid.UUID) -> None:
+        granter = await self.user()
+        await _commit(
+            self.owner,
+            insert(TicketAccessGrant).values(
+                ticket_id=ticket_pk, user_id=user_pk, granted_by_id=granter
+            ),
+        )
 
     async def cleanup(self) -> None:
         await self.owner.rollback()
-        await _commit(self.owner, delete(CVE).where(CVE.id.in_(self.cve_pks)))
+        packages = select(TicketPackage.id).where(
+            TicketPackage.ticket_id.in_(self.ticket_pks)
+        )
+        await _commit(
+            self.owner,
+            delete(TicketPackageMaintainer).where(
+                TicketPackageMaintainer.ticket_package_id.in_(packages)
+            ),
+            delete(TicketPackage).where(TicketPackage.ticket_id.in_(self.ticket_pks)),
+            delete(TicketAccessGrant).where(
+                TicketAccessGrant.ticket_id.in_(self.ticket_pks)
+            ),
+            delete(Ticket).where(Ticket.id.in_(self.ticket_pks)),
+            delete(CVE).where(CVE.id.in_(self.cve_pks)),
+            delete(User).where(User.id.in_(self.user_pks)),
+        )
 
 
 @pytest.fixture
@@ -931,3 +1279,101 @@ class TestListingRaces:
         assert {(i.cve_id, i.source) for i in result.items} == scenario.before
         fresh = await race.sessions()
         assert await race.keys(fresh, **scenario.filters) == (scenario.after, 2)
+
+
+@dataclasses.dataclass(frozen=True)
+class _Loss:
+    """A row of a CVE accessible to `caller` and the committed change that
+    removes that access."""
+
+    row: _Committed
+    caller: TicketCaller
+    change: tuple[Executable, ...]
+
+
+LOSS_CASES: Final = ["confidentiality", "grant", "last_package", "association"]
+
+
+async def _prepare_loss(race: _Race, case: str) -> _Loss:
+    row = await race.row("missing")
+    if case == "confidentiality":
+        user = await race.user()
+        ticket, _ = await race.ticket(row, is_confidential=False)
+        change: Executable = (
+            update(Ticket).where(Ticket.id == ticket).values(is_confidential=True)
+        )
+        return _Loss(row, _restricted(user), (change,))
+    if case == "grant":
+        user = await race.user()
+        ticket, _ = await race.ticket(row, is_confidential=True)
+        await race.grant(ticket, user)
+        change = delete(TicketAccessGrant).where(TicketAccessGrant.ticket_id == ticket)
+        return _Loss(row, _restricted(user), (change,))
+    if case == "last_package":
+        user = await race.user()
+        _, (first, last) = await race.ticket(
+            row, is_confidential=True, maintainer=user, packages=2
+        )
+        await _commit(
+            race.owner,
+            update(TicketPackage)
+            .where(TicketPackage.id == first)
+            .values(deleted_at=EXCLUDED_AT),
+        )
+        change = (
+            update(TicketPackage)
+            .where(TicketPackage.id == last)
+            .values(deleted_at=EXCLUDED_AT)
+        )
+        return _Loss(row, _restricted(user), (change,))
+    assert case == "association"
+    ticket, _ = await race.ticket(None, is_confidential=True)
+    change = update(Ticket).where(Ticket.id == ticket).values(cve_id=row.cve_pk)
+    return _Loss(row, ROLELESS_CALLER, (change,))
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("case", LOSS_CASES)
+class TestListingAccessRaces:
+    """W removes R's caller access to a listed row by confidentiality,
+    grant revocation, exclusion of the last maintained package, or
+    association of the ticketless CVE with a confidential Ticket. Between
+    two listings R observes the loss; committed right after R's first
+    statement, the one-statement listing returns the coherent pre-change
+    rows and total, and a fresh session never lists the lost row."""
+
+    async def test_access_lost_between_listings_is_observed(
+        self, race: _Race, case: str
+    ) -> None:
+        loss = await _prepare_loss(race, case)
+        control = await race.row("missing")
+
+        assert await race.keys(race.reader, loss.caller) == (
+            {loss.row.key, control.key},
+            2,
+        )
+        await _commit(race.writer, *loss.change)
+
+        assert await race.keys(race.reader, loss.caller) == ({control.key}, 1)
+
+    async def test_access_lost_after_the_first_statement_is_not_observed(
+        self, race: _Race, monkeypatch: pytest.MonkeyPatch, case: str
+    ) -> None:
+        loss = await _prepare_loss(race, case)
+        control = await race.row("missing")
+        added = race.new("missing")
+
+        async def change() -> None:
+            await _commit(race.writer, *loss.change, *added.inserts)
+
+        calls = _commit_after_first_statement(monkeypatch, race.reader, change)
+        result = await _list(race.reader, loss.caller, source=race.source)
+
+        assert calls == [1]
+        assert result.total == 2
+        assert {(i.cve_id, i.source) for i in result.items} == {
+            loss.row.key,
+            control.key,
+        }
+        fresh = await race.sessions()
+        assert await race.keys(fresh, loss.caller) == ({control.key, added.key}, 2)
