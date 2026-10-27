@@ -208,7 +208,7 @@ class TestOpenAPIResponsesDeclareNoCheckpoint:
 class TestResponsesOmitTheStoredCheckpoint:
     async def test_ticket_and_package_reads_do_not_return_the_checkpoint(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         cve_factory: Factory,
         ticket_factory: Factory,
         ticket_package_factory: Factory,
@@ -235,7 +235,7 @@ class TestResponsesOmitTheStoredCheckpoint:
             ("/api/v1/packages", {"name": "example-checkpoint-lib"}, str(package.id)),
         ]
         for path, params, anchor in reads:
-            response = await client.get(path, params=params)
+            response = await authenticated_client.get(path, params=params)
 
             assert response.status_code == 200, response.text
             assert anchor in response.text, path

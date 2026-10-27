@@ -64,7 +64,8 @@ from app.services.package_service import (
     TrackSummaryProjection,
     search_packages,
 )
-from app.services.ticket_visibility import ANONYMOUS_CALLER, TicketCaller
+from app.services.ticket_visibility import TicketCaller
+from tests.support.callers import ROLELESS_CALLER
 from tests.support.lifecycle_matrix import FAR_PAST, GS_END, ONE_DAY
 
 Factory = Callable[..., Awaitable[Any]]
@@ -422,7 +423,6 @@ class TestVisibility:
         no_path = TicketCaller.authenticated(uuid.uuid4(), Scope.NON_CONFIDENTIAL)
 
         expectations = {
-            ANONYMOUS_CALLER: {"example-public"},
             no_path: {"example-public"},
             restricted: {
                 "example-public",
@@ -540,7 +540,7 @@ class TestVisibility:
     ) -> None:
         """Visibility is part of the selection before sorting and
         pagination: hidden packages interleaved in the order neither count
-        nor shift the anonymous caller's pages."""
+        nor shift the role-less caller's pages."""
         public = await ticket_factory()
         hidden = await ticket_factory(is_confidential=True)
         for minute, (ticket, name) in enumerate(
@@ -557,7 +557,7 @@ class TestVisibility:
             )
 
         pages = [
-            await _search(db_session, ANONYMOUS_CALLER, page=n, per_page=1)
+            await _search(db_session, ROLELESS_CALLER, page=n, per_page=1)
             for n in range(1, 5)
         ]
 
@@ -583,20 +583,8 @@ class TestVisibility:
             {"ticket_status": [TicketStatus.ANALYSIS]},
             {"sort_by": PackageSortField.PACKAGE_NAME},
         ):
-            page = await _search(db_session, ANONYMOUS_CALLER, **filters)
+            page = await _search(db_session, ROLELESS_CALLER, **filters)
             assert (page.items, page.total) == ((), 0), filters
-
-    async def test_anonymous_search_evaluates_no_grant_or_maintainer_branch(
-        self, db_session: AsyncSession, tree: Tree, ticket_factory: Factory
-    ) -> None:
-        await tree.package(await ticket_factory(), "example-public")
-
-        with _StatementRecorder(db_session) as recorder:
-            await _search(db_session, ANONYMOUS_CALLER)
-
-        (statement,) = recorder.statements
-        assert "ticket_access_grant" not in statement
-        assert "ticket_package_maintainer" not in statement
 
 
 # ---------------------------------------------------------------------------

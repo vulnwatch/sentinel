@@ -800,8 +800,7 @@ async def search_packages(
 
     Q3: in one SQL statement, and therefore one PostgreSQL snapshot:
     1. selects the `TicketPackage` occurrences joined to their Ticket
-       under the canonical visibility predicate (anonymous callers
-       evaluate no grant or maintainer branch);
+       under the canonical visibility predicate;
     2. keeps only actionable packages
        (`package_actionable_expression(evaluation_date)`);
     3. applies `ticket_status` (OR within the filter); trims `search`
@@ -946,11 +945,9 @@ def _workbench_caller_user_id(
 ) -> uuid.UUID:
     """Validate the workbench caller contract and return the owner ID.
 
-    The workbench owner is the authenticated caller; an anonymous caller
-    and a naive evaluation instant are caller-contract violations.
+    The workbench owner is the authenticated caller; a naive evaluation
+    instant is a caller-contract violation.
     """
-    if caller.user_id is None:
-        raise ValueError("The maintainer workbench requires an authenticated caller.")
     if evaluation_instant.utcoffset() is None:
         raise ValueError("evaluation_instant must be a timezone-aware datetime.")
     return caller.user_id
@@ -1038,8 +1035,8 @@ async def list_maintainer_pending_work(
     `per_page`; an empty candidate set or a page beyond the last returns
     no items with the correct total.
 
-    Q6: raises `ValueError` before any query for an anonymous caller, a
-    naive `evaluation_instant`, `page < 1`, or `per_page` outside 1-100.
+    Q6: raises `ValueError` before any query for a naive
+    `evaluation_instant`, `page < 1`, or `per_page` outside 1-100.
     Database exceptions propagate unchanged.
     """
     return await _list_maintainer_work(
@@ -1158,8 +1155,8 @@ async def get_maintainer_ticket_work(
     Q6: raises `TicketNotFoundError` for a malformed locator (including a
     lowercase, padded, or UUID value; no query is run), a missing Ticket,
     or an inaccessible Ticket, without distinguishing the causes. Raises
-    `ValueError` before any query for an anonymous caller or a naive
-    `evaluation_instant`. Database exceptions propagate unchanged.
+    `ValueError` before any query for a naive `evaluation_instant`.
+    Database exceptions propagate unchanged.
     """
     caller_user_id = _workbench_caller_user_id(caller, evaluation_instant)
     sequence_id = parse_ticket_id(ticket_id)

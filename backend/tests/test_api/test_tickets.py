@@ -4,7 +4,7 @@
 See docs/features/tickets/tickets.md (API Endpoints > Get Ticket, Response
 Schemas > CVEDetail and TicketDetail), docs/features/tickets/ticket-priority.md
 (API Surface), docs/features/tickets/ticket-deadlines.md (Actors and Phases,
-API Surface), docs/api-spec.md (Optional Authentication on Public Endpoints,
+API Surface), docs/api-spec.md (Authentication and Authorization,
 Ticket Accessibility Check, Anti-Enumeration Boundary, Ticket Identifier
 Resolution, User References in Responses, Response Format), and
 docs/features/platform/testing-strategy.md (Ticket Accessibility). Detail
@@ -130,12 +130,29 @@ def fixed_clock(monkeypatch: pytest.MonkeyPatch) -> Clock:
 
 @pytest.mark.e2e
 class TestAuthentication:
-    async def test_anonymous_caller_reads_a_non_confidential_ticket(
-        self, client: AsyncClient, ticket_factory: Factory
+    async def test_request_without_credential_returns_401_before_lookup(
+        self,
+        client: AsyncClient,
+        ticket_factory: Factory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        target: Ticket = await ticket_factory()
+        spy = AsyncMock()
+        monkeypatch.setattr(ticket_service, "get_ticket_detail", spy)
+
+        for locator in (format_ticket_id(target.sequence_id), "not-a-ticket"):
+            response = await client.get(_url(locator))
+            assert response.status_code == 401
+            assert response.json() == _UNAUTHENTICATED
+
+        spy.assert_not_awaited()
+
+    async def test_roleless_caller_reads_a_non_confidential_ticket(
+        self, authenticated_client: AsyncClient, ticket_factory: Factory
     ) -> None:
         target: Ticket = await ticket_factory()
 
-        response = await client.get(_url(target))
+        response = await authenticated_client.get(_url(target))
 
         assert response.status_code == 200
         assert response.json()["data"]["ticket_id"] == format_ticket_id(
@@ -162,7 +179,7 @@ class TestAuthentication:
 class TestGetTicketEndpoint:
     async def test_returns_the_complete_detail_in_the_wire_format(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         user_factory: Factory,
@@ -225,8 +242,8 @@ class TestGetTicketEndpoint:
         track = await ticket_package_track_factory(ticket_package_id=package.id)
         await ticket_package_product_factory(ticket_package_track_id=track.id)
 
-        response = await client.get(_url(target))
-        packages = await client.get(_url(target) + "/packages")
+        response = await authenticated_client.get(_url(target))
+        packages = await authenticated_client.get(_url(target) + "/packages")
 
         assert response.status_code == 200
         body = response.json()
@@ -293,7 +310,7 @@ class TestGetTicketEndpoint:
 
     async def test_null_sla_severity_labels_and_rejected_cve(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         cve_factory: Factory,
@@ -316,7 +333,7 @@ class TestGetTicketEndpoint:
         unresolved: Ticket = await ticket_factory()
 
         bodies = [
-            (await client.get(_url(t))).json()["data"]
+            (await authenticated_client.get(_url(t))).json()["data"]
             for t in (ignored, none_label, unresolved)
         ]
 
@@ -335,7 +352,7 @@ class TestGetTicketEndpoint:
 
     async def test_duplicate_of_inaccessible_target_exposes_only_its_identifier(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         cve_factory: Factory,
     ) -> None:
@@ -345,8 +362,8 @@ class TestGetTicketEndpoint:
         )
         duplicate: Ticket = await ticket_factory(duplicate_of_id=target.id)
 
-        response = await client.get(_url(duplicate))
-        followed = await client.get(_url(target))
+        response = await authenticated_client.get(_url(duplicate))
+        followed = await authenticated_client.get(_url(target))
 
         assert response.status_code == 200
         data = response.json()["data"]
@@ -358,11 +375,11 @@ class TestGetTicketEndpoint:
         assert followed.json() == _NOT_FOUND
 
     async def test_undeclared_query_parameters_are_ignored(
-        self, client: AsyncClient, ticket_factory: Factory
+        self, authenticated_client: AsyncClient, ticket_factory: Factory
     ) -> None:
         target: Ticket = await ticket_factory()
 
-        response = await client.get(
+        response = await authenticated_client.get(
             _url(target), params={"evaluation_date": "2020-01-01", "caller": "x"}
         )
 
@@ -375,7 +392,7 @@ class TestGetTicketEndpoint:
 @pytest.mark.e2e
 class TestTicketAccessibility:
     async def test_every_not_found_cause_returns_the_identical_response(
-        self, client: AsyncClient, ticket_factory: Factory
+        self, authenticated_client: AsyncClient, ticket_factory: Factory
     ) -> None:
         visible: Ticket = await ticket_factory()
         confidential: Ticket = await ticket_factory(is_confidential=True)
@@ -395,7 +412,7 @@ class TestTicketAccessibility:
             format_ticket_id(confidential.sequence_id),
         ]
 
-        responses = [await client.get(_url(loc)) for loc in locators]
+        responses = [await authenticated_client.get(_url(loc)) for loc in locators]
 
         for locator, response in zip(locators, responses, strict=True):
             assert response.status_code == 404, locator

@@ -10,7 +10,7 @@ decision is the canonical predicate of docs/features/identity/rbac.md
 (Scope and Confidential Ticket Visibility), and the lock-then-revalidate
 order is docs/api-spec.md (Authorization Chain Evaluation Order, flow 3).
 The accessibility cases follow docs/features/platform/testing-strategy.md
-(Ticket References: anonymous, `non_confidential` scope, scope `all`,
+(Ticket References: role-less caller, `non_confidential` scope, scope `all`,
 explicit grant, included-package maintainership, and loss of a path).
 
 Malformed locators never reach the database; missing and inaccessible
@@ -34,7 +34,8 @@ from app.models.ticket import Ticket
 from app.models.ticket_package import TicketPackage
 from app.models.user import User
 from app.services.ticket_mutations import lock_accessible_ticket_by_locator
-from app.services.ticket_visibility import ANONYMOUS_CALLER, TicketCaller
+from app.services.ticket_visibility import TicketCaller
+from tests.support.callers import ROLELESS_CALLER
 from tests.support.ticket_api import INVALID_LOCATORS, MAX_SEQUENCE
 from tests.support.ticket_mutations import StatementRecorder
 
@@ -111,7 +112,7 @@ class TestMalformedLocator:
 
         with StatementRecorder(db_session) as recorder:
             for caller in (
-                ANONYMOUS_CALLER,
+                ROLELESS_CALLER,
                 TicketCaller.authenticated(user_id, Scope.ALL),
             ):
                 with pytest.raises(TicketNotFoundError):
@@ -161,7 +162,7 @@ class TestInaccessibleTicket:
         _assert_lock_statement(recorder.statements[0])
         _assert_visibility_statement(recorder.statements[1])
 
-    async def test_confidential_ticket_denied_to_anonymous_caller(
+    async def test_confidential_ticket_with_other_users_paths_denied_to_roleless_caller(
         self,
         db_session: AsyncSession,
         ticket_factory: Factory,
@@ -174,7 +175,7 @@ class TestInaccessibleTicket:
         package = await ticket_package_factory(ticket_id=ticket.id)
         await ticket_package_maintainer_factory(ticket_package_id=package.id)
 
-        recorder = await _denied(db_session, ticket, ANONYMOUS_CALLER)
+        recorder = await _denied(db_session, ticket, ROLELESS_CALLER)
 
         assert len(recorder.statements) == 2
         _assert_lock_statement(recorder.statements[0])
@@ -215,12 +216,12 @@ class TestInaccessibleTicket:
 
 @pytest.mark.integration
 class TestAccessibleTicket:
-    async def test_non_confidential_ticket_is_locked_for_anonymous_caller(
+    async def test_non_confidential_ticket_is_locked_for_roleless_caller(
         self, db_session: AsyncSession, ticket_factory: Factory
     ) -> None:
         ticket = await ticket_factory(is_confidential=False)
 
-        locked, recorder = await _lock(db_session, ticket, ANONYMOUS_CALLER)
+        locked, recorder = await _lock(db_session, ticket, ROLELESS_CALLER)
 
         assert locked.id == ticket.id
         assert len(recorder.statements) == 2
@@ -289,7 +290,7 @@ class TestAccessibleTicket:
         other = await ticket_factory()
         ticket = await ticket_factory()
 
-        locked, recorder = await _lock(db_session, ticket, ANONYMOUS_CALLER)
+        locked, recorder = await _lock(db_session, ticket, ROLELESS_CALLER)
 
         assert locked.id == ticket.id != other.id
         assert len(recorder.row_locks()) == 1

@@ -181,7 +181,7 @@ class TestActorContextValidation:
 
     @pytest.mark.parametrize(
         "case",
-        ["system-with-actor", "consumer-without-actor", "other-user", "anonymous"],
+        ["system-with-actor", "consumer-without-actor", "other-user"],
     )
     async def test_inconsistent_pairing_raises_before_any_statement(
         self,
@@ -205,7 +205,6 @@ class TestActorContextValidation:
                 TicketCaller.authenticated(actor.id, Scope.ALL),
             ),
             "other-user": (actor.id, TicketCaller.authenticated(other.id, Scope.ALL)),
-            "anonymous": (actor.id, TicketCaller()),
         }
         acting_user_id, caller = pairings[case]
 

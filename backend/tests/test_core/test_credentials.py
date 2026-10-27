@@ -131,7 +131,7 @@ class TestReadSessionCookie:
 
     def test_keeps_other_whitespace_in_the_value(self) -> None:
         """A value of other whitespace is non-empty: it selects an invalid
-        credential, not anonymous access (Shared Credential Resolution
+        credential rather than no credential (Shared Credential Resolution
         step 2)."""
         assert read_session_cookie(f"{SESSION_COOKIE_NAME}=\x0b\xa0") == "\x0b\xa0"
 

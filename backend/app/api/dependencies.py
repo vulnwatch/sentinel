@@ -1,9 +1,8 @@
 """Shared authentication and authorization FastAPI dependencies.
 
 See `docs/features/identity/authentication.md` (Authenticated Principal,
-Authentication Dependencies: `get_current_user`,
-`get_optional_current_user`, API key validation, Session-Only
-Authentication Dependency) and `docs/features/identity/rbac.md`
+Authentication Dependencies: `get_current_user`, API key validation,
+Session-Only Authentication Dependency) and `docs/features/identity/rbac.md`
 (`require_capability()` Dependency) for the authoritative contracts
 this module implements. Also hosts the API transaction's Ticket
 convergence drain (`drain_ticket_convergence_after_commit`).
@@ -50,7 +49,7 @@ from app.services.cve_service import ResolvedCVE
 from app.services.session_service import is_session_active
 from app.services.ticket_convergence_publication import drain_ticket_convergence
 from app.services.ticket_service import ResolvedTicket
-from app.services.ticket_visibility import ANONYMOUS_CALLER, TicketCaller
+from app.services.ticket_visibility import TicketCaller
 
 logger = structlog.get_logger(__name__)
 
@@ -550,41 +549,37 @@ async def _authenticate_api_key(
 
 
 # ---------------------------------------------------------------------------
-# Shared credential resolution — `get_current_user` / `get_optional_current_user`
+# Authentication dependency — `get_current_user`
 # ---------------------------------------------------------------------------
 
 
-async def _resolve_principal(
+async def get_current_user(
     request: Request,
     response: Response,
     db: DatabaseSession,
-) -> AuthenticatedPrincipal | None:
-    """Apply Shared Credential Resolution and return the principal, or
-    `None` when no credential is selected.
+) -> AuthenticatedPrincipal:
+    """Resolve and validate the request's credential; reject if absent.
 
     See `docs/features/identity/authentication.md` (Authentication
-    Dependencies, Shared Credential Resolution): `get_current_user` and
-    `get_optional_current_user` share this single selection and
-    validation path and differ only in how they handle the `None`
-    case — they must never diverge on validation behavior or
-    successful-authentication side effects. `Authorization: Bearer`
-    takes precedence over the session cookie, which is read from the raw
-    `Cookie` header (`extract_credential()`; Starlette's own cookie parser
-    strips characters such as U+00A0 from cookie names, which would let a
-    planted cookie match the name); a duplicated session cookie is
-    rejected before any type determination, lookup, or log record;
-    JWT-vs-API-key dispatch uses the `stl_ak_` prefix; any
-    selected-but-rejected credential raises the generic 401 (never
-    converted to `None` here); and JWT requests receive the sliding
-    refresh evaluation.
+    Dependencies: Shared Credential Resolution, `get_current_user`): the
+    single authentication dependency of every endpoint that is not
+    Public, injected directly or through the authorization dependencies
+    below. No selected credential returns the generic 401 without a
+    user, session, or API key lookup. `Authorization: Bearer` takes
+    precedence over the session cookie, which is read from the raw
+    `Cookie` header (`extract_credential()`; Starlette's own cookie
+    parser strips characters such as U+00A0 from cookie names, which
+    would let a planted cookie match the name); a duplicated session
+    cookie is rejected before any type determination, lookup, or log
+    record; JWT-vs-API-key dispatch uses the `stl_ak_` prefix; any
+    selected-but-rejected credential raises the generic 401; and JWT
+    requests receive the sliding refresh evaluation.
     """
     credential = extract_credential(
         request.headers.get("authorization"),
         request.headers.get("cookie"),
     )
-    if credential is None:
-        return None
-    if isinstance(credential, DuplicateSessionCookie):
+    if credential is None or isinstance(credential, DuplicateSessionCookie):
         raise unauthenticated_error()
 
     now = datetime.now(UTC)
@@ -598,51 +593,7 @@ async def _resolve_principal(
     return AuthenticatedPrincipal(user=user, credential_kind=credential_kind)
 
 
-async def get_current_user(
-    request: Request,
-    response: Response,
-    db: DatabaseSession,
-) -> AuthenticatedPrincipal:
-    """Resolve and validate the request's credential; reject if absent.
-
-    See `docs/features/identity/authentication.md` (`get_current_user`):
-    applies Shared Credential Resolution and returns the generic 401
-    when no credential is selected. Injected via `Depends()` into every
-    endpoint that requires authentication.
-    """
-    principal = await _resolve_principal(request, response, db)
-    if principal is None:
-        raise unauthenticated_error()
-    return principal
-
-
 CurrentUser = Annotated[AuthenticatedPrincipal, Depends(get_current_user)]
-
-
-async def get_optional_current_user(
-    request: Request,
-    response: Response,
-    db: DatabaseSession,
-) -> AuthenticatedPrincipal | None:
-    """Resolve and validate the request's credential; return `None` if absent.
-
-    See `docs/features/identity/authentication.md`
-    (`get_optional_current_user`): applies Shared Credential Resolution
-    to Public endpoints that declare `Authentication: Optional`. Returns
-    `None` only when no credential is selected — no user/session/API-key
-    lookup, refresh, `last_used_at` touch, `api_key_validation_failed`
-    WARNING, or `api_key_rejected` WARNING occurs in that case. A
-    selected credential is validated exactly as in `get_current_user`:
-    success returns the same `AuthenticatedPrincipal` with the same side
-    effects (JWT refresh, API-key `last_used_at` touch); rejection raises
-    the same generic 401 rather than degrading to anonymous access.
-    """
-    return await _resolve_principal(request, response, db)
-
-
-OptionalCurrentUser = Annotated[
-    AuthenticatedPrincipal | None, Depends(get_optional_current_user)
-]
 
 
 # ---------------------------------------------------------------------------
@@ -656,7 +607,7 @@ async def get_caller_roles(
     """Load the authenticated caller's current roles once per request.
 
     See `docs/features/identity/rbac.md` (`require_capability()`
-    Dependency, Optional Principal to Caller Context) and
+    Dependency, Principal to Caller Context) and
     `docs/api-spec.md` (Authorization Chain Evaluation Order): the roles
     are read from the `UserRole` table when the request is authorized.
     As a module-level dependency, FastAPI caches the result per request,
@@ -755,52 +706,22 @@ async def require_session_authentication(
 # ---------------------------------------------------------------------------
 
 
-async def _ticket_caller_for(
-    db: AsyncSession, principal: AuthenticatedPrincipal | None
-) -> TicketCaller:
-    """Map a validated principal (or `None`) to the Ticket caller value.
-
-    See `docs/features/identity/rbac.md` (Optional Principal to Caller
-    Context): `None` is the anonymous caller and loads no roles; an
-    authenticated principal's current roles are loaded once and reduced
-    to the effective scope with `get_effective_scope()`. The result is a
-    plain service-layer value, so services never import API types.
-    """
-    if principal is None:
-        return ANONYMOUS_CALLER
-    roles = await user_service.get_user_roles(db, principal.user.id)
-    return TicketCaller.authenticated(principal.user.id, get_effective_scope(roles))
-
-
 async def get_ticket_caller(principal: CurrentUser, roles: CallerRoles) -> TicketCaller:
     """Resolve the authenticated caller of a Ticket-derived operation.
 
-    For `Access: Authenticated` and capability-protected endpoints: runs
-    after `get_current_user`, so an absent or invalid credential returns
-    the global 401 before any role or Ticket lookup. The effective scope
-    derives from the same per-request role load (`get_caller_roles`) as
-    `require_capability`, and FastAPI caches the result per request, so
-    the caller is resolved once and never reconstructed later in the
-    same request.
+    See `docs/features/identity/rbac.md` (Principal to Caller Context):
+    runs after `get_current_user`, so an absent or invalid credential
+    returns the global 401 before any role or Ticket lookup. The
+    effective scope derives from the same per-request role load
+    (`get_caller_roles`) as `require_capability`, and FastAPI caches the
+    result per request, so the caller is resolved once and never
+    reconstructed later in the same request. The result is a plain
+    service-layer value, so services never import API types.
     """
     return TicketCaller.authenticated(principal.user.id, get_effective_scope(roles))
 
 
-async def get_optional_ticket_caller(
-    db: DatabaseSession, principal: OptionalCurrentUser
-) -> TicketCaller:
-    """Resolve the caller of a Public (`Authentication: Optional`) Ticket read.
-
-    No selected credential yields `ANONYMOUS_CALLER` without any role
-    lookup; a selected invalid credential has already returned the
-    global 401 in `get_optional_current_user`. Cached per request like
-    `get_ticket_caller`.
-    """
-    return await _ticket_caller_for(db, principal)
-
-
 AuthenticatedTicketCaller = Annotated[TicketCaller, Depends(get_ticket_caller)]
-OptionalTicketCaller = Annotated[TicketCaller, Depends(get_optional_ticket_caller)]
 
 TicketIdPath = Annotated[
     str,

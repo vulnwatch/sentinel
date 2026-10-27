@@ -40,7 +40,6 @@ from app.api.dependencies import (
     AuthenticatedPrincipal,
     AuthenticatedTicketCaller,
     CallerRoles,
-    OptionalTicketCaller,
     TicketIdPath,
     cve_invalid_format_error,
     insufficient_permission_error,
@@ -392,13 +391,14 @@ def serialize_ticket_detail(detail: TicketDetailProjection) -> TicketDetail:
         "Returns a paginated list of the Tickets visible to the caller, with "
         "multi-field search, repeatable status, severity, priority, and overdue "
         "filters, assignee and maintainer filters, and sorting. Visibility is "
-        "applied before every filter, sort, count, and page. Public; optional "
-        "authentication determines access to confidential Tickets."
+        "applied before every filter, sort, count, and page. Requires "
+        "authentication (JWT session or API key); the caller's scope, grants, "
+        "and package maintainership determine access to confidential Tickets."
     ),
 )
 async def list_tickets(
     db: DatabaseSession,
-    caller: OptionalTicketCaller,
+    caller: AuthenticatedTicketCaller,
     query: Annotated[TicketListQuery, Depends(_ticket_list_query)],
 ) -> TicketListResponse:
     """List Tickets — see `docs/features/tickets/tickets.md` (List
@@ -541,8 +541,9 @@ async def create_ticket(
         "(KEV, EPSS, SSVC, CWE, external identifiers; CVSS assessments are "
         "available from their own sub-resource), the duplicate target's "
         "identifier only, and the complete package tree. Maintainer "
-        "identities are not included. Public; optional authentication "
-        "determines access to confidential Tickets."
+        "identities are not included. Requires authentication (JWT session "
+        "or API key); the caller's scope, grants, and package maintainership "
+        "determine access to confidential Tickets."
     ),
     responses={
         404: {
@@ -557,7 +558,7 @@ async def create_ticket(
 async def get_ticket(
     ticket_id: TicketIdPath,
     db: DatabaseSession,
-    caller: OptionalTicketCaller,
+    caller: AuthenticatedTicketCaller,
 ) -> TicketDetailResponse:
     """Get Ticket — see `docs/features/tickets/tickets.md` (Get Ticket).
 

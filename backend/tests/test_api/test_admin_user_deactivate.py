@@ -562,7 +562,7 @@ class TestEffectiveDeactivation:
             ("vulnerability_analyst", "_manual", None),
         ]
         assert "deactivated" not in response.text
-        # Same shape and values as the public Get User profile.
+        # Same shape and values as the Get User profile.
         profile = await client.get(f"/api/v1/users/{target.id}")
         assert profile.status_code == 200
         assert profile.json() == body
@@ -850,7 +850,9 @@ class TestAlreadyInactiveTarget:
     ) -> None:
         _admin, headers = await committed.admin()
         target = await committed.user("bob.va", active=False)
-        before = await committed.client.get(f"/api/v1/users/{target.id}")
+        before = await committed.client.get(
+            f"/api/v1/users/{target.id}", headers=headers
+        )
         assert before.status_code == 200
         committed.journal.clear()
 

@@ -80,7 +80,7 @@ from app.services.ticket_convergence_registry import (
     TicketConvergenceEffect,
     pending_ticket_convergence_effects,
 )
-from app.services.ticket_visibility import ANONYMOUS_CALLER, TicketCaller
+from app.services.ticket_visibility import TicketCaller
 from tests.support.cvss_chain import DEFAULT_VERSION
 from tests.support.database import rollback_test_scope
 from tests.support.package_records import (
@@ -198,7 +198,6 @@ class TestCallerContract:
             "system-with-actor",
             "consumer-without-actor",
             "consumer-of-another-user",
-            "anonymous-with-actor",
         ],
     )
     async def test_actor_and_context_mismatch(
@@ -228,7 +227,6 @@ class TestCallerContract:
                 TicketCaller.authenticated(other.id, Scope.ALL),
                 None,
             ),
-            "anonymous-with-actor": (actor.id, ANONYMOUS_CALLER, None),
         }
         acting_user_id, caller, comment = pairings[case]
 

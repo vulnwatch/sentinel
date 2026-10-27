@@ -41,8 +41,6 @@ from app.api.dependencies import (
     CurrentUser,
     KeyedWarningLimiter,
     LastUsedDebouncer,
-    OptionalCurrentUser,
-    OptionalTicketCaller,
     require_accessible_ticket,
     require_any_capability,
     require_capability,
@@ -58,7 +56,7 @@ from app.core.enums import (
 )
 from app.core.errors import AppError, ErrorCode
 from app.core.identifiers import format_ticket_id
-from app.core.jwt import issue_token
+from app.core.jwt import decode_and_validate, issue_token
 from app.database import get_db
 from app.models.api_key import ApiKey
 from app.models.session import Session
@@ -233,17 +231,6 @@ def _build_test_app() -> FastAPI:
             "credential_kind": principal.credential_kind.value,
         }
 
-    @test_app.get("/optional-whoami")
-    async def optional_whoami(
-        principal: OptionalCurrentUser,
-    ) -> dict[str, str | None]:
-        if principal is None:
-            return {"user_id": None, "credential_kind": None}
-        return {
-            "user_id": str(principal.user.id),
-            "credential_kind": principal.credential_kind.value,
-        }
-
     @test_app.get("/capability-protected")
     async def capability_protected(
         principal: Annotated[
@@ -254,19 +241,10 @@ def _build_test_app() -> FastAPI:
         return {"user_id": str(principal.user.id)}
 
     def _caller_body(caller: TicketCaller) -> dict[str, str | None]:
-        return {
-            "user_id": None if caller.user_id is None else str(caller.user_id),
-            "scope": None if caller.scope is None else caller.scope.value,
-        }
+        return {"user_id": str(caller.user_id), "scope": caller.scope.value}
 
     @test_app.get("/ticket-caller")
     async def ticket_caller(caller: AuthenticatedTicketCaller) -> dict[str, str | None]:
-        return _caller_body(caller)
-
-    @test_app.get("/optional-ticket-caller")
-    async def optional_ticket_caller(
-        caller: OptionalTicketCaller,
-    ) -> dict[str, str | None]:
         return _caller_body(caller)
 
     @test_app.get("/tickets/{ticket_id}/accessible")
@@ -1303,78 +1281,72 @@ class TestAuthenticateApiKeyExpirationBoundary:
 
 
 # ---------------------------------------------------------------------------
-# get_optional_current_user (e2e)
+# get_current_user — no selected credential (e2e)
 # ---------------------------------------------------------------------------
 #
-# See docs/features/identity/authentication.md (get_optional_current_user)
-# and docs/features/platform/testing-strategy.md (Optional authentication
-# mandatory scenarios). `get_current_user` and `get_optional_current_user`
-# share the same `_resolve_principal()` selection/validation path — the
-# rejection-matrix scenarios below are the optional-path counterparts of
-# `TestGetCurrentUserJwt`/`TestGetCurrentUserApiKey` above and prove the two
-# dependencies never diverge on a selected credential. The rejected-JWT
-# matrix (malformed, expired, inactive session, inactive or missing user)
-# runs against both dependencies in `TestRejectedJwtIsNotLogged`.
+# See docs/features/identity/authentication.md (Shared Credential
+# Resolution step 2; `get_current_user`) and
+# docs/features/platform/testing-strategy.md (Authentication and Session):
+# a request that selects no credential returns the generic 401 without a
+# user, session, or API key lookup, refresh, `last_used_at` touch, or API
+# key warning.
+
+_UNAUTHENTICATED_BODY = {
+    "code": "AUTH_NOT_AUTHENTICATED",
+    "detail": "Authentication required",
+}
+
+
+@pytest.fixture
+def no_credential_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every step after credential selection fail loudly: token
+    validation, the session liveness check, the API key and user lookups,
+    the `last_used_at` touch, and both API key warnings. A request that
+    still returns the generic 401 therefore selected no credential."""
+
+    def _fail(step: str) -> Callable[..., Any]:
+        def _raise(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError(f"{step} must not occur without a credential")
+
+        return _raise
+
+    async def _fail_async(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("a lookup must not occur without a credential")
+
+    monkeypatch.setattr(dependencies, "decode_and_validate", _fail("JWT validation"))
+    monkeypatch.setattr(dependencies, "is_session_active", _fail_async)
+    monkeypatch.setattr(api_key_service, "get_key_by_hash", _fail_async)
+    monkeypatch.setattr(user_service, "get_user_by_id", _fail_async)
+    monkeypatch.setattr(dependencies._last_used_debouncer, "touch", _fail_async)
+    monkeypatch.setattr(
+        dependencies, "_record_unknown_key_attempt", _fail("unknown-key warning")
+    )
+    monkeypatch.setattr(
+        dependencies, "_record_rejected_key_attempt", _fail("rejected-key warning")
+    )
 
 
 @pytest.mark.e2e
-class TestGetOptionalCurrentUserAnonymous:
-    """No credential selected — returns `None` with no authentication
-    work at all."""
-
-    async def test_no_credential_returns_anonymous(
+@pytest.mark.usefixtures("no_credential_work")
+class TestGetCurrentUserWithoutCredential:
+    async def test_no_credential_returns_401_without_authentication_work(
         self, dep_client: AsyncClient
     ) -> None:
-        response = await dep_client.get("/optional-whoami")
+        response = await dep_client.get("/whoami")
 
-        assert response.status_code == 200
-        assert response.json() == {"user_id": None, "credential_kind": None}
+        assert response.status_code == 401
+        assert response.json() == _UNAUTHENTICATED_BODY
         assert "set-cookie" not in response.headers
 
-    async def test_empty_cookie_returns_anonymous(
+    async def test_empty_cookie_selects_no_credential(
         self, dep_client: AsyncClient
     ) -> None:
         dep_client.cookies.set(SESSION_COOKIE_NAME, "")
 
-        response = await dep_client.get("/optional-whoami")
+        response = await dep_client.get("/whoami")
 
-        assert response.status_code == 200
-        assert response.json() == {"user_id": None, "credential_kind": None}
-
-    async def test_no_credential_performs_no_authentication_work(
-        self,
-        dep_client: AsyncClient,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Absence of a credential must short-circuit before any user
-        lookup, `last_used_at` touch, or API key warning — each side
-        effect is made to fail loudly if invoked."""
-
-        async def _fail_get_user_by_id(*args: Any, **kwargs: Any) -> User:
-            raise AssertionError("user lookup must not occur when anonymous")
-
-        def _fail_record_unknown_key(*args: Any, **kwargs: Any) -> None:
-            raise AssertionError("unknown-key warning must not occur when anonymous")
-
-        def _fail_record_rejected_key(*args: Any, **kwargs: Any) -> None:
-            raise AssertionError("rejected-key warning must not occur when anonymous")
-
-        monkeypatch.setattr(user_service, "get_user_by_id", _fail_get_user_by_id)
-        monkeypatch.setattr(
-            dependencies._last_used_debouncer,
-            "touch",
-            AsyncMock(side_effect=AssertionError("touch must not occur")),
-        )
-        monkeypatch.setattr(
-            dependencies, "_record_unknown_key_attempt", _fail_record_unknown_key
-        )
-        monkeypatch.setattr(
-            dependencies, "_record_rejected_key_attempt", _fail_record_rejected_key
-        )
-
-        response = await dep_client.get("/optional-whoami")
-
-        assert response.status_code == 200
+        assert response.status_code == 401
+        assert response.json() == _UNAUTHENTICATED_BODY
 
 
 async def _valid_jwt(
@@ -1416,36 +1388,42 @@ _OTHER_SESSION_NAMES = [
 @pytest.mark.e2e
 class TestWhitespaceOnlyCookieValue:
     """A session cookie value made only of whitespace other than spaces and
-    horizontal tabs is non-empty: a selected, invalid credential, not
-    anonymous access. A value of only spaces and horizontal tabs is empty
-    after parsing (authentication.md, Session cookie; Shared Credential
+    horizontal tabs is non-empty: a selected, invalid credential. A value
+    of only spaces and horizontal tabs is empty after parsing and selects
+    no credential (authentication.md, Session cookie; Shared Credential
     Resolution step 2). The session cookie is read from the raw `Cookie`
     header, so a real round trip carries these octets to the resolver."""
 
-    @pytest.mark.parametrize("path", ["/whoami", "/optional-whoami"])
     async def test_other_whitespace_value_is_selected_and_rejected(
-        self, dep_client: AsyncClient, path: str
+        self, dep_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        validated: list[str] = []
+
+        def _spy(token: str, **kwargs: Any) -> Any:
+            validated.append(token)
+            return decode_and_validate(token, **kwargs)
+
+        monkeypatch.setattr(dependencies, "decode_and_validate", _spy)
+
         response = await dep_client.get(
-            path, headers={b"cookie": _SESSION_NAME + b"=\x0b\xa0"}
+            "/whoami", headers={b"cookie": _SESSION_NAME + b"=\x0b\xa0"}
         )
 
         assert response.status_code == 401
-        assert response.json() == {
-            "code": "AUTH_NOT_AUTHENTICATED",
-            "detail": "Authentication required",
-        }
+        assert response.json() == _UNAUTHENTICATED_BODY
+        assert validated == ["\x0b\xa0"]
 
-    async def test_space_and_tab_only_value_is_anonymous(
+    @pytest.mark.usefixtures("no_credential_work")
+    async def test_space_and_tab_only_value_selects_no_credential(
         self, dep_client: AsyncClient
     ) -> None:
         response = await dep_client.get(
-            "/optional-whoami",
+            "/whoami",
             headers={"cookie": f"{SESSION_COOKIE_NAME}= \t ; theme=dark"},
         )
 
-        assert response.status_code == 200
-        assert response.json() == {"user_id": None, "credential_kind": None}
+        assert response.status_code == 401
+        assert response.json() == _UNAUTHENTICATED_BODY
 
 
 @pytest.mark.e2e
@@ -1461,18 +1439,17 @@ class TestSessionCookieName:
         db_session: AsyncSession,
         user_factory: Callable[..., Awaitable[User]],
         redis_client: redis_asyncio.Redis,
+        request: pytest.FixtureRequest,
         name: bytes,
     ) -> None:
         _, token = await _valid_jwt(db_session, user_factory)
         headers = {b"cookie": _raw_cookie_header((name, token))}
+        request.getfixturevalue("no_credential_work")
 
-        mandatory = await dep_client.get("/whoami", headers=headers)
-        optional = await dep_client.get("/optional-whoami", headers=headers)
+        response = await dep_client.get("/whoami", headers=headers)
 
-        assert mandatory.status_code == 401
-        assert mandatory.json()["code"] == "AUTH_NOT_AUTHENTICATED"
-        assert optional.status_code == 200
-        assert optional.json() == {"user_id": None, "credential_kind": None}
+        assert response.status_code == 401
+        assert response.json() == _UNAUTHENTICATED_BODY
 
     @pytest.mark.parametrize("name", _OTHER_SESSION_NAMES)
     @pytest.mark.parametrize("planted_first", [True, False], ids=["before", "after"])
@@ -1492,10 +1469,10 @@ class TestSessionCookieName:
             pairs.reverse()
         headers = {b"cookie": _raw_cookie_header(*pairs)}
 
-        for path in ("/whoami", "/optional-whoami"):
-            response = await dep_client.get(path, headers=headers)
-            assert response.status_code == 200
-            assert response.json()["user_id"] == str(victim.id)
+        response = await dep_client.get("/whoami", headers=headers)
+
+        assert response.status_code == 200
+        assert response.json()["user_id"] == str(victim.id)
 
 
 @pytest.mark.e2e
@@ -1505,14 +1482,12 @@ class TestDuplicatedSessionCookie:
     determination, lookup, or log record (authentication.md, Session cookie;
     Shared Credential Resolution step 2)."""
 
-    @pytest.mark.parametrize("path", ["/whoami", "/optional-whoami"])
     async def test_two_valid_jwts_are_rejected(
         self,
         dep_client: AsyncClient,
         db_session: AsyncSession,
         user_factory: Callable[..., Awaitable[User]],
         redis_client: redis_asyncio.Redis,
-        path: str,
     ) -> None:
         _, first = await _valid_jwt(db_session, user_factory)
         _, second = await _valid_jwt(db_session, user_factory)
@@ -1522,21 +1497,16 @@ class TestDuplicatedSessionCookie:
             )
         }
 
-        response = await dep_client.get(path, headers=headers)
+        response = await dep_client.get("/whoami", headers=headers)
 
         assert response.status_code == 401
-        assert response.json() == {
-            "code": "AUTH_NOT_AUTHENTICATED",
-            "detail": "Authentication required",
-        }
+        assert response.json() == _UNAUTHENTICATED_BODY
 
-    @pytest.mark.parametrize("path", ["/whoami", "/optional-whoami"])
     async def test_api_key_values_are_neither_looked_up_nor_logged(
         self,
         dep_client: AsyncClient,
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
-        path: str,
     ) -> None:
         lookup = AsyncMock()
         monkeypatch.setattr(api_key_service, "get_key_by_hash", lookup)
@@ -1549,7 +1519,7 @@ class TestDuplicatedSessionCookie:
         }
 
         with caplog.at_level(logging.DEBUG, logger="app"):
-            response = await dep_client.get(path, headers=headers)
+            response = await dep_client.get("/whoami", headers=headers)
 
         assert response.status_code == 401
         lookup.assert_not_awaited()
@@ -1579,66 +1549,9 @@ class TestDuplicatedSessionCookie:
 
 
 @pytest.mark.e2e
-class TestGetOptionalCurrentUserValidCredential:
-    """A selected valid credential authenticates exactly as under
-    mandatory authentication, including sliding refresh and API-key
-    operational effects."""
-
-    async def test_valid_jwt_cookie_returns_principal(
-        self,
-        dep_client: AsyncClient,
-        db_session: AsyncSession,
-        user_factory: Callable[..., Awaitable[User]],
-        redis_client: redis_asyncio.Redis,
-    ) -> None:
-        user = await user_factory()
-        created = await create_session(
-            db_session,
-            user,
-            SessionCreationReason.LOCAL_LOGIN,
-            expected_password_hash=None,
-        )
-        assert created is not None
-        dep_client.cookies.set(SESSION_COOKIE_NAME, created.token)
-
-        response = await dep_client.get("/optional-whoami")
-
-        assert response.status_code == 200
-        body = response.json()
-        assert body["user_id"] == str(user.id)
-        assert body["credential_kind"] == "jwt"
-
-    async def test_bearer_takes_precedence_over_cookie(
-        self,
-        dep_client: AsyncClient,
-        db_session: AsyncSession,
-        user_factory: Callable[..., Awaitable[User]],
-        redis_client: redis_asyncio.Redis,
-    ) -> None:
-        bearer_user = await user_factory()
-        bearer_created = await create_session(
-            db_session,
-            bearer_user,
-            SessionCreationReason.LOCAL_LOGIN,
-            expected_password_hash=None,
-        )
-        assert bearer_created is not None
-        cookie_user = await user_factory()
-        cookie_created = await create_session(
-            db_session,
-            cookie_user,
-            SessionCreationReason.LOCAL_LOGIN,
-            expected_password_hash=None,
-        )
-        assert cookie_created is not None
-        dep_client.cookies.set(SESSION_COOKIE_NAME, cookie_created.token)
-
-        response = await dep_client.get(
-            "/optional-whoami",
-            headers={"Authorization": f"Bearer {bearer_created.token}"},
-        )
-
-        assert response.json()["user_id"] == str(bearer_user.id)
+class TestGetCurrentUserCredentialSelection:
+    """Bearer-over-cookie selection end to end (authentication.md, Shared
+    Credential Resolution steps 1-2, and Database failures)."""
 
     async def test_empty_bearer_header_falls_back_to_cookie(
         self,
@@ -1658,70 +1571,11 @@ class TestGetOptionalCurrentUserValidCredential:
         dep_client.cookies.set(SESSION_COOKIE_NAME, created.token)
 
         response = await dep_client.get(
-            "/optional-whoami", headers={"Authorization": "Bearer   "}
+            "/whoami", headers={"Authorization": "Bearer   "}
         )
 
         assert response.status_code == 200
         assert response.json()["user_id"] == str(user.id)
-
-    async def test_eligible_jwt_refreshes_cookie(
-        self,
-        dep_client: AsyncClient,
-        session_factory: Callable[..., Awaitable[Session]],
-        redis_client: redis_asyncio.Redis,
-    ) -> None:
-        session = await session_factory()
-        old_iat = datetime.now(UTC) - timedelta(hours=settings.jwt_expiry_hours * 0.6)
-        issued = issue_token(
-            user_id=session.user_id,
-            session_id=session.id,
-            issued_at=old_iat,
-            session_deadline=session.expires_at,
-            jwt_expiry_hours=settings.jwt_expiry_hours,
-            secret_key=settings.jwt_secret_key.get_secret_value(),
-        )
-
-        response = await dep_client.get(
-            "/optional-whoami", headers={"Authorization": f"Bearer {issued.token}"}
-        )
-
-        assert response.status_code == 200
-        assert "set-cookie" in response.headers
-        assert response.headers["set-cookie"].startswith(f"{SESSION_COOKIE_NAME}=")
-
-    async def test_valid_api_key_returns_principal_and_touches_last_used(
-        self,
-        dep_client: AsyncClient,
-        db_session: AsyncSession,
-        user_factory: Callable[..., Awaitable[User]],
-        api_key_factory: Callable[..., Awaitable[ApiKey]],
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        user = await user_factory()
-        token, digest = _make_api_key_credential()
-        key = await api_key_factory(user_id=user.id, key_hash=digest)
-        touch_mock = AsyncMock()
-        monkeypatch.setattr(dependencies._last_used_debouncer, "touch", touch_mock)
-
-        response = await dep_client.get(
-            "/optional-whoami", headers={"Authorization": f"Bearer {token}"}
-        )
-
-        assert response.status_code == 200
-        body = response.json()
-        assert body["user_id"] == str(user.id)
-        assert body["credential_kind"] == "api_key"
-        touch_mock.assert_awaited_once()
-        assert touch_mock.await_args is not None
-        assert touch_mock.await_args.args[0] == key.id
-
-
-@pytest.mark.e2e
-class TestGetOptionalCurrentUserRejection:
-    """A selected credential that fails validation returns the same
-    generic 401 as mandatory authentication rather than degrading to
-    anonymous access — see authentication.md,
-    `get_optional_current_user`."""
 
     async def test_invalid_non_empty_bearer_does_not_fall_back_to_valid_cookie(
         self,
@@ -1741,62 +1595,14 @@ class TestGetOptionalCurrentUserRejection:
         dep_client.cookies.set(SESSION_COOKIE_NAME, created.token)
 
         response = await dep_client.get(
-            "/optional-whoami",
+            "/whoami",
             headers={"Authorization": "Bearer not-a-real-token"},
         )
 
         assert response.status_code == 401
+        assert response.json() == _UNAUTHENTICATED_BODY
 
-    async def test_unknown_api_key_returns_generic_401_with_warning(
-        self,
-        dep_client: AsyncClient,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        token = "stl_ak_" + "1" * 32
-
-        with caplog.at_level(logging.WARNING, logger="app.api.dependencies"):
-            response = await dep_client.get(
-                "/optional-whoami", headers={"Authorization": f"Bearer {token}"}
-            )
-
-        assert response.status_code == 401
-        assert response.json() == {
-            "code": "AUTH_NOT_AUTHENTICATED",
-            "detail": "Authentication required",
-        }
-        assert "api_key_validation_failed" in _dependency_log_text(caplog)
-        assert _dependency_events(caplog, "api_key_rejected") == []
-
-    @pytest.mark.parametrize("case", ["revoked", "expired", "inactive_owner"])
-    async def test_rejected_api_key_returns_generic_401_with_rejected_key_warning(
-        self,
-        peer_client: AsyncClient,
-        user_factory: Callable[..., Awaitable[User]],
-        api_key_factory: Callable[..., Awaitable[ApiKey]],
-        monkeypatch: pytest.MonkeyPatch,
-        caplog: pytest.LogCaptureFixture,
-        case: str,
-    ) -> None:
-        """The same `api_key_rejected` path as mandatory authentication
-        (authentication.md, `get_optional_current_user`)."""
-        rejected = await _arrange_rejected_key(
-            case, user_factory, api_key_factory, monkeypatch
-        )
-
-        with caplog.at_level(logging.WARNING, logger="app.api.dependencies"):
-            response = await peer_client.get(
-                "/optional-whoami",
-                headers={"Authorization": f"Bearer {rejected.token}"},
-            )
-
-        assert response.status_code == 401
-        assert response.json() == {
-            "code": "AUTH_NOT_AUTHENTICATED",
-            "detail": "Authentication required",
-        }
-        _assert_single_rejected_key_warning(caplog, rejected)
-
-    async def test_database_failure_propagates_rather_than_anonymous(
+    async def test_database_failure_propagates_rather_than_401(
         self,
         dep_client: AsyncClient,
         db_session: AsyncSession,
@@ -1804,12 +1610,11 @@ class TestGetOptionalCurrentUserRejection:
         redis_client: redis_asyncio.Redis,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """An unexpected infrastructure failure must propagate — never
-        be converted into an anonymous optional-authentication result
-        — see authentication.md, Shared Credential Resolution: "Database
-        failures and other infrastructure or unexpected exceptions
-        propagate through normal error handling; neither dependency
-        converts them to anonymous access"."""
+        """An unexpected infrastructure failure must propagate — never be
+        reported as an invalid credential — see authentication.md, Shared
+        Credential Resolution: "Database failures and other infrastructure
+        or unexpected exceptions propagate through normal error handling;
+        the dependency does not report them as invalid credentials"."""
         user = await user_factory()
         created = await create_session(
             db_session,
@@ -1826,18 +1631,18 @@ class TestGetOptionalCurrentUserRejection:
 
         with pytest.raises(RuntimeError, match="simulated database failure"):
             await dep_client.get(
-                "/optional-whoami",
+                "/whoami",
                 headers={"Authorization": f"Bearer {created.token}"},
             )
 
 
 @pytest.mark.e2e
 class TestRejectedJwtIsNotLogged:
-    """A rejected JWT emits no log record of its own under mandatory or
-    optional authentication — token expiry and `JWT_SECRET_KEY` rotation
-    make such rejections routine (authentication.md, JWT validation;
-    `get_optional_current_user`). Redis is available, so the liveness
-    check's outage warning cannot appear either."""
+    """A rejected JWT emits no log record of its own under
+    `get_current_user` — token expiry and `JWT_SECRET_KEY` rotation make
+    such rejections routine (authentication.md, JWT validation). Redis is
+    available, so the liveness check's outage warning cannot appear
+    either."""
 
     @staticmethod
     async def _rejected_token(
@@ -1878,7 +1683,6 @@ class TestRejectedJwtIsNotLogged:
             secret_key=settings.jwt_secret_key.get_secret_value(),
         ).token
 
-    @pytest.mark.parametrize("path", ["/whoami", "/optional-whoami"])
     @pytest.mark.parametrize(
         "kind",
         ["malformed", "expired", "inactive_session", "inactive_user", "missing_user"],
@@ -1891,14 +1695,13 @@ class TestRejectedJwtIsNotLogged:
         redis_client: redis_asyncio.Redis,
         caplog: pytest.LogCaptureFixture,
         kind: str,
-        path: str,
     ) -> None:
         token = await self._rejected_token(kind, db_session, user_factory)
 
         with caplog.at_level(logging.DEBUG):
             caplog.clear()
             response = await dep_client.get(
-                path, headers={"Authorization": f"Bearer {token}"}
+                "/whoami", headers={"Authorization": f"Bearer {token}"}
             )
 
         assert response.status_code == 401
@@ -2194,28 +1997,17 @@ def _count_role_lookups(monkeypatch: pytest.MonkeyPatch) -> list[uuid.UUID]:
 
 @pytest.mark.e2e
 class TestTicketCallerDependencies:
-    async def test_optional_caller_without_credential_is_anonymous(
-        self, dep_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        calls = _count_role_lookups(monkeypatch)
-
-        response = await dep_client.get("/optional-ticket-caller")
-
-        assert response.status_code == 200
-        assert response.json() == {"user_id": None, "scope": None}
-        assert calls == []
-
-    async def test_optional_caller_with_invalid_credential_returns_401(
+    async def test_caller_with_invalid_credential_returns_401_without_role_lookup(
         self, dep_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         calls = _count_role_lookups(monkeypatch)
 
         response = await dep_client.get(
-            "/optional-ticket-caller", headers={"Authorization": "Bearer invalid"}
+            "/ticket-caller", headers={"Authorization": "Bearer invalid"}
         )
 
         assert response.status_code == 401
-        assert response.json()["code"] == "AUTH_NOT_AUTHENTICATED"
+        assert response.json() == _UNAUTHENTICATED_BODY
         assert calls == []
 
     @pytest.mark.parametrize(
@@ -2227,10 +2019,8 @@ class TestTicketCallerDependencies:
             ([Role.RESTRICTED_ANALYST, Role.ADMIN], "all"),
         ],
     )
-    @pytest.mark.parametrize("path", ["/ticket-caller", "/optional-ticket-caller"])
     async def test_authenticated_caller_carries_the_effective_scope(
         self,
-        path: str,
         roles: list[Role],
         scope: str,
         dep_client: AsyncClient,
@@ -2244,7 +2034,7 @@ class TestTicketCallerDependencies:
             await user_role_factory(user_id=user.id, role=role.value)
         headers = await _bearer(db_session, user)
 
-        response = await dep_client.get(path, headers=headers)
+        response = await dep_client.get("/ticket-caller", headers=headers)
 
         assert response.status_code == 200
         assert response.json() == {"user_id": str(user.id), "scope": scope}
@@ -2407,8 +2197,8 @@ def _spy_resolver(monkeypatch: pytest.MonkeyPatch) -> list[TicketCaller]:
 @pytest.mark.e2e
 class TestSingleRoleResolution:
     """`require_capability()` and the Ticket caller share one role load per
-    request (docs/features/identity/rbac.md, Optional Principal to Caller
-    Context, Permission Checking; docs/api-spec.md, Authorization Chain
+    request (docs/features/identity/rbac.md, Principal to Caller Context,
+    Permission Checking; docs/api-spec.md, Authorization Chain
     Evaluation Order; testing-strategy.md, Ticket Accessibility)."""
 
     @pytest.mark.parametrize(

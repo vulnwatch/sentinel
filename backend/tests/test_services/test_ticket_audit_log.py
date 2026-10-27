@@ -55,7 +55,8 @@ from app.services.ticket_audit_log import (
     list_ticket_events,
 )
 from app.services.ticket_service import resolve_ticket_locator
-from app.services.ticket_visibility import ANONYMOUS_CALLER, TicketCaller
+from app.services.ticket_visibility import TicketCaller
+from tests.support.callers import ROLELESS_CALLER
 from tests.support.database import rollback_test_scope
 
 # No module-level `pytestmark`: pytest marks accumulate rather than
@@ -1044,7 +1045,7 @@ def _restricted(user: User) -> TicketCaller:
 
 async def _page_ids(db: AsyncSession, ticket: Ticket, **kwargs: Any) -> list[uuid.UUID]:
     result = await list_ticket_events(
-        db, ticket_id=_sntl(ticket), caller=ANONYMOUS_CALLER, **kwargs
+        db, ticket_id=_sntl(ticket), caller=ROLELESS_CALLER, **kwargs
     )
     return [item.id for item in result.items]
 
@@ -1064,7 +1065,7 @@ class TestListTicketEventsInputGuards:
             await list_ticket_events(
                 db,
                 ticket_id="SNTL-1",
-                caller=ANONYMOUS_CALLER,
+                caller=ROLELESS_CALLER,
                 page=page,
                 per_page=per_page,
             )
@@ -1087,7 +1088,7 @@ class TestListTicketEventsInputGuards:
         db = AsyncMock(spec=AsyncSession)
 
         with pytest.raises(TicketNotFoundError):
-            await list_ticket_events(db, ticket_id=locator, caller=ANONYMOUS_CALLER)
+            await list_ticket_events(db, ticket_id=locator, caller=ROLELESS_CALLER)
 
         db.execute.assert_not_awaited()
 
@@ -1097,7 +1098,7 @@ class TestListTicketEventsInputGuards:
         db.execute.side_effect = failure
 
         with pytest.raises(OperationalError) as excinfo:
-            await list_ticket_events(db, ticket_id="SNTL-1", caller=ANONYMOUS_CALLER)
+            await list_ticket_events(db, ticket_id="SNTL-1", caller=ROLELESS_CALLER)
 
         assert excinfo.value is failure
 
@@ -1131,7 +1132,7 @@ class TestListTicketEventsProjection:
         )
 
         result = await list_ticket_events(
-            db_session, ticket_id=_sntl(ticket), caller=ANONYMOUS_CALLER
+            db_session, ticket_id=_sntl(ticket), caller=ROLELESS_CALLER
         )
 
         assert (result.total, result.page, result.per_page) == (2, 1, 20)
@@ -1169,7 +1170,7 @@ class TestListTicketEventsProjection:
         await db_session.flush()
 
         result = await list_ticket_events(
-            db_session, ticket_id=_sntl(ticket), caller=ANONYMOUS_CALLER
+            db_session, ticket_id=_sntl(ticket), caller=ROLELESS_CALLER
         )
 
         assert result.items[0].actor == TicketEventActor(
@@ -1182,7 +1183,7 @@ class TestListTicketEventsProjection:
         ticket: Ticket = await ticket_factory()
 
         result = await list_ticket_events(
-            db_session, ticket_id=_sntl(ticket), caller=ANONYMOUS_CALLER
+            db_session, ticket_id=_sntl(ticket), caller=ROLELESS_CALLER
         )
 
         assert result.items == ()
@@ -1198,7 +1199,7 @@ class TestListTicketEventsProjection:
         await ticket_audit_event_factory(ticket_id=ticket.id)
 
         await list_ticket_events(
-            db_session, ticket_id=_sntl(ticket), caller=ANONYMOUS_CALLER
+            db_session, ticket_id=_sntl(ticket), caller=ROLELESS_CALLER
         )
 
         assert not db_session.new
@@ -1262,7 +1263,7 @@ class TestListTicketEventsProjection:
         event.listen(sync_engine, "before_cursor_execute", _record)
         try:
             await list_ticket_events(
-                db_session, ticket_id=_sntl(ticket), caller=ANONYMOUS_CALLER
+                db_session, ticket_id=_sntl(ticket), caller=ROLELESS_CALLER
             )
         finally:
             event.remove(sync_engine, "before_cursor_execute", _record)
@@ -1330,7 +1331,7 @@ class TestListTicketEventsPagination:
         result = await list_ticket_events(
             db_session,
             ticket_id=_sntl(ticket),
-            caller=ANONYMOUS_CALLER,
+            caller=ROLELESS_CALLER,
             page=3,
             per_page=2,
         )
@@ -1350,7 +1351,7 @@ class TestListTicketEventsPagination:
         result = await list_ticket_events(
             db_session,
             ticket_id=_sntl(ticket),
-            caller=ANONYMOUS_CALLER,
+            caller=ROLELESS_CALLER,
             page=2_147_483_647,
             per_page=100,
         )
@@ -1411,7 +1412,7 @@ class TestListTicketEventsFilters:
         await ticket_audit_event_factory(ticket_id=ticket.id)
 
         result = await list_ticket_events(
-            db_session, ticket_id=_sntl(ticket), caller=ANONYMOUS_CALLER, event_types=[]
+            db_session, ticket_id=_sntl(ticket), caller=ROLELESS_CALLER, event_types=[]
         )
 
         assert result.items == ()
@@ -1458,7 +1459,7 @@ class TestListTicketEventsFilters:
         await ticket_audit_event_factory(ticket_id=ticket.id)
 
         result = await list_ticket_events(
-            db_session, ticket_id=_sntl(ticket), caller=ANONYMOUS_CALLER, actor=actor
+            db_session, ticket_id=_sntl(ticket), caller=ROLELESS_CALLER, actor=actor
         )
 
         assert (result.items, result.total) == ((), 0)
@@ -1592,7 +1593,7 @@ class TestListTicketEventsFilters:
         result = await list_ticket_events(
             db_session,
             ticket_id=_sntl(ticket),
-            caller=ANONYMOUS_CALLER,
+            caller=ROLELESS_CALLER,
             event_types=[TicketAuditEventType.STATUS_CHANGE],
             actor=str(actor.id),
             search="analysis",
@@ -1738,7 +1739,7 @@ class TestListTicketEventsAccessibility:
 
         with pytest.raises(TicketNotFoundError):
             await list_ticket_events(
-                db_session, ticket_id=locator, caller=ANONYMOUS_CALLER
+                db_session, ticket_id=locator, caller=ROLELESS_CALLER
             )
 
     async def test_fan_out_does_not_duplicate_events_or_inflate_total(
@@ -1961,16 +1962,16 @@ class TestListTicketEventsRaces:
         writer = await db_session_factory()
 
         before = await list_ticket_events(
-            reader, ticket_id=_sntl(ticket), caller=ANONYMOUS_CALLER, per_page=100
+            reader, ticket_id=_sntl(ticket), caller=ROLELESS_CALLER, per_page=100
         )
-        await resolve_ticket_locator(reader, _sntl(ticket), ANONYMOUS_CALLER)
+        await resolve_ticket_locator(reader, _sntl(ticket), ROLELESS_CALLER)
         writer.add_all(
             TicketAuditEvent(ticket_id=ticket.id, event_type="assignment")
             for _ in range(3)
         )
         await writer.commit()
         after = await list_ticket_events(
-            reader, ticket_id=_sntl(ticket), caller=ANONYMOUS_CALLER, per_page=100
+            reader, ticket_id=_sntl(ticket), caller=ROLELESS_CALLER, per_page=100
         )
 
         assert (before.total, len(before.items)) == (2, 2)
@@ -2009,7 +2010,7 @@ class TestListTicketEventsRaces:
     ) -> None:
         """The caller's scope is resolved once per request; a committed
         role removal applies to the next resolution, not to the in-flight
-        request (rbac.md, Optional Principal to Caller Context)."""
+        request (rbac.md, Principal to Caller Context)."""
         user = await committed_world.user(role=Role.VULNERABILITY_ANALYST)
         ticket = await committed_world.ticket(is_confidential=True)
         reader = await db_session_factory()

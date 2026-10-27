@@ -83,7 +83,8 @@ from app.services.ticket_deadlines import (
     DueDates,
     TrackMilestones,
 )
-from app.services.ticket_visibility import ANONYMOUS_CALLER, TicketCaller
+from app.services.ticket_visibility import TicketCaller
+from tests.support.callers import ROLELESS_CALLER
 from tests.support.deadline_matrix import (
     ACTIVE_RELEASE_REQUEST_STATES as MATRIX_ACTIVE_STATES,
 )
@@ -503,7 +504,6 @@ class TestResolutionAndAccessibility:
         for locator, caller in (
             (str(confidential.id), ALL_SCOPE),
             ("SNTL-2147483647", ALL_SCOPE),
-            (_sntl(confidential), ANONYMOUS_CALLER),
             (
                 _sntl(confidential),
                 TicketCaller.authenticated(uuid.uuid4(), Scope.NON_CONFIDENTIAL),
@@ -560,7 +560,7 @@ class TestResolutionAndAccessibility:
 
         assert projected.id == package.id
 
-    async def test_non_confidential_tree_is_visible_to_anonymous(
+    async def test_non_confidential_tree_is_visible_to_roleless_caller(
         self,
         db_session: AsyncSession,
         ticket_factory: Factory,
@@ -569,7 +569,7 @@ class TestResolutionAndAccessibility:
         ticket: Ticket = await ticket_factory()
         package = await ticket_package_factory(ticket_id=ticket.id)
 
-        (projected,) = await _read(db_session, ticket, caller=ANONYMOUS_CALLER)
+        (projected,) = await _read(db_session, ticket, caller=ROLELESS_CALLER)
 
         assert projected.id == package.id
 
@@ -1389,7 +1389,7 @@ class TestTreeReadRaces:
         reader = await db_session_factory()
         writer = await db_session_factory()
 
-        (before,) = await _tree_read(reader, ticket, ANONYMOUS_CALLER)
+        (before,) = await _tree_read(reader, ticket, ROLELESS_CALLER)
         excluded_at = datetime.now(UTC)
         await _commit(
             writer,
@@ -1400,7 +1400,7 @@ class TestTreeReadRaces:
             .where(TicketPackageProduct.ticket_package_track_id == track.id)
             .values(released_at=excluded_at),
         )
-        (after,) = await _tree_read(reader, ticket, ANONYMOUS_CALLER)
+        (after,) = await _tree_read(reader, ticket, ROLELESS_CALLER)
 
         assert (before.tracks[0].actionable, before.tracks[0].status) == (
             True,

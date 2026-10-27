@@ -5,9 +5,9 @@ Requests (`GET /api/v1/tickets/{ticket_id}/release-requests`).
 
 See docs/features/packages/ibs-submission-tracking.md (Public API, Common
 Query Rules, List Submission Requests, List Release Requests, Testing
-Requirements, Security and Privacy), docs/api-spec.md (Optional
-Authentication on Public Endpoints, Authorization Chain Evaluation Order
-flow 1, Query Parameter Length Limit, Undeclared Query Parameters,
+Requirements, Security and Privacy), docs/api-spec.md (Authentication
+and Authorization, Authorization Chain Evaluation Order flow 1, Query
+Parameter Length Limit, Undeclared Query Parameters,
 Inadmissible Characters in Request Input, Pagination, Enum Filter
 Validation, Sort Parameter Validation, Response Format, Global Responses,
 Ticket Accessibility Check, Response Applicability Derivation, Ticket
@@ -17,7 +17,7 @@ Proportionality; Mandatory Test Scenarios > API Endpoints; Ticket
 Accessibility > Authentication, authorization, and anti-enumeration and
 Ticket identifier and read-contract coverage).
 
-These tests cover only the HTTP boundary: optional authentication and its
+These tests cover only the HTTP boundary: mandatory authentication and its
 operational effects, one role resolution per request, the identical
 `TICKET_NOT_FOUND` family, accessibility as observed through HTTP, the
 global `422 VALIDATION_ERROR` bodies (which precede the scoped 404 and
@@ -259,27 +259,42 @@ async def _correlated_ticket(
 
 
 # ---------------------------------------------------------------------------
-# Optional authentication (flow 1 step 1)
+# Authentication (flow 1 step 1)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.e2e
-class TestOptionalAuthentication:
+class TestAuthentication:
     @pytest.mark.parametrize("endpoint", ENDPOINTS)
-    async def test_anonymous_request_on_a_non_confidential_ticket(
+    async def test_request_without_credential_returns_401_before_the_service(
         self,
         client: AsyncClient,
         ticket_factory: Factory,
         seed: _Seed,
+        monkeypatch: pytest.MonkeyPatch,
         endpoint: _Endpoint,
     ) -> None:
-        ticket, action = await _correlated_ticket(ticket_factory, seed, endpoint)
+        """The global 401 precedes visibility evaluation for a
+        non-confidential, confidential, missing, or malformed Ticket
+        (testing-strategy.md, Ticket Accessibility)."""
+        ticket, _ = await _correlated_ticket(ticket_factory, seed, endpoint)
+        hidden, _ = await _correlated_ticket(
+            ticket_factory, seed, endpoint, is_confidential=True
+        )
+        spy = _spy(monkeypatch, endpoint)
 
-        response = await client.get(endpoint.url(ticket))
+        for target in (
+            locator(ticket),
+            locator(hidden),
+            f"SNTL-{MAX_SEQUENCE}",
+            "not-a-ticket",
+        ):
+            response = await client.get(endpoint.url(target))
+            assert response.status_code == 401
+            assert response.json() == UNAUTHENTICATED
+            assert "set-cookie" not in response.headers
 
-        assert response.status_code == 200
-        assert _ids(response) == [str(action.id)]
-        assert "set-cookie" not in response.headers
+        spy.assert_not_awaited()
 
     @pytest.mark.parametrize("endpoint", ENDPOINTS)
     async def test_valid_session_cookie_is_accepted(
@@ -289,6 +304,8 @@ class TestOptionalAuthentication:
         seed: _Seed,
         endpoint: _Endpoint,
     ) -> None:
+        """A role-less caller (the read-only profile) reads a
+        non-confidential Ticket."""
         ticket, action = await _correlated_ticket(ticket_factory, seed, endpoint)
 
         response = await authenticated_client.get(endpoint.url(ticket))
@@ -336,10 +353,9 @@ class TestOptionalAuthentication:
         redis_client: redis_asyncio.Redis,
         endpoint: _Endpoint,
     ) -> None:
-        """Optional authentication is wired end-to-end, not accepted as a
-        no-op (api-spec.md, Optional Authentication on Public Endpoints:
-        "so browser activity on those endpoints participates in sliding
-        session refresh")."""
+        """Authentication is wired end-to-end through `get_current_user`,
+        so a valid JWT participates in sliding session refresh
+        (authentication.md, Token refresh)."""
         ticket, _ = await _correlated_ticket(ticket_factory, seed, endpoint)
         session = await session_factory()
         old_iat = datetime.now(UTC) - timedelta(hours=settings.jwt_expiry_hours * 0.6)
@@ -378,8 +394,8 @@ class TestOptionalAuthentication:
         credential: dict[str, dict[str, str]],
         endpoint: _Endpoint,
     ) -> None:
-        """Never a fallback to anonymous access, even for a non-confidential
-        Ticket, a missing Ticket, or a malformed locator."""
+        """Never a fallback to an unauthenticated read, even for a
+        non-confidential Ticket, a missing Ticket, or a malformed locator."""
         ticket, _ = await _correlated_ticket(ticket_factory, seed, endpoint)
         spy = _spy(monkeypatch, endpoint)
         for name, value in credential.get("cookies", {}).items():
@@ -472,37 +488,19 @@ class TestTicketNotFound:
     @pytest.mark.parametrize("build_locator", _LOCATOR_SHAPES)
     async def test_invalid_or_missing_locator_returns_the_identical_404(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         seed: _Seed,
         build_locator: Callable[[Ticket], str],
         endpoint: _Endpoint,
     ) -> None:
         ticket, _ = await _correlated_ticket(ticket_factory, seed, endpoint)
-        assert (await client.get(endpoint.url(ticket))).status_code == 200
+        assert (await authenticated_client.get(endpoint.url(ticket))).status_code == 200
 
-        response = await client.get(endpoint.url(build_locator(ticket)))
+        response = await authenticated_client.get(endpoint.url(build_locator(ticket)))
 
         assert response.status_code == 404
         assert response.content == NOT_FOUND
-
-    @pytest.mark.parametrize("endpoint", ENDPOINTS)
-    async def test_anonymous_read_of_a_confidential_ticket_is_the_identical_404(
-        self,
-        client: AsyncClient,
-        ticket_factory: Factory,
-        seed: _Seed,
-        endpoint: _Endpoint,
-    ) -> None:
-        hidden, _ = await _correlated_ticket(
-            ticket_factory, seed, endpoint, is_confidential=True
-        )
-
-        inaccessible = await client.get(endpoint.url(hidden))
-        missing = await client.get(endpoint.url(f"SNTL-{MAX_SEQUENCE}"))
-
-        assert inaccessible.status_code == missing.status_code == 404
-        assert inaccessible.content == missing.content == NOT_FOUND
 
     @pytest.mark.parametrize("endpoint", ENDPOINTS)
     async def test_non_entitled_authenticated_read_is_the_identical_404(
@@ -527,7 +525,7 @@ class TestTicketNotFound:
     @pytest.mark.parametrize("endpoint", ENDPOINTS)
     async def test_invalid_state_on_an_inaccessible_ticket_is_the_identical_404(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         seed: _Seed,
         endpoint: _Endpoint,
@@ -538,7 +536,9 @@ class TestTicketNotFound:
         )
 
         responses = [
-            await client.get(endpoint.url(target), params={"state": "bogus"})
+            await authenticated_client.get(
+                endpoint.url(target), params={"state": "bogus"}
+            )
             for target in (locator(hidden), f"SNTL-{MAX_SEQUENCE}", "not-a-ticket")
         ]
 
@@ -706,7 +706,7 @@ class TestRequestValidation:
     @pytest.mark.parametrize(("name", "value", "msg", "type_"), _SHARED_INVALID)
     async def test_invalid_shared_parameter_returns_the_validation_envelope(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         seed: _Seed,
         monkeypatch: pytest.MonkeyPatch,
@@ -719,7 +719,9 @@ class TestRequestValidation:
         ticket, _ = await _correlated_ticket(ticket_factory, seed, endpoint)
         spy = _spy(monkeypatch, endpoint)
 
-        response = await client.get(endpoint.url(ticket), params={name: value})
+        response = await authenticated_client.get(
+            endpoint.url(ticket), params={name: value}
+        )
 
         assert response.status_code == 422
         assert response.json() == validation_error(_query_error(name, msg, type_))
@@ -728,7 +730,7 @@ class TestRequestValidation:
     @pytest.mark.parametrize(("value", "msg", "type_"), _INCIDENT_INVALID)
     async def test_invalid_release_incident_number_returns_the_validation_envelope(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         seed: _Seed,
         monkeypatch: pytest.MonkeyPatch,
@@ -741,7 +743,7 @@ class TestRequestValidation:
         ticket, _ = await _correlated_ticket(ticket_factory, seed, RELEASE)
         spy = _spy(monkeypatch, RELEASE)
 
-        response = await client.get(
+        response = await authenticated_client.get(
             RELEASE.url(ticket), params={"incident_number": value}
         )
 
@@ -752,12 +754,12 @@ class TestRequestValidation:
         spy.assert_not_awaited()
 
     async def test_incident_number_bounds_are_accepted(
-        self, client: AsyncClient, ticket_factory: Factory, seed: _Seed
+        self, authenticated_client: AsyncClient, ticket_factory: Factory, seed: _Seed
     ) -> None:
         ticket, _ = await _correlated_ticket(ticket_factory, seed, RELEASE)
 
         for value in ("1", "2147483647"):
-            response = await client.get(
+            response = await authenticated_client.get(
                 RELEASE.url(ticket), params={"incident_number": value}
             )
             assert response.status_code == 200
@@ -767,7 +769,7 @@ class TestRequestValidation:
     @pytest.mark.parametrize("name", _LENGTH_LIMITED)
     async def test_string_parameter_over_500_characters_is_a_validation_error(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         seed: _Seed,
         monkeypatch: pytest.MonkeyPatch,
@@ -778,9 +780,13 @@ class TestRequestValidation:
         accepted (and matches nothing)."""
         ticket, _ = await _correlated_ticket(ticket_factory, seed, endpoint)
 
-        accepted = await client.get(endpoint.url(ticket), params={name: "x" * 500})
+        accepted = await authenticated_client.get(
+            endpoint.url(ticket), params={name: "x" * 500}
+        )
         spy = _spy(monkeypatch, endpoint)
-        rejected = await client.get(endpoint.url(ticket), params={name: "x" * 501})
+        rejected = await authenticated_client.get(
+            endpoint.url(ticket), params={name: "x" * 501}
+        )
 
         assert accepted.status_code == 200
         assert accepted.json() == _EMPTY_PAGE
@@ -791,7 +797,7 @@ class TestRequestValidation:
     @pytest.mark.parametrize("endpoint", ENDPOINTS)
     async def test_nul_in_a_string_parameter_is_a_validation_error(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         seed: _Seed,
         monkeypatch: pytest.MonkeyPatch,
@@ -803,7 +809,7 @@ class TestRequestValidation:
         spy = _spy(monkeypatch, endpoint)
 
         for target in (locator(ticket), f"SNTL-{MAX_SEQUENCE}"):
-            response = await client.get(
+            response = await authenticated_client.get(
                 f"{endpoint.url(target)}?package_name=fictional%00package"
             )
             assert response.status_code == 422
@@ -845,7 +851,7 @@ class TestRequestValidation:
     @pytest.mark.parametrize("endpoint", ENDPOINTS)
     async def test_rejected_values_are_never_echoed(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         seed: _Seed,
         endpoint: _Endpoint,
@@ -862,7 +868,9 @@ class TestRequestValidation:
             params.append({"incident_number": "fictional-marker"})
 
         for query in params:
-            response = await client.get(endpoint.url(ticket), params=query)
+            response = await authenticated_client.get(
+                endpoint.url(ticket), params=query
+            )
             assert response.status_code == 422
             assert "fictional-marker" not in response.text
 
@@ -886,7 +894,7 @@ class TestQueryShape:
     )
     async def test_invalid_state_is_an_empty_page(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         seed: _Seed,
         state: str,
@@ -900,7 +908,9 @@ class TestQueryShape:
         for value in ("accepted", "review"):
             await seed.action(endpoint, track, request={"state": value})
 
-        response = await client.get(endpoint.url(ticket), params={"state": state})
+        response = await authenticated_client.get(
+            endpoint.url(ticket), params={"state": state}
+        )
 
         assert response.status_code == 200
         assert response.json() == _EMPTY_PAGE
@@ -908,7 +918,7 @@ class TestQueryShape:
     @pytest.mark.parametrize("endpoint", ENDPOINTS)
     async def test_undeclared_parameters_are_ignored(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         seed: _Seed,
         endpoint: _Endpoint,
@@ -920,8 +930,8 @@ class TestQueryShape:
         for _ in range(2):
             await seed.action(endpoint, track)
 
-        plain = await client.get(endpoint.url(ticket))
-        decorated = await client.get(
+        plain = await authenticated_client.get(endpoint.url(ticket))
+        decorated = await authenticated_client.get(
             endpoint.url(ticket),
             params={"foo": "bar", "sort": "x", "order": "sideways", "limit": "abc"},
         )
@@ -936,7 +946,7 @@ class TestQueryShape:
     )
     async def test_incident_number_is_undeclared_on_the_submission_list(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         seed: _Seed,
         value: str,
@@ -946,8 +956,8 @@ class TestQueryShape:
         await seed.action(SUBMISSION, track, incident_number=45001)
         await seed.action(SUBMISSION, track, incident_number=45002)
 
-        plain = await client.get(SUBMISSION.url(ticket))
-        decorated = await client.get(
+        plain = await authenticated_client.get(SUBMISSION.url(ticket))
+        decorated = await authenticated_client.get(
             SUBMISSION.url(ticket), params={"incident_number": value}
         )
 
@@ -966,7 +976,7 @@ class TestQueryShape:
 class TestEnvelope:
     async def test_submission_example_item(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         seed: _Seed,
     ) -> None:
@@ -991,7 +1001,7 @@ class TestEnvelope:
             incident_number=45001,
         )
 
-        response = await client.get(SUBMISSION.url(ticket))
+        response = await authenticated_client.get(SUBMISSION.url(ticket))
 
         assert response.status_code == 200
         assert response.json() == {
@@ -1024,7 +1034,7 @@ class TestEnvelope:
 
     async def test_superseded_submission_without_incident(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         seed: _Seed,
     ) -> None:
@@ -1045,7 +1055,7 @@ class TestEnvelope:
             },
         )
 
-        response = await client.get(SUBMISSION.url(ticket))
+        response = await authenticated_client.get(SUBMISSION.url(ticket))
 
         assert response.status_code == 200
         assert response.json() == {
@@ -1070,7 +1080,7 @@ class TestEnvelope:
 
     async def test_release_example_item(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         seed: _Seed,
     ) -> None:
@@ -1092,7 +1102,7 @@ class TestEnvelope:
             incident_number=45001,
         )
 
-        response = await client.get(RELEASE.url(ticket))
+        response = await authenticated_client.get(RELEASE.url(ticket))
 
         assert response.status_code == 200
         assert response.json() == {
@@ -1120,7 +1130,7 @@ class TestEnvelope:
 
     async def test_superseded_release_with_a_non_utc_offset(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         seed: _Seed,
     ) -> None:
@@ -1139,7 +1149,7 @@ class TestEnvelope:
             incident_number=45002,
         )
 
-        response = await client.get(RELEASE.url(ticket))
+        response = await authenticated_client.get(RELEASE.url(ticket))
 
         assert response.status_code == 200
         (item,) = response.json()["data"]
@@ -1162,7 +1172,7 @@ class TestEnvelope:
     @pytest.mark.parametrize("endpoint", ENDPOINTS)
     async def test_accessible_ticket_without_correlated_actions_is_empty(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         seed: _Seed,
         endpoint: _Endpoint,
@@ -1175,7 +1185,7 @@ class TestEnvelope:
         other: Ticket = await ticket_factory()
         await seed.action(endpoint, await seed.track(other))
 
-        response = await client.get(endpoint.url(ticket))
+        response = await authenticated_client.get(endpoint.url(ticket))
 
         assert response.status_code == 200
         assert response.json() == _EMPTY_PAGE
@@ -1193,7 +1203,7 @@ class TestQueryWiring:
     @pytest.mark.parametrize("endpoint", ENDPOINTS)
     async def test_filters_sorting_and_pagination_through_http(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         seed: _Seed,
         endpoint: _Endpoint,
@@ -1255,7 +1265,9 @@ class TestQueryWiring:
         await seed.action(_OTHER[endpoint.path], track, request={"state": accepted})
 
         async def _get(**params: str) -> httpx.Response:
-            response = await client.get(endpoint.url(ticket), params=params)
+            response = await authenticated_client.get(
+                endpoint.url(ticket), params=params
+            )
             assert response.status_code == 200
             return response
 

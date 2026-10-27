@@ -71,7 +71,8 @@ from app.services.cvss import (
     validate_cvss_vector,
 )
 from app.services.settings import RequiredSystemSettingMissingError
-from app.services.ticket_visibility import ANONYMOUS_CALLER, TicketCaller
+from app.services.ticket_visibility import TicketCaller
+from tests.support.callers import ROLELESS_CALLER
 
 Factory = Callable[..., Awaitable[Any]]
 
@@ -125,7 +126,7 @@ def _restricted(user: User) -> TicketCaller:
 
 
 async def _read(
-    db: AsyncSession, cve: CVE | str, caller: TicketCaller = ANONYMOUS_CALLER
+    db: AsyncSession, cve: CVE | str, caller: TicketCaller = ROLELESS_CALLER
 ) -> CVECVSSAssessments:
     cve_id = cve if isinstance(cve, str) else cve.cve_id
     return await get_cvss_assessments(db, cve_id=cve_id, caller=caller)
@@ -293,7 +294,7 @@ class TestCVEAccessibility:
         await cve_cvss_assessment_factory(cve_id=cve.id, provider_name=VENDOR)
         user: User = await user_factory()
 
-        for caller in (ANONYMOUS_CALLER, _restricted(user), ALL_SCOPE):
+        for caller in (_restricted(user), ALL_SCOPE):
             result = await _read(db_session, cve, caller)
             assert _summary(result) == [("3.1", VENDOR, Decimal("9.8"))]
 
@@ -308,10 +309,10 @@ class TestCVEAccessibility:
         await ticket_factory(cve_id=cve.id, is_confidential=False)
         user: User = await user_factory()
 
-        for caller in (ANONYMOUS_CALLER, _restricted(user), ALL_SCOPE):
+        for caller in (_restricted(user), ALL_SCOPE):
             assert (await _read(db_session, cve, caller)).assessments == ()
 
-    async def test_anonymous_caller_never_sees_a_confidential_cve(
+    async def test_roleless_caller_never_sees_a_confidential_cve(
         self,
         db_session: AsyncSession,
         cve_factory: Factory,
@@ -320,8 +321,8 @@ class TestCVEAccessibility:
         ticket_package_factory: Factory,
         ticket_package_maintainer_factory: Factory,
     ) -> None:
-        """Grant and maintainer rows exist for some user; an anonymous
-        caller has no identity, so neither branch can authorize it."""
+        """Grant and maintainer rows exist for other users only, so neither
+        branch can authorize the role-less caller."""
         cve: CVE = await cve_factory()
         ticket: Ticket = await ticket_factory(cve_id=cve.id, is_confidential=True)
         await ticket_access_grant_factory(ticket_id=ticket.id)
@@ -329,7 +330,7 @@ class TestCVEAccessibility:
         await ticket_package_maintainer_factory(ticket_package_id=package.id)
 
         with pytest.raises(CVENotFoundError):
-            await _read(db_session, cve, ANONYMOUS_CALLER)
+            await _read(db_session, cve, ROLELESS_CALLER)
 
     async def test_scope_all_sees_a_confidential_cve_without_grant(
         self, db_session: AsyncSession, cve_factory: Factory, ticket_factory: Factory

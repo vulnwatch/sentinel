@@ -89,7 +89,8 @@ from app.services.reference_service import (
 from app.services.ticket_convergence_registry import (
     pending_ticket_convergence_effects,
 )
-from app.services.ticket_visibility import ANONYMOUS_CALLER, TicketCaller
+from app.services.ticket_visibility import TicketCaller
+from tests.support.callers import ROLELESS_CALLER
 from tests.support.inadmissible import SURROGATE
 from tests.support.no_outbound import OutboundGuard
 from tests.support.ticket_api import MAX_SEQUENCE
@@ -535,32 +536,6 @@ class TestInputValidation:
             pytest.raises(ValueError, match=_subject(case_id)),
         ):
             await _update(db_session, ticket, reference.id, actor, **fields)
-
-        assert recorder.statements == []
-        assert await _rows(db_session, ticket.id) == before
-        assert await ticket_events_by_id(db_session, ticket.id) == []
-
-    @pytest.mark.parametrize("op", MUTATIONS)
-    async def test_anonymous_caller_is_a_programming_error(
-        self,
-        db_session: AsyncSession,
-        ticket_factory: TicketFactory,
-        ticket_reference_factory: ReferenceFactory,
-        op: str,
-    ) -> None:
-        """Service Layer: an anonymous caller at a manual mutation boundary
-        raises `ValueError` before database access."""
-        ticket = await ticket_factory()
-        reference = await _seed(ticket_reference_factory, ticket)
-        before = await _rows(db_session, ticket.id)
-
-        with (
-            StatementRecorder(db_session) as recorder,
-            pytest.raises(ValueError, match=r"(?i)authenticated"),
-        ):
-            await _invoke(
-                op, db_session, _locator(ticket), ANONYMOUS_CALLER, reference.id
-            )
 
         assert recorder.statements == []
         assert await _rows(db_session, ticket.id) == before
@@ -1692,39 +1667,6 @@ class TestAccessibility:
             assert [p.id for p in result] == [reference.id]
             assert events == []
 
-    async def test_anonymous_list_sees_only_non_confidential_tickets(
-        self,
-        db_session: AsyncSession,
-        ticket_factory: TicketFactory,
-        ticket_reference_factory: ReferenceFactory,
-    ) -> None:
-        """Security and Privacy: anonymous callers see references only for
-        non-confidential Tickets."""
-        public = await ticket_factory()
-        confidential = await ticket_factory(is_confidential=True)
-        reference = await _seed(ticket_reference_factory, public)
-        await _seed(ticket_reference_factory, confidential)
-
-        listed = await list_references(
-            db_session,
-            _locator(public),
-            ANONYMOUS_CALLER,
-            source=None,
-            type=None,
-            type_was_supplied=False,
-        )
-        assert [p.id for p in listed] == [reference.id]
-
-        with pytest.raises(TicketNotFoundError):
-            await list_references(
-                db_session,
-                _locator(confidential),
-                ANONYMOUS_CALLER,
-                source=None,
-                type=None,
-                type_was_supplied=False,
-            )
-
     @pytest.mark.parametrize("scope", list(Scope), ids=str)
     async def test_non_confidential_ticket_is_mutable_for_any_scope(
         self,
@@ -1848,7 +1790,7 @@ async def _list(
     db: AsyncSession,
     ticket: Ticket,
     *,
-    caller: TicketCaller = ANONYMOUS_CALLER,
+    caller: TicketCaller = ROLELESS_CALLER,
     source: str | None = None,
     type: ReferenceType | None = None,
     type_was_supplied: bool = False,

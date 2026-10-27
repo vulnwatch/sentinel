@@ -115,7 +115,8 @@ class TestRequestInputRejection:
         assert count == 0
 
     async def test_query_parameter_is_rejected(self, client: AsyncClient) -> None:
-        """A public, anonymous query parameter that feeds a search."""
+        """A query parameter that feeds a search; sent without a
+        credential, the admissibility rejection still precedes the 401."""
         response = await client.get("/api/v1/users", params={"search": "fic\x00tional"})
 
         assert response.status_code == 422

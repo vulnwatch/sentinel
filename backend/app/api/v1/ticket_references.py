@@ -24,7 +24,6 @@ from fastapi import APIRouter, Depends, Path, Query, Response, status
 from app.api.dependencies import (
     AuthenticatedPrincipal,
     AuthenticatedTicketCaller,
-    OptionalTicketCaller,
     TicketIdPath,
     require_capability,
     resource_not_found_error,
@@ -133,8 +132,8 @@ def serialize_reference(
         "caller, unpaginated, ordered by type (`advisory`, `patch`, `issue`, "
         "`article`, uncategorized), then creation time, then identifier. "
         "`source` and `type` filters combine with AND; an invalid `type` value "
-        "returns an empty list for an accessible Ticket. Anonymous callers see "
-        "references of non-confidential Tickets only."
+        "returns an empty list for an accessible Ticket. Requires "
+        "authentication (JWT session or API key)."
     ),
     responses={
         404: {"model": ErrorResponse, "description": _TICKET_NOT_FOUND_DESCRIPTION}
@@ -143,7 +142,7 @@ def serialize_reference(
 async def list_references(
     ticket_id: TicketIdPath,
     db: DatabaseSession,
-    caller: OptionalTicketCaller,
+    caller: AuthenticatedTicketCaller,
     source: Annotated[
         str | None,
         Query(description="Exact, case-sensitive source (`manual` or a fetcher name)."),

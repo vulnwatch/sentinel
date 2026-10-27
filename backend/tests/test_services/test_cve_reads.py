@@ -56,7 +56,8 @@ from app.services.cve_service import (
     list_cves,
 )
 from app.services.ticket_service import get_ticket_detail
-from app.services.ticket_visibility import ANONYMOUS_CALLER, TicketCaller
+from app.services.ticket_visibility import TicketCaller
+from tests.support.callers import ROLELESS_CALLER
 
 Factory = Callable[..., Awaitable[Any]]
 SessionFactory = Callable[[], Awaitable[AsyncSession]]
@@ -260,8 +261,7 @@ async def visibility_world(make: _Make) -> _VisibilityWorld:
     return _VisibilityWorld(
         cves,
         {
-            ANONYMOUS_CALLER: public,
-            _restricted(uuid.uuid4()): public,
+            ROLELESS_CALLER: public,
             _restricted(user): [*public, "granted", "maintained", "multi"],
             ALL_SCOPE: list(cves),
         },
@@ -300,20 +300,8 @@ class TestListVisibility:
             {"from_date": FEB},
             {"sort_by": CVESortField.SEVERITY},
         ):
-            result = await _list(db_session, ANONYMOUS_CALLER, **filters)
+            result = await _list(db_session, ROLELESS_CALLER, **filters)
             assert (result.items, result.total) == ((), 0), filters
-
-    async def test_anonymous_statement_evaluates_no_grant_or_maintainer_branch(
-        self, db_session: AsyncSession, make: _Make
-    ) -> None:
-        await make.cve()
-
-        with _StatementRecorder(db_session) as recorder:
-            await _list(db_session, ANONYMOUS_CALLER)
-
-        (statement,) = recorder.statements
-        assert "ticket_access_grant" not in statement
-        assert "ticket_package_maintainer" not in statement
 
 
 # ---------------------------------------------------------------------------
@@ -324,7 +312,7 @@ class TestListVisibility:
 @pytest.fixture
 async def filter_world(make: _Make) -> None:
     """Five accessible CVEs and one confidential associated CVE (hidden
-    from the anonymous caller used by the filter matrix)."""
+    from the role-less caller used by the filter matrix)."""
     rows = (
         ("alpha", CveState.PUBLISHED, Severity.HIGH, MAR, None),
         ("bravo", CveState.REJECTED, Severity.NONE, APR, False),
@@ -412,10 +400,10 @@ class TestListFilters:
         [(filters, expected) for _, filters, expected in FILTER_CASES],
         ids=[name for name, _, _ in FILTER_CASES],
     )
-    async def test_filter_matrix_for_the_anonymous_caller(
+    async def test_filter_matrix_for_the_roleless_caller(
         self, db_session: AsyncSession, filters: dict[str, Any], expected: list[str]
     ) -> None:
-        result = await _list(db_session, ANONYMOUS_CALLER, **filters)
+        result = await _list(db_session, ROLELESS_CALLER, **filters)
 
         assert [item.cve_id for item in result.items] == [_NAMES[n] for n in expected]
         assert result.total == len(expected)
@@ -428,7 +416,7 @@ class TestListFilters:
             "CVE-2099-20003",
             "CVE-2099-20006",
         ]
-        assert await _ids(db_session, ANONYMOUS_CALLER, has_ticket=True) == [
+        assert await _ids(db_session, ROLELESS_CALLER, has_ticket=True) == [
             "CVE-2099-20002",
             "CVE-2099-20003",
         ]
@@ -776,7 +764,7 @@ class TestListRowIdentityAndBoundedRead:
             )
         }
 
-        first, second = (await _list(db_session, ANONYMOUS_CALLER)).items
+        first, second = (await _list(db_session, ROLELESS_CALLER)).items
 
         assert first == CVEListItemProjection(
             cve_id="CVE-2099-80001",
@@ -849,7 +837,7 @@ class TestDetailAccess:
         with pytest.raises(CVENotFoundError):
             await get_cve_detail(db_session, ALL_SCOPE, "CVE-2099-400010")
         with pytest.raises(CVENotFoundError) as missing:
-            await get_cve_detail(db_session, ANONYMOUS_CALLER, "CVE-2099-99999")
+            await get_cve_detail(db_session, ROLELESS_CALLER, "CVE-2099-99999")
 
         for caller, visible in visibility_world.expectations.items():
             for name, cve in cves.items():
@@ -975,7 +963,7 @@ class TestDetailProjection:
     ) -> None:
         cve: CVE = await make.cve(cve_id="CVE-2099-90002")
 
-        result = await get_cve_detail(db_session, ANONYMOUS_CALLER, cve.cve_id)
+        result = await get_cve_detail(db_session, ROLELESS_CALLER, cve.cve_id)
 
         assert result == CVEDetailResult(
             cve=CVEDetailProjection(
@@ -1258,7 +1246,7 @@ async def _prepare_loss(world: _CommittedWorld, case: str) -> _Loss:
     assert case == "association"
     ticket, _ = await world.ticket(None, is_confidential=True)
     change = update(Ticket).where(Ticket.id == ticket.id).values(cve_id=cve.id)
-    return _Loss(cve, ANONYMOUS_CALLER, (change,))
+    return _Loss(cve, ROLELESS_CALLER, (change,))
 
 
 def _add_kev(cve: CVE) -> Executable:

@@ -1,4 +1,4 @@
-"""Public user directory, profile, and current-user endpoints, plus the
+"""User directory, profile, and current-user endpoints, plus the
 admin user mutation endpoints and the deactivation impact preview.
 
 See `docs/features/identity/user-management.md` (List Users, Get User,
@@ -19,7 +19,6 @@ from fastapi import APIRouter, Depends, Query, status
 from app.api.dependencies import (
     AuthenticatedPrincipal,
     CurrentUser,
-    OptionalCurrentUser,
     require_capability,
     require_session_authentication,
     user_not_found_error,
@@ -249,25 +248,23 @@ def _serialize_user(user: User) -> UserData:
     response_model=UserListResponse,
     summary="List users",
     description=(
-        "Returns a paginated public directory of users. Supports search "
-        "across username, email, and full name; local/external type; "
-        "active status; repeatable role (OR semantics); and has_role "
-        "filters, plus standard pagination and sorting. Public endpoint."
+        "Returns a paginated directory of users. Supports search across "
+        "username, email, and full name; local/external type; active "
+        "status; repeatable role (OR semantics); and has_role filters, plus "
+        "standard pagination and sorting. Requires authentication (JWT "
+        "session or API key)."
     ),
 )
 async def list_users(
     db: DatabaseSession,
     query: Annotated[UserListQuery, Depends(_user_list_query)],
-    _principal: OptionalCurrentUser,
+    _principal: CurrentUser,
 ) -> UserListResponse:
     """List users — see
     `docs/features/identity/user-management.md` (List Users).
 
-    `_principal` is unused by the response: it exists solely to run
-    optional authentication (`Authentication: Optional`) so a valid
-    selected credential participates in JWT sliding refresh and API-key
-    operational effects — see `docs/api-spec.md` (Optional
-    Authentication on Public Endpoints)."""
+    `_principal` is unused by the response: it exists solely to require
+    authentication (`Access: Authenticated`)."""
     type_valid, user_type = _parse_user_type(query.type)
     roles_valid, roles = _parse_role_filters(query.role)
     if not type_valid or not roles_valid:
@@ -328,7 +325,8 @@ async def get_current_user_profile(
     summary="Get user",
     description=(
         "Returns the full profile of one user, resolved by UUID or exact, "
-        "case-sensitive username. Public endpoint."
+        "case-sensitive username. Requires authentication (JWT session or "
+        "API key)."
     ),
     responses={
         404: {
@@ -340,16 +338,13 @@ async def get_current_user_profile(
     },
 )
 async def get_user(
-    user: str, db: DatabaseSession, _principal: OptionalCurrentUser
+    user: str, db: DatabaseSession, _principal: CurrentUser
 ) -> UserResponse:
     """Get user — see
     `docs/features/identity/user-management.md` (Get User).
 
-    `_principal` is unused by the response: it exists solely to run
-    optional authentication (`Authentication: Optional`) so a valid
-    selected credential participates in JWT sliding refresh and API-key
-    operational effects — see `docs/api-spec.md` (Optional
-    Authentication on Public Endpoints)."""
+    `_principal` is unused by the response: it exists solely to require
+    authentication (`Access: Authenticated`)."""
     try:
         resolved = await user_service.get_user(db, user)
     except UserNotFoundError:

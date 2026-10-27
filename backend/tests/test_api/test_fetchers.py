@@ -1,13 +1,15 @@
-"""End-to-end tests for the Public fetcher observation API
+"""End-to-end tests for the fetcher API
 (`backend/app/api/v1/fetchers.py`).
 
 See `docs/features/platform/fetcher-operations.md` (List Fetchers, List
-Fetcher Runs, Get Fetcher Run Detail, Get Fetcher Run Timeline Data) for
+Fetcher Runs, Get Fetcher Run Detail, Get Fetcher Run Timeline Data,
+Access Control) for
 the authoritative endpoint contracts under test. Filter/query
 combination coverage for the underlying query lives in
 `tests/test_services/test_fetcher_operations.py` — these tests focus on
 the HTTP/route contract (status codes, envelopes, error mapping,
-optional-authentication visibility, and OpenAPI route inventory).
+authentication, `manage_fetchers` field-level visibility, and OpenAPI
+route inventory).
 """
 
 from __future__ import annotations
@@ -56,6 +58,7 @@ from app.models.user import User
 from app.models.user_role import UserRole
 from app.services.base_fetcher import FETCHER_REGISTRY, BaseFetcher
 from app.services.session_service import create_session
+from tests.support.ticket_api import UNAUTHENTICATED
 
 FetcherConfigFactory = Callable[..., Awaitable[FetcherConfig]]
 FetcherRunFactory = Callable[..., Awaitable[FetcherRun]]
@@ -282,49 +285,32 @@ class TestRouteInventory:
 
 @pytest.mark.e2e
 class TestListFetchersEndpoint:
-    async def test_anonymous_returns_200_with_empty_envelope(
-        self, client: AsyncClient
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        response = await client.get("/api/v1/fetchers")
+        assert response.status_code == 401
+        assert response.json() == UNAUTHENTICATED
+
+    async def test_role_less_caller_returns_200_with_empty_envelope(
+        self, authenticated_client: AsyncClient
     ) -> None:
         FETCHER_REGISTRY.clear()
-        response = await client.get("/api/v1/fetchers")
+        response = await authenticated_client.get("/api/v1/fetchers")
         assert response.status_code == 200
         assert response.json() == {"data": []}
 
     async def test_includes_deregistered_fetcher(
-        self, client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+        self,
+        authenticated_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
     ) -> None:
         FETCHER_REGISTRY.clear()
         config = await fetcher_config_factory()
 
-        response = await client.get("/api/v1/fetchers")
+        response = await authenticated_client.get("/api/v1/fetchers")
 
         assert response.status_code == 200
         names = [item["fetcher_name"] for item in response.json()["data"]]
         assert config.fetcher_name in names
-
-    async def test_anonymous_does_not_see_triggered_by_user(
-        self,
-        client: AsyncClient,
-        fetcher_config_factory: FetcherConfigFactory,
-        fetcher_run_factory: FetcherRunFactory,
-        user_factory: UserFactory,
-    ) -> None:
-        _register(_StubFetcher)
-        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
-        actor = await user_factory()
-        await fetcher_run_factory(
-            fetcher_name=config.fetcher_name,
-            triggered_by="manual",
-            triggered_by_user_id=actor.id,
-        )
-
-        response = await client.get("/api/v1/fetchers")
-
-        assert response.status_code == 200
-        item = next(
-            i for i in response.json()["data"] if i["fetcher_name"] == _StubFetcher.name
-        )
-        assert item["last_run"]["triggered_by_user"] is None
 
     async def test_admin_jwt_sees_triggered_by_user(
         self,
@@ -382,10 +368,9 @@ class TestListFetchersEndpoint:
         user_factory: UserFactory,
     ) -> None:
         """An authenticated caller with no roles (and therefore no
-        `manage_fetchers` capability) is treated identically to
-        anonymous — capability, not mere authentication, gates
-        visibility. See `_resolve_has_manage_fetchers`
-        (`app/api/v1/fetchers.py`)."""
+        `manage_fetchers` capability) sees sanitized fields only —
+        capability, not mere authentication, gates visibility. See
+        `_resolve_has_manage_fetchers` (`app/api/v1/fetchers.py`)."""
         _register(_StubFetcher)
         config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
         actor = await user_factory()
@@ -406,9 +391,8 @@ class TestListFetchersEndpoint:
     async def test_invalid_selected_credential_returns_401(
         self, client: AsyncClient
     ) -> None:
-        """A selected but rejected credential is never silently ignored
-        — see `docs/api-spec.md` (Optional Authentication on Public
-        Endpoints)."""
+        """A selected but rejected credential returns the generic 401
+        — see `docs/api-spec.md` (Authentication and Authorization)."""
         response = await client.get(
             "/api/v1/fetchers", headers={"Authorization": "Bearer not-a-real-token"}
         )
@@ -418,7 +402,7 @@ class TestListFetchersEndpoint:
 
     async def test_queued_last_run_has_null_started_at_and_created_at_present(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
         fetcher_run_factory: FetcherRunFactory,
     ) -> None:
@@ -435,7 +419,7 @@ class TestListFetchersEndpoint:
             triggered_by="manual",
         )
 
-        response = await client.get("/api/v1/fetchers")
+        response = await authenticated_client.get("/api/v1/fetchers")
 
         assert response.status_code == 200
         item = next(
@@ -454,7 +438,7 @@ class TestListFetchersEndpoint:
 
     async def test_terminal_last_run_exposes_items_succeeded(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
         fetcher_run_factory: FetcherRunFactory,
     ) -> None:
@@ -474,7 +458,7 @@ class TestListFetchersEndpoint:
             items_failed=0,
         )
 
-        response = await client.get("/api/v1/fetchers")
+        response = await authenticated_client.get("/api/v1/fetchers")
 
         assert response.status_code == 200
         item = next(
@@ -493,21 +477,35 @@ class TestListFetchersEndpoint:
 
 @pytest.mark.e2e
 class TestListFetcherRunsEndpoint:
-    async def test_unknown_fetcher_returns_404(self, client: AsyncClient) -> None:
-        response = await client.get("/api/v1/fetchers/no-such-fetcher/runs")
+    async def test_unauthenticated_returns_401(
+        self, client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await client.get(f"/api/v1/fetchers/{config.fetcher_name}/runs")
+        assert response.status_code == 401
+        assert response.json() == UNAUTHENTICATED
+
+    async def test_unknown_fetcher_returns_404(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        response = await authenticated_client.get(
+            "/api/v1/fetchers/no-such-fetcher/runs"
+        )
         assert response.status_code == 404
         assert response.json()["code"] == "FETCHER_NOT_FOUND"
 
     async def test_returns_paginated_envelope(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
         fetcher_run_factory: FetcherRunFactory,
     ) -> None:
         config = await fetcher_config_factory()
         await fetcher_run_factory(fetcher_name=config.fetcher_name)
 
-        response = await client.get(f"/api/v1/fetchers/{config.fetcher_name}/runs")
+        response = await authenticated_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/runs"
+        )
 
         assert response.status_code == 200
         body = response.json()
@@ -521,7 +519,7 @@ class TestListFetcherRunsEndpoint:
 
     async def test_items_succeeded_need_not_equal_created_plus_updated(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
         fetcher_run_factory: FetcherRunFactory,
     ) -> None:
@@ -541,7 +539,9 @@ class TestListFetcherRunsEndpoint:
             items_failed=0,
         )
 
-        response = await client.get(f"/api/v1/fetchers/{config.fetcher_name}/runs")
+        response = await authenticated_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/runs"
+        )
 
         assert response.status_code == 200
         item = response.json()["data"][0]
@@ -574,28 +574,34 @@ class TestListFetcherRunsEndpoint:
         assert "error_traceback" not in item
 
     async def test_invalid_page_returns_422(
-        self, client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+        self,
+        authenticated_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
     ) -> None:
         config = await fetcher_config_factory()
-        response = await client.get(
+        response = await authenticated_client.get(
             f"/api/v1/fetchers/{config.fetcher_name}/runs", params={"page": 0}
         )
         assert response.status_code == 422
 
     async def test_invalid_per_page_returns_422(
-        self, client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+        self,
+        authenticated_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
     ) -> None:
         config = await fetcher_config_factory()
-        response = await client.get(
+        response = await authenticated_client.get(
             f"/api/v1/fetchers/{config.fetcher_name}/runs", params={"per_page": 101}
         )
         assert response.status_code == 422
 
     async def test_malformed_date_returns_422(
-        self, client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+        self,
+        authenticated_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
     ) -> None:
         config = await fetcher_config_factory()
-        response = await client.get(
+        response = await authenticated_client.get(
             f"/api/v1/fetchers/{config.fetcher_name}/runs",
             params={"from_date": "not-a-date"},
         )
@@ -604,7 +610,7 @@ class TestListFetcherRunsEndpoint:
     @pytest.mark.parametrize(("field", "value"), _OUT_OF_RANGE_BOUNDS)
     async def test_out_of_range_single_bound_returns_422_without_error_log(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
         field: str,
         value: str,
@@ -615,7 +621,7 @@ class TestListFetcherRunsEndpoint:
         config = await fetcher_config_factory()
 
         with capture_logs() as logs:
-            response = await client.get(
+            response = await authenticated_client.get(
                 f"/api/v1/fetchers/{config.fetcher_name}/runs", params={field: value}
             )
 
@@ -624,7 +630,7 @@ class TestListFetcherRunsEndpoint:
 
     async def test_representable_extreme_bounds_reach_the_database(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
         fetcher_run_factory: FetcherRunFactory,
     ) -> None:
@@ -633,7 +639,7 @@ class TestListFetcherRunsEndpoint:
             fetcher_name=config.fetcher_name, status="success"
         )
 
-        response = await client.get(
+        response = await authenticated_client.get(
             f"/api/v1/fetchers/{config.fetcher_name}/runs",
             params={
                 "from_date": "0001-01-01T00:00:00-23:59",
@@ -645,10 +651,12 @@ class TestListFetcherRunsEndpoint:
         assert [item["id"] for item in response.json()["data"]] == [str(run.id)]
 
     async def test_inverted_range_returns_400(
-        self, client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+        self,
+        authenticated_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
     ) -> None:
         config = await fetcher_config_factory()
-        response = await client.get(
+        response = await authenticated_client.get(
             f"/api/v1/fetchers/{config.fetcher_name}/runs",
             params={"from_date": "2025-06-01", "to_date": "2025-01-01"},
         )
@@ -657,14 +665,14 @@ class TestListFetcherRunsEndpoint:
 
     async def test_invalid_status_returns_empty_page_not_error(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
         fetcher_run_factory: FetcherRunFactory,
     ) -> None:
         config = await fetcher_config_factory()
         await fetcher_run_factory(fetcher_name=config.fetcher_name, status="success")
 
-        response = await client.get(
+        response = await authenticated_client.get(
             f"/api/v1/fetchers/{config.fetcher_name}/runs",
             params={"status": "not-a-real-status"},
         )
@@ -675,7 +683,7 @@ class TestListFetcherRunsEndpoint:
 
     async def test_filters_by_queued_status(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
         fetcher_run_factory: FetcherRunFactory,
     ) -> None:
@@ -685,7 +693,7 @@ class TestListFetcherRunsEndpoint:
             fetcher_name=config.fetcher_name, status="queued", started_at=None
         )
 
-        response = await client.get(
+        response = await authenticated_client.get(
             f"/api/v1/fetchers/{config.fetcher_name}/runs",
             params={"status": "queued"},
         )
@@ -704,16 +712,36 @@ class TestListFetcherRunsEndpoint:
 
 @pytest.mark.e2e
 class TestGetFetcherRunEndpoint:
-    async def test_unknown_fetcher_returns_404(self, client: AsyncClient) -> None:
-        response = await client.get(f"/api/v1/fetchers/no-such-fetcher/runs/{uuid4()}")
+    async def test_unauthenticated_returns_401(
+        self,
+        client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        run = await fetcher_run_factory(fetcher_name=config.fetcher_name)
+        response = await client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/runs/{run.id}"
+        )
+        assert response.status_code == 401
+        assert response.json() == UNAUTHENTICATED
+
+    async def test_unknown_fetcher_returns_404(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        response = await authenticated_client.get(
+            f"/api/v1/fetchers/no-such-fetcher/runs/{uuid4()}"
+        )
         assert response.status_code == 404
         assert response.json()["code"] == "FETCHER_NOT_FOUND"
 
     async def test_unknown_run_returns_404(
-        self, client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+        self,
+        authenticated_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
     ) -> None:
         config = await fetcher_config_factory()
-        response = await client.get(
+        response = await authenticated_client.get(
             f"/api/v1/fetchers/{config.fetcher_name}/runs/{uuid4()}"
         )
         assert response.status_code == 404
@@ -721,7 +749,7 @@ class TestGetFetcherRunEndpoint:
 
     async def test_run_of_different_fetcher_returns_404(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
         fetcher_run_factory: FetcherRunFactory,
     ) -> None:
@@ -729,7 +757,7 @@ class TestGetFetcherRunEndpoint:
         config_b = await fetcher_config_factory()
         run = await fetcher_run_factory(fetcher_name=config_a.fetcher_name)
 
-        response = await client.get(
+        response = await authenticated_client.get(
             f"/api/v1/fetchers/{config_b.fetcher_name}/runs/{run.id}"
         )
 
@@ -738,7 +766,7 @@ class TestGetFetcherRunEndpoint:
 
     async def test_queued_run_has_null_started_at_and_present_created_at(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
         fetcher_run_factory: FetcherRunFactory,
     ) -> None:
@@ -750,7 +778,7 @@ class TestGetFetcherRunEndpoint:
             triggered_by="manual",
         )
 
-        response = await client.get(
+        response = await authenticated_client.get(
             f"/api/v1/fetchers/{config.fetcher_name}/runs/{run.id}"
         )
 
@@ -761,31 +789,6 @@ class TestGetFetcherRunEndpoint:
         assert data["finished_at"] is None
         assert data["duration_seconds"] is None
         assert data["created_at"] is not None
-
-    async def test_anonymous_does_not_see_raw_diagnostics(
-        self,
-        client: AsyncClient,
-        fetcher_config_factory: FetcherConfigFactory,
-        fetcher_run_factory: FetcherRunFactory,
-    ) -> None:
-        config = await fetcher_config_factory()
-        run = await fetcher_run_factory(
-            fetcher_name=config.fetcher_name,
-            status="failure",
-            error_message="sanitized",
-            error_detail="raw detail",
-            error_traceback="raw traceback",
-        )
-
-        response = await client.get(
-            f"/api/v1/fetchers/{config.fetcher_name}/runs/{run.id}"
-        )
-
-        assert response.status_code == 200
-        data = response.json()["data"]
-        assert data["error_message"] == "sanitized"
-        assert "error_detail" not in data
-        assert "error_traceback" not in data
 
     async def test_admin_jwt_sees_raw_diagnostics(
         self,
@@ -840,10 +843,9 @@ class TestGetFetcherRunEndpoint:
         fetcher_run_factory: FetcherRunFactory,
     ) -> None:
         """An authenticated caller with no roles (and therefore no
-        `manage_fetchers` capability) is treated identically to
-        anonymous — capability, not mere authentication, gates
-        visibility. See `_resolve_has_manage_fetchers`
-        (`app/api/v1/fetchers.py`)."""
+        `manage_fetchers` capability) sees sanitized fields only —
+        capability, not mere authentication, gates visibility. See
+        `_resolve_has_manage_fetchers` (`app/api/v1/fetchers.py`)."""
         config = await fetcher_config_factory()
         run = await fetcher_run_factory(
             fetcher_name=config.fetcher_name,
@@ -865,7 +867,7 @@ class TestGetFetcherRunEndpoint:
 
     async def test_running_run_has_null_finished_at_and_duration(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
         fetcher_run_factory: FetcherRunFactory,
     ) -> None:
@@ -877,7 +879,7 @@ class TestGetFetcherRunEndpoint:
             duration_seconds=None,
         )
 
-        response = await client.get(
+        response = await authenticated_client.get(
             f"/api/v1/fetchers/{config.fetcher_name}/runs/{run.id}"
         )
 
@@ -893,7 +895,7 @@ class TestGetFetcherRunEndpoint:
 
     async def test_run_detail_exposes_items_succeeded(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
         fetcher_run_factory: FetcherRunFactory,
     ) -> None:
@@ -909,7 +911,7 @@ class TestGetFetcherRunEndpoint:
             items_failed=1,
         )
 
-        response = await client.get(
+        response = await authenticated_client.get(
             f"/api/v1/fetchers/{config.fetcher_name}/runs/{run.id}"
         )
 
@@ -928,16 +930,32 @@ class TestGetFetcherRunEndpoint:
 
 @pytest.mark.e2e
 class TestGetFetcherTimelineEndpoint:
-    async def test_unknown_fetcher_returns_404(self, client: AsyncClient) -> None:
-        response = await client.get("/api/v1/fetchers/no-such-fetcher/timeline")
-        assert response.status_code == 404
-        assert response.json()["code"] == "FETCHER_NOT_FOUND"
-
-    async def test_default_range_returns_envelope(
+    async def test_unauthenticated_returns_401(
         self, client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
     ) -> None:
         config = await fetcher_config_factory()
         response = await client.get(f"/api/v1/fetchers/{config.fetcher_name}/timeline")
+        assert response.status_code == 401
+        assert response.json() == UNAUTHENTICATED
+
+    async def test_unknown_fetcher_returns_404(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        response = await authenticated_client.get(
+            "/api/v1/fetchers/no-such-fetcher/timeline"
+        )
+        assert response.status_code == 404
+        assert response.json()["code"] == "FETCHER_NOT_FOUND"
+
+    async def test_default_range_returns_envelope(
+        self,
+        authenticated_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await authenticated_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/timeline"
+        )
 
         assert response.status_code == 200
         data = response.json()["data"]
@@ -946,7 +964,7 @@ class TestGetFetcherTimelineEndpoint:
 
     async def test_queued_point_has_null_started_at_semantics(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
         fetcher_run_factory: FetcherRunFactory,
     ) -> None:
@@ -959,7 +977,9 @@ class TestGetFetcherTimelineEndpoint:
             fetcher_name=config.fetcher_name, status="queued", started_at=None
         )
 
-        response = await client.get(f"/api/v1/fetchers/{config.fetcher_name}/timeline")
+        response = await authenticated_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/timeline"
+        )
 
         assert response.status_code == 200
         points = response.json()["data"]["points"]
@@ -975,7 +995,7 @@ class TestGetFetcherTimelineEndpoint:
 
     async def test_timeline_point_exposes_items_succeeded(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
         fetcher_run_factory: FetcherRunFactory,
     ) -> None:
@@ -994,7 +1014,9 @@ class TestGetFetcherTimelineEndpoint:
             items_failed=0,
         )
 
-        response = await client.get(f"/api/v1/fetchers/{config.fetcher_name}/timeline")
+        response = await authenticated_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/timeline"
+        )
 
         assert response.status_code == 200
         points = response.json()["data"]["points"]
@@ -1005,10 +1027,12 @@ class TestGetFetcherTimelineEndpoint:
         assert points[0]["items_failed"] == 0
 
     async def test_date_range_too_wide_returns_400(
-        self, client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+        self,
+        authenticated_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
     ) -> None:
         config = await fetcher_config_factory()
-        response = await client.get(
+        response = await authenticated_client.get(
             f"/api/v1/fetchers/{config.fetcher_name}/timeline",
             params={"from_date": "2000-01-01", "to_date": "2010-01-01"},
         )
@@ -1019,7 +1043,7 @@ class TestGetFetcherTimelineEndpoint:
     @pytest.mark.parametrize(("field", "value"), _OUT_OF_RANGE_BOUNDS)
     async def test_out_of_range_single_bound_returns_422_without_error_log(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
         field: str,
         value: str,
@@ -1029,7 +1053,7 @@ class TestGetFetcherTimelineEndpoint:
         config = await fetcher_config_factory()
 
         with capture_logs() as logs:
-            response = await client.get(
+            response = await authenticated_client.get(
                 f"/api/v1/fetchers/{config.fetcher_name}/timeline",
                 params={field: value},
             )
@@ -1039,12 +1063,12 @@ class TestGetFetcherTimelineEndpoint:
 
     async def test_representable_extreme_bounds_reach_the_database(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
     ) -> None:
         config = await fetcher_config_factory()
 
-        response = await client.get(
+        response = await authenticated_client.get(
             f"/api/v1/fetchers/{config.fetcher_name}/timeline",
             params={
                 "from_date": "9999-12-31T00:00:00+23:59",
@@ -1056,7 +1080,9 @@ class TestGetFetcherTimelineEndpoint:
         assert response.json()["data"]["points"] == []
 
     async def test_exactly_1825_days_is_accepted(
-        self, client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+        self,
+        authenticated_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
     ) -> None:
         """Uses full ISO datetimes (not bare dates) so neither bound is
         widened to a day boundary (`docs/api-spec.md`, Date Range
@@ -1066,7 +1092,7 @@ class TestGetFetcherTimelineEndpoint:
         from_date = datetime(2020, 1, 1, tzinfo=UTC)
         to_date = from_date + timedelta(days=1825)
 
-        response = await client.get(
+        response = await authenticated_client.get(
             f"/api/v1/fetchers/{config.fetcher_name}/timeline",
             params={
                 "from_date": from_date.isoformat(),
@@ -1078,7 +1104,7 @@ class TestGetFetcherTimelineEndpoint:
 
     async def test_disabled_period_actor_hidden_without_manage_fetchers(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
         fetcher_audit_event_factory: FetcherAuditEventFactory,
         user_factory: UserFactory,
@@ -1093,7 +1119,7 @@ class TestGetFetcherTimelineEndpoint:
             user_id=actor.id,
         )
 
-        response = await client.get(
+        response = await authenticated_client.get(
             f"/api/v1/fetchers/{config.fetcher_name}/timeline",
             params={
                 "from_date": (now - timedelta(days=5)).date().isoformat(),

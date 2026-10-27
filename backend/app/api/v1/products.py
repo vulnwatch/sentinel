@@ -2,11 +2,11 @@
 
 See `docs/features/packages/product-catalog.md` (List Products, Product
 Query Service, Security) for the authoritative endpoint contract, and
-`docs/api-spec.md` (Optional Authentication on Public Endpoints; Request
-Conventions; Product Identifier Resolution) for the shared behavior.
+`docs/api-spec.md` (Authentication and Authorization; Request Conventions;
+Product Identifier Resolution) for the shared behavior.
 
-The handler stays thin: it processes optional authentication, captures the
-one UTC `evaluation_date` of the request, removes invalid repeatable enum
+The handler stays thin: it requires authentication, captures the one UTC
+`evaluation_date` of the request, removes invalid repeatable enum
 filter values, delegates the query to `product_service.list_products()`,
 and serializes the semantic projection. No database query lives here.
 """
@@ -19,7 +19,7 @@ from typing import Annotated, Final
 
 from fastapi import APIRouter, Depends, Query
 
-from app.api.dependencies import OptionalCurrentUser
+from app.api.dependencies import CurrentUser
 from app.core.enums import (
     CatalogPresence,
     LifecyclePhaseFilter,
@@ -174,25 +174,24 @@ def serialize_product_list_item(item: ProductListItemProjection) -> ProductListI
         "retained historical Products are selected through "
         "`catalog_presence`. Supports search, exact CPE, repeatable catalog "
         "presence and lifecycle filters, and sorting. Before the first "
-        "complete snapshot, the list is empty. Public; optional "
-        "authentication."
+        "complete snapshot, the list is empty. Requires authentication (JWT "
+        "session or API key)."
     ),
 )
 async def list_products(
     db: DatabaseSession,
-    principal: OptionalCurrentUser,
+    _principal: CurrentUser,
     query: Annotated[ProductListQuery, Depends(_product_list_query)],
 ) -> ProductListResponse:
     """List Products — see `docs/features/packages/product-catalog.md`
     (List Products).
 
-    `principal` processes optional authentication (sliding session
-    refresh, 401 for an invalid selected credential); the listing itself
-    does not vary by caller. Captures one UTC evaluation date for the
-    complete response; the service derives rows, total, catalog presence,
-    and lifecycle phases from one snapshot in one statement.
+    `_principal` exists solely to require authentication (`Access:
+    Authenticated`); the listing itself does not vary by caller. Captures
+    one UTC evaluation date for the complete response; the service
+    derives rows, total, catalog presence, and lifecycle phases from one
+    snapshot in one statement.
     """
-    del principal
     result = await product_service.list_products(
         db,
         evaluation_date=_utc_now().astimezone(UTC).date(),

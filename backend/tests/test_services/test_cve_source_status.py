@@ -70,7 +70,8 @@ from app.services.cve_service import (
     get_cve_source_status,
     upsert_cve,
 )
-from app.services.ticket_visibility import ANONYMOUS_CALLER, TicketCaller
+from app.services.ticket_visibility import TicketCaller
+from tests.support.callers import ROLELESS_CALLER
 from tests.support.cve_source_status import (
     clear_fetcher_registries,
     define_cve_fetcher,
@@ -192,7 +193,7 @@ class _Service:
         return cls(factory, journal, hooks)
 
     async def status(
-        self, cve_id: str, caller: TicketCaller = ANONYMOUS_CALLER
+        self, cve_id: str, caller: TicketCaller = ROLELESS_CALLER
     ) -> CVESourceStatusResult:
         return await get_cve_source_status(cve_id, caller, session_factory=self.factory)
 
@@ -424,16 +425,15 @@ class TestIdentityAndAccess:
 
         with pytest.raises(CVENotFoundError) as missing:
             await service.status("CVE-2099-99999", ALL_SCOPE)
-        for caller in (ANONYMOUS_CALLER, _restricted(user)):
-            with pytest.raises(CVENotFoundError) as denied:
-                await service.status(confidential.cve_id, caller)
-            assert type(denied.value) is type(missing.value)
-            assert str(denied.value) == str(missing.value)
-            assert denied.value.args == missing.value.args
+        with pytest.raises(CVENotFoundError) as denied:
+            await service.status(confidential.cve_id, _restricted(user))
+        assert type(denied.value) is type(missing.value)
+        assert str(denied.value) == str(missing.value)
+        assert denied.value.args == missing.value.args
 
         redis_factory.assert_not_called()
 
-    @pytest.mark.parametrize("caller", ["anonymous", "restricted", "scope-all"])
+    @pytest.mark.parametrize("caller", ["restricted", "scope-all"])
     async def test_ticketless_cve_is_always_visible(
         self,
         service: _Service,
@@ -446,7 +446,6 @@ class TestIdentityAndAccess:
         cve: CVE = await cve_factory(cve_id=_random_cve_id())
         await cve_source_factory(cve_id=cve.id, source="legacy_source", **_ROW)
         callers = {
-            "anonymous": ANONYMOUS_CALLER,
             "restricted": _restricted(await user_factory()),
             "scope-all": ALL_SCOPE,
         }
@@ -455,9 +454,7 @@ class TestIdentityAndAccess:
 
         assert result.entries == (_historical("legacy_source", SUCCESS, FETCHED),)
 
-    @pytest.mark.parametrize(
-        "path", ["non-confidential-anonymous", "non-confidential", "scope-all", "grant"]
-    )
+    @pytest.mark.parametrize("path", ["non-confidential", "scope-all", "grant"])
     async def test_associated_cve_is_visible_through_a_qualifying_path(
         self,
         service: _Service,
@@ -478,7 +475,6 @@ class TestIdentityAndAccess:
         if path == "grant":
             await ticket_access_grant_factory(ticket_id=ticket.id, user_id=user.id)
         caller = {
-            "non-confidential-anonymous": ANONYMOUS_CALLER,
             "non-confidential": _restricted(user),
             "scope-all": TicketCaller.authenticated(user.id, Scope.ALL),
             "grant": _restricted(user),
@@ -622,7 +618,7 @@ async def _prepare_loss(world: _CommittedWorld, case: str) -> _Loss:
     assert case == "association"
     ticket = await world.ticket(None, is_confidential=True)
     change = update(Ticket).where(Ticket.id == ticket.id).values(cve_id=cve.id)
-    return _Loss(cve, ANONYMOUS_CALLER, change)
+    return _Loss(cve, ROLELESS_CALLER, change)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1146,7 +1142,7 @@ class TestRedisDegradation:
 
         result = await get_cve_source_status(
             cve.cve_id,
-            ANONYMOUS_CALLER,
+            ROLELESS_CALLER,
             session_factory=cast(async_sessionmaker[AsyncSession], _factory),
         )
 

@@ -84,7 +84,8 @@ from app.services.ticket_service import (
     get_ticket_detail,
     resolve_ticket_locator,
 )
-from app.services.ticket_visibility import ANONYMOUS_CALLER, TicketCaller
+from app.services.ticket_visibility import TicketCaller
+from tests.support.callers import ROLELESS_CALLER
 from tests.support.deadline_matrix import (
     BEFORE_ANY_DUE,
     CREATED_AT,
@@ -204,7 +205,7 @@ class TestMalformedLocatorPerformsNoQuery:
         db = AsyncMock(spec=AsyncSession)
 
         with pytest.raises(TicketNotFoundError):
-            await resolve_ticket_locator(db, locator, ANONYMOUS_CALLER)
+            await resolve_ticket_locator(db, locator, ROLELESS_CALLER)
 
         db.execute.assert_not_awaited()
 
@@ -217,7 +218,7 @@ class TestResolveTicketLocator:
         ticket: Ticket = await ticket_factory()
 
         resolved = await resolve_ticket_locator(
-            db_session, format_ticket_id(ticket.sequence_id), ANONYMOUS_CALLER
+            db_session, format_ticket_id(ticket.sequence_id), ROLELESS_CALLER
         )
 
         assert resolved == ResolvedTicket(id=ticket.id, sequence_id=ticket.sequence_id)
@@ -228,15 +229,13 @@ class TestResolveTicketLocator:
         ticket: Ticket = await ticket_factory()
 
         with pytest.raises(TicketNotFoundError):
-            await resolve_ticket_locator(db_session, str(ticket.id), ANONYMOUS_CALLER)
+            await resolve_ticket_locator(db_session, str(ticket.id), ROLELESS_CALLER)
 
     async def test_well_formed_missing_locator_is_not_found(
         self, db_session: AsyncSession
     ) -> None:
         with pytest.raises(TicketNotFoundError):
-            await resolve_ticket_locator(
-                db_session, "SNTL-2147483647", ANONYMOUS_CALLER
-            )
+            await resolve_ticket_locator(db_session, "SNTL-2147483647", ROLELESS_CALLER)
 
     async def test_inaccessible_ticket_is_not_found(
         self, db_session: AsyncSession, ticket_factory: Factory, user_factory: Factory
@@ -244,13 +243,10 @@ class TestResolveTicketLocator:
         ticket: Ticket = await ticket_factory(is_confidential=True)
         user = await user_factory()
         locator = format_ticket_id(ticket.sequence_id)
+        caller = TicketCaller.authenticated(user.id, Scope.NON_CONFIDENTIAL)
 
-        for caller in (
-            ANONYMOUS_CALLER,
-            TicketCaller.authenticated(user.id, Scope.NON_CONFIDENTIAL),
-        ):
-            with pytest.raises(TicketNotFoundError):
-                await resolve_ticket_locator(db_session, locator, caller)
+        with pytest.raises(TicketNotFoundError):
+            await resolve_ticket_locator(db_session, locator, caller)
 
     async def test_accessible_confidential_ticket_resolves(
         self,
@@ -284,7 +280,7 @@ class TestResolveTicketLocator:
         messages = set()
         for locator in causes:
             with pytest.raises(TicketNotFoundError) as excinfo:
-                await resolve_ticket_locator(db_session, locator, ANONYMOUS_CALLER)
+                await resolve_ticket_locator(db_session, locator, ROLELESS_CALLER)
             assert type(excinfo.value) is TicketNotFoundError
             messages.add(str(excinfo.value))
         assert messages == {"Ticket not found."}
@@ -295,7 +291,7 @@ class TestResolveTicketLocator:
         db.execute.side_effect = failure
 
         with pytest.raises(OperationalError) as excinfo:
-            await resolve_ticket_locator(db, "SNTL-1", ANONYMOUS_CALLER)
+            await resolve_ticket_locator(db, "SNTL-1", ROLELESS_CALLER)
 
         assert excinfo.value is failure
 
@@ -716,7 +712,7 @@ class TestDetailProjection:
         await ticket_package_factory(ticket_id=target.id, package_name="secret-lib")
         duplicate: Ticket = await ticket_factory(duplicate_of_id=target.id)
 
-        detail = await _detail(db_session, duplicate, ANONYMOUS_CALLER)
+        detail = await _detail(db_session, duplicate, ROLELESS_CALLER)
 
         assert detail.duplicate_of_ticket_id == _sntl(target)
         assert (detail.cve, detail.severity, detail.priority, detail.packages) == (
@@ -726,7 +722,7 @@ class TestDetailProjection:
             (),
         )
         with pytest.raises(TicketNotFoundError):
-            await _detail(db_session, target, ANONYMOUS_CALLER)
+            await _detail(db_session, target, ROLELESS_CALLER)
 
     async def test_duplicate_chain_is_not_followed(
         self, db_session: AsyncSession, clock: Clock, ticket_factory: Factory
@@ -828,7 +824,7 @@ class TestDetailAccessibility:
         ):
             with pytest.raises(TicketNotFoundError) as excinfo:
                 await get_ticket_detail(
-                    db_session, ticket_id=locator, caller=ANONYMOUS_CALLER
+                    db_session, ticket_id=locator, caller=ROLELESS_CALLER
                 )
             assert type(excinfo.value) is TicketNotFoundError
 
@@ -861,12 +857,12 @@ class TestDetailAccessibility:
         assert detail.ticket_id == _sntl(ticket)
         assert detail.is_confidential is True
 
-    async def test_non_confidential_detail_is_visible_to_anonymous(
+    async def test_non_confidential_detail_is_visible_to_roleless_caller(
         self, db_session: AsyncSession, ticket_factory: Factory
     ) -> None:
         ticket: Ticket = await ticket_factory()
 
-        detail = await _detail(db_session, ticket, ANONYMOUS_CALLER)
+        detail = await _detail(db_session, ticket, ROLELESS_CALLER)
 
         assert detail.ticket_id == _sntl(ticket)
 
@@ -1542,7 +1538,7 @@ class TestDetailReadRaces:
         reader = await db_session_factory()
         writer = await db_session_factory()
 
-        before = await _detail(reader, ticket, ANONYMOUS_CALLER)
+        before = await _detail(reader, ticket, ROLELESS_CALLER)
         writer.add(
             CVEEPSSScore(
                 cve_id=cve.id, score=0.5, percentile=0.96, assessed_at=date(2026, 3, 9)
@@ -1558,7 +1554,7 @@ class TestDetailReadRaces:
             .where(TicketPackageTrack.id == track.id)
             .values(status=PackageStatus.AFFECTED.value),
         )
-        after = await _detail(reader, ticket, ANONYMOUS_CALLER)
+        after = await _detail(reader, ticket, ROLELESS_CALLER)
 
         assert before.cve is not None
         assert after.cve is not None
@@ -1600,12 +1596,12 @@ class TestDetailReadRaces:
         reader = await db_session_factory()
         writer = await db_session_factory()
 
-        before = await _detail(reader, ticket, ANONYMOUS_CALLER)
+        before = await _detail(reader, ticket, ROLELESS_CALLER)
         await _commit(
             writer,
             update(Ticket).where(Ticket.id == ticket.id).values(cve_id=replacement.id),
         )
-        after = await _detail(reader, ticket, ANONYMOUS_CALLER)
+        after = await _detail(reader, ticket, ROLELESS_CALLER)
 
         assert before.cve is not None
         assert after.cve is not None

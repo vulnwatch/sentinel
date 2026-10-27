@@ -4,7 +4,7 @@
 See docs/features/packages/package-model.md (API Endpoints; Search
 Packages Across Tickets, including Query Parameters and the
 `PackageListItem`, `TicketPackageRef`, and `TrackSummary` schemas;
-Security), docs/api-spec.md (Optional Authentication on Public Endpoints,
+Security), docs/api-spec.md (Authentication and Authorization,
 Authorization Chain Evaluation Order flow 1, Query Parameter Length Limit,
 Undeclared Query Parameters, Pagination, Enum Filter Validation, Sort
 Parameter Validation, Deterministic Pagination Ordering, Response Format,
@@ -14,8 +14,8 @@ docs/features/platform/testing-strategy.md (Ticket Accessibility:
 canonical predicate, list and count reads, Ticket identifier and
 read-contract coverage, controlled clock; Parallel Execution).
 
-These tests cover the HTTP contract: the wire shape, optional
-authentication, visibility after a real exclusion request, query
+These tests cover the HTTP contract: the wire shape, authentication,
+visibility after a real exclusion request, query
 validation, filters and sorting at the wire, pagination, the global query
 length limit, undeclared parameters, OpenAPI, and the one handler-captured
 UTC evaluation date. Search, actionability, aggregation, N+1, no-write,
@@ -49,6 +49,7 @@ from app.core.enums import (
     PackageSortField,
     PackageStatus,
     Role,
+    SessionCreationReason,
     Severity,
     SortOrder,
     TicketStatus,
@@ -64,6 +65,7 @@ from app.models.ticket_package_product import TicketPackageProduct
 from app.models.ticket_package_track import TicketPackageTrack
 from app.models.user import User
 from app.services import package_service
+from app.services.session_service import create_session
 from tests.support.ticket_api import (
     UNAUTHENTICATED,
     Clock,
@@ -220,7 +222,7 @@ def trees(
 class TestWireShape:
     async def test_returns_the_paginated_envelope_in_the_wire_format(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         trees: Trees,
@@ -246,7 +248,7 @@ class TestWireShape:
             updated_at=updated_at,
         )
 
-        response = await client.get(_PATH)
+        response = await authenticated_client.get(_PATH)
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/json"
@@ -281,7 +283,7 @@ class TestWireShape:
 
     async def test_wont_fix_tracks_are_counted(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         trees: Trees,
@@ -291,7 +293,7 @@ class TestWireShape:
             ticket, "example-tool", (PackageStatus.WONT_FIX, PackageStatus.WONT_FIX)
         )
 
-        (item,) = (await _search(client))["data"]
+        (item,) = (await _search(authenticated_client))["data"]
 
         assert item["track_summary"] == _summary(total=2, wont_fix=2)
 
@@ -306,7 +308,7 @@ class TestWireShape:
     )
     async def test_severity_is_lowercase_and_none_is_distinct_from_null(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         cve_factory: Factory,
@@ -320,7 +322,7 @@ class TestWireShape:
         ticket: Ticket = await ticket_factory(**columns)
         await trees.package(ticket, "example-lib")
 
-        response = await client.get(_PATH)
+        response = await authenticated_client.get(_PATH)
 
         (item,) = response.json()["data"]
         # Key access: an unresolved severity is a present JSON `null`.
@@ -329,7 +331,7 @@ class TestWireShape:
     @pytest.mark.parametrize("status", list(TicketStatus), ids=str)
     async def test_ticket_status_is_the_lowercase_wire_value(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         trees: Trees,
@@ -338,16 +340,16 @@ class TestWireShape:
         ticket: Ticket = await ticket_factory(status=status.value)
         await trees.package(ticket, "example-lib")
 
-        body = await _search(client, ticket_status=status.value.lower())
+        body = await _search(authenticated_client, ticket_status=status.value.lower())
 
         assert [item["ticket"]["status"] for item in body["data"]] == [
             status.value.lower()
         ]
 
     async def test_no_package_returns_an_empty_page(
-        self, client: AsyncClient, fixed_clock: Clock
+        self, authenticated_client: AsyncClient, fixed_clock: Clock
     ) -> None:
-        response = await client.get(_PATH)
+        response = await authenticated_client.get(_PATH)
 
         assert response.status_code == 200
         assert response.json() == {
@@ -357,7 +359,7 @@ class TestWireShape:
 
     async def test_each_ticket_occurrence_is_a_separate_item(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         trees: Trees,
@@ -368,7 +370,7 @@ class TestWireShape:
         for ticket in (first, second):
             await trees.package(ticket, "example-lib")
 
-        body = await _search(client, name="example-lib")
+        body = await _search(authenticated_client, name="example-lib")
 
         assert body["meta"]["total"] == 2
         assert {item["ticket"]["ticket_id"] for item in body["data"]} == {
@@ -378,13 +380,32 @@ class TestWireShape:
 
 
 # ---------------------------------------------------------------------------
-# Optional authentication and visibility
+# Authentication and visibility
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.e2e
-class TestOptionalAuthentication:
-    async def test_anonymous_and_authenticated_callers_see_their_visible_set(
+class TestAuthentication:
+    async def test_request_without_credential_returns_401_before_the_search(
+        self,
+        client: AsyncClient,
+        fixed_clock: Clock,
+        ticket_factory: Factory,
+        trees: Trees,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        await trees.package(await ticket_factory(), "example-public")
+        spy = AsyncMock()
+        monkeypatch.setattr(package_service, "search_packages", spy)
+
+        response = await client.get(_PATH)
+
+        assert response.status_code == 401
+        assert response.json() == UNAUTHENTICATED
+        spy.assert_not_awaited()
+        assert fixed_clock.calls == 0
+
+    async def test_roleless_granted_and_scope_all_callers_see_their_visible_set(
         self,
         authenticated_client: AsyncClient,
         authenticated_user: User,
@@ -400,24 +421,19 @@ class TestOptionalAuthentication:
         await trees.package(public, "example-public")
         await trees.package(granted, "example-granted")
         await trees.package(hidden, "example-hidden")
+
+        role_less = await _names(authenticated_client)
         await ticket_access_grant_factory(
             ticket_id=granted.id, user_id=authenticated_user.id
         )
-
-        # `authenticated_client` is the shared client with a session cookie;
-        # drop it for one anonymous request.
-        token = authenticated_client.cookies[SESSION_COOKIE_NAME]
-        authenticated_client.cookies.delete(SESSION_COOKIE_NAME)
-        anonymous = await _names(authenticated_client)
-        authenticated_client.cookies.set(SESSION_COOKIE_NAME, token)
-        role_less = await _names(authenticated_client)
+        with_grant = await _names(authenticated_client)
         await user_role_factory(
             user_id=authenticated_user.id, role=Role.VULNERABILITY_ANALYST.value
         )
         scope_all = await _names(authenticated_client)
 
-        assert anonymous == ["example-public"]
-        assert sorted(role_less) == ["example-granted", "example-public"]
+        assert role_less == ["example-public"]
+        assert sorted(with_grant) == ["example-granted", "example-public"]
         assert sorted(scope_all) == [
             "example-granted",
             "example-hidden",
@@ -433,7 +449,7 @@ class TestOptionalAuthentication:
             ),
         ],
     )
-    async def test_invalid_selected_credential_is_401_never_anonymous(
+    async def test_invalid_selected_credential_returns_401_before_the_search(
         self,
         client: AsyncClient,
         fixed_clock: Clock,
@@ -442,9 +458,8 @@ class TestOptionalAuthentication:
         monkeypatch: pytest.MonkeyPatch,
         credential: dict[str, dict[str, str]],
     ) -> None:
-        """A non-confidential package exists, so an anonymous fallback
-        would have returned it; instead the global 401 is returned before
-        the search runs."""
+        """A non-confidential package exists, yet a rejected credential is
+        never ignored: the global 401 is returned before the search runs."""
         await trees.package(await ticket_factory(), "example-public")
         spy = AsyncMock()
         monkeypatch.setattr(package_service, "search_packages", spy)
@@ -609,7 +624,8 @@ class TestVisibilityAfterExclusion:
         only through its maintained package A. The search returns A and
         the Ticket's other actionable package B; after the same caller
         excludes A through the real endpoint, a new search returns neither
-        and `meta.total` excludes both."""
+        and `meta.total` excludes both. A role-less reader without a
+        visibility path sees only the non-confidential package."""
         world, committed_client, product_ids = committed_app
         analyst, headers = await world.va_headers(role=Role.RESTRICTED_ANALYST)
         confidential = await world.ticket(
@@ -660,6 +676,13 @@ class TestVisibilityAfterExclusion:
             ]
         )
         await db.commit()
+        reader = await world.user(role=None)
+        created = await create_session(
+            db, reader, SessionCreationReason.LOCAL_LOGIN, expected_password_hash=None
+        )
+        assert created is not None
+        await db.commit()
+        role_less_headers = {"Authorization": f"Bearer {created.token}"}
 
         async def search(**kwargs: Any) -> dict[str, Any]:
             response = await committed_client.get(
@@ -675,7 +698,7 @@ class TestVisibilityAfterExclusion:
             body: dict[str, Any] = response.json()
             return body
 
-        anonymous = await search()
+        role_less = await search(headers=role_less_headers)
         before = await search(headers=headers)
         excluded = await committed_client.post(
             f"/api/v1/tickets/{locator(confidential)}/packages/{maintained.id}/exclude",
@@ -683,8 +706,8 @@ class TestVisibilityAfterExclusion:
         )
         after = await search(headers=headers)
 
-        assert [i["package_name"] for i in anonymous["data"]] == [f"{prefix}-c"]
-        assert anonymous["meta"]["total"] == 1
+        assert [i["package_name"] for i in role_less["data"]] == [f"{prefix}-c"]
+        assert role_less["meta"]["total"] == 1
         assert [i["package_name"] for i in before["data"]] == [
             f"{prefix}-a",
             f"{prefix}-b",
@@ -716,7 +739,7 @@ class TestSearchAndNameExclusivity:
     )
     async def test_non_empty_search_with_name_is_a_validation_error(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         monkeypatch: pytest.MonkeyPatch,
         search: str,
@@ -724,7 +747,7 @@ class TestSearchAndNameExclusivity:
         spy = AsyncMock()
         monkeypatch.setattr(package_service, "search_packages", spy)
 
-        response = await client.get(
+        response = await authenticated_client.get(
             _PATH, params={"search": search, "name": "example-lib"}
         )
 
@@ -740,7 +763,7 @@ class TestSearchAndNameExclusivity:
 
     async def test_whitespace_only_search_is_absent_and_only_name_applies(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         trees: Trees,
@@ -749,14 +772,16 @@ class TestSearchAndNameExclusivity:
         await trees.package(ticket, "example-lib")
         await trees.package(ticket, "example-lib-extra")
 
-        assert await _names(client, search="   ", name="example-lib") == ["example-lib"]
+        assert await _names(authenticated_client, search="   ", name="example-lib") == [
+            "example-lib"
+        ]
 
 
 @pytest.mark.e2e
 class TestFilters:
     async def test_search_is_a_trimmed_case_insensitive_literal_substring(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         trees: Trees,
@@ -765,20 +790,24 @@ class TestFilters:
         for name in ("example-lib", "example%lib", "example_lib", "fictional-tool"):
             await trees.package(ticket, name)
 
-        assert await _names(client, search="%") == ["example%lib"]
-        assert await _names(client, search="_") == ["example_lib"]
-        assert await _names(client, search="  EXAMPLE%LIB  ") == ["example%lib"]
-        assert sorted(await _names(client, search="Example")) == [
+        assert await _names(authenticated_client, search="%") == ["example%lib"]
+        assert await _names(authenticated_client, search="_") == ["example_lib"]
+        assert await _names(authenticated_client, search="  EXAMPLE%LIB  ") == [
+            "example%lib"
+        ]
+        assert sorted(await _names(authenticated_client, search="Example")) == [
             "example%lib",
             "example-lib",
             "example_lib",
         ]
-        assert await _names(client, search="   ") == await _names(client)
-        assert len(await _names(client)) == 4
+        assert await _names(authenticated_client, search="   ") == await _names(
+            authenticated_client
+        )
+        assert len(await _names(authenticated_client)) == 4
 
     async def test_name_is_an_exact_match(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         trees: Trees,
@@ -787,13 +816,13 @@ class TestFilters:
         for name in ("example-lib", "example-lib-extra", "fictional-example-lib"):
             await trees.package(ticket, name)
 
-        assert await _names(client, name="example-lib") == ["example-lib"]
-        assert await _names(client, name="example") == []
-        assert await _names(client, name="EXAMPLE-LIB") == []
+        assert await _names(authenticated_client, name="example-lib") == ["example-lib"]
+        assert await _names(authenticated_client, name="example") == []
+        assert await _names(authenticated_client, name="EXAMPLE-LIB") == []
 
     async def test_ticket_status_is_repeatable_with_or_semantics(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         trees: Trees,
@@ -802,14 +831,16 @@ class TestFilters:
             ticket: Ticket = await ticket_factory(status=status.value)
             await trees.package(ticket, f"example-{status.value.lower()}")
 
-        assert sorted(await _names(client, ticket_status=["new", "analysis"])) == [
+        assert sorted(
+            await _names(authenticated_client, ticket_status=["new", "analysis"])
+        ) == [
             "example-analysis",
             "example-new",
         ]
-        assert await _names(client, ticket_status=["new", "bogus", "NEW"]) == [
-            "example-new"
-        ]
-        assert len(await _names(client)) == 3
+        assert await _names(
+            authenticated_client, ticket_status=["new", "bogus", "NEW"]
+        ) == ["example-new"]
+        assert len(await _names(authenticated_client)) == 3
 
     @pytest.mark.parametrize(
         "values",
@@ -823,7 +854,7 @@ class TestFilters:
     )
     async def test_all_invalid_ticket_status_values_return_an_empty_page(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         trees: Trees,
@@ -833,7 +864,9 @@ class TestFilters:
             ticket: Ticket = await ticket_factory(status=status.value)
             await trees.package(ticket, f"example-{status.value.lower()}")
 
-        response = await client.get(_PATH, params={"ticket_status": values})
+        response = await authenticated_client.get(
+            _PATH, params={"ticket_status": values}
+        )
 
         assert response.status_code == 200
         assert response.json() == {
@@ -843,7 +876,7 @@ class TestFilters:
 
     async def test_filters_combine_with_and(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         trees: Trees,
@@ -854,7 +887,9 @@ class TestFilters:
             await trees.package(ticket, "example-lib")
             await trees.package(ticket, "fictional-tool")
 
-        body = await _search(client, search="lib", ticket_status="resolved")
+        body = await _search(
+            authenticated_client, search="lib", ticket_status="resolved"
+        )
 
         assert [
             (item["package_name"], item["ticket"]["ticket_id"]) for item in body["data"]
@@ -904,7 +939,7 @@ class TestSorting:
     )
     async def test_sort_parameters_order_the_page(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         trees: Trees,
@@ -918,11 +953,11 @@ class TestSorting:
         await trees.package(ticket, "example-c", created_at=_BASE + timedelta(hours=1))
         await trees.package(ticket, "example-a", created_at=_BASE + timedelta(hours=2))
 
-        assert await _names(client, **params) == expected
+        assert await _names(authenticated_client, **params) == expected
 
     async def test_equal_sort_keys_page_deterministically(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         trees: Trees,
@@ -937,7 +972,7 @@ class TestSorting:
             pages = [
                 (
                     await _search(
-                        client,
+                        authenticated_client,
                         sort_by="created_at",
                         sort_order=sort_order.value,
                         page=page,
@@ -952,7 +987,9 @@ class TestSorting:
                 item["id"]
                 for item in (
                     await _search(
-                        client, sort_by="created_at", sort_order=sort_order.value
+                        authenticated_client,
+                        sort_by="created_at",
+                        sort_order=sort_order.value,
                     )
                 )["data"]
             ]
@@ -972,7 +1009,7 @@ class TestSorting:
     )
     async def test_invalid_sort_parameters_return_422(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         monkeypatch: pytest.MonkeyPatch,
         params: dict[str, str],
@@ -981,7 +1018,7 @@ class TestSorting:
         spy = AsyncMock()
         monkeypatch.setattr(package_service, "search_packages", spy)
 
-        response = await client.get(_PATH, params=params)
+        response = await authenticated_client.get(_PATH, params=params)
 
         assert response.status_code == 422
         body = response.json()
@@ -1000,7 +1037,7 @@ class TestPagination:
     @pytest.mark.parametrize("per_page", [1, 100], ids=["min", "max"])
     async def test_per_page_boundaries_are_accepted(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         trees: Trees,
@@ -1010,14 +1047,14 @@ class TestPagination:
         await trees.package(ticket, "example-a")
         await trees.package(ticket, "example-b")
 
-        body = await _search(client, per_page=per_page)
+        body = await _search(authenticated_client, per_page=per_page)
 
         assert body["meta"] == {"total": 2, "page": 1, "per_page": per_page}
         assert len(body["data"]) == min(per_page, 2)
 
     async def test_pages_partition_the_result(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         trees: Trees,
@@ -1028,7 +1065,11 @@ class TestPagination:
 
         pages = [
             await _search(
-                client, sort_by="package_name", sort_order="asc", page=page, per_page=2
+                authenticated_client,
+                sort_by="package_name",
+                sort_order="asc",
+                page=page,
+                per_page=2,
             )
             for page in (1, 2)
         ]
@@ -1044,7 +1085,7 @@ class TestPagination:
 
     async def test_page_beyond_the_last_is_empty_with_the_correct_total(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         trees: Trees,
@@ -1053,7 +1094,9 @@ class TestPagination:
         for name in ("example-a", "example-b", "example-c"):
             await trees.package(ticket, name)
 
-        response = await client.get(_PATH, params={"page": 3, "per_page": 2})
+        response = await authenticated_client.get(
+            _PATH, params={"page": 3, "per_page": 2}
+        )
 
         assert response.status_code == 200
         assert response.json() == {
@@ -1073,7 +1116,7 @@ class TestPagination:
     )
     async def test_out_of_range_pagination_is_a_422_never_clamped(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         monkeypatch: pytest.MonkeyPatch,
         params: dict[str, Any],
@@ -1082,7 +1125,7 @@ class TestPagination:
         spy = AsyncMock()
         monkeypatch.setattr(package_service, "search_packages", spy)
 
-        response = await client.get(_PATH, params=params)
+        response = await authenticated_client.get(_PATH, params=params)
 
         assert response.status_code == 422
         body = response.json()
@@ -1100,9 +1143,9 @@ class TestPagination:
 class TestQueryLength:
     @pytest.mark.parametrize("field", ["search", "name"])
     async def test_a_500_character_value_is_accepted(
-        self, client: AsyncClient, fixed_clock: Clock, field: str
+        self, authenticated_client: AsyncClient, fixed_clock: Clock, field: str
     ) -> None:
-        body = await _search(client, **{field: "x" * 500})
+        body = await _search(authenticated_client, **{field: "x" * 500})
 
         assert body == {"data": [], "meta": {"total": 0, "page": 1, "per_page": 20}}
 
@@ -1125,7 +1168,7 @@ class TestQueryLength:
     )
     async def test_a_501_character_value_is_a_422(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         monkeypatch: pytest.MonkeyPatch,
         params: dict[str, Any],
@@ -1137,7 +1180,7 @@ class TestQueryLength:
         spy = AsyncMock()
         monkeypatch.setattr(package_service, "search_packages", spy)
 
-        response = await client.get(_PATH, params=params)
+        response = await authenticated_client.get(_PATH, params=params)
 
         assert response.status_code == 422
         assert response.json() == validation_error(
@@ -1150,7 +1193,7 @@ class TestQueryLength:
 class TestUndeclaredParameters:
     async def test_undeclared_query_parameters_are_ignored(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         fixed_clock: Clock,
         ticket_factory: Factory,
         trees: Trees,
@@ -1160,9 +1203,9 @@ class TestUndeclaredParameters:
         await trees.package(new, "example-a", created_at=_BASE)
         await trees.package(resolved, "example-b", created_at=_BASE)
 
-        baseline = await _search(client)
+        baseline = await _search(authenticated_client)
         with_undeclared = await _search(
-            client,
+            authenticated_client,
             status="new",
             severity="bogus",
             foo="bar",
@@ -1233,7 +1276,7 @@ class TestEvaluationDate:
     )
     async def test_the_utc_date_of_the_captured_instant_decides_actionability(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         trees: Trees,
         monkeypatch: pytest.MonkeyPatch,
@@ -1250,7 +1293,7 @@ class TestEvaluationDate:
         )
         await trees.track(package, PackageStatus.AFFECTED, gs_end=_GS_END)
 
-        body = await _search(client)
+        body = await _search(authenticated_client)
 
         assert clock.calls == 1
         assert received == [evaluation_date]
@@ -1267,7 +1310,7 @@ class TestEvaluationDate:
 
     async def test_one_date_drives_candidates_and_aggregates_across_midnight(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         ticket_factory: Factory,
         trees: Trees,
         monkeypatch: pytest.MonkeyPatch,
@@ -1296,7 +1339,9 @@ class TestEvaluationDate:
         for clock in clocks:
             monkeypatch.setattr(route, "_utc_now", clock.now)
             bodies.append(
-                await _search(client, sort_by="package_name", sort_order="asc")
+                await _search(
+                    authenticated_client, sort_by="package_name", sort_order="asc"
+                )
             )
 
         assert [clock.calls for clock in clocks] == [1, 1]

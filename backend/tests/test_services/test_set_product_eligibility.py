@@ -160,9 +160,7 @@ class TestCallerValidation:
     inconsistent pairing is a caller-contract violation rejected before any
     database statement."""
 
-    @pytest.mark.parametrize(
-        "case", ["null-actor", "other-user", "anonymous", "system-invocation"]
-    )
+    @pytest.mark.parametrize("case", ["null-actor", "other-user", "system-invocation"])
     async def test_inconsistent_pairing_raises_before_any_statement(
         self,
         db_session: AsyncSession,
@@ -179,7 +177,6 @@ class TestCallerValidation:
         pairings: dict[str, tuple[Any, Any]] = {
             "null-actor": (None, TicketCaller.authenticated(actor.id, Scope.ALL)),
             "other-user": (actor.id, TicketCaller.authenticated(other.id, Scope.ALL)),
-            "anonymous": (actor.id, TicketCaller()),
             "system-invocation": (actor.id, SYSTEM_INVOCATION),
         }
         acting_user_id, caller = pairings[case]

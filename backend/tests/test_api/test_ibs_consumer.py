@@ -4,7 +4,7 @@
 See docs/features/integrations/ibs-rabbitmq-integration.md (Status API > Get
 IBS Consumer Status: Behavior, Response Schema; Monitoring and Observability >
 Heartbeat Storage, Consumer States; Security; Testing Requirements),
-docs/api-spec.md (Optional Authentication on Public Endpoints; Infrastructure
+docs/api-spec.md (Authentication and Authorization; Infrastructure
 Dependency Errors > Status-reporting exception; Response Format; Global
 Responses; Response Applicability Derivation), and
 docs/features/platform/testing-strategy.md (API Endpoints; Redis Strategy;
@@ -12,7 +12,7 @@ Tier Responsibility and Proportionality).
 
 These tests cover the HTTP contract: the envelope and wire format of every
 status, HTTP 200 for every operational status (never `REDIS_UNAVAILABLE`),
-the absence of stale fields beside `unreachable`, optional authentication,
+the absence of stale fields beside `unreachable`, mandatory authentication,
 ignored query parameters, response sanitization, the route inventory, and
 OpenAPI. The heartbeat validation matrix and every `RedisError` kind live in
 `tests/test_services/test_ibs_consumer_status.py`; this module shows the
@@ -162,21 +162,24 @@ class TestConsumerWrittenStatus:
     )
     async def test_valid_fresh_heartbeat_returns_200_with_every_field(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         redis_client: redis_asyncio.Redis,
         enabled: None,
         members: Mapping[str, Any],
     ) -> None:
         await _store(redis_client, _encode(members))
 
-        response = await client.get(_PATH)
+        response = await authenticated_client.get(_PATH)
 
         assert response.status_code == 200
         assert response.json() == {"data": dict(members)}
         assert set(response.json()["data"]) == _FIELDS
 
     async def test_plus_zero_offsets_render_with_z_and_extra_members_are_dropped(
-        self, client: AsyncClient, redis_client: redis_asyncio.Redis, enabled: None
+        self,
+        authenticated_client: AsyncClient,
+        redis_client: redis_asyncio.Redis,
+        enabled: None,
     ) -> None:
         stored = _with(
             heartbeat_at="2026-09-08T15:42:30+00:00",
@@ -188,7 +191,7 @@ class TestConsumerWrittenStatus:
         )
         await _store(redis_client, _encode(stored))
 
-        response = await client.get(_PATH)
+        response = await authenticated_client.get(_PATH)
 
         assert response.status_code == 200
         assert response.json() == {"data": dict(_CONNECTED)}
@@ -203,7 +206,7 @@ class TestConsumerWrittenStatus:
 class TestDisabledStatus:
     async def test_disabled_ignores_a_fresh_key_and_reads_no_redis(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         redis_client: redis_asyncio.Redis,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -212,7 +215,7 @@ class TestDisabledStatus:
         await _store(redis_client, _encode(_CONNECTED))
         _forbid_redis(monkeypatch)
 
-        response = await client.get(_PATH)
+        response = await authenticated_client.get(_PATH)
 
         assert response.status_code == 200
         assert response.json() == _null_body("disabled")
@@ -238,7 +241,7 @@ class TestUnreachableStatus:
     )
     async def test_unusable_heartbeat_returns_200_unreachable_with_null_fields(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         redis_client: redis_asyncio.Redis,
         enabled: None,
         value: bytes | None,
@@ -246,14 +249,14 @@ class TestUnreachableStatus:
         if value is not None:
             await _store(redis_client, value)
 
-        response = await client.get(_PATH)
+        response = await authenticated_client.get(_PATH)
 
         assert response.status_code == 200
         assert response.json() == _null_body("unreachable")
 
     async def test_redis_error_returns_200_unreachable_never_redis_unavailable(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         redis_client: redis_asyncio.Redis,
         enabled: None,
         monkeypatch: pytest.MonkeyPatch,
@@ -265,7 +268,7 @@ class TestUnreachableStatus:
         failing.get.side_effect = redis_exceptions.ConnectionError("fictional refused")
         monkeypatch.setattr(ibs_consumer_status, "_new_redis_client", lambda: failing)
 
-        response = await client.get(_PATH)
+        response = await authenticated_client.get(_PATH)
 
         assert response.status_code == 200
         assert response.json() == _null_body("unreachable")
@@ -274,21 +277,22 @@ class TestUnreachableStatus:
 
 
 # ---------------------------------------------------------------------------
-# Optional authentication
+# Authentication
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.e2e
-class TestOptionalAuthentication:
-    async def test_anonymous_request_is_accepted(
-        self, client: AsyncClient, redis_client: redis_asyncio.Redis, enabled: None
+class TestAuthentication:
+    async def test_request_without_credential_returns_401_before_the_service(
+        self, client: AsyncClient, enabled: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        await _store(redis_client, _encode(_CONNECTED))
+        spy = _spy(monkeypatch)
 
         response = await client.get(_PATH)
 
-        assert response.status_code == 200
-        assert response.json() == {"data": dict(_CONNECTED)}
+        assert response.status_code == 401
+        assert response.json() == UNAUTHENTICATED
+        spy.assert_not_awaited()
 
     async def test_valid_session_cookie_is_accepted_with_the_same_status(
         self,
@@ -296,6 +300,8 @@ class TestOptionalAuthentication:
         redis_client: redis_asyncio.Redis,
         enabled: None,
     ) -> None:
+        """A role-less caller (the read-only profile) sees the full status;
+        the observation does not vary by caller."""
         await _store(redis_client, _encode(_CONNECTED))
 
         response = await authenticated_client.get(_PATH)
@@ -373,11 +379,11 @@ class TestOptionalAuthentication:
         spy.assert_not_awaited()
 
     async def test_handler_delegates_to_the_status_read_once(
-        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+        self, authenticated_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         spy = _spy(monkeypatch)
 
-        response = await client.get(_PATH)
+        response = await authenticated_client.get(_PATH)
 
         assert response.status_code == 200
         assert response.json() == _null_body("disabled")
@@ -392,12 +398,15 @@ class TestOptionalAuthentication:
 @pytest.mark.e2e
 class TestRequestAndResponseBoundaries:
     async def test_query_parameters_are_ignored(
-        self, client: AsyncClient, redis_client: redis_asyncio.Redis, enabled: None
+        self,
+        authenticated_client: AsyncClient,
+        redis_client: redis_asyncio.Redis,
+        enabled: None,
     ) -> None:
         await _store(redis_client, _encode(_RECONNECTING))
 
-        plain = await client.get(_PATH)
-        with_params = await client.get(
+        plain = await authenticated_client.get(_PATH)
+        with_params = await authenticated_client.get(
             _PATH, params={"status": "connected", "page": "0", "q": "x" * 600}
         )
 
@@ -417,7 +426,7 @@ class TestRequestAndResponseBoundaries:
     )
     async def test_response_exposes_no_broker_url_credential_project_or_package(
         self,
-        client: AsyncClient,
+        authenticated_client: AsyncClient,
         redis_client: redis_asyncio.Redis,
         enabled: None,
         monkeypatch: pytest.MonkeyPatch,
@@ -438,7 +447,7 @@ class TestRequestAndResponseBoundaries:
         }
         await _store(redis_client, _encode(polluted))
 
-        response = await client.get(_PATH)
+        response = await authenticated_client.get(_PATH)
 
         assert response.status_code == 200
         assert response.json()["data"]["status"] == status

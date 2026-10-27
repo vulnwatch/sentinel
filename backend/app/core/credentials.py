@@ -5,8 +5,7 @@ Dependencies, Shared Credential Resolution) for the authoritative session
 cookie reading and precedence rules these functions implement. They are pure
 functions (no FastAPI/Starlette dependency) so they are directly
 unit-testable, and they are shared by the logout endpoint and by the
-credential resolution of `get_current_user`/`get_optional_current_user`
-(`app.api.dependencies`).
+credential resolution of `get_current_user` (`app.api.dependencies`).
 """
 
 from __future__ import annotations

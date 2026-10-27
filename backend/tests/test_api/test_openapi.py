@@ -6,9 +6,10 @@ Derivation). Every case builds a standalone `SentinelAPI` whose routes use
 the real authentication and capability dependencies and the methods that
 derive the cross-origin rejection; only the generated
 document is inspected, so no request runs. The registered application is
-covered by the structural tests in `tests/test_api_conventions.py` and by
-the OpenAPI response contract check over every test request
-(`tests/support/openapi_contract.py`).
+covered by the structural tests in `tests/test_api_conventions.py`, by the
+required-authentication `401` check in
+`tests/test_api/test_route_authentication.py`, and by the OpenAPI response
+contract check over every test request (`tests/support/openapi_contract.py`).
 """
 
 from __future__ import annotations
@@ -21,7 +22,6 @@ from fastapi import APIRouter, Depends, Query
 from app.api.dependencies import (
     AuthenticatedPrincipal,
     CurrentUser,
-    OptionalCurrentUser,
     require_any_capability,
     require_capability,
 )
@@ -33,7 +33,6 @@ _ERROR_REF = {"$ref": "#/components/schemas/ErrorResponse"}
 _REQUIRED_401 = (
     "`AUTH_NOT_AUTHENTICATED`: no credential was sent, or the credential is invalid."
 )
-_OPTIONAL_401 = "`AUTH_NOT_AUTHENTICATED`: a credential was sent and is invalid."
 _403 = "`AUTH_INSUFFICIENT_PERMISSION`: the caller lacks the required capability."
 _CROSS_ORIGIN_403 = (
     "`AUTH_CROSS_ORIGIN_REJECTED`: a browser sent the request for a page of an "
@@ -91,10 +90,6 @@ def _build_app(*, include_v1_responses: bool = True) -> SentinelAPI:
         ],
     ) -> None:
         """A route-level 403 on an unsafe method."""
-
-    @router.get("/optional")
-    async def optional(principal: OptionalCurrentUser) -> None:
-        """`Authentication: Optional`."""
 
     @router.get("/authenticated")
     async def authenticated(principal: CurrentUser) -> None:
@@ -188,7 +183,6 @@ class TestDependencyDerivedResponses:
         ("method", "path", "expected"),
         [
             pytest.param("get", "/public", {}, id="public"),
-            pytest.param("get", "/optional", {"401": _OPTIONAL_401}, id="optional"),
             pytest.param(
                 "get", "/authenticated", {"401": _REQUIRED_401}, id="authenticated"
             ),

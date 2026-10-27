@@ -71,7 +71,8 @@ from app.services.ticket_service import (
     TicketUserProjection,
     list_tickets,
 )
-from app.services.ticket_visibility import ANONYMOUS_CALLER, TicketCaller
+from app.services.ticket_visibility import TicketCaller
+from tests.support.callers import ROLELESS_CALLER
 from tests.support.deadline_matrix import (
     AFTER_ALL_DUE,
     AFTER_TRIAGE_DUE,
@@ -753,10 +754,6 @@ class TestUserFilters:
         stranger = TicketCaller.authenticated(uuid.uuid4(), Scope.NON_CONFIDENTIAL)
 
         assert await _ids(db_session, stranger, maintainer=str(maintainer.id)) == []
-        assert (
-            await _ids(db_session, ANONYMOUS_CALLER, maintainer=str(maintainer.id))
-            == []
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -1377,7 +1374,6 @@ class TestVisibility:
         no_path = TicketCaller.authenticated(uuid.uuid4(), Scope.NON_CONFIDENTIAL)
 
         expectations = {
-            ANONYMOUS_CALLER: [public],
             no_path: [public],
             restricted: [public, granted, maintained],
             ALL_SCOPE: [public, granted, maintained, excluded_maintained, hidden],
@@ -1408,21 +1404,9 @@ class TestVisibility:
             {"overdue": [MilestonePhase.TRIAGE]},
             {"sort_by": TicketSortField.SEVERITY},
         ):
-            page = await _list(db_session, ANONYMOUS_CALLER, **filters)
+            page = await _list(db_session, ROLELESS_CALLER, **filters)
             assert page.items == ()
             assert page.total == 0
-
-    async def test_anonymous_list_evaluates_no_grant_or_maintainer_branch(
-        self, db_session: AsyncSession, clock: Clock, ticket_factory: Factory
-    ) -> None:
-        await ticket_factory()
-
-        with _StatementRecorder(db_session) as recorder:
-            await _list(db_session, ANONYMOUS_CALLER)
-
-        (statement,) = recorder.statements
-        assert "ticket_access_grant" not in statement
-        assert "ticket_package_maintainer" not in statement
 
 
 # ---------------------------------------------------------------------------

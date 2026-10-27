@@ -38,12 +38,16 @@ from redbeat import RedBeatSchedulerEntry
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.core.enums import SessionCreationReason
 from app.database import Base
 from app.models.fetcher_audit_event import FetcherAuditEvent
 from app.models.fetcher_config import FetcherConfig
 from app.models.fetcher_run import FetcherRun
+from app.models.session import Session
+from app.models.user import User
 from app.services.base_fetcher import FETCHER_REGISTRY
 from app.services.fetcher_schedule import delete_fetcher_entry
+from app.services.session_service import create_session
 
 _BACKEND_DIR = Path(__file__).resolve().parents[2]
 
@@ -284,6 +288,12 @@ class FetcherPipelineHarness:
     #: evidence of this invocation's own dispatch, independent of
     #: whether the preflight purge itself succeeded.
     preexisting_run_ids: frozenset[uuid.UUID] = field(default_factory=frozenset)
+    #: JWT of a committed session of a role-less user, so the fetcher
+    #: observation API is read by an authenticated caller
+    #: (testing-strategy.md, Behavioral Requirements, point 5). Created
+    #: before the test body, so its rows are part of both domain
+    #: snapshots, and deleted at teardown.
+    reader_token: str = ""
 
     # -- Process lifecycle ---------------------------------------------
 
@@ -675,6 +685,54 @@ async def _residual_fetcher_artifacts(
     return residues
 
 
+async def _create_reader(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> tuple[uuid.UUID, str]:
+    """Commit a role-less user and a new session of that user; return the
+    user ID and the session's JWT. The user is external, so it needs no
+    password hash, and its fictional identifiers are unique per
+    invocation."""
+    suffix = uuid.uuid4().hex[:10]
+    async with session_factory() as session:
+        user = User(
+            username=f"system-reader-{suffix}",
+            email=f"system-reader-{suffix}@example.com",
+            external_id=uuid.uuid4(),
+        )
+        session.add(user)
+        await session.flush()
+        created = await create_session(
+            session, user, SessionCreationReason.SSO_LOGIN, expected_password_hash=None
+        )
+        assert created is not None
+        await session.commit()
+        return user.id, created.token
+
+
+async def _delete_reader(
+    session_factory: async_sessionmaker[AsyncSession], user_id: uuid.UUID
+) -> None:
+    """Delete the reader's sessions and then the reader, and commit."""
+    async with session_factory() as session:
+        await session.execute(delete(Session).where(Session.user_id == user_id))
+        await session.execute(delete(User).where(User.id == user_id))
+        await session.commit()
+
+
+async def _residual_reader(
+    session_factory: async_sessionmaker[AsyncSession], user_id: uuid.UUID
+) -> list[str]:
+    """Read-only check: describe the reader rows still present."""
+    async with session_factory() as session:
+        users = await session.execute(select(User.id).where(User.id == user_id))
+        sessions = await session.execute(
+            select(Session.id).where(Session.user_id == user_id)
+        )
+        return [f"User(id={found})" for found in users.scalars().all()] + [
+            f"Session(id={found})" for found in sessions.scalars().all()
+        ]
+
+
 @pytest_asyncio.fixture
 async def fetcher_pipeline_harness(
     tmp_path: Path,
@@ -687,7 +745,9 @@ async def fetcher_pipeline_harness(
     then performs deterministic cleanup — in the exact order mandated by
     testing-strategy.md (Deterministic Cleanup) — regardless of whether
     the test succeeded or failed. A cleanup failure fails the test even
-    when the primary assertion already passed.
+    when the primary assertion already passed. The harness also holds the
+    committed role-less reader of the fetcher observation API, whose rows
+    step 6 deletes and step 8 verifies absent.
 
     Depends on `redis_client` (rather than opening a separate Redis
     connection) to reuse its existing FLUSHDB-before/after isolation
@@ -748,7 +808,10 @@ async def fetcher_pipeline_harness(
     registry_before = dict(FETCHER_REGISTRY)
 
     cleanup_errors: list[str] = []
+    reader_id: uuid.UUID | None = None
     try:
+        reader_id, harness.reader_token = await _create_reader(real_session_factory)
+
         # Registration boundary: import only now — never at collection time
         # — so a `pytest -m 'not system'` run of the wider suite never
         # registers this class (see testing-strategy.md, Registration
@@ -812,6 +875,11 @@ async def fetcher_pipeline_harness(
             await _delete_fetcher_artifacts(real_session_factory, created_names)
         except Exception as exc:
             cleanup_errors.append(f"postgres row cleanup failed: {exc!r}")
+        if reader_id is not None:
+            try:
+                await _delete_reader(real_session_factory, reader_id)
+            except Exception as exc:
+                cleanup_errors.append(f"reader cleanup failed: {exc!r}")
 
         # 7. Remove the test registry entry from the pytest process —
         # without clearing the global registry. The test-only fetcher is
@@ -864,6 +932,17 @@ async def fetcher_pipeline_harness(
                 )
         except Exception as exc:
             cleanup_errors.append(f"postgres residue verification failed: {exc!r}")
+        if reader_id is not None:
+            try:
+                reader_residues = await _residual_reader(
+                    real_session_factory, reader_id
+                )
+                if reader_residues:
+                    cleanup_errors.append(
+                        f"reader rows still present after cleanup: {reader_residues}"
+                    )
+            except Exception as exc:
+                cleanup_errors.append(f"reader residue verification failed: {exc!r}")
 
         try:
             key = RedBeatSchedulerEntry.generate_key(
