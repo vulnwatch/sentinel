@@ -1056,11 +1056,13 @@ contracts disclose one without applying the visibility of its Ticket:
   even when following that target now returns `TICKET_NOT_FOUND`; and
 - `TICKET_CVE_CONFLICT` retains `existing_ticket_id`, including when that
   Ticket is otherwise inaccessible; the value is the conflicting Ticket's
-  `SNTL-{n}` identifier.
+  `SNTL-{n}` identifier. The response confirms that a Ticket tracks the CVE ID
+  that the request names, an accepted residual bounded in
+  `docs/features/tickets/tickets.md` (Identifier Disclosure Boundary).
 
 These bounded exceptions expose `SNTL-{n}` identifiers only. They do not expose
-protected Ticket content or a CVE ID, authorize a direct read, add a
-capability, or change any resource-accessibility result.
+protected Ticket content or a CVE ID that the request does not name, authorize
+a direct read, add a capability, or change any resource-accessibility result.
 
 #### Manual-Zone Mutability Guard
 

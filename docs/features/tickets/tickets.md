@@ -1153,8 +1153,13 @@ may return `404 TICKET_NOT_FOUND`.
 
 The existing `409 TICKET_CVE_CONFLICT` response likewise retains
 `existing_ticket_id` even when that Ticket is not otherwise visible. It answers
-a create or associate request that names the CVE and requires `create_ticket`
-or `triage_ticket`, so it discloses no CVE ID that the caller did not supply.
+a create or associate request that names the CVE, so it discloses no CVE ID
+that the caller did not supply, but it confirms that another Ticket, possibly
+an inaccessible one, tracks the supplied CVE. This is an accepted residual: the
+request requires `create_ticket` or `triage_ticket`, and a probe for a CVE that
+no Ticket tracks does not fail but completes the audited create or associate
+mutation.
+
 These are bounded identifier-only exceptions that disclose only `SNTL-{n}`
 identifiers; they do not permit protected Ticket content or direct
 inaccessible-resource reads.

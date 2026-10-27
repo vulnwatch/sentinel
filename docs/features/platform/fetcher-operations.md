@@ -1099,7 +1099,9 @@ relative to the original run, and the number of rows can differ from the run's
 counter. The listing also applies CVE accessibility, so a caller without
 effective scope `all` does not see the rows of CVEs associated with Tickets
 invisible to that caller. `FetcherRun.items_failed` remains the authoritative
-aggregate count.
+aggregate count. The run counters apply no Ticket visibility, so for that
+caller the difference can reveal how many CVEs of invisible Tickets a run
+processed, never which ones; this aggregate residual is accepted.
 For runs still in `running` status, omit `to_date` for a live view of
 accumulated failures. If `started_at` is `null` (a `queued` run finalized as
 `failure` before any worker adopted it, or a run still `queued`), omit

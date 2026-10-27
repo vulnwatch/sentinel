@@ -668,9 +668,10 @@ eligibility uses the 10.0 conservative fallback.
 
 A `TicketCVEConflictError` continues to expose the documented
 `existing_ticket_id` as the conflicting Ticket's `SNTL-{n}` identity even when
-that Ticket is otherwise inaccessible. Ticket and CVE identifiers are not
-confidential Ticket content; this does not authorize following the identifier
-to protected data.
+that Ticket is otherwise inaccessible. `SNTL-{n}` identifiers are not
+confidential Ticket content, and the CVE ID is the one that the caller
+supplied; this does not authorize following the identifier to protected data
+(`tickets.md`, Identifier Disclosure Boundary).
 
 `associate_cve` captures and passes the previous `severity_manual` value; the
 delegated calculation creates exactly one handover event when the source

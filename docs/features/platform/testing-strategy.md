@@ -2586,7 +2586,9 @@ this complete matrix.
   `meta.total` of a role-less caller, including under the `source` and
   `status=missing` filters, while scope `all`, a grant, or an included
   maintained package lists them; excluding the caller's last maintained package
-  removes them.
+  removes them. A caller who maintains two included packages of that Ticket
+  and also holds a grant receives each row exactly once, with an uninflated
+  `meta.total`.
 - An independent-session race that makes the Ticket confidential, revokes the
   caller's grant, excludes the caller's last maintained package, or associates
   a ticketless CVE with an inaccessible Ticket before the protected selection
