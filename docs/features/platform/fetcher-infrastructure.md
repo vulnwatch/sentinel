@@ -920,10 +920,10 @@ Sentinel uses a **three-tier error field architecture**:
 | `error_detail` | `manage_fetchers` only | Raw exception message (`str(exception)`) |
 | `error_traceback` | `manage_fetchers` only | Full Python traceback |
 
-`error_detail` and `error_traceback` are not sanitized and can contain values
-of the failed request, such as the CVE ID in the URL of a per-CVE request,
-including the CVE of a confidential Ticket. This disclosure boundary depends on
-`manage_fetchers` being held only by all-scope roles
+`error_detail` and `error_traceback` are not reduced to a public message and
+can contain values of the failed request, such as the CVE ID in the URL of a
+per-CVE request, including the CVE of a confidential Ticket. This disclosure
+boundary depends on `manage_fetchers` being held only by all-scope roles
 (`docs/features/identity/rbac.md`, Predefined Roles). Any future capability
 split, new role, or scope change that grants `manage_fetchers` to a
 limited-scope role requires reassessment of these fields' visibility before
