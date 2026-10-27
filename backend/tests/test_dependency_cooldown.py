@@ -11,6 +11,15 @@ security fix, with an absolute cutoff in the past: `false` or a future date
 would exempt the package from the cooldown, silently. See issue #1014. The
 `uvx` tools are covered in `tests/test_workflow_tool_pins.py` and the pip-audit
 step in `tests/test_ci_workflow.py`.
+
+No package is exempt from Renovate's cooldown: the uv image comes from Docker
+Hub, the only registry from which Renovate reads the release timestamps of
+images, and its tag must match every `setup-uv` version, so a uv PR that lacks
+the image's update fails. The Dockerfile frontend is pinned to an exact
+version, so that its releases are version updates. The cooldown cannot age a
+digest update, so every digest update except the base image's waits for
+approval on the Dependency Dashboard instead (Workflow Conventions, Digest
+updates). See issue #1120.
 """
 
 from __future__ import annotations
@@ -28,9 +37,12 @@ from tests.support.dependency_config import (
     backend_uv_settings,
     renovate_config,
 )
+from tests.support.yaml_files import job_steps, load_yaml_file, workflow_jobs
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
+DOCKERFILE_PATH = REPO_ROOT / "backend" / "Dockerfile"
+WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 
 # The reference regular expression of PEP 723 for an inline metadata block.
 PEP_723_BLOCK = re.compile(
@@ -38,6 +50,15 @@ PEP_723_BLOCK = re.compile(
 )
 UTC_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 UV_GROUP = "uv version (CI + Docker image)"
+# The image of the uv binary that backend/Dockerfile copies, by tag and digest.
+UV_IMAGE = re.compile(
+    r"(?m)^COPY --from=(?P<image>[^:\s]+):(?P<tag>[^@\s]+)@sha256:[0-9a-f]{64}"
+    r" /uv /bin/uv$"
+)
+# The parser directive that names the Dockerfile frontend, by tag and digest.
+FRONTEND_DIRECTIVE = re.compile(
+    r"# syntax=docker/dockerfile:(?P<version>[^@\s]+)@sha256:[0-9a-f]{64}"
+)
 
 
 def _script_uv_settings() -> dict[str, dict[str, Any]]:
@@ -72,6 +93,13 @@ def _paths_of_setting(node: object, name: str, path: str = "") -> list[str]:
         for index, value in enumerate(node):
             found.extend(_paths_of_setting(value, name, f"{path}[{index}]"))
     return found
+
+
+def _dockerfile_uv_image() -> re.Match[str]:
+    """The uv image reference that backend/Dockerfile copies the binary from."""
+    match = UV_IMAGE.search(DOCKERFILE_PATH.read_text(encoding="utf-8"))
+    assert match is not None, f"no line of the form {UV_IMAGE.pattern}"
+    return match
 
 
 @pytest.mark.unit
@@ -126,9 +154,12 @@ def test_per_package_cutoffs_are_past_absolute_utc_timestamps() -> None:
 def test_renovate_holds_every_new_version_for_the_backend_cooldown() -> None:
     # One rule, matching only the update type, applies the cooldown to every
     # manager; digest, pin, and lock file maintenance updates are outside it.
+    # A later packageRules entry overrides an earlier one, so another rule
+    # that set minimumReleaseAge, to null or to a shorter duration, would
+    # exempt the packages that it matches.
     config = renovate_config()
     rules = config["packageRules"]
-    holding = [rule for rule in rules if rule.get("minimumReleaseAge")]
+    holding = [rule for rule in rules if "minimumReleaseAge" in rule]
 
     assert "minimumReleaseAge" not in config
     assert len(holding) == 1
@@ -152,19 +183,76 @@ def test_renovate_holds_every_release_without_a_timestamp() -> None:
 
 
 @pytest.mark.unit
-def test_renovate_cooldown_exempts_only_the_uv_version_group() -> None:
-    # ghcr.io publishes no release timestamps, so the uv image would be held
-    # indefinitely and the group would split; the exemption must follow the
-    # cooldown rule, since a later packageRules entry overrides an earlier one.
-    rules = renovate_config()["packageRules"]
-    exempt = [
-        rule
-        for rule in rules
-        if "minimumReleaseAge" in rule and rule["minimumReleaseAge"] is None
+def test_dockerfile_copies_uv_from_docker_hub_in_the_uv_group() -> None:
+    # From a registry without release timestamps, such as ghcr.io, the cooldown
+    # would hold the image indefinitely while the rest of its group moved on.
+    image = _dockerfile_uv_image()["image"]
+    group = next(
+        (
+            rule
+            for rule in renovate_config()["packageRules"]
+            if rule.get("groupName") == UV_GROUP
+        ),
+        None,
+    )
+
+    assert group is not None, f"no packageRules entry for the {UV_GROUP!r} group"
+    assert image == "astral/uv"
+    assert image in group["matchPackageNames"]
+
+
+@pytest.mark.unit
+def test_dockerfile_uv_tag_matches_every_setup_uv_version() -> None:
+    # Renovate drops a member whose update is still pending from its group's
+    # PR, such as the image when a lookup lacks its timestamps. CI and the
+    # image would then run different uv versions.
+    tag = _dockerfile_uv_image()["tag"]
+    workflows = sorted([*WORKFLOWS_DIR.glob("*.yml"), *WORKFLOWS_DIR.glob("*.yaml")])
+    versions = [
+        (path.name, job_id, step.get("with", {}).get("version"))
+        for path in workflows
+        for job_id, job in workflow_jobs(load_yaml_file(path)).items()
+        for step in job_steps(job)
+        if str(step.get("uses", "")).startswith("astral-sh/setup-uv@")
     ]
 
-    assert [rule.get("groupName") for rule in exempt] == [UV_GROUP]
-    assert rules.index(exempt[0]) > 0
+    assert versions
+    assert [version for version in versions if version[2] != tag] == [], tag
+
+
+@pytest.mark.unit
+def test_dockerfile_frontend_is_pinned_to_an_exact_version_and_digest() -> None:
+    # BuildKit runs the frontend that the directive names in every build. A
+    # floating tag such as "1" would change every build as soon as Docker moves
+    # it to a new release, outside the cooldown; an exact version makes each
+    # release a version update that the cooldown holds.
+    first_line = DOCKERFILE_PATH.read_text(encoding="utf-8").splitlines()[0]
+    match = FRONTEND_DIRECTIVE.fullmatch(first_line)
+
+    assert match is not None, first_line
+    assert re.fullmatch(r"\d+\.\d+\.\d+", match["version"])
+
+
+@pytest.mark.unit
+def test_renovate_holds_digest_updates_for_approval_except_the_base_image() -> None:
+    # The cooldown cannot age a digest, which Docker Hub dates by the last push
+    # of its tag. Any other pin's digest update means that its tag moved to
+    # other content; the base image's tag is republished with every fix, and
+    # its digest refresh is the remediation path of the image scan.
+    config = renovate_config()
+    approving = [
+        rule for rule in config["packageRules"] if "dependencyDashboardApproval" in rule
+    ]
+
+    assert "dependencyDashboardApproval" not in config
+    assert len(approving) == 1
+    assert approving[0]["dependencyDashboardApproval"] is True
+    assert {
+        key: value for key, value in approving[0].items() if key.startswith("match")
+    } == {
+        "matchUpdateTypes": ["digest"],
+        "matchPackageNames": ["!python"],
+    }
 
 
 @pytest.mark.unit

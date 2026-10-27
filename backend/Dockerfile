@@ -1,4 +1,7 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.27.1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+# The Dockerfile frontend that BuildKit runs to parse this file in every
+# build, pinned by version and digest (see docs/deployment.md, Container
+# Build Conventions → Dockerfile frontend pinning).
 
 # Python version — must match backend/.python-version (CI drift-check enforces this)
 ARG PYTHON_VERSION=3.14
@@ -18,12 +21,15 @@ FROM python:${PYTHON_VERSION}-slim@${PYTHON_BASE_DIGEST} AS builder
 
 # Pin the uv version used to build this image (keep in sync with the
 # `version:` input of astral-sh/setup-uv in .github/workflows/ci.yml).
-# The tag documents the version; the digest guarantees immutability (see
+# The tag documents the version; the digest guarantees immutability.
+# Astral publishes the same image to Docker Hub and to ghcr.io. It comes
+# from Docker Hub because Renovate reads the release timestamps of images
+# only from there and needs them for the release-age cooldown (see
 # docs/deployment.md, Container Build Conventions → uv image pinning).
 # The binary also provides the uv_build backend that builds the project;
 # the uv_build range in pyproject.toml must stay compatible with it.
 # Renovate updates tag, digest, and that range together.
-COPY --from=ghcr.io/astral-sh/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf5661b302bf6f06abda8deca6ff /uv /bin/uv
+COPY --from=astral/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf5661b302bf6f06abda8deca6ff /uv /bin/uv
 
 # Use the Python interpreter already present in this base image instead
 # of letting uv download its own managed interpreter
