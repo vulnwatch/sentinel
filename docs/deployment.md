@@ -534,6 +534,10 @@ latest available release. Every pinned version MUST also be tracked by
 Renovate, in one of the forms below, so that a new release is proposed
 instead of the pin aging unnoticed; a pin that none of these forms can
 express carries a comment beside it stating why it is updated manually.
+The software that the GitHub-hosted runner image (`ubuntu-latest`) itself
+provides, such as the Docker Engine with its built-in BuildKit, the Buildx
+and Compose plugins, and `jq`, is outside this rule: its versions follow the
+runner image, which every job already trusts.
 
 Dependency updates are managed by the hosted Mend Renovate GitHub App
 reading `renovate.jsonc` from the repository root; no workflow in this
@@ -747,6 +751,10 @@ settings with the same duration implement the cooldown:
   `postgres`. A GitHub Action is aged by the date of its tagged commit,
   which its publisher controls, so the cooldown holds an Action only as
   reliably as that date.
+
+The software of the runner image, such as the Docker Engine whose BuildKit
+builds the image, is outside the cooldown, as it is outside the pinning rule
+(see Pinned action references above).
 
 **Digest updates.** Docker Hub dates a digest by the last push of its tag,
 so the release-age cooldown cannot age a digest update: the digest of a
@@ -992,7 +1000,43 @@ Dockerfile in every build. It is pinned by exact version and digest
 would let a new frontend release change every build as soon as Docker moves
 the tag to it, outside the release-age cooldown. Renovate's `dockerfile`
 manager tracks the directive, so a new frontend release is a version
-update like any other.
+update like any other. Without the directive, each builder would use the
+frontend built into its own BuildKit, which follows the runner image in CI
+(see Image builder and format below) and the developer's Docker Engine
+locally; with it, both interpret the Dockerfile alike.
+
+**Image builder and format.** The image builds of `ci.yml`
+(`Image Smoke Test`) and `build-images.yml` (`Build Backend Image`) run
+`docker/build-push-action` with the default builder of the runner's Docker
+Engine: the BuildKit built into the Engine. No workflow sets up a builder of
+its own, as `docker/setup-buildx-action` does, which downloads a BuildKit
+image and runs it as a privileged container that executes the build. The
+Engine's builder adds nothing that the job does not already trust: the same
+Engine runs the smoke stack and pushes the image. Its BuildKit version
+therefore follows the runner image (see Workflow Conventions, Pinned action
+references), while the Dockerfile frontend stays pinned (see Dockerfile
+frontend pinning above). The Engine's builder exports the `gha` build cache
+only with the containerd image store, which the GitHub-hosted runners use;
+without that store, the build fails instead of running without the cache.
+
+The build loads the image into the Engine's image store as one OCI image
+manifest (`application/vnd.oci.image.manifest.v1+json`), the form in which
+the registry serves it and the attestations of Release Supply-Chain
+Artifacts name it. Two inputs of the build set this form against the
+builder's defaults:
+
+- `outputs: type=docker,oci-mediatypes=true`, in place of `load: true`,
+  loads the image with OCI media types, which the Engine's exporter does not
+  use by default.
+- `provenance: false` omits the unsigned provenance attestation that Buildx
+  adds by default, which would turn the image into an index that holds the
+  attestation beside it. The signed attestations of the release workflow
+  remain the image's provenance and SBOM.
+
+Before its first push, `scripts/publish-image.sh` fails unless the tested
+image is one OCI image manifest, and after each push unless the registry
+serves the tag under the tested image's digest (see Trigger and gate
+semantics).
 
 **Test code exclusion.** The runtime image MUST NOT contain test code.
 `backend/tests/` is excluded by `.dockerignore` and is never copied
@@ -1390,10 +1434,13 @@ release records. Only a `v*` tag build uploads the versioned GitHub Release
 assets and creates signed SBOM and provenance attestations. The complete SBOM
 gate is defined in `docs/features/platform/testing-strategy.md` (SBOM Gate).
 
-A failure in generation or validation prevents image publication. After all
-tags are pushed, the workflow obtains and cross-checks the registry-reported
-digest for every tag. A missing or mismatched digest fails the build job before
-any attestation is created. On a version-tag build, both attestations, the
+A failure in generation or validation prevents image publication. Before the
+first push, the workflow fails unless the tested image is one OCI image
+manifest (see Container Build Conventions, Image builder and format). After
+each push, it obtains the registry-reported digest of the tag and fails unless
+it is the tested image's digest. A missing or mismatched digest therefore fails
+the build job before any attestation is created, and both attestations name the
+tested image. On a version-tag build, both attestations, the
 release-asset upload, and publication of the GitHub Release run in a separate
 release-metadata job. Release Publication and Immutability below defines when a
 version is final and how a failed run is repaired.

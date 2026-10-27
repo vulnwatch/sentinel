@@ -9,10 +9,12 @@ Covers two related invariants:
    earlier tag went undetected as long as the final iteration
    succeeded. See issue #69.
 2. **Single build, tested artifact published unchanged**: the image is
-   built exactly once (`push: false`, `load: true`), the blocking smoke
-   gate runs against that exact local artifact, and its immutable image
-   ID feeds SBOM generation, OpenAPI extraction, and publication. See
-   issues #185, #473, and #1036.
+   built exactly once and loaded without a push (`push: false`), the
+   blocking smoke gate runs against that exact local artifact, and its
+   immutable image ID feeds SBOM generation, OpenAPI extraction, and
+   publication. Publication fails unless that image is one OCI image
+   manifest and the registry serves every tag under its digest. See
+   issues #185, #473, #1036, and #1121.
 
 The workflow is parsed as YAML (`tests/support/yaml_files.py`); only the
 version comments after pinned action references and whole-file absence
@@ -64,6 +66,14 @@ RELEASE_GUARD_ENV = {
 OPENAPI_ARTIFACT = "${{ env.OPENAPI_ARTIFACT_NAME }}"
 RELEASE_OPENAPI_DIR = "${{ runner.temp }}/release-openapi"
 
+# The digest that the stub registry serves for every tag but `*different*`
+# and `*malformed*`.
+TESTED_DIGEST = f"sha256:{'a' * 64}"
+OCI_MANIFEST_DESCRIPTOR = (
+    '{"mediaType":"application/vnd.oci.image.manifest.v1+json",'
+    f'"digest":"{TESTED_DIGEST}","size":2955}}'
+)
+
 
 def _jobs() -> dict[str, YamlMapping]:
     return workflow_jobs(load_yaml_file(WORKFLOW_PATH))
@@ -74,12 +84,19 @@ def _uses(step: YamlMapping, action: str) -> bool:
     return str(step.get("uses", "")).startswith(f"{action}@")
 
 
-# Logs both `docker tag <source> <target>` and `docker push <target>`
-# invocations (space-separated, one call per line) so tests can assert
-# on the tag *source* image, not just which tags were pushed.
+# Logs `docker image inspect ... <image>`, `docker tag <source> <target>`,
+# and `docker push <target>` invocations (space-separated, one call per
+# line) so tests can assert on the inspected and the tag *source* image,
+# not just which tags were pushed. `docker image inspect` prints
+# DOCKER_STUB_DESCRIPTOR as the image's descriptor.
 DOCKER_STUB = """\
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == "image" && "${2:-}" == "inspect" ]]; then
+    echo "inspect ${5:-}" >> "${DOCKER_STUB_LOG}"
+    printf '%s\\n' "${DOCKER_STUB_DESCRIPTOR}"
+    exit 0
+fi
 if [[ "${1:-}" == "tag" ]]; then
     echo "tag ${2:-} ${3:-}" >> "${DOCKER_STUB_LOG}"
     exit 0
@@ -126,7 +143,10 @@ def _install_docker_stub(bin_dir: Path) -> None:
 
 
 def _run_push_loop(
-    tmp_path: Path, *, image_tags: str
+    tmp_path: Path,
+    *,
+    image_tags: str,
+    descriptor: str = OCI_MANIFEST_DESCRIPTOR,
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -139,6 +159,7 @@ def _run_push_loop(
         "SMOKE_IMAGE": "sentinel-backend:smoke",
         "IMAGE_TAGS": image_tags,
         "DOCKER_STUB_LOG": str(log_file),
+        "DOCKER_STUB_DESCRIPTOR": descriptor,
         "GITHUB_OUTPUT": str(tmp_path / "github-output"),
     }
     result = subprocess.run(
@@ -192,25 +213,102 @@ def test_push_loop_pushes_all_tags_when_all_succeed(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_push_loop_rejects_tags_with_different_registry_digests(
+def test_push_loop_rejects_a_registry_digest_other_than_the_tested_one(
     tmp_path: Path,
 ) -> None:
-    tags = "ghcr.io/example/sentinel:1.2.3\nghcr.io/example/sentinel:different"
+    tags = (
+        "ghcr.io/example/sentinel:1.2.3\n"
+        "ghcr.io/example/sentinel:different\n"
+        "ghcr.io/example/sentinel:1.2"
+    )
 
-    result, _ = _run_push_loop(tmp_path, image_tags=tags)
+    result, log_file = _run_push_loop(tmp_path, image_tags=tags)
 
     assert result.returncode != 0
-    assert "do not resolve to one digest" in result.stderr
+    assert f"not as the tested {TESTED_DIGEST}" in result.stderr
+    assert _pushed_tags(log_file) == [
+        "ghcr.io/example/sentinel:1.2.3",
+        "ghcr.io/example/sentinel:different",
+    ]
+    assert not (tmp_path / "github-output").exists()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "descriptor",
+    [
+        pytest.param(
+            '{"mediaType":"application/vnd.oci.image.index.v1+json",'
+            f'"digest":"{TESTED_DIGEST}","size":856}}',
+            id="index-with-attestation",
+        ),
+        pytest.param(
+            '{"mediaType":"application/vnd.docker.distribution.manifest.v2+json",'
+            f'"digest":"{TESTED_DIGEST}","size":2955}}',
+            id="docker-media-types",
+        ),
+        pytest.param("null", id="classic-image-store"),
+        pytest.param("", id="no-output"),
+    ],
+)
+def test_push_loop_pushes_nothing_unless_the_tested_image_is_one_oci_manifest(
+    tmp_path: Path, descriptor: str
+) -> None:
+    result, log_file = _run_push_loop(
+        tmp_path, image_tags="ghcr.io/example/sentinel:master", descriptor=descriptor
+    )
+
+    assert result.returncode != 0
+    assert "is not one OCI image manifest" in result.stderr
+    assert log_file.read_text(encoding="utf-8").splitlines() == [
+        "inspect sentinel-backend:smoke"
+    ]
+
+
+@pytest.mark.unit
+def test_push_loop_pushes_nothing_when_the_tested_digest_is_invalid(
+    tmp_path: Path,
+) -> None:
+    descriptor = (
+        '{"mediaType":"application/vnd.oci.image.manifest.v1+json",'
+        '"digest":"sha256:not-a-digest","size":2955}'
+    )
+
+    result, log_file = _run_push_loop(
+        tmp_path, image_tags="ghcr.io/example/sentinel:master", descriptor=descriptor
+    )
+
+    assert result.returncode != 0
+    assert "has an invalid digest" in result.stderr
+    assert _pushed_tags(log_file) == []
+
+
+@pytest.mark.unit
+def test_push_loop_outputs_the_image_name_and_the_tested_digest(
+    tmp_path: Path,
+) -> None:
+    tags = "ghcr.io/example/sentinel:1.2.3\nghcr.io/example/sentinel:1.2"
+
+    result, log_file = _run_push_loop(tmp_path, image_tags=tags)
+
+    assert result.returncode == 0
+    assert log_file.read_text(encoding="utf-8").splitlines()[0] == (
+        "inspect sentinel-backend:smoke"
+    )
+    assert (tmp_path / "github-output").read_text(encoding="utf-8") == (
+        f"image_name=ghcr.io/example/sentinel\ndigest={TESTED_DIGEST}\n"
+    )
 
 
 @pytest.mark.unit
 def test_push_loop_rejects_malformed_registry_digest(tmp_path: Path) -> None:
-    result, _ = _run_push_loop(
+    result, log_file = _run_push_loop(
         tmp_path, image_tags="ghcr.io/example/sentinel:malformed"
     )
 
     assert result.returncode != 0
-    assert "invalid digest" in result.stderr
+    assert "Registry returned an invalid digest" in result.stderr
+    assert _pushed_tags(log_file) == ["ghcr.io/example/sentinel:malformed"]
 
 
 @pytest.mark.unit
@@ -267,7 +365,7 @@ def test_image_is_built_exactly_once_without_pushing() -> None:
     )
     assert build_steps[0]["name"] == BUILD_STEP
     assert build_steps[0]["with"]["push"] is False
-    assert build_steps[0]["with"]["load"] is True
+    assert build_steps[0]["with"]["outputs"] == "type=docker,oci-mediatypes=true"
 
 
 @pytest.mark.unit
