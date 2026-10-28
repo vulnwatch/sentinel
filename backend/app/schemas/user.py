@@ -18,7 +18,7 @@ from pydantic import MISSING, BaseModel, Field, field_validator, model_validator
 from app.core.enums import SortOrder, UserDirectorySortField, UserSortField
 from app.core.permissions import role_from_wire
 from app.core.usernames import RESERVED_USERNAMES, USERNAME_PATTERN
-from app.schemas.common import PaginationMeta
+from app.schemas.common import PaginationMeta, UserReference
 
 
 class UserDirectoryListQuery(BaseModel):
@@ -112,11 +112,13 @@ class UserManagerData(BaseModel):
 
 class UserRoleAssignmentData(BaseModel):
     """One entry of a complete user profile's `roles` array
-    (`user-management.md`, Get User (Admin))."""
+    (`user-management.md`, Get User (Admin)). `assigned_by` is the user
+    reference of the recorded assigning user, or `None` when none is
+    recorded (CLI or external-group origin)."""
 
     role: str
     group_name: str
-    assigned_by: UUID | None
+    assigned_by: UserReference | None
     created_at: datetime
 
 

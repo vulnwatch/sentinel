@@ -130,9 +130,14 @@ async def _identity_events(
 
 def _profile_roles(response_json: Any) -> list[tuple[str, str, str | None]]:
     """The response profile's role origins as `(role, group_name,
-    assigned_by)`, in response order."""
+    assigned_by id)`, in response order. `assigned_by` is a user reference
+    or `None` (`user-management.md`, Get User (Admin))."""
     return [
-        (entry["role"], entry["group_name"], entry["assigned_by"])
+        (
+            entry["role"],
+            entry["group_name"],
+            entry["assigned_by"]["id"] if entry["assigned_by"] is not None else None,
+        )
         for entry in response_json["data"]["roles"]
     ]
 
@@ -530,6 +535,13 @@ class TestEffectiveMutations:
             ("admin", "_manual", str(admin.id)),
             ("restricted_analyst", "_manual", str(admin.id)),
         ]
+        assert response.json()["data"]["roles"][0]["assigned_by"] == {
+            "id": str(admin.id),
+            "username": admin.username,
+            "full_name": admin.full_name,
+            "active": True,
+            "bot": False,
+        }
         assert await _origins(db_session, target.id) == {
             (Role.ADMIN.value, "_manual", admin.id),
             (Role.RESTRICTED_ANALYST.value, "_manual", admin.id),

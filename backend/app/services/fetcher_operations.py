@@ -187,9 +187,9 @@ class FetcherSettingInvalidError(FetcherOperationsServiceError):
 @dataclass(frozen=True)
 class FetcherRunSummary:
     """One run, shaped for the `List Fetchers`/`List Fetcher Runs`
-    responses. `triggered_by_user` is already visibility-filtered by
-    the producing function (`None` unless the caller holds
-    `manage_fetchers`)."""
+    responses. `triggered_by_user` is the user who triggered a manual run,
+    for every caller (`docs/features/identity/rbac.md`, Actor
+    Identities), and `None` for any other trigger."""
 
     id: UUID
     fetcher_name: str
@@ -212,8 +212,8 @@ class FetcherRunSummary:
 class FetcherRunDetail(FetcherRunSummary):
     """Full run detail. `error_detail`/`error_traceback` are always the
     raw stored values here — the caller (API router) decides whether to
-    surface them, based on the same `has_manage_fetchers` value it
-    passed into `get_fetcher_run()`."""
+    surface them from the caller's `manage_fetchers` capability
+    (`docs/features/platform/fetcher-operations.md`, Access Control)."""
 
     error_detail: str | None
     error_traceback: str | None
@@ -248,9 +248,9 @@ class FetcherRunPage:
 
 @dataclass(frozen=True)
 class DisabledPeriod:
-    """One derived disabled period. `disabled_by`/`enabled_by` are
-    already visibility-filtered (`None` unless the caller holds
-    `manage_fetchers`)."""
+    """One derived disabled period. `disabled_by`/`enabled_by` are the
+    actors of the delimiting `disabled`/`enabled` events, for every caller;
+    `enabled_by` is `None` while the period is open."""
 
     disabled_at: datetime
     disabled_by: User | None
@@ -493,7 +493,7 @@ def _strict_setting_type_error(key: str, annotation: Any, value: Any) -> str | N
 
 
 def _build_run_summary(
-    run: FetcherRun, fallback_run_timeout: int, now: datetime, has_manage_fetchers: bool
+    run: FetcherRun, fallback_run_timeout: int, now: datetime
 ) -> FetcherRunSummary:
     """Build a `FetcherRunSummary`, resolving `stale` via the shared
     `is_run_stale()` (`app.services.fetcher_execution`).
@@ -518,7 +518,7 @@ def _build_run_summary(
         items_failed=run.items_failed,
         error_message=run.error_message,
         triggered_by=run.triggered_by,
-        triggered_by_user=run.triggered_by_user if has_manage_fetchers else None,
+        triggered_by_user=run.triggered_by_user,
         stale=is_run_stale(
             status=run.status,
             created_at=run.created_at,
@@ -628,7 +628,6 @@ async def _resolve_disabled_periods(
     fetcher_name: str,
     from_date: datetime,
     to_date: datetime,
-    has_manage_fetchers: bool,
 ) -> list[DisabledPeriod]:
     """Implements Disabled Period Derivation
     (`docs/features/platform/fetcher-operations.md`): pairs each
@@ -684,13 +683,9 @@ async def _resolve_disabled_periods(
         periods.append(
             DisabledPeriod(
                 disabled_at=disabled_at,
-                disabled_by=disabled_event.actor if has_manage_fetchers else None,
+                disabled_by=disabled_event.actor,
                 enabled_at=enabled_at,
-                enabled_by=(
-                    enabled_event.actor
-                    if enabled_event is not None and has_manage_fetchers
-                    else None
-                ),
+                enabled_by=enabled_event.actor if enabled_event is not None else None,
             )
         )
     return periods
@@ -704,7 +699,6 @@ async def _resolve_disabled_periods(
 async def list_fetchers(
     db: AsyncSession,
     *,
-    has_manage_fetchers: bool,
     celery_app: Celery,
 ) -> list[FetcherListItem]:
     """List every fetcher — registered and deregistered — merged with
@@ -792,7 +786,7 @@ async def list_fetchers(
 
         run = last_run_by_name.get(name)
         last_run_summary = (
-            _build_run_summary(run, fallback_run_timeout, now, has_manage_fetchers)
+            _build_run_summary(run, fallback_run_timeout, now)
             if run is not None
             else None
         )
@@ -819,7 +813,6 @@ async def list_fetcher_runs(
     db: AsyncSession,
     *,
     fetcher_name: str,
-    has_manage_fetchers: bool,
     page: int,
     per_page: int,
     status: str | None = None,
@@ -875,10 +868,7 @@ async def list_fetcher_runs(
     )
     runs = list((await db.execute(data_query)).scalars().all())
     now = datetime.now(UTC)
-    items = [
-        _build_run_summary(run, fallback_run_timeout, now, has_manage_fetchers)
-        for run in runs
-    ]
+    items = [_build_run_summary(run, fallback_run_timeout, now) for run in runs]
     return FetcherRunPage(items=items, total=total, page=page, per_page=per_page)
 
 
@@ -887,17 +877,15 @@ async def get_fetcher_run(
     *,
     fetcher_name: str,
     run_id: UUID,
-    has_manage_fetchers: bool,
 ) -> FetcherRunDetail:
     """Return full detail for one `FetcherRun`.
 
     `error_detail`/`error_traceback` are always populated with the raw
     stored values on the returned object — the caller (API router)
-    decides whether to surface them in the HTTP response using the same
-    `has_manage_fetchers` value passed in here, per
-    `docs/features/platform/fetcher-operations.md` (Get Fetcher Run
-    Detail, Fields: "absent from the response body", a presentation
-    concern resolved at the schema/serialization layer).
+    decides whether to surface them in the HTTP response from the
+    caller's `manage_fetchers` capability, per
+    `docs/features/platform/fetcher-operations.md` (`get_fetcher_run`,
+    step 3, and Access Control, `has_manage_fetchers` derivation).
 
     Raises:
         FetcherNotFoundError: `fetcher_name` is unknown.
@@ -931,7 +919,7 @@ async def get_fetcher_run(
         items_failed=run.items_failed,
         error_message=run.error_message,
         triggered_by=run.triggered_by,
-        triggered_by_user=run.triggered_by_user if has_manage_fetchers else None,
+        triggered_by_user=run.triggered_by_user,
         stale=is_run_stale(
             status=run.status,
             created_at=run.created_at,
@@ -949,7 +937,6 @@ async def get_fetcher_timeline(
     db: AsyncSession,
     *,
     fetcher_name: str,
-    has_manage_fetchers: bool,
     from_date: datetime,
     to_date: datetime,
 ) -> FetcherTimeline:
@@ -992,7 +979,7 @@ async def get_fetcher_timeline(
     ]
 
     disabled_periods = await _resolve_disabled_periods(
-        db, fetcher_name, from_date, to_date, has_manage_fetchers
+        db, fetcher_name, from_date, to_date
     )
     return FetcherTimeline(points=points, disabled_periods=disabled_periods)
 

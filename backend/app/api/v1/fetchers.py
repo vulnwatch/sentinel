@@ -5,9 +5,10 @@ Fetcher Runs, Get Fetcher Run Detail, Get Fetcher Run Timeline Data,
 Trigger Fetcher, Get Fetcher Config, Update Fetcher Config, Get Fetcher
 Audit Log) for the authoritative endpoint contracts this module
 implements. Handlers stay thin: they validate, derive
-`has_manage_fetchers` from the authenticated principal (read endpoints)
-or require the `manage_fetchers` capability outright (admin endpoints),
-delegate to `app.services.fetcher_operations`, and map the result to
+`has_manage_fetchers` from the authenticated principal (run detail, for
+its raw error fields) or require the `manage_fetchers` capability outright
+(admin endpoints), delegate to `app.services.fetcher_operations`, and map
+the result to
 the documented response — no business logic or database query lives
 here. `trigger_fetcher` is the sole exception to the `DatabaseSession`
 pattern used by every other handler in this module — see
@@ -121,8 +122,8 @@ async def _resolve_has_manage_fetchers(
     """Derive `has_manage_fetchers` per fetcher-operations.md (Access
     Control, `has_manage_fetchers` derivation): whether the
     authenticated caller's current roles grant `manage_fetchers`. Never
-    produces a 403 on these read endpoints — it only controls
-    field-level visibility."""
+    produces a 403 — it only controls whether the run detail includes
+    `error_detail` and `error_traceback`."""
     roles = await user_service.get_user_roles(db, principal.user.id)
     return Capability.MANAGE_FETCHERS in get_capabilities(roles)
 
@@ -422,21 +423,17 @@ def _fetcher_audit_query(
         "Returns every fetcher — registered and deregistered — merged with "
         "its latest run and, for enabled registered fetchers, its next "
         "scheduled run time. Requires authentication (JWT session or API "
-        "key): callers without manage_fetchers see sanitized fields only; "
-        "callers with manage_fetchers additionally see the manual-trigger "
-        "actor."
+        "key); every caller sees the same fields, including the user who "
+        "triggered a manual run."
     ),
 )
 async def list_fetchers(
-    principal: CurrentUser,
+    _principal: CurrentUser,
     db: DatabaseSession,
 ) -> FetcherListResponse:
     """List all fetchers — see
     `docs/features/platform/fetcher-operations.md` (List Fetchers)."""
-    has_manage_fetchers = await _resolve_has_manage_fetchers(db, principal)
-    items = await fetcher_operations.list_fetchers(
-        db, has_manage_fetchers=has_manage_fetchers, celery_app=celery_app
-    )
+    items = await fetcher_operations.list_fetchers(db, celery_app=celery_app)
     return FetcherListResponse(data=[_serialize_list_item(item) for item in items])
 
 
@@ -453,19 +450,17 @@ async def list_fetchers(
 )
 async def list_fetcher_runs(
     fetcher_name: str,
-    principal: CurrentUser,
+    _principal: CurrentUser,
     db: DatabaseSession,
     query: Annotated[FetcherRunListQuery, Depends(_fetcher_run_list_query)],
 ) -> FetcherRunListResponse:
     """List fetcher run history — see
     `docs/features/platform/fetcher-operations.md` (List Fetcher
     Runs)."""
-    has_manage_fetchers = await _resolve_has_manage_fetchers(db, principal)
     try:
         page = await fetcher_operations.list_fetcher_runs(
             db,
             fetcher_name=fetcher_name,
-            has_manage_fetchers=has_manage_fetchers,
             page=query.page,
             per_page=query.per_page,
             status=query.status,
@@ -511,10 +506,7 @@ async def get_fetcher_run(
     has_manage_fetchers = await _resolve_has_manage_fetchers(db, principal)
     try:
         run = await fetcher_operations.get_fetcher_run(
-            db,
-            fetcher_name=fetcher_name,
-            run_id=run_id,
-            has_manage_fetchers=has_manage_fetchers,
+            db, fetcher_name=fetcher_name, run_id=run_id
         )
     except (FetcherNotFoundError, FetcherRunNotFoundError) as exc:
         raise _not_found(exc) from exc
@@ -550,15 +542,13 @@ async def get_fetcher_run(
 )
 async def get_fetcher_timeline(
     fetcher_name: str,
-    principal: CurrentUser,
+    _principal: CurrentUser,
     db: DatabaseSession,
     query: Annotated[FetcherTimelineQuery, Depends(_fetcher_timeline_query)],
 ) -> FetcherTimelineResponse:
     """Get fetcher run timeline data — see
     `docs/features/platform/fetcher-operations.md` (Get Fetcher Run
     Timeline Data)."""
-    has_manage_fetchers = await _resolve_has_manage_fetchers(db, principal)
-
     now = datetime.now(UTC)
     to_date = (
         normalize_date_bound(query.to_date, end_of_day=True)
@@ -579,11 +569,7 @@ async def get_fetcher_timeline(
 
     try:
         timeline = await fetcher_operations.get_fetcher_timeline(
-            db,
-            fetcher_name=fetcher_name,
-            has_manage_fetchers=has_manage_fetchers,
-            from_date=from_date,
-            to_date=to_date,
+            db, fetcher_name=fetcher_name, from_date=from_date, to_date=to_date
         )
     except FetcherNotFoundError as exc:
         raise _not_found(exc) from exc

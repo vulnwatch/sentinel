@@ -87,18 +87,13 @@ async def _list_flow(
 
     Read-only: opens a session, delegates the query, and issues no
     commit — see `docs/features/platform/cli-infrastructure.md`
-    (Database Session Management). `has_manage_fetchers=False`: this
-    command never surfaces `triggered_by_user` (no admin-capability
-    concept applies to a local shell invocation, and the rendered table
-    does not display that field regardless).
+    (Database Session Management).
     """
     from app.celery_app import celery_app
     from app.services import fetcher_operations
 
     async with session_factory() as db:
-        return await fetcher_operations.list_fetchers(
-            db, has_manage_fetchers=False, celery_app=celery_app
-        )
+        return await fetcher_operations.list_fetchers(db, celery_app=celery_app)
 
 
 def _render_fetcher_list(items: list[FetcherListItem]) -> str:

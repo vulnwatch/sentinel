@@ -246,7 +246,10 @@ async def _profile_rich_user(
         role=Role.VULNERABILITY_ANALYST.value,
         group_name="O SUSE Security",
     )
-    await user_role_factory(user_id=user.id, role=Role.ADMIN.value)
+    assigner = await user_factory(username="richassigner")
+    await user_role_factory(
+        user_id=user.id, role=Role.ADMIN.value, assigned_by=assigner.id
+    )
     return user
 
 
@@ -936,10 +939,17 @@ class TestListUsersAdmin:
         assert item["source"] == "external"
         assert item["external_id"] == str(user.external_id)
         assert item["manager"]["username"] == "richmanager"
-        assert [(role["role"], role["group_name"]) for role in item["roles"]] == [
-            ("admin", "_manual"),
-            ("vulnerability_analyst", "O SUSE Security"),
-            ("vulnerability_analyst", "_manual"),
+        assert [
+            (
+                role["role"],
+                role["group_name"],
+                role["assigned_by"] and role["assigned_by"]["username"],
+            )
+            for role in item["roles"]
+        ] == [
+            ("admin", "_manual", "richassigner"),
+            ("vulnerability_analyst", "O SUSE Security", None),
+            ("vulnerability_analyst", "_manual", None),
         ]
         assert item["last_login_at"] is None
 
@@ -1191,6 +1201,17 @@ class TestGetUserAdmin:
         manager = await user_factory(username="managerforprofile")
         user = await user_factory(username="profiletarget", manager_id=manager.id)
         await user_role_factory(user_id=user.id, role=Role.ADMIN.value)
+        assigner = await user_factory(
+            username="fictional.assigner",
+            full_name="Fictional Assigner",
+            active=False,
+            bot=True,
+        )
+        await user_role_factory(
+            user_id=user.id,
+            role=Role.VULNERABILITY_ANALYST.value,
+            assigned_by=assigner.id,
+        )
 
         response = await admin_client.get(f"/api/v1/admin/users/{user.username}")
 
@@ -1210,7 +1231,19 @@ class TestGetUserAdmin:
                 "group_name": "_manual",
                 "assigned_by": None,
                 "created_at": data["roles"][0]["created_at"],
-            }
+            },
+            {
+                "role": "vulnerability_analyst",
+                "group_name": "_manual",
+                "assigned_by": {
+                    "id": str(assigner.id),
+                    "username": "fictional.assigner",
+                    "full_name": "Fictional Assigner",
+                    "active": False,
+                    "bot": True,
+                },
+                "created_at": data["roles"][1]["created_at"],
+            },
         ]
 
     async def test_bot_marker_of_the_user_and_its_manager_are_current(
@@ -1595,7 +1628,7 @@ class TestCreateUserAdmin:
     async def test_assigns_initial_manual_roles(
         self, admin_user_and_client: tuple[User, AsyncClient]
     ) -> None:
-        _admin, client = admin_user_and_client
+        admin, client = admin_user_and_client
 
         response = await client.post(
             "/api/v1/admin/users",
@@ -1611,6 +1644,17 @@ class TestCreateUserAdmin:
         assert roles == {"admin", "vulnerability_analyst"}
         assert all(
             entry["group_name"] == "_manual"
+            for entry in response.json()["data"]["roles"]
+        )
+        assert all(
+            entry["assigned_by"]
+            == {
+                "id": str(admin.id),
+                "username": admin.username,
+                "full_name": admin.full_name,
+                "active": True,
+                "bot": False,
+            }
             for entry in response.json()["data"]["roles"]
         )
 

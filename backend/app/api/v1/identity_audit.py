@@ -10,8 +10,7 @@ here.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
-from uuid import UUID
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
@@ -20,6 +19,7 @@ from app.core.dates import parse_date_range_bound, validate_date_range_order
 from app.core.enums import Capability, IdentityAuditEventType
 from app.database import DatabaseSession
 from app.models.identity_audit_event import IdentityAuditEvent
+from app.models.user import User
 from app.schemas.common import PaginationMeta, UserReference
 from app.schemas.identity_audit import (
     AdminIdentityAuditEventData,
@@ -124,16 +124,8 @@ def _parse_event_types(raw: list[str]) -> tuple[bool, list[IdentityAuditEventTyp
 # ---------------------------------------------------------------------------
 
 
-def _resolve_self_actor(
-    event_user_id: UUID | None, current_user_id: UUID
-) -> Literal["system", "self", "admin"]:
-    """The self-service actor anonymization mapping
-    (`identity-audit-log.md`, List My Identity Audit Events)."""
-    if event_user_id is None:
-        return "system"
-    if event_user_id == current_user_id:
-        return "self"
-    return "admin"
+def _user_reference(user: User | None) -> UserReference | None:
+    return UserReference.model_validate(user) if user is not None else None
 
 
 def _serialize_admin_event(event: IdentityAuditEvent) -> AdminIdentityAuditEventData:
@@ -144,22 +136,14 @@ def _serialize_admin_event(event: IdentityAuditEvent) -> AdminIdentityAuditEvent
         new_value=event.new_value,
         detail=event.detail,
         created_at=event.created_at,
-        actor=(
-            UserReference.model_validate(event.actor)
-            if event.actor is not None
-            else None
-        ),
-        target_user=(
-            UserReference.model_validate(event.target_user)
-            if event.target_user is not None
-            else None
-        ),
+        actor=_user_reference(event.actor),
+        target_user=_user_reference(event.target_user),
     )
 
 
-def _serialize_self_event(
-    event: IdentityAuditEvent, user_id: UUID
-) -> SelfIdentityAuditEventData:
+def _serialize_self_event(event: IdentityAuditEvent) -> SelfIdentityAuditEventData:
+    """The actor is the same user reference as in the admin log, for every
+    reader (`docs/features/identity/rbac.md`, Actor Identities)."""
     return SelfIdentityAuditEventData(
         id=event.id,
         event_type=event.event_type,
@@ -167,7 +151,7 @@ def _serialize_self_event(
         new_value=event.new_value,
         detail=event.detail,
         created_at=event.created_at,
-        actor=_resolve_self_actor(event.user_id, user_id),
+        actor=_user_reference(event.actor),
     )
 
 
@@ -183,8 +167,9 @@ def _serialize_self_event(
     description=(
         "Returns a paginated, fixed reverse-chronological list of identity "
         "audit events where the authenticated user is the target. The "
-        "actor is anonymized to 'system', 'self', or 'admin'. Requires "
-        "authentication (JWT session or API key)."
+        "actor is the user reference of the user who performed the action, "
+        "or null when no user is recorded. Requires authentication (JWT "
+        "session or API key)."
     ),
 )
 async def list_my_identity_audit_events(
@@ -212,7 +197,7 @@ async def list_my_identity_audit_events(
         per_page=query.per_page,
     )
     return SelfIdentityAuditListResponse(
-        data=[_serialize_self_event(event, principal.user.id) for event in page.items],
+        data=[_serialize_self_event(event) for event in page.items],
         meta=PaginationMeta(total=page.total, page=page.page, per_page=page.per_page),
     )
 

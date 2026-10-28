@@ -23,7 +23,7 @@ import pytest
 import redis.asyncio as redis_asyncio
 from email_validator import validate_email
 from redis.exceptions import RedisError
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, inspect, or_, select
 from sqlalchemy.exc import EmulatedDBAPIException, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1796,6 +1796,25 @@ class TestUpdateUser:
         assert len(result.user.roles) == 1
         assert result.user.manager is not None
         assert result.user.manager.id == manager.id
+
+    async def test_returned_profile_loads_role_assigners(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        """Mutation results carry the complete profile, the role
+        assigners included (user-service.md, Mutation Result Types)."""
+        assigner = await user_factory()
+        target = await user_factory(external_id=uuid.uuid4())
+        await user_role_factory(user_id=target.id, assigned_by=assigner.id)
+        db_session.expunge_all()
+
+        result = await update_user(
+            db_session, target.id, acting_user_id=None, synced_at=datetime.now(UTC)
+        )
+
+        _assert_role_assigners_loaded(result.user, assigner.id)
 
     async def test_flushes_without_commit(
         self,
@@ -3629,6 +3648,22 @@ class TestListUsers:
         assert item.manager.id == manager.id
         assert len(item.roles) == 1
 
+    async def test_role_assigners_are_eagerly_loaded(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        assigner = await user_factory(username="listassigner")
+        user = await user_factory(username="listassigned")
+        await user_role_factory(user_id=user.id, assigned_by=assigner.id)
+        db_session.expunge_all()
+
+        page = await list_users(db_session, search="listassigned")
+
+        (item,) = page.items
+        _assert_role_assigners_loaded(item, assigner.id)
+
 
 @pytest.mark.integration
 class TestGetUser:
@@ -3660,6 +3695,21 @@ class TestGetUser:
 
         assert result.id == user.id
 
+    async def test_role_assigners_are_eagerly_loaded(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        assigner = await user_factory()
+        user = await user_factory()
+        await user_role_factory(user_id=user.id, assigned_by=assigner.id)
+        db_session.expunge_all()
+
+        result = await get_user(db_session, str(user.id))
+
+        _assert_role_assigners_loaded(result, assigner.id)
+
     async def test_unknown_uuid_raises_not_found(
         self, db_session: AsyncSession
     ) -> None:
@@ -3671,6 +3721,17 @@ class TestGetUser:
     ) -> None:
         with pytest.raises(UserNotFoundError):
             await get_user(db_session, "no-such-user")
+
+
+def _assert_role_assigners_loaded(user: User, assigner_id: uuid.UUID) -> None:
+    """Every role of the complete profile has its assigning user loaded
+    (`roles[].assigned_by`, `docs/features/identity/user-management.md`,
+    Get User (Admin)), so serialization needs no lazy load."""
+    for user_role in user.roles:
+        assert "assigning_user" not in inspect(user_role).unloaded
+    (user_role,) = user.roles
+    assert user_role.assigning_user is not None
+    assert user_role.assigning_user.id == assigner_id
 
 
 def _letter_leading_uuid() -> uuid.UUID:

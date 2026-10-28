@@ -235,9 +235,7 @@ class TestListFetchersMergeAndSort:
     ) -> None:
         _register(_NoSettingsFetcher)
 
-        items = await list_fetchers(
-            db_session, has_manage_fetchers=False, celery_app=celery_test_app
-        )
+        items = await list_fetchers(db_session, celery_app=celery_test_app)
 
         assert len(items) == 1
         item = items[0]
@@ -264,9 +262,7 @@ class TestListFetchersMergeAndSort:
             custom_settings={"results_per_page": 250, "orphaned": True},
         )
 
-        items = await list_fetchers(
-            db_session, has_manage_fetchers=False, celery_app=celery_test_app
-        )
+        items = await list_fetchers(db_session, celery_app=celery_test_app)
 
         assert len(items) == 1
         item = items[0]
@@ -288,9 +284,7 @@ class TestListFetchersMergeAndSort:
             custom_settings={"a": 1, "b": 2},
         )
 
-        items = await list_fetchers(
-            db_session, has_manage_fetchers=False, celery_app=celery_test_app
-        )
+        items = await list_fetchers(db_session, celery_app=celery_test_app)
 
         assert len(items) == 1
         item = items[0]
@@ -316,9 +310,7 @@ class TestListFetchersMergeAndSort:
         await fetcher_config_factory(fetcher_name="test_ops_aaa_deregistered")
         await fetcher_config_factory(fetcher_name="test_ops_zzz_deregistered")
 
-        items = await list_fetchers(
-            db_session, has_manage_fetchers=False, celery_app=celery_test_app
-        )
+        items = await list_fetchers(db_session, celery_app=celery_test_app)
 
         names = [item.fetcher_name for item in items]
         assert names == sorted(names)
@@ -337,9 +329,7 @@ class TestListFetchersLastRun:
         _register(_NoSettingsFetcher)
         await fetcher_config_factory(fetcher_name=_NoSettingsFetcher.name)
 
-        items = await list_fetchers(
-            db_session, has_manage_fetchers=False, celery_app=celery_test_app
-        )
+        items = await list_fetchers(db_session, celery_app=celery_test_app)
 
         assert items[0].last_run is None
 
@@ -364,9 +354,7 @@ class TestListFetchersLastRun:
             status="success",
         )
 
-        items = await list_fetchers(
-            db_session, has_manage_fetchers=False, celery_app=celery_test_app
-        )
+        items = await list_fetchers(db_session, celery_app=celery_test_app)
 
         assert items[0].last_run is not None
         assert items[0].last_run.id == latest.id
@@ -390,9 +378,7 @@ class TestListFetchersLastRun:
             fetcher_name=config.fetcher_name, started_at=fixed_time, status="success"
         )
 
-        items = await list_fetchers(
-            db_session, has_manage_fetchers=False, celery_app=celery_test_app
-        )
+        items = await list_fetchers(db_session, celery_app=celery_test_app)
 
         assert items[0].last_run is not None
         assert items[0].last_run.id == second.id
@@ -413,9 +399,7 @@ class TestListFetchersLastRun:
             duration_seconds=None,
         )
 
-        items = await list_fetchers(
-            db_session, has_manage_fetchers=False, celery_app=celery_test_app
-        )
+        items = await list_fetchers(db_session, celery_app=celery_test_app)
 
         last_run = items[0].last_run
         assert last_run is not None
@@ -438,9 +422,7 @@ class TestListFetchersLastRun:
             error_message="sanitized failure",
         )
 
-        items = await list_fetchers(
-            db_session, has_manage_fetchers=False, celery_app=celery_test_app
-        )
+        items = await list_fetchers(db_session, celery_app=celery_test_app)
 
         last_run = items[0].last_run
         assert last_run is not None
@@ -465,9 +447,7 @@ class TestListFetchersLastRun:
             started_at=datetime.now(UTC) - timedelta(seconds=200),
         )
 
-        items = await list_fetchers(
-            db_session, has_manage_fetchers=False, celery_app=celery_test_app
-        )
+        items = await list_fetchers(db_session, celery_app=celery_test_app)
 
         last_run = items[0].last_run
         assert last_run is not None
@@ -496,9 +476,7 @@ class TestListFetchersLastRun:
             hard_time_limit_seconds=60,
         )
 
-        items = await list_fetchers(
-            db_session, has_manage_fetchers=False, celery_app=celery_test_app
-        )
+        items = await list_fetchers(db_session, celery_app=celery_test_app)
 
         last_run = items[0].last_run
         assert last_run is not None
@@ -506,7 +484,7 @@ class TestListFetchersLastRun:
         # even though the live config's run_timeout (3600) would not be.
         assert last_run.stale is True
 
-    async def test_triggered_by_user_hidden_without_manage_fetchers(
+    async def test_last_run_carries_the_manual_trigger_actor(
         self,
         db_session: AsyncSession,
         celery_test_app: Celery,
@@ -514,6 +492,8 @@ class TestListFetchersLastRun:
         fetcher_run_factory: FetcherRunFactory,
         user_factory: UserFactory,
     ) -> None:
+        """No caller-dependent masking: the actor is returned for every
+        caller (`docs/features/identity/rbac.md`, Actor Identities)."""
         _register(_NoSettingsFetcher)
         config = await fetcher_config_factory(fetcher_name=_NoSettingsFetcher.name)
         actor = await user_factory()
@@ -523,18 +503,11 @@ class TestListFetchersLastRun:
             triggered_by_user_id=actor.id,
         )
 
-        unprivileged_items = await list_fetchers(
-            db_session, has_manage_fetchers=False, celery_app=celery_test_app
-        )
-        privileged_items = await list_fetchers(
-            db_session, has_manage_fetchers=True, celery_app=celery_test_app
-        )
+        items = await list_fetchers(db_session, celery_app=celery_test_app)
 
-        assert unprivileged_items[0].last_run is not None
-        assert unprivileged_items[0].last_run.triggered_by_user is None
-        assert privileged_items[0].last_run is not None
-        assert privileged_items[0].last_run.triggered_by_user is not None
-        assert privileged_items[0].last_run.triggered_by_user.id == actor.id
+        assert items[0].last_run is not None
+        assert items[0].last_run.triggered_by_user is not None
+        assert items[0].last_run.triggered_by_user.id == actor.id
 
     async def test_queued_run_is_last_run_with_null_started_at(
         self,
@@ -562,9 +535,7 @@ class TestListFetchersLastRun:
             created_at=now,
         )
 
-        items = await list_fetchers(
-            db_session, has_manage_fetchers=False, celery_app=celery_test_app
-        )
+        items = await list_fetchers(db_session, celery_app=celery_test_app)
 
         last_run = items[0].last_run
         assert last_run is not None
@@ -605,9 +576,7 @@ class TestListFetchersNextRunAt:
             app=celery_test_app,
         ).due_at
 
-        items = await list_fetchers(
-            db_session, has_manage_fetchers=False, celery_app=celery_test_app
-        )
+        items = await list_fetchers(db_session, celery_app=celery_test_app)
 
         # `due_at` is recomputed relative to wall-clock time at read time
         # (see redbeat's `RedBeatSchedulerEntry.due_at`), so two separate
@@ -648,7 +617,6 @@ class TestListFetchersNextRunAt:
 
         items = await list_fetchers(
             db_session,
-            has_manage_fetchers=False,
             celery_app=uninitialized_celery_test_app,
         )
 
@@ -665,9 +633,7 @@ class TestListFetchersNextRunAt:
         _register(_NoSettingsFetcher)
         await fetcher_config_factory(fetcher_name=_NoSettingsFetcher.name, enabled=True)
 
-        items = await list_fetchers(
-            db_session, has_manage_fetchers=False, celery_app=celery_test_app
-        )
+        items = await list_fetchers(db_session, celery_app=celery_test_app)
 
         assert items[0].next_run_at is None
 
@@ -694,9 +660,7 @@ class TestListFetchersNextRunAt:
         )
         entry.save()
 
-        items = await list_fetchers(
-            db_session, has_manage_fetchers=False, celery_app=celery_test_app
-        )
+        items = await list_fetchers(db_session, celery_app=celery_test_app)
 
         assert items[0].next_run_at is None
 
@@ -720,9 +684,7 @@ class TestListFetchersNextRunAt:
         )
         entry.save()
 
-        items = await list_fetchers(
-            db_session, has_manage_fetchers=False, celery_app=celery_test_app
-        )
+        items = await list_fetchers(db_session, celery_app=celery_test_app)
 
         assert items[0].next_run_at is None
 
@@ -752,9 +714,7 @@ class TestListFetchersNextRunAt:
         )
 
         with caplog.at_level("WARNING", logger="app.services.fetcher_operations"):
-            items = await list_fetchers(
-                db_session, has_manage_fetchers=False, celery_app=celery_test_app
-            )
+            items = await list_fetchers(db_session, celery_app=celery_test_app)
 
         assert all(item.next_run_at is None for item in items)
         records = _ops_log_records(caplog)
@@ -802,9 +762,7 @@ class TestListFetchersNextRunAt:
             return ticks
 
         heartbeat_task = asyncio.create_task(_heartbeat())
-        await list_fetchers(
-            db_session, has_manage_fetchers=False, celery_app=celery_test_app
-        )
+        await list_fetchers(db_session, celery_app=celery_test_app)
         heartbeat_ticks = await heartbeat_task
 
         assert heartbeat_ticks == 5
@@ -838,7 +796,6 @@ class TestListFetcherRuns:
             await list_fetcher_runs(
                 db_session,
                 fetcher_name="no_such_fetcher",
-                has_manage_fetchers=False,
                 page=1,
                 per_page=20,
             )
@@ -851,7 +808,6 @@ class TestListFetcherRuns:
         page = await list_fetcher_runs(
             db_session,
             fetcher_name=_NoSettingsFetcher.name,
-            has_manage_fetchers=False,
             page=1,
             per_page=20,
         )
@@ -872,7 +828,6 @@ class TestListFetcherRuns:
         page = await list_fetcher_runs(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             page=1,
             per_page=20,
             status="failure",
@@ -893,7 +848,6 @@ class TestListFetcherRuns:
         page = await list_fetcher_runs(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             page=1,
             per_page=20,
             status="not-a-real-status",
@@ -920,7 +874,6 @@ class TestListFetcherRuns:
         page = await list_fetcher_runs(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             page=1,
             per_page=20,
             from_date=now - timedelta(days=2),
@@ -943,14 +896,12 @@ class TestListFetcherRuns:
         page = await list_fetcher_runs(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             page=1,
             per_page=2,
         )
         out_of_range_page = await list_fetcher_runs(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             page=5,
             per_page=2,
         )
@@ -978,14 +929,13 @@ class TestListFetcherRuns:
         page = await list_fetcher_runs(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             page=1,
             per_page=20,
         )
 
         assert [item.id for item in page.items] == [newer.id, older.id]
 
-    async def test_triggered_by_user_visibility(
+    async def test_items_carry_the_manual_trigger_actor(
         self,
         db_session: AsyncSession,
         fetcher_config_factory: FetcherConfigFactory,
@@ -1000,24 +950,12 @@ class TestListFetcherRuns:
             triggered_by_user_id=actor.id,
         )
 
-        unprivileged_page = await list_fetcher_runs(
-            db_session,
-            fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
-            page=1,
-            per_page=20,
-        )
-        privileged_page = await list_fetcher_runs(
-            db_session,
-            fetcher_name=config.fetcher_name,
-            has_manage_fetchers=True,
-            page=1,
-            per_page=20,
+        page = await list_fetcher_runs(
+            db_session, fetcher_name=config.fetcher_name, page=1, per_page=20
         )
 
-        assert unprivileged_page.items[0].triggered_by_user is None
-        assert privileged_page.items[0].triggered_by_user is not None
-        assert privileged_page.items[0].triggered_by_user.id == actor.id
+        assert page.items[0].triggered_by_user is not None
+        assert page.items[0].triggered_by_user.id == actor.id
 
     async def test_stale_field_uses_fetcher_run_timeout(
         self,
@@ -1035,7 +973,6 @@ class TestListFetcherRuns:
         page = await list_fetcher_runs(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             page=1,
             per_page=20,
         )
@@ -1057,7 +994,6 @@ class TestListFetcherRuns:
         page = await list_fetcher_runs(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             page=1,
             per_page=20,
             status="queued",
@@ -1096,7 +1032,6 @@ class TestListFetcherRuns:
         page = await list_fetcher_runs(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             page=1,
             per_page=20,
             from_date=now - timedelta(minutes=1),
@@ -1109,7 +1044,6 @@ class TestListFetcherRuns:
         full_page = await list_fetcher_runs(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             page=1,
             per_page=20,
         )
@@ -1132,7 +1066,6 @@ class TestListFetcherRuns:
         page = await list_fetcher_runs(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             page=1,
             per_page=20,
         )
@@ -1170,7 +1103,6 @@ class TestGetFetcherRun:
             db_session,
             fetcher_name=config.fetcher_name,
             run_id=run.id,
-            has_manage_fetchers=False,
         )
 
         assert result.id == run.id
@@ -1192,9 +1124,9 @@ class TestGetFetcherRun:
         fetcher_config_factory: FetcherConfigFactory,
         fetcher_run_factory: FetcherRunFactory,
     ) -> None:
-        """The service always returns the raw values regardless of
-        `has_manage_fetchers` — visibility (absence in the HTTP
-        response) is a router/schema-layer decision, per
+        """The service always returns the raw values — visibility
+        (absence in the HTTP response) is decided by the router from the
+        caller's `manage_fetchers` capability, per the
         `fetcher_operations.get_fetcher_run` docstring."""
         config = await fetcher_config_factory()
         run = await fetcher_run_factory(
@@ -1208,7 +1140,6 @@ class TestGetFetcherRun:
             db_session,
             fetcher_name=config.fetcher_name,
             run_id=run.id,
-            has_manage_fetchers=False,
         )
 
         assert result.error_detail == "raw detail"
@@ -1222,7 +1153,6 @@ class TestGetFetcherRun:
                 db_session,
                 fetcher_name="no_such_fetcher",
                 run_id=uuid4(),
-                has_manage_fetchers=False,
             )
 
     async def test_raises_run_not_found_for_nonexistent_run(
@@ -1236,7 +1166,6 @@ class TestGetFetcherRun:
                 db_session,
                 fetcher_name=config.fetcher_name,
                 run_id=uuid4(),
-                has_manage_fetchers=False,
             )
 
     async def test_raises_run_not_found_for_run_of_different_fetcher(
@@ -1254,10 +1183,9 @@ class TestGetFetcherRun:
                 db_session,
                 fetcher_name=config_b.fetcher_name,
                 run_id=run.id,
-                has_manage_fetchers=False,
             )
 
-    async def test_triggered_by_user_hidden_without_manage_fetchers(
+    async def test_carries_the_manual_trigger_actor(
         self,
         db_session: AsyncSession,
         fetcher_config_factory: FetcherConfigFactory,
@@ -1273,13 +1201,11 @@ class TestGetFetcherRun:
         )
 
         result = await get_fetcher_run(
-            db_session,
-            fetcher_name=config.fetcher_name,
-            run_id=run.id,
-            has_manage_fetchers=False,
+            db_session, fetcher_name=config.fetcher_name, run_id=run.id
         )
 
-        assert result.triggered_by_user is None
+        assert result.triggered_by_user is not None
+        assert result.triggered_by_user.id == actor.id
 
 
 # ---------------------------------------------------------------------------
@@ -1307,7 +1233,6 @@ class TestGetFetcherTimelinePoints:
         timeline = await get_fetcher_timeline(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             from_date=now - timedelta(days=1),
             to_date=now,
         )
@@ -1333,7 +1258,6 @@ class TestGetFetcherTimelinePoints:
         timeline = await get_fetcher_timeline(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             from_date=now - timedelta(hours=1),
             to_date=now + timedelta(hours=1),
         )
@@ -1363,7 +1287,6 @@ class TestGetFetcherTimelinePoints:
         timeline = await get_fetcher_timeline(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             from_date=now - timedelta(hours=1),
             to_date=now + timedelta(hours=1),
         )
@@ -1386,7 +1309,6 @@ class TestGetFetcherTimelinePoints:
         timeline = await get_fetcher_timeline(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             from_date=boundary,
             to_date=boundary,
         )
@@ -1401,7 +1323,6 @@ class TestGetFetcherTimelinePoints:
             await get_fetcher_timeline(
                 db_session,
                 fetcher_name="no_such_fetcher",
-                has_manage_fetchers=False,
                 from_date=now - timedelta(days=1),
                 to_date=now,
             )
@@ -1433,7 +1354,6 @@ class TestDisabledPeriodDerivation:
         timeline = await get_fetcher_timeline(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             from_date=now - timedelta(days=10),
             to_date=now,
         )
@@ -1461,7 +1381,6 @@ class TestDisabledPeriodDerivation:
         timeline = await get_fetcher_timeline(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             from_date=now - timedelta(days=10),
             to_date=now,
         )
@@ -1486,7 +1405,6 @@ class TestDisabledPeriodDerivation:
         timeline = await get_fetcher_timeline(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             from_date=now - timedelta(days=10),
             to_date=now,
         )
@@ -1510,7 +1428,6 @@ class TestDisabledPeriodDerivation:
         timeline = await get_fetcher_timeline(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             from_date=now - timedelta(days=10),
             to_date=now,
         )
@@ -1544,7 +1461,6 @@ class TestDisabledPeriodDerivation:
         timeline = await get_fetcher_timeline(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             from_date=now - timedelta(days=10),
             to_date=now,
         )
@@ -1574,7 +1490,6 @@ class TestDisabledPeriodDerivation:
         timeline = await get_fetcher_timeline(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             from_date=now - timedelta(days=10),
             to_date=now,
         )
@@ -1605,7 +1520,6 @@ class TestDisabledPeriodDerivation:
         timeline = await get_fetcher_timeline(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             from_date=now - timedelta(days=10),
             to_date=now,
         )
@@ -1615,7 +1529,7 @@ class TestDisabledPeriodDerivation:
         assert timeline.disabled_periods[0].disabled_at == disabled_at
         assert timeline.disabled_periods[0].enabled_at == enabled_at
 
-    async def test_actors_hidden_without_manage_fetchers(
+    async def test_periods_carry_the_disabling_and_enabling_actors(
         self,
         db_session: AsyncSession,
         fetcher_config_factory: FetcherConfigFactory,
@@ -1623,42 +1537,44 @@ class TestDisabledPeriodDerivation:
         user_factory: UserFactory,
     ) -> None:
         config = await fetcher_config_factory()
-        actor = await user_factory()
+        disabler = await user_factory()
+        enabler = await user_factory()
         now = datetime.now(UTC)
         await fetcher_audit_event_factory(
             fetcher_name=config.fetcher_name,
             event_type="disabled",
             created_at=now - timedelta(days=5),
-            user_id=actor.id,
+            user_id=disabler.id,
         )
         await fetcher_audit_event_factory(
             fetcher_name=config.fetcher_name,
             event_type="enabled",
             created_at=now - timedelta(days=3),
-            user_id=actor.id,
+            user_id=enabler.id,
+        )
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name,
+            event_type="disabled",
+            created_at=now - timedelta(days=1),
+            user_id=disabler.id,
         )
 
-        unprivileged_timeline = await get_fetcher_timeline(
+        timeline = await get_fetcher_timeline(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
-            from_date=now - timedelta(days=10),
-            to_date=now,
-        )
-        privileged_timeline = await get_fetcher_timeline(
-            db_session,
-            fetcher_name=config.fetcher_name,
-            has_manage_fetchers=True,
             from_date=now - timedelta(days=10),
             to_date=now,
         )
 
-        assert unprivileged_timeline.disabled_periods[0].disabled_by is None
-        assert unprivileged_timeline.disabled_periods[0].enabled_by is None
-        assert privileged_timeline.disabled_periods[0].disabled_by is not None
-        assert privileged_timeline.disabled_periods[0].disabled_by.id == actor.id
-        assert privileged_timeline.disabled_periods[0].enabled_by is not None
-        assert privileged_timeline.disabled_periods[0].enabled_by.id == actor.id
+        closed, open_ended = timeline.disabled_periods
+        assert closed.disabled_by is not None
+        assert closed.disabled_by.id == disabler.id
+        assert closed.enabled_by is not None
+        assert closed.enabled_by.id == enabler.id
+        assert open_ended.disabled_by is not None
+        assert open_ended.disabled_by.id == disabler.id
+        assert open_ended.enabled_at is None
+        assert open_ended.enabled_by is None
 
     async def test_equal_created_at_pairs_correctly_via_id_ordering(
         self,
@@ -1686,7 +1602,6 @@ class TestDisabledPeriodDerivation:
         timeline = await get_fetcher_timeline(
             db_session,
             fetcher_name=config.fetcher_name,
-            has_manage_fetchers=False,
             from_date=now - timedelta(days=10),
             to_date=now,
         )

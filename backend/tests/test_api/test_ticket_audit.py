@@ -182,6 +182,43 @@ class TestListTicketEventsEndpoint:
         ]
         assert str(ticket.id) not in response.text
 
+    async def test_roleless_reader_sees_the_administrator_actor(
+        self,
+        authenticated_client: AsyncClient,
+        ticket_factory: Factory,
+        user_factory: Factory,
+        user_role_factory: Factory,
+        ticket_audit_event_factory: Factory,
+    ) -> None:
+        """A `track_status_changed` to `FIXED` through `admin_ticket_ops`
+        names the administrator to a reader without that capability
+        (`docs/features/identity/rbac.md`, Actor Identities)."""
+        ticket: Ticket = await ticket_factory()
+        admin: User = await user_factory(
+            username="fictional.admin", full_name="Fictional Admin"
+        )
+        await user_role_factory(user_id=admin.id, role=Role.ADMIN.value)
+        await ticket_audit_event_factory(
+            ticket_id=ticket.id,
+            event_type="track_status_changed",
+            user_id=admin.id,
+            old_value="AFFECTED",
+            new_value="FIXED",
+            detail={"track": "SUSE:SLE-15-SP6:Update", "package": "fictional-package"},
+            created_at=_BASE_TIME,
+        )
+
+        response = await authenticated_client.get(_url(ticket))
+
+        assert response.status_code == 200
+        assert response.json()["data"][0]["actor"] == {
+            "id": str(admin.id),
+            "username": "fictional.admin",
+            "full_name": "Fictional Admin",
+            "active": True,
+            "bot": False,
+        }
+
     async def test_filters_are_forwarded(
         self,
         authenticated_client: AsyncClient,

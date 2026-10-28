@@ -122,7 +122,7 @@ def _make_self_event_kwargs(**overrides: object) -> dict[str, object]:
         "new_value": "admin",
         "detail": {"source": "external_sync", "mapping": "SecurityTeam"},
         "created_at": datetime(2026, 5, 13, 10, 30, 0, tzinfo=UTC),
-        "actor": "system",
+        "actor": None,
     }
     defaults.update(overrides)
     return defaults
@@ -160,14 +160,22 @@ class TestAdminIdentityAuditEventData:
 
 @pytest.mark.unit
 class TestSelfIdentityAuditEventData:
-    @pytest.mark.parametrize("actor", ["system", "self", "admin"])
-    def test_actor_accepts_every_documented_literal(self, actor: str) -> None:
-        event = SelfIdentityAuditEventData(**_make_self_event_kwargs(actor=actor))
-        assert event.actor == actor
+    def test_actor_accepts_null_for_an_event_without_a_recorded_actor(
+        self,
+    ) -> None:
+        event = SelfIdentityAuditEventData(**_make_self_event_kwargs(actor=None))
+        assert event.actor is None
 
-    def test_actor_rejects_a_value_outside_the_literal_set(self) -> None:
+    def test_actor_accepts_a_user_reference(self) -> None:
+        actor = UserReference(**_make_user_reference_kwargs(username="asmith"))
+        event = SelfIdentityAuditEventData(**_make_self_event_kwargs(actor=actor))
+        assert event.actor is not None
+        assert event.actor.username == "asmith"
+
+    @pytest.mark.parametrize("actor", ["system", "self", "admin"])
+    def test_actor_rejects_the_former_anonymized_strings(self, actor: str) -> None:
         with pytest.raises(ValidationError):
-            SelfIdentityAuditEventData(**_make_self_event_kwargs(actor="jdoe"))
+            SelfIdentityAuditEventData(**_make_self_event_kwargs(actor=actor))
 
     def test_has_no_target_user_field(self) -> None:
         """Structural guarantee: the self-service response never
@@ -199,4 +207,4 @@ class TestResponseEnvelopes:
             meta=PaginationMeta(total=1, page=1, per_page=20),
         )
         assert len(response.data) == 1
-        assert response.data[0].actor == "system"
+        assert response.data[0].actor is None
