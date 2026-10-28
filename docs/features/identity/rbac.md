@@ -887,10 +887,12 @@ underscores:
 - `vulnerability_analyst`
 - `restricted_analyst`
 
-This applies to all endpoints that accept or return role values:
-`POST /api/v1/admin/users/{user}/roles`, `GET /api/v1/users/{user}`,
-`GET /api/v1/admin/users/{user}`, CLI `--role` parameter, and `RoleMapping`
-API payloads.
+This applies to every endpoint that accepts or returns role values,
+including the `role` filter and the `roles` of the user directory and of the
+administrator user reads (`GET /api/v1/users`, `GET /api/v1/users/{user}`,
+`GET /api/v1/admin/users`, `GET /api/v1/admin/users/{user}`),
+`GET /api/v1/users/me`, `POST /api/v1/admin/users/{user}/roles`, the CLI
+`--role` parameter, and `RoleMapping` API payloads.
 
 **Deterministic ordering**: any response array of role values (e.g.,
 the `roles` of `GET /api/v1/users/me` and of the user directory entry) is

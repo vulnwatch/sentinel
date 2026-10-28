@@ -770,7 +770,7 @@ stderr.
 
 ## Access Level Requirements
 
-The API serves users to two audiences:
+The API exposes user records to two audiences:
 
 - **The user directory** (List Users and Get User under Directory API
   endpoints) is accessible to every authenticated user (read-only) and
@@ -786,20 +786,21 @@ reactivate, reset password, unlock, role management) require the
 container access and pass `acting_user_id = None`; they do not evaluate an HTTP
 caller capability.
 
-> **Design note — two audiences**: every legitimate reader of Sentinel holds
-> a user account, so the directory serves every reader. Its consumers, such
-> as an assignment picker (active Vulnerability Analysts), an access-grant
-> picker (a search by name, username, or email), and Ticket filters, need a
-> user's identity, email, and role values. The other fields of the profile
-> serve only user administration: the authentication source, the external
-> identity provider's identifier, the manager, the origin of each role (the
-> granting external group, the assigning administrator, and the assignment
-> time), the record timestamps, and the last login. The directory therefore
-> omits them, and it filters, searches, and sorts only on the fields that its
-> entry returns, so a query cannot reveal a value that the response
-> withholds. The omitted fields remain part of the User record. Adding a
-> field to the directory entry later is an additive change; removing one is
-> breaking (`docs/api-spec.md`, Versioning).
+> **Design note — two audiences**: every read of application data requires
+> authentication (`docs/features/identity/rbac.md`, Access Levels), so the
+> directory serves every user account, role-less readers included. Its
+> consumers, such as an assignment picker (active Vulnerability Analysts), an
+> access-grant picker (a search by name, username, or email), and Ticket
+> filters, need a user's identity, email, and role values. The other fields of
+> the profile serve only user administration: the authentication source, the
+> external identity provider's identifier, the manager, the origin of each
+> role (the granting external group, the assigning administrator, and the
+> assignment time), the record timestamps, and the last login. The directory
+> therefore omits them, and it filters, searches, and sorts only on the fields
+> that its entry returns, so a query cannot reveal a value that the response
+> withholds. The omitted fields remain part of the User record. Adding a field
+> to the directory entry later is an additive change; removing one is breaking
+> (`docs/api-spec.md`, Versioning).
 
 ### Directory API endpoints
 
@@ -908,8 +909,10 @@ otherwise stated.
 
 For every endpoint with a `{user}` path parameter, the route resolves the
 identifier through `user_service.resolve_user_identifier()` and passes the
-resolved UUID to the owning service. `UserNotFoundError` maps to 404
-`USER_NOT_FOUND`. Route handlers execute no ORM lookup directly.
+resolved UUID to the owning service; Get User (Admin) instead passes the
+identifier to `user_service.get_user()`, which applies the same resolution.
+`UserNotFoundError` maps to 404 `USER_NOT_FOUND`. Route handlers execute no ORM
+lookup directly.
 
 #### List Users (Admin)
 
@@ -1135,8 +1138,8 @@ in `docs/features/identity/user-service.md`).
 7. If the service raises `UserConflictError` (duplicate email), return
    HTTP 409 with code `USER_ALREADY_EXISTS`:
    `"A user with this email already exists."`
-8. Return HTTP 200 with `UserUpdateResult.user` — the updated user profile —
-   in the standard `{"data": ...}` envelope
+8. Return HTTP 200 with `UserUpdateResult.user` — the updated complete user
+   profile — in the standard `{"data": ...}` envelope
 
 **Error responses**:
 
@@ -1607,8 +1610,13 @@ handling is required.
   employee, searching colleagues by email is a directory use case, and role
   values identify whom to assign a Ticket or ask for access. The directory
   also lists deactivated users and local accounts, whose email the corporate
-  directory may not show. The fields that serve only user administration are
-  never part of it (see Access Level Requirements)
+  directory may not show. This is accepted too: deactivated users remain the
+  subject of historical assignments, references, and Ticket filters; a
+  username grants nothing without the password of a local account; and the
+  lockout of a known username, an administrator's included, is the accepted
+  risk stated below (Per-username lockout DoS vector). The fields that serve
+  only user administration are never part of the directory (see Access Level
+  Requirements)
 - **Password policy**: minimum 16 characters, no complexity rules.
   Length is the primary defense (see
   `docs/features/identity/local-authentication.md`)

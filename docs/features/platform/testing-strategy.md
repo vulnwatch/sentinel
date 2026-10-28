@@ -3885,9 +3885,10 @@ or identity audit validation are affected, tests MUST cover:
   validation/policy 422, initial roles, and atomic audit persistence
 - the two audiences of `docs/features/identity/user-management.md` (Access
   Level Requirements): `GET /api/v1/users` and `GET /api/v1/users/{user}`
-  return exactly the fields of the directory entry to every authenticated
-  caller, an administrator included, and no field of the complete user
-  profile; they reject `sort_by=created_at` and ignore `type`.
+  return exactly the fields of the directory entry, with `roles` as plain
+  values, to every authenticated caller, an administrator included, and none
+  of the fields that only the complete user profile returns; they reject
+  `sort_by=created_at` and ignore `type`.
   `GET /api/v1/admin/users` and `GET /api/v1/admin/users/{user}` return the
   complete user profile, including `last_login_at` (`null` before the first
   login and the login time after it), and return 403 to an authenticated
