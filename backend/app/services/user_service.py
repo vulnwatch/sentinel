@@ -15,7 +15,8 @@ role-mapping operations (`sync_role_mapping()`,
 provisioning (`docs/features/identity/identity-provisioning.md`) and are
 not implemented. `resolve_user_identifier()` and `get_user_roles()` back
 the shared authentication/authorization dependencies. `list_users()` and
-`get_user()` provide the paginated directory and full profile reads;
+`get_user()` provide the paginated list and detail reads behind both the
+user directory and the administrator complete-profile reads;
 `get_user_by_username()` is the username-only profile read used by CLI
 commands.
 
@@ -472,7 +473,7 @@ async def list_users(
     sort_by: UserSortField = UserSortField.USERNAME,
     sort_order: SortOrder = SortOrder.ASC,
 ) -> UserPage:
-    """Return one page of the public user directory.
+    """Return one page of users for the directory and administrator lists.
 
     Q1: `search` is a case-insensitive substring matched against
     `username`, `email`, and `full_name` (OR); `user_type` restricts to
@@ -483,9 +484,10 @@ async def list_users(
     total); `has_role` additionally restricts to users with at least one
     role (`True`) or none (`False`). All provided filter categories
     combine with AND
-    (`docs/features/identity/user-management.md`, List Users).
-    `page`/`per_page`/`sort_by`/`sort_order` have already passed API
-    schema validation.
+    (`docs/features/identity/user-management.md`, List Users (Admin));
+    the directory read (List Users) passes no `user_type` and never sorts
+    by `created_at`. `page`/`per_page`/`sort_by`/`sort_order` have
+    already passed API schema validation.
 
     Q3: returns `UserPage(items, total, page, per_page)` with `roles`
     and `manager` eagerly loaded on every item, ordered per `sort_by`/
@@ -550,7 +552,9 @@ async def get_user(session: AsyncSession, identifier: str) -> User:
 
     Q3: resolves `identifier` via `resolve_user_identifier()`, then
     returns the matching `User` with `roles` and `manager` eagerly
-    loaded (`docs/features/identity/user-management.md`, Get User).
+    loaded for the complete user profile
+    (`docs/features/identity/user-management.md`, Get User (Admin)); the
+    directory read (Get User) serializes only its entry from it.
 
     Q6: propagates `UserNotFoundError` when `identifier` resolves to no
     user, and any underlying database exception.

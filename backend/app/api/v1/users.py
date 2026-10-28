@@ -1,13 +1,15 @@
-"""User directory, profile, and current-user endpoints, plus the
-admin user mutation endpoints and the deactivation impact preview.
+"""User directory and current-user endpoints, plus the administrator
+user reads, the admin user mutation endpoints, and the deactivation
+impact preview.
 
-See `docs/features/identity/user-management.md` (List Users, Get User,
-Admin API endpoints) and `docs/features/identity/authentication.md`
-(Get Current User) for the authoritative endpoint contracts this module
-implements. Handlers stay thin: they validate, delegate to
-`user_service` (`docs/features/identity/user-service.md`), and map the
-result or a typed service exception to the documented response — no
-business logic or database query lives here.
+See `docs/features/identity/user-management.md` (Directory API
+endpoints, Admin API endpoints) and
+`docs/features/identity/authentication.md` (Get Current User) for the
+authoritative endpoint contracts this module implements. Handlers stay
+thin: they validate, delegate to `user_service`
+(`docs/features/identity/user-service.md`), and map the result or a
+typed service exception to the documented response — no business logic
+or database query lives here.
 """
 
 from __future__ import annotations
@@ -23,7 +25,14 @@ from app.api.dependencies import (
     require_session_authentication,
     user_not_found_error,
 )
-from app.core.enums import Capability, Role, SortOrder, UserSortField, UserType
+from app.core.enums import (
+    Capability,
+    Role,
+    SortOrder,
+    UserDirectorySortField,
+    UserSortField,
+    UserType,
+)
 from app.core.errors import AppError, ErrorCode
 from app.core.exceptions import UserNotFoundError
 from app.core.passwords import PasswordValidationError
@@ -42,6 +51,10 @@ from app.schemas.user import (
     UserActionDetailData,
     UserActionDetailResponse,
     UserData,
+    UserDirectoryData,
+    UserDirectoryListQuery,
+    UserDirectoryListResponse,
+    UserDirectoryResponse,
     UserListQuery,
     UserListResponse,
     UserManagerData,
@@ -65,7 +78,7 @@ router = APIRouter(prefix="/api/v1", tags=["Users"])
 
 
 # ---------------------------------------------------------------------------
-# Query parameter builder
+# Query parameter builders
 #
 # Declared as individual `Query()`-annotated parameters (rather than a
 # single `Annotated[Model, Query()]` query-parameter-model field) so
@@ -74,6 +87,58 @@ router = APIRouter(prefix="/api/v1", tags=["Users"])
 # inspects `Dependant.query_params` at every nesting depth. Mirrors
 # `app/api/v1/api_keys.py`.
 # ---------------------------------------------------------------------------
+
+
+def _user_directory_query(
+    *,
+    search: Annotated[
+        str | None,
+        Query(
+            min_length=2,
+            description=(
+                "Case-insensitive substring across username, email, and full name."
+            ),
+        ),
+    ] = None,
+    active: Annotated[
+        bool | None, Query(description="Filter by active status.")
+    ] = None,
+    role: Annotated[
+        list[str],
+        Query(
+            default_factory=list,
+            description=(
+                "One or more of 'admin', 'vulnerability_analyst', "
+                "'restricted_analyst'. Repeatable; OR semantics."
+            ),
+        ),
+    ],
+    has_role: Annotated[
+        bool | None,
+        Query(description="true for users with at least one role, false for none."),
+    ] = None,
+    page: Annotated[int, Query(ge=1, le=2_147_483_647, description="Page number.")] = 1,
+    per_page: Annotated[
+        int, Query(ge=1, le=100, description="Items per page; maximum 100.")
+    ] = 20,
+    sort_by: Annotated[
+        UserDirectorySortField,
+        Query(description="'username' (default), 'full_name', or 'email'."),
+    ] = UserDirectorySortField.USERNAME,
+    sort_order: Annotated[SortOrder, Query(description="'asc' or 'desc'.")] = (
+        SortOrder.ASC
+    ),
+) -> UserDirectoryListQuery:
+    return UserDirectoryListQuery(
+        search=search,
+        active=active,
+        role=role,
+        has_role=has_role,
+        page=page,
+        per_page=per_page,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
 
 
 def _user_list_query(
@@ -182,8 +247,27 @@ def _parse_role_filters(raw: list[str]) -> tuple[bool, list[Role]]:
 # ---------------------------------------------------------------------------
 
 
+def _serialize_directory_entry(user: User) -> UserDirectoryData:
+    """Build the user directory entry (`user-management.md`, Get User).
+
+    `roles` holds each role the user currently holds from any origin
+    once, ordered alphabetically by wire-format value
+    (`docs/features/identity/rbac.md`, Deterministic ordering). No other
+    field of the complete profile is read.
+    """
+    return UserDirectoryData(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        full_name=user.full_name,
+        active=user.active,
+        roles=sorted({role_to_wire(Role(user_role.role)) for user_role in user.roles}),
+    )
+
+
 def _serialize_user(user: User) -> UserData:
-    """Build the full user profile response object.
+    """Build the complete user profile response object
+    (`user-management.md`, Get User (Admin)).
 
     `source` is derived (never stored) from `external_id`. `roles` is
     ordered alphabetically by wire-format role value, then `group_name`,
@@ -229,6 +313,7 @@ def _serialize_user(user: User) -> UserData:
         external_id=user.external_id,
         manager=manager,
         roles=roles,
+        last_login_at=user.last_login_at,
         created_at=user.created_at,
         updated_at=user.updated_at,
     )
@@ -245,30 +330,31 @@ def _serialize_user(user: User) -> UserData:
 
 @router.get(
     "/users",
-    response_model=UserListResponse,
+    response_model=UserDirectoryListResponse,
     summary="List users",
     description=(
-        "Returns a paginated directory of users. Supports search across "
-        "username, email, and full name; local/external type; active "
+        "Returns a paginated user directory: each entry carries the user's "
+        "id, username, email, full name, active status, and role values. "
+        "Supports search across username, email, and full name; active "
         "status; repeatable role (OR semantics); and has_role filters, plus "
-        "standard pagination and sorting. Requires authentication (JWT "
+        "standard pagination and sorting. The complete user profile is "
+        "served by GET /api/v1/admin/users. Requires authentication (JWT "
         "session or API key)."
     ),
 )
 async def list_users(
     db: DatabaseSession,
-    query: Annotated[UserListQuery, Depends(_user_list_query)],
+    query: Annotated[UserDirectoryListQuery, Depends(_user_directory_query)],
     _principal: CurrentUser,
-) -> UserListResponse:
-    """List users — see
+) -> UserDirectoryListResponse:
+    """List users (directory) — see
     `docs/features/identity/user-management.md` (List Users).
 
     `_principal` is unused by the response: it exists solely to require
     authentication (`Access: Authenticated`)."""
-    type_valid, user_type = _parse_user_type(query.type)
     roles_valid, roles = _parse_role_filters(query.role)
-    if not type_valid or not roles_valid:
-        return UserListResponse(
+    if not roles_valid:
+        return UserDirectoryListResponse(
             data=[],
             meta=PaginationMeta(total=0, page=query.page, per_page=query.per_page),
         )
@@ -276,17 +362,16 @@ async def list_users(
     page = await user_service.list_users(
         db,
         search=query.search,
-        user_type=user_type,
         active=query.active,
         roles=roles,
         has_role=query.has_role,
         page=query.page,
         per_page=query.per_page,
-        sort_by=query.sort_by,
+        sort_by=UserSortField(query.sort_by.value),
         sort_order=query.sort_order,
     )
-    return UserListResponse(
-        data=[_serialize_user(user) for user in page.items],
+    return UserDirectoryListResponse(
+        data=[_serialize_directory_entry(user) for user in page.items],
         meta=PaginationMeta(total=page.total, page=page.page, per_page=page.per_page),
     )
 
@@ -321,12 +406,13 @@ async def get_current_user_profile(
 
 @router.get(
     "/users/{user}",
-    response_model=UserResponse,
+    response_model=UserDirectoryResponse,
     summary="Get user",
     description=(
-        "Returns the full profile of one user, resolved by UUID or exact, "
-        "case-sensitive username. Requires authentication (JWT session or "
-        "API key)."
+        "Returns the directory entry of one user, resolved by UUID or "
+        "exact, case-sensitive username. The complete user profile is "
+        "served by GET /api/v1/admin/users/{user}. Requires authentication "
+        "(JWT session or API key)."
     ),
     responses={
         404: {
@@ -339,12 +425,105 @@ async def get_current_user_profile(
 )
 async def get_user(
     user: str, db: DatabaseSession, _principal: CurrentUser
-) -> UserResponse:
-    """Get user — see
+) -> UserDirectoryResponse:
+    """Get user (directory) — see
     `docs/features/identity/user-management.md` (Get User).
 
     `_principal` is unused by the response: it exists solely to require
     authentication (`Access: Authenticated`)."""
+    try:
+        resolved = await user_service.get_user(db, user)
+    except UserNotFoundError:
+        raise user_not_found_error() from None
+    return UserDirectoryResponse(data=_serialize_directory_entry(resolved))
+
+
+# ---------------------------------------------------------------------------
+# Administrator user reads
+#
+# See `docs/features/identity/user-management.md` (List Users (Admin),
+# Get User (Admin)): both require `manage_users` and return the
+# complete user profile. `/admin/users/{user}` declares no literal
+# sibling at the `{user}` position, so no reserved username applies.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/admin/users",
+    response_model=UserListResponse,
+    summary="List users (admin)",
+    description=(
+        "Returns a paginated list of complete user profiles. Supports search "
+        "across username, email, and full name; local/external type; active "
+        "status; repeatable role (OR semantics); and has_role filters, plus "
+        "standard pagination and sorting. Requires the 'manage_users' "
+        "capability."
+    ),
+)
+async def list_users_admin(
+    db: DatabaseSession,
+    query: Annotated[UserListQuery, Depends(_user_list_query)],
+    _principal: Annotated[
+        AuthenticatedPrincipal,
+        Depends(require_capability(Capability.MANAGE_USERS)),
+    ],
+) -> UserListResponse:
+    """List users (admin) — see
+    `docs/features/identity/user-management.md` (List Users (Admin))."""
+    type_valid, user_type = _parse_user_type(query.type)
+    roles_valid, roles = _parse_role_filters(query.role)
+    if not type_valid or not roles_valid:
+        return UserListResponse(
+            data=[],
+            meta=PaginationMeta(total=0, page=query.page, per_page=query.per_page),
+        )
+
+    page = await user_service.list_users(
+        db,
+        search=query.search,
+        user_type=user_type,
+        active=query.active,
+        roles=roles,
+        has_role=query.has_role,
+        page=query.page,
+        per_page=query.per_page,
+        sort_by=query.sort_by,
+        sort_order=query.sort_order,
+    )
+    return UserListResponse(
+        data=[_serialize_user(user) for user in page.items],
+        meta=PaginationMeta(total=page.total, page=page.page, per_page=page.per_page),
+    )
+
+
+@router.get(
+    "/admin/users/{user}",
+    response_model=UserResponse,
+    summary="Get user (admin)",
+    description=(
+        "Returns the complete profile of one user, resolved by UUID or "
+        "exact, case-sensitive username. Requires the 'manage_users' "
+        "capability."
+    ),
+    responses={
+        404: {
+            "model": ErrorResponse,
+            "description": (
+                "`USER_NOT_FOUND`: no user matches the given UUID or username."
+            ),
+        },
+    },
+)
+async def get_user_admin(
+    user: str,
+    db: DatabaseSession,
+    _principal: Annotated[
+        AuthenticatedPrincipal,
+        Depends(require_capability(Capability.MANAGE_USERS)),
+    ],
+) -> UserResponse:
+    """Get user (admin) — see
+    `docs/features/identity/user-management.md` (Get User (Admin))."""
     try:
         resolved = await user_service.get_user(db, user)
     except UserNotFoundError:

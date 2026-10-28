@@ -1,9 +1,9 @@
-"""Request/response/query schemas for the public user directory/profile
-endpoints and the admin user mutation endpoints.
+"""Request/response/query schemas for the user directory endpoints, the
+administrator user reads, and the admin user mutation endpoints.
 
-See `docs/features/identity/user-management.md` (List Users, Get User,
-Admin API endpoints) for the authoritative request/response contract
-these schemas implement.
+See `docs/features/identity/user-management.md` (Access Level
+Requirements, Directory API endpoints, Admin API endpoints) for the
+authoritative request/response contract these schemas implement.
 """
 
 from __future__ import annotations
@@ -15,15 +15,37 @@ from uuid import UUID
 from email_validator import EmailNotValidError, validate_email
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.core.enums import SortOrder, UserSortField
+from app.core.enums import SortOrder, UserDirectorySortField, UserSortField
 from app.core.permissions import role_from_wire
 from app.core.usernames import RESERVED_USERNAMES, USERNAME_PATTERN
 from app.schemas.common import PaginationMeta
 
 
-class UserListQuery(BaseModel):
+class UserDirectoryListQuery(BaseModel):
     """Query parameters for `GET /api/v1/users` (`user-management.md`,
     List Users).
+
+    The directory filters, searches, and sorts only on fields its entry
+    returns, so it declares no `type` filter and no `created_at` sort.
+    `role` is intentionally `list[str]`, not a typed enum list: an
+    invalid value must be silently ignored (`docs/api-spec.md`, Enum
+    Filter Validation) rather than raise the schema-validation `422` a
+    typed enum field would. The route handler parses it against `Role`.
+    """
+
+    search: str | None = Field(default=None, min_length=2)
+    active: bool | None = None
+    role: list[str] = Field(default_factory=list)
+    has_role: bool | None = None
+    page: int = Field(default=1, ge=1, le=2_147_483_647)
+    per_page: int = Field(default=20, ge=1, le=100)
+    sort_by: UserDirectorySortField = UserDirectorySortField.USERNAME
+    sort_order: SortOrder = SortOrder.ASC
+
+
+class UserListQuery(BaseModel):
+    """Query parameters for `GET /api/v1/admin/users`
+    (`user-management.md`, List Users (Admin)).
 
     `type` and `role` are intentionally `str | None` / `list[str]`, not
     typed enums: an invalid value must be silently ignored and produce
@@ -43,10 +65,41 @@ class UserListQuery(BaseModel):
     sort_order: SortOrder = SortOrder.ASC
 
 
+class UserDirectoryData(BaseModel):
+    """The user directory entry returned by `GET /api/v1/users` (list
+    items) and `GET /api/v1/users/{user}` (`user-management.md`, Get
+    User). It has the fields of the caller's own profile
+    (`app.schemas.auth.CurrentUserData`) and none of the fields that
+    only the complete user profile (`UserData`) returns. `roles` is the
+    distinct, alphabetically wire-sorted set of current role values
+    (`rbac.md`, Deterministic ordering); `full_name` is returned `null`
+    verbatim with no fallback substitution."""
+
+    id: UUID
+    username: str
+    email: str
+    full_name: str | None
+    active: bool
+    roles: list[str]
+
+
+class UserDirectoryResponse(BaseModel):
+    """Response body for `GET /api/v1/users/{user}`."""
+
+    data: UserDirectoryData
+
+
+class UserDirectoryListResponse(BaseModel):
+    """Response body for `GET /api/v1/users`."""
+
+    data: list[UserDirectoryData]
+    meta: PaginationMeta
+
+
 class UserManagerData(BaseModel):
-    """The `manager` object in a full user profile — the standard User
-    Reference Object shape plus `email`, per `user-management.md` (Get
-    User)."""
+    """The `manager` object in a complete user profile — the standard
+    User Reference Object shape plus `email`, per `user-management.md`
+    (Get User (Admin))."""
 
     id: UUID
     username: str
@@ -56,8 +109,8 @@ class UserManagerData(BaseModel):
 
 
 class UserRoleAssignmentData(BaseModel):
-    """One entry of a full user profile's `roles` array
-    (`user-management.md`, Get User)."""
+    """One entry of a complete user profile's `roles` array
+    (`user-management.md`, Get User (Admin))."""
 
     role: str
     group_name: str
@@ -66,10 +119,12 @@ class UserRoleAssignmentData(BaseModel):
 
 
 class UserData(BaseModel):
-    """The full user profile object shared by `GET /api/v1/users` (list
-    items) and `GET /api/v1/users/{user}` (`user-management.md`, Get
-    User). `full_name` and `manager.full_name` are nullable — the API
-    returns `null` verbatim with no fallback substitution."""
+    """The complete user profile returned by `GET /api/v1/admin/users`
+    (list items), `GET /api/v1/admin/users/{user}`, and the admin
+    mutation endpoints (`user-management.md`, Get User (Admin)).
+    `full_name` and `manager.full_name` are nullable — the API returns
+    `null` verbatim with no fallback substitution. `last_login_at` is
+    `null` until the user's first login."""
 
     id: UUID
     username: str
@@ -80,18 +135,20 @@ class UserData(BaseModel):
     external_id: UUID | None
     manager: UserManagerData | None
     roles: list[UserRoleAssignmentData]
+    last_login_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
 
 class UserResponse(BaseModel):
-    """Response body for `GET /api/v1/users/{user}`."""
+    """Response body for `GET /api/v1/admin/users/{user}` and the admin
+    mutation endpoints that return the complete user profile."""
 
     data: UserData
 
 
 class UserListResponse(BaseModel):
-    """Response body for `GET /api/v1/users`."""
+    """Response body for `GET /api/v1/admin/users`."""
 
     data: list[UserData]
     meta: PaginationMeta

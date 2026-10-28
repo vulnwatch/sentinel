@@ -1,9 +1,10 @@
-"""Unit tests for user directory/profile request/response/query schemas
-and the admin user mutation request/response schemas
+"""Unit tests for the user directory, the complete user profile, and the
+admin user mutation request/response/query schemas
 (`backend/app/schemas/user.py`).
 
-See `docs/features/identity/user-management.md` (List Users, Get User,
-Admin API endpoints) for the authoritative contract under test.
+See `docs/features/identity/user-management.md` (Access Level
+Requirements, Directory API endpoints, Admin API endpoints) for the
+authoritative contract under test.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from app.core.enums import SortOrder, UserSortField
+from app.core.enums import SortOrder, UserDirectorySortField, UserSortField
 from app.schemas.common import PaginationMeta
 from app.schemas.user import (
     AdminPasswordResetRequest,
@@ -23,6 +24,10 @@ from app.schemas.user import (
     UserActionDetailData,
     UserActionDetailResponse,
     UserData,
+    UserDirectoryData,
+    UserDirectoryListQuery,
+    UserDirectoryListResponse,
+    UserDirectoryResponse,
     UserListQuery,
     UserListResponse,
     UserManagerData,
@@ -30,6 +35,37 @@ from app.schemas.user import (
     UserRoleAssignmentData,
     UserRolesUpdateRequest,
 )
+
+
+@pytest.mark.unit
+class TestUserDirectoryListQuery:
+    def test_defaults(self) -> None:
+        query = UserDirectoryListQuery()
+        assert query.search is None
+        assert query.active is None
+        assert query.role == []
+        assert query.has_role is None
+        assert query.page == 1
+        assert query.per_page == 20
+        assert query.sort_by is UserDirectorySortField.USERNAME
+        assert query.sort_order is SortOrder.ASC
+
+    def test_declares_no_type_filter(self) -> None:
+        """The directory filters only on fields its entry returns
+        (`user-management.md`, List Users)."""
+        assert "type" not in UserDirectoryListQuery.model_fields
+
+    @pytest.mark.parametrize("sort_by", ["username", "full_name", "email"])
+    def test_directory_sort_by_is_accepted(self, sort_by: str) -> None:
+        assert UserDirectoryListQuery(sort_by=sort_by).sort_by == sort_by
+
+    def test_sort_by_created_at_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            UserDirectoryListQuery(sort_by="created_at")
+
+    def test_search_below_minimum_length_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            UserDirectoryListQuery(search="j")
 
 
 @pytest.mark.unit
@@ -141,11 +177,59 @@ def _make_user_data_kwargs(**overrides: object) -> dict[str, object]:
         "external_id": None,
         "manager": None,
         "roles": [],
+        "last_login_at": None,
         "created_at": datetime(2026, 5, 1, tzinfo=UTC),
         "updated_at": datetime(2026, 5, 1, tzinfo=UTC),
     }
     defaults.update(overrides)
     return defaults
+
+
+def _make_directory_kwargs(**overrides: object) -> dict[str, object]:
+    defaults: dict[str, object] = {
+        "id": uuid4(),
+        "username": "jdoe",
+        "email": "jdoe@example.com",
+        "full_name": "John Doe",
+        "active": True,
+        "roles": ["admin"],
+    }
+    defaults.update(overrides)
+    return defaults
+
+
+@pytest.mark.unit
+class TestUserDirectoryData:
+    def test_has_exactly_the_directory_entry_fields(self) -> None:
+        """Structural guarantee: the directory entry carries none of the
+        fields that only the complete user profile returns
+        (`user-management.md`, Access Level Requirements)."""
+        assert set(UserDirectoryData.model_fields) == {
+            "id",
+            "username",
+            "email",
+            "full_name",
+            "active",
+            "roles",
+        }
+
+    def test_roles_are_plain_values(self) -> None:
+        data = UserDirectoryData(
+            **_make_directory_kwargs(roles=["admin", "vulnerability_analyst"])
+        )
+        assert data.roles == ["admin", "vulnerability_analyst"]
+
+    def test_full_name_accepts_null_with_no_fallback(self) -> None:
+        data = UserDirectoryData(**_make_directory_kwargs(full_name=None))
+        assert data.full_name is None
+
+    def test_envelopes_wrap_the_entry(self) -> None:
+        entry = UserDirectoryData(**_make_directory_kwargs())
+        assert UserDirectoryResponse(data=entry).data.username == "jdoe"
+        listing = UserDirectoryListResponse(
+            data=[entry], meta=PaginationMeta(total=1, page=1, per_page=20)
+        )
+        assert len(listing.data) == 1
 
 
 @pytest.mark.unit
@@ -177,8 +261,8 @@ class TestUserRoleAssignmentData:
 @pytest.mark.unit
 class TestUserData:
     def test_full_name_accepts_null_with_no_fallback(self) -> None:
-        """docs/features/identity/user-management.md (Get User, Field
-        notes): the API returns `null` verbatim — no `username`
+        """docs/features/identity/user-management.md (Get User (Admin),
+        Field notes): the API returns `null` verbatim — no `username`
         substitution happens at the schema/backend layer."""
         data = UserData(**_make_user_data_kwargs(full_name=None))
         assert data.full_name is None
@@ -213,11 +297,14 @@ class TestUserData:
         data = UserData(**_make_user_data_kwargs(roles=roles))
         assert len(data.roles) == 2
 
-    def test_has_no_last_login_at_field(self) -> None:
-        """Structural guarantee: the public full profile must never
-        expose the operational `last_login_at` field — CLI
-        `manage-user show` remains its sole owner."""
-        assert "last_login_at" not in UserData.model_fields
+    def test_last_login_at_accepts_null_before_the_first_login(self) -> None:
+        data = UserData(**_make_user_data_kwargs(last_login_at=None))
+        assert data.last_login_at is None
+
+    def test_last_login_at_carries_the_login_time(self) -> None:
+        login = datetime(2026, 6, 1, 14, 22, tzinfo=UTC)
+        data = UserData(**_make_user_data_kwargs(last_login_at=login))
+        assert data.last_login_at == login
 
     def test_has_no_password_hash_field(self) -> None:
         assert "password_hash" not in UserData.model_fields
