@@ -620,11 +620,11 @@ forms (see `docs/features/platform/testing-strategy.md`, Structural Tests).
   omission, and does not rebuild presence from `model_fields_set`. A response
   member that some responses omit likewise defaults to `MISSING`, which
   Pydantic leaves out of the serialized body; routes do not use
-  `response_model_exclude_unset`.
-  Structural tests in `backend/tests/test_api_conventions.py` enforce, for
-  every registered route, that a request-body member is published as nullable
-  exactly when validation accepts `null` for it, and that every optional
-  member of a `PATCH` body defaults to `MISSING`
+  `response_model_exclude_unset`. Structural tests in
+  `backend/tests/test_api_conventions.py` enforce, for every registered route,
+  that a request-body member is published as nullable exactly when validation
+  accepts `null` for it, and that every optional member of a `PATCH` body
+  defaults to `MISSING`
 
 ## Database, Transactions, and State
 
