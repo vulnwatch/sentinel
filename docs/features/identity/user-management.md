@@ -1753,7 +1753,9 @@ handling is required.
   (`password_reset`) provides a forensic trail of acting admin and target
   user, and the target user sees the acting administrator in their own
   identity audit log (`docs/features/identity/identity-audit-log.md`, List
-  My Identity Audit Events), so they can report an unexpected reset
+  My Identity Audit Events), so they can report an unexpected reset. They
+  read it once their access is restored, or at once through an API key they
+  already hold, because a reset invalidates Sessions but revokes no API key
 - **Per-username lockout DoS vector (accepted risk)**: the per-username
   lockout mechanism (5 failed attempts → account locked for 10 minutes)
   allows anyone who knows a valid username to lock out that account by

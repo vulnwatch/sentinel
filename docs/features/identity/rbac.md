@@ -178,19 +178,19 @@ Confidential Ticket Visibility). Authenticated access covers:
   and the users who triggered runs or disabled and enabled a fetcher)
 - View IBS consumer status
 
-### Actor Identities
+## Actor Identities
 
 A response that includes a recorded action, such as an audit event, a fetcher
 run, a disabled period of a fetcher, an API key revocation, or a role
-assignment, identifies the user who performed it with the user reference object
-(`docs/api-spec.md`, User References in Responses), or with `null` when no
-authenticated Sentinel user performed it. Every caller that can read the
-response receives the same actor: no actor is masked, anonymized, or replaced
-according to the caller's capabilities or the actor's roles, and an
+assignment, identifies the user that the owning contract records as its actor
+with the user reference object (`docs/api-spec.md`, User References in
+Responses), or with `null` when no user is recorded. Every caller that can
+read the response receives the same actor: no actor is masked, anonymized, or
+replaced according to the caller's capabilities or the actor's roles, and an
 administrator's action is attributed like any other user's. Which responses
 include an action, and to whom, is decided by the access level or capability
-of each operation, so this rule exposes no response to a caller that the
-operation does not already admit.
+of each operation, so this rule applies under every access level and exposes
+no response to a caller that the operation does not already admit.
 
 > **Design note — no anonymized administrators**: every authenticated user
 > can list the holders of the Admin role through the user directory

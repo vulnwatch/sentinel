@@ -411,9 +411,9 @@ The User returned by a profile-mutating operation — directly by
 `create_user()`, or as the result's `user` for `update_user()`,
 `reactivate_user()`, `deactivate_user()`, and `update_roles()` — has roles,
 the user who assigned each role, and manager loaded for API profile
-serialization. Callers do not execute
-follow-up ORM queries to construct the complete user profile
-(`user-management.md`, Get User (Admin)). API and external synchronization
+serialization. Callers do not execute follow-up ORM queries to construct the
+complete user profile (`user-management.md`, Get User (Admin)). API and
+external synchronization
 callers serialize the result's `user`; they do not infer the outcome from a
 read taken before the mutation.
 

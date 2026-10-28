@@ -2130,14 +2130,16 @@ UUID and username inputs. At minimum:
 
 ### Actor Identities
 
-Every read open to callers without an administrator capability that returns
-the actor of an action an administrator can perform
-(`docs/features/identity/rbac.md`, Actor Identities) MUST be tested with a
-caller that lacks that capability, for example a role-less user: the response
-carries the acting administrator's complete user reference, and `null` for an
-action without an authenticated actor. This covers the self-service identity
-audit log, the fetcher list (`last_run`), run list, run detail, and timeline
-(`disabled_periods`), and the self-service API key list (`revoked_by`).
+Every read that returns the actor of an action to callers who lack the
+capability that the action requires (`docs/features/identity/rbac.md`, Actor
+Identities) MUST be tested with such a caller, for example a role-less user:
+the response carries the actor's complete user reference and, where the read
+can report an action without a recorded actor, `null` for that action. This
+includes the self-service identity audit log, the fetcher list (`last_run`),
+run list, run detail, and timeline (`disabled_periods`), the self-service API
+key list (`revoked_by`), and the Ticket audit log (a `track_status_changed`
+to `fixed` through `admin_ticket_ops`). For the same caller, the fetcher run
+detail contains neither the `error_detail` nor the `error_traceback` key.
 
 ### Service Functions
 
@@ -3946,8 +3948,7 @@ or identity audit validation are affected, tests MUST cover:
   assignees and access grants, Ticket, identity, setting, and fetcher audit
   actors, API-key owners and revokers, and role assigners), the directory
   entry, the complete profile and its `manager`, and `GET /api/v1/users/me`;
-  the
-  OpenAPI document declares `bot` as a required boolean of each of these
+  the OpenAPI document declares `bot` as a required boolean of each of these
   schemas
 - the marker has no authorization or business-rule effect: a bot account
   passes and fails exactly the capability checks of its roles, and a bot
