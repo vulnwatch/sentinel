@@ -6,7 +6,7 @@ authoritative endpoint contracts under test. Filter/date/ordering
 combination coverage for the underlying query lives in
 `tests/test_services/test_identity_audit_log.py` — these tests focus on
 the HTTP/route contract (status codes, envelopes, error mapping,
-authentication/authorization, and actor anonymization).
+authentication/authorization, and actor representation).
 """
 
 from __future__ import annotations
@@ -19,9 +19,10 @@ import pytest
 from httpx import AsyncClient
 
 from app.api.v1.identity_audit import _parse_event_types
-from app.core.enums import IdentityAuditEventType
+from app.core.enums import IdentityAuditEventType, Role
 from app.models.identity_audit_event import IdentityAuditEvent
 from app.models.user import User
+from app.models.user_role import UserRole
 
 
 @pytest.fixture
@@ -101,7 +102,7 @@ class TestListMyIdentityAuditEvents:
         assert response.status_code == 200
         assert response.json()["meta"]["total"] == 0
 
-    async def test_actor_null_maps_to_system(
+    async def test_system_actor_renders_as_null(
         self,
         authenticated_client: AsyncClient,
         authenticated_user: User,
@@ -115,9 +116,9 @@ class TestListMyIdentityAuditEvents:
 
         response = await authenticated_client.get("/api/v1/users/me/audit-log")
 
-        assert response.json()["data"][0]["actor"] == "system"
+        assert response.json()["data"][0]["actor"] is None
 
-    async def test_actor_equal_to_self_maps_to_self(
+    async def test_own_action_renders_the_callers_user_reference(
         self,
         authenticated_client: AsyncClient,
         authenticated_user: User,
@@ -132,62 +133,45 @@ class TestListMyIdentityAuditEvents:
 
         response = await authenticated_client.get("/api/v1/users/me/audit-log")
 
-        assert response.json()["data"][0]["actor"] == "self"
+        assert response.json()["data"][0]["actor"] == {
+            "id": str(authenticated_user.id),
+            "username": authenticated_user.username,
+            "full_name": authenticated_user.full_name,
+            "active": True,
+            "bot": False,
+        }
 
-    async def test_actor_different_admin_maps_to_admin(
+    async def test_administrator_action_names_the_administrator_to_a_roleless_caller(
         self,
         authenticated_client: AsyncClient,
         authenticated_user: User,
         user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
         identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
     ) -> None:
-        admin = await user_factory(username="anadminactor")
+        """The caller holds no role, so lacks `manage_users`; the actor is
+        still the administrator's complete user reference
+        (`docs/features/identity/rbac.md`, Actor Identities)."""
+        admin = await user_factory(
+            username="fictional.admin", full_name="Fictional Admin", active=False
+        )
+        await user_role_factory(user_id=admin.id, role=Role.ADMIN.value)
         await identity_audit_event_factory(
-            event_type="role_added",
+            event_type="password_reset",
             user_id=admin.id,
             target_user_id=authenticated_user.id,
-            new_value="admin",
         )
 
         response = await authenticated_client.get("/api/v1/users/me/audit-log")
 
-        assert response.json()["data"][0]["actor"] == "admin"
-
-    async def test_actor_is_always_a_string_never_an_object(
-        self,
-        authenticated_client: AsyncClient,
-        authenticated_user: User,
-        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
-    ) -> None:
-        await identity_audit_event_factory(
-            event_type="user_created",
-            user_id=None,
-            target_user_id=authenticated_user.id,
-        )
-
-        response = await authenticated_client.get("/api/v1/users/me/audit-log")
-
-        assert isinstance(response.json()["data"][0]["actor"], str)
-
-    async def test_administrator_identity_is_never_disclosed(
-        self,
-        authenticated_client: AsyncClient,
-        authenticated_user: User,
-        user_factory: Callable[..., Awaitable[User]],
-        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
-    ) -> None:
-        admin = await user_factory(username="secretadminname")
-        await identity_audit_event_factory(
-            event_type="role_added",
-            user_id=admin.id,
-            target_user_id=authenticated_user.id,
-            new_value="admin",
-        )
-
-        response = await authenticated_client.get("/api/v1/users/me/audit-log")
-
-        assert "secretadminname" not in response.text
-        assert str(admin.id) not in response.text
+        assert response.status_code == 200
+        assert response.json()["data"][0]["actor"] == {
+            "id": str(admin.id),
+            "username": "fictional.admin",
+            "full_name": "Fictional Admin",
+            "active": False,
+            "bot": False,
+        }
 
     async def test_null_target_events_are_excluded(
         self,

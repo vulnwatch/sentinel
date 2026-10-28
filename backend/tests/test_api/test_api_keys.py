@@ -205,6 +205,38 @@ class TestListMyApiKeys:
         assert item["revoked_by"]["id"] == str(user.id)
         assert item["revoked_by"]["username"] == user.username
 
+    async def test_roleless_owner_sees_the_revoking_administrator(
+        self,
+        authenticated_user_and_client: tuple[User, AsyncClient],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        """The owner holds no role, so lacks `manage_users`; the revoker is
+        still the administrator's complete user reference
+        (`docs/features/identity/rbac.md`, Actor Identities)."""
+        user, client = authenticated_user_and_client
+        admin = await user_factory(
+            username="fictional.admin", full_name="Fictional Admin"
+        )
+        await user_role_factory(user_id=admin.id, role=Role.ADMIN.value)
+        await api_key_factory(
+            user_id=user.id,
+            revoked_at=datetime.now(UTC),
+            revoked_by=admin.id,
+        )
+
+        response = await client.get("/api/v1/api-keys")
+
+        assert response.status_code == 200
+        assert response.json()["data"][0]["revoked_by"] == {
+            "id": str(admin.id),
+            "username": "fictional.admin",
+            "full_name": "Fictional Admin",
+            "active": True,
+            "bot": False,
+        }
+
     async def test_non_revoked_key_has_null_revoked_by(
         self,
         authenticated_user_and_client: tuple[User, AsyncClient],

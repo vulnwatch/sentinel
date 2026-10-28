@@ -17,7 +17,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import IdentityAuditEventType
@@ -1672,6 +1672,29 @@ class TestListUserEvents:
 
         assert page.total == 1
         assert page.items[0].target_user_id == user.id
+
+    async def test_actor_is_eagerly_loaded(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        """The self-service log identifies the actor like the admin log
+        (`docs/features/identity/rbac.md`, Actor Identities), so the
+        actor is loaded with the page rather than left unloaded."""
+        admin = await user_factory(username="fictional.admin")
+        user = await user_factory()
+        await identity_audit_event_factory(
+            event_type="password_reset", user_id=admin.id, target_user_id=user.id
+        )
+        db_session.expunge_all()
+
+        page = await list_user_events(db_session, user_id=user.id)
+
+        (event,) = page.items
+        assert "actor" not in inspect(event).unloaded
+        assert event.actor is not None
+        assert event.actor.username == "fictional.admin"
 
     async def test_excludes_null_target_events(
         self,

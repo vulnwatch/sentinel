@@ -535,10 +535,10 @@ async def list_user_events(
     condition), ordered `id DESC` (fixed). `id` is a UUIDv7 value, so
     this is equivalent to `created_at DESC` with a deterministic
     tiebreak, in a single column. An out-of-range page returns an empty
-    `items` list with the correct `total`. The `actor` relationship is
-    deliberately not loaded — this endpoint renders `actor` as an
-    anonymized string, never the administrator's identity. No row lock
-    or audit event is created.
+    `items` list with the correct `total`. `actor` is eagerly loaded on
+    every item, as in `list_events()`: the self-service log identifies
+    the actor like the admin log (`docs/features/identity/rbac.md`, Actor
+    Identities). No row lock or audit event is created.
 
     Q6: propagates any underlying database exception. Infallible
     otherwise.
@@ -562,7 +562,8 @@ async def list_user_events(
     total = (await session.execute(count_query)).scalar_one()
 
     data_query = (
-        query.order_by(IdentityAuditEvent.id.desc())
+        query.options(selectinload(IdentityAuditEvent.actor))
+        .order_by(IdentityAuditEvent.id.desc())
         .offset((page - 1) * per_page)
         .limit(per_page)
     )

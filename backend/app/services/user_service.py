@@ -54,6 +54,7 @@ from sqlalchemy import (
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.interfaces import LoaderOption
 
 from app.core.enums import (
     ACTIVE_TICKET_STATUSES,
@@ -521,7 +522,7 @@ async def list_users(
     data_query = (
         select(User)
         .where(*conditions)
-        .options(selectinload(User.roles), selectinload(User.manager))
+        .options(*_profile_relationship_options())
         .order_by(*_user_sort_clauses(sort_by, sort_order))
         .offset((page - 1) * per_page)
         .limit(per_page)
@@ -797,8 +798,19 @@ async def _resolve_username(session: AsyncSession, user_id: UUID | None) -> str 
     return result.scalar_one_or_none()
 
 
+def _profile_relationship_options() -> tuple[LoaderOption, ...]:
+    """Eager loads for the complete user profile: `roles` with each role's
+    assigning user (`roles[].assigned_by`) and `manager`
+    (`docs/features/identity/user-management.md`, Get User (Admin))."""
+    return (
+        selectinload(User.roles).selectinload(UserRole.assigning_user),
+        selectinload(User.manager),
+    )
+
+
 def _user_profile_query(user_id: UUID) -> Select[User]:
-    """Select one `User` with `roles` and `manager` eagerly populated.
+    """Select one `User` with the complete profile's relationships eagerly
+    populated.
 
     `populate_existing` refreshes an identity-map copy and its loaded
     collections, so a profile read after a flushed role mutation never
@@ -807,15 +819,16 @@ def _user_profile_query(user_id: UUID) -> Select[User]:
     return (
         select(User)
         .where(User.id == user_id)
-        .options(selectinload(User.roles), selectinload(User.manager))
+        .options(*_profile_relationship_options())
         .execution_options(populate_existing=True)
     )
 
 
 async def _load_user_profile(session: AsyncSession, user_id: UUID) -> User:
-    """Load one existing `User` with `roles` and `manager` eagerly
-    populated, for API profile serialization after a lifecycle mutation (see
-    `docs/features/identity/user-service.md`, Mutation Result Types)."""
+    """Load one existing `User` with `roles` (and their assigning users) and
+    `manager` eagerly populated, for API profile serialization after a
+    lifecycle mutation (see `docs/features/identity/user-service.md`,
+    Mutation Result Types)."""
     return (await session.execute(_user_profile_query(user_id))).scalar_one()
 
 

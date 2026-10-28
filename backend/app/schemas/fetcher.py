@@ -73,7 +73,8 @@ class FetcherLastRunData(BaseModel):
     """The `last_run` object nested in a `List Fetchers` item.
 
     `triggered_by_user` is a `UserReference` when `triggered_by` is
-    `manual` and the caller holds `manage_fetchers`, otherwise `null`.
+    `manual`, for every caller (`docs/features/identity/rbac.md`, Actor
+    Identities), otherwise `null`.
     `error_detail`/`error_traceback` are never included at this level
     (list response) — see `docs/features/platform/fetcher-operations.md`
     (List Fetchers, Fields)."""
@@ -181,11 +182,10 @@ class FetcherTimelinePointData(BaseModel):
 
 
 class FetcherDisabledPeriodData(BaseModel):
-    """One derived disabled period. `disabled_by`/`enabled_by` are
-    `UserReference` objects only when the caller holds
-    `manage_fetchers`, otherwise `null` — never absent (unlike the run
-    detail's raw diagnostic fields), since these are always meaningful
-    as a null value regardless of capability."""
+    """One derived disabled period. `disabled_by`/`enabled_by` are the
+    `UserReference` objects of the users who disabled and enabled the
+    fetcher, for every caller (`docs/features/identity/rbac.md`, Actor
+    Identities); `enabled_by` is `null` while the period is open."""
 
     disabled_at: datetime
     disabled_by: UserReference | None

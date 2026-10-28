@@ -1066,7 +1066,13 @@ The route delegates UUID-or-username resolution and relationship loading to
       {
         "role": "admin",
         "group_name": "O SUSE Security",
-        "assigned_by": "uuid | null",
+        "assigned_by": {
+          "id": "uuid",
+          "username": "string",
+          "full_name": "string | null",
+          "active": true,
+          "bot": false
+        } | null,
         "created_at": "ISO8601"
       }
     ],
@@ -1091,6 +1097,11 @@ Field notes:
   assignments. `group_name` is `'_manual'` for manually assigned roles.
   See `rbac.md` (Role Wire Format, Deterministic ordering) for the
   array's sort order
+- `roles[].assigned_by`: the user reference object (`docs/api-spec.md`,
+  User References in Responses) of the user recorded as having assigned the
+  role (`docs/data-model.md`, UserRole), such as the administrator who
+  assigned a manual role through the API; `null` when no user is recorded,
+  as for a role assigned through the CLI or derived from an external group
 - `last_login_at`: the time of the user's most recent login, which every
   Session creation records (`docs/features/identity/authentication.md`,
   `last_login_at` field); `null` when the user has never logged in.
@@ -1740,7 +1751,13 @@ handling is required.
   account. This is accepted because: (1) the admin trust level already
   implies full system access; (2) the `IdentityAuditEvent`
   (`password_reset`) provides a forensic trail of acting admin and target
-  user
+  user, and the target user sees the acting administrator in their own
+  identity audit log (`docs/features/identity/identity-audit-log.md`, List
+  My Identity Audit Events), so they can report an unexpected reset. They
+  read it once their access is restored, or at once through an API key they
+  already hold, because a reset invalidates Sessions but revokes no API key
+  (`docs/features/identity/local-authentication.md`, Password reset does not
+  revoke API keys)
 - **Per-username lockout DoS vector (accepted risk)**: the per-username
   lockout mechanism (5 failed attempts → account locked for 10 minutes)
   allows anyone who knows a valid username to lock out that account by

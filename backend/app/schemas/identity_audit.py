@@ -7,7 +7,7 @@ authoritative request/response contract these schemas implement.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -69,9 +69,10 @@ class AdminIdentityAuditEventData(BaseModel):
 
 class SelfIdentityAuditEventData(BaseModel):
     """One event in the self-service identity audit log response
-    (`identity-audit-log.md`, List My Identity Audit Events). `actor` is
-    always one of `system`/`self`/`admin` — never a User object — per
-    the documented anonymization mapping."""
+    (`identity-audit-log.md`, List My Identity Audit Events). `actor` is the
+    user reference of the recorded actor, the caller's own included, or
+    `None` for an event with no recorded actor (`rbac.md`, Actor
+    Identities). The target is always the caller, so it is omitted."""
 
     id: UUID
     event_type: str
@@ -79,7 +80,7 @@ class SelfIdentityAuditEventData(BaseModel):
     new_value: str | None
     detail: dict[str, Any] | None
     created_at: datetime
-    actor: Literal["system", "self", "admin"]
+    actor: UserReference | None
 
 
 class AdminIdentityAuditListResponse(BaseModel):

@@ -35,7 +35,7 @@ endpoint contract.
 | `manage_users` | List users and view their complete profiles, create local users, update user fields, manage user roles, reset password, deactivate/reactivate, unlock, view deactivation impact, view/revoke all API keys, view admin-scoped identity audit log |
 | `manage_role_mappings` | Group-to-role mapping CRUD, preview role mapping. These operations belong to [identity-provisioning](identity-provisioning.md), a deferred specification |
 | `manage_settings` | View/update system settings, preview the impact of a default-CVSS version change, trigger CVSS recalculation, view settings audit log |
-| `manage_fetchers` | Trigger manual fetcher run, rerun complete Ticket convergence for an accessible eligible Ticket, enable/disable fetchers, view/modify fetcher config, view fetcher audit log, view error details, view error tracebacks, view triggered_by_user identity, view disabled_by/enabled_by actors |
+| `manage_fetchers` | Trigger manual fetcher run, rerun complete Ticket convergence for an accessible eligible Ticket, enable/disable fetchers, view/modify fetcher config, view fetcher audit log, view error details, view error tracebacks |
 | `admin_ticket_ops` | Set track affectedness to `FIXED` from any status |
 
 > **Design note — capability granularity**: capabilities are intentionally
@@ -174,8 +174,33 @@ Confidential Ticket Visibility). Authenticated access covers:
 - View tickets, CVEs, products, packages, and ticket package trees
 - View ticket references, CVSS assessments, and submission/release requests
 - View ticket audit logs
-- View fetcher dashboard (list, detail, charts, run history, error messages)
+- View fetcher dashboard (list, detail, charts, run history, error messages,
+  and the users who triggered runs or disabled and enabled a fetcher)
 - View IBS consumer status
+
+## Actor Identities
+
+A response that includes a recorded action, such as an audit event, a fetcher
+run, a disabled period of a fetcher, an API key revocation, or a role
+assignment, identifies the user that the owning contract records as its actor
+with the user reference object (`docs/api-spec.md`, User References in
+Responses), or with `null` when no user is recorded. Every caller that can
+read the response receives the same actor: no actor is masked, anonymized, or
+replaced according to the caller's capabilities or the actor's roles, and an
+administrator's action is attributed like any other user's. Which responses
+include an action, and to whom, is decided by the access level or capability
+of each operation, so this rule applies under every access level and exposes
+no response to a caller that the operation does not already admit.
+
+> **Design note — no anonymized administrators**: every authenticated user
+> can list the holders of the Admin role through the user directory
+> (`docs/features/identity/user-management.md`, Security Considerations), and
+> only a few known members of the security team hold it. Withholding which
+> administrator performed an action would therefore protect no one, while it
+> would deny the reader whom to ask about the action, or which account to
+> report when an action on their own account was unexpected, such as a
+> password reset (`docs/features/identity/identity-audit-log.md`, List My
+> Identity Audit Events).
 
 ## Permission Matrix
 
@@ -225,8 +250,6 @@ Confidential Ticket Visibility). Authenticated access covers:
 | View fetcher audit log | `manage_fetchers` |
 | View fetcher error details | `manage_fetchers` |
 | View fetcher error tracebacks | `manage_fetchers` |
-| View triggered_by_user identity | `manage_fetchers` |
-| View disabled_by/enabled_by actors | `manage_fetchers` |
 
 > **Assignment target constraint**: the `triage_ticket` capability allows
 > performing assignment operations, but the target user MUST hold the

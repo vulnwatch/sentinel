@@ -203,6 +203,29 @@ def _register(*stubs: type[Any]) -> None:
         FETCHER_REGISTRY[stub.name] = stub
 
 
+async def _fetcher_admin(
+    user_factory: UserFactory, user_role_factory: UserRoleFactory
+) -> User:
+    """An administrator — the only role holding `manage_fetchers` — to act
+    as the actor that a role-less reader sees
+    (`docs/features/identity/rbac.md`, Actor Identities)."""
+    admin = await user_factory(
+        username="fictional.admin", full_name="Fictional Admin", bot=True
+    )
+    await user_role_factory(user_id=admin.id, role=Role.ADMIN.value)
+    return admin
+
+
+def _user_reference(user: User) -> dict[str, Any]:
+    return {
+        "id": str(user.id),
+        "username": user.username,
+        "full_name": user.full_name,
+        "active": user.active,
+        "bot": user.bot,
+    }
+
+
 _OUT_OF_RANGE_BOUNDS: Final = [
     ("from_date", "9999-12-31T23:59:59-00:01"),
     ("to_date", "0001-01-01T00:00:00+00:01"),
@@ -312,72 +335,24 @@ class TestListFetchersEndpoint:
         names = [item["fetcher_name"] for item in response.json()["data"]]
         assert config.fetcher_name in names
 
-    async def test_admin_jwt_sees_triggered_by_user(
-        self,
-        admin_client: AsyncClient,
-        fetcher_config_factory: FetcherConfigFactory,
-        fetcher_run_factory: FetcherRunFactory,
-        user_factory: UserFactory,
-    ) -> None:
-        _register(_StubFetcher)
-        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
-        actor = await user_factory()
-        await fetcher_run_factory(
-            fetcher_name=config.fetcher_name,
-            triggered_by="manual",
-            triggered_by_user_id=actor.id,
-        )
-
-        response = await admin_client.get("/api/v1/fetchers")
-
-        assert response.status_code == 200
-        item = next(
-            i for i in response.json()["data"] if i["fetcher_name"] == _StubFetcher.name
-        )
-        assert item["last_run"]["triggered_by_user"]["id"] == str(actor.id)
-
-    async def test_admin_api_key_sees_triggered_by_user(
-        self,
-        admin_api_key_client: AsyncClient,
-        fetcher_config_factory: FetcherConfigFactory,
-        fetcher_run_factory: FetcherRunFactory,
-        user_factory: UserFactory,
-    ) -> None:
-        _register(_StubFetcher)
-        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
-        actor = await user_factory()
-        await fetcher_run_factory(
-            fetcher_name=config.fetcher_name,
-            triggered_by="manual",
-            triggered_by_user_id=actor.id,
-        )
-
-        response = await admin_api_key_client.get("/api/v1/fetchers")
-
-        assert response.status_code == 200
-        item = next(
-            i for i in response.json()["data"] if i["fetcher_name"] == _StubFetcher.name
-        )
-        assert item["last_run"]["triggered_by_user"]["id"] == str(actor.id)
-
-    async def test_authenticated_without_manage_fetchers_does_not_see_triggered_by_user(
+    async def test_roleless_caller_sees_the_manual_trigger_actor(
         self,
         authenticated_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
         fetcher_run_factory: FetcherRunFactory,
         user_factory: UserFactory,
+        user_role_factory: UserRoleFactory,
     ) -> None:
-        """An authenticated caller with no roles (and therefore no
-        `manage_fetchers` capability) sees sanitized fields only —
-        capability, not mere authentication, gates visibility. See
-        `_resolve_has_manage_fetchers` (`app/api/v1/fetchers.py`)."""
+        """A caller with no roles (no `manage_fetchers`) receives the
+        triggering administrator's complete user reference
+        (`docs/features/identity/rbac.md`, Actor Identities)."""
         _register(_StubFetcher)
         config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
-        actor = await user_factory()
+        admin = await _fetcher_admin(user_factory, user_role_factory)
         await fetcher_run_factory(
             fetcher_name=config.fetcher_name,
             triggered_by="manual",
-            triggered_by_user_id=actor.id,
+            triggered_by_user_id=admin.id,
         )
 
         response = await authenticated_client.get("/api/v1/fetchers")
@@ -386,7 +361,7 @@ class TestListFetchersEndpoint:
         item = next(
             i for i in response.json()["data"] if i["fetcher_name"] == _StubFetcher.name
         )
-        assert item["last_run"]["triggered_by_user"] is None
+        assert item["last_run"]["triggered_by_user"] == _user_reference(admin)
 
     async def test_invalid_selected_credential_returns_401(
         self, client: AsyncClient
@@ -549,6 +524,34 @@ class TestListFetcherRunsEndpoint:
         assert item["items_created"] == 1
         assert item["items_updated"] == 1
         assert item["items_failed"] == 0
+
+    async def test_roleless_caller_sees_the_manual_trigger_actor(
+        self,
+        authenticated_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+        user_factory: UserFactory,
+        user_role_factory: UserRoleFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        admin = await _fetcher_admin(user_factory, user_role_factory)
+        await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            triggered_by="manual",
+            triggered_by_user_id=admin.id,
+        )
+        await fetcher_run_factory(fetcher_name=config.fetcher_name)
+
+        response = await authenticated_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/runs"
+        )
+
+        assert response.status_code == 200
+        actors = {
+            item["triggered_by"]: item["triggered_by_user"]
+            for item in response.json()["data"]
+        }
+        assert actors == {"manual": _user_reference(admin), "schedule": None}
 
     async def test_raw_diagnostics_never_present_in_list_items(
         self,
@@ -868,18 +871,25 @@ class TestGetFetcherRunEndpoint:
         authenticated_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
         fetcher_run_factory: FetcherRunFactory,
+        user_factory: UserFactory,
+        user_role_factory: UserRoleFactory,
     ) -> None:
         """An authenticated caller with no roles (and therefore no
-        `manage_fetchers` capability) sees sanitized fields only —
-        capability, not mere authentication, gates visibility. See
-        `_resolve_has_manage_fetchers` (`app/api/v1/fetchers.py`)."""
+        `manage_fetchers` capability) does not receive the raw
+        diagnostics — capability, not mere authentication, gates them
+        (`_resolve_has_manage_fetchers`, `app/api/v1/fetchers.py`) — but
+        does receive the triggering administrator's complete user
+        reference (`docs/features/identity/rbac.md`, Actor Identities)."""
         config = await fetcher_config_factory()
+        admin = await _fetcher_admin(user_factory, user_role_factory)
         run = await fetcher_run_factory(
             fetcher_name=config.fetcher_name,
             status="failure",
             error_message="sanitized",
             error_detail="raw detail",
             error_traceback="raw traceback",
+            triggered_by="manual",
+            triggered_by_user_id=admin.id,
         )
 
         response = await authenticated_client.get(
@@ -891,6 +901,7 @@ class TestGetFetcherRunEndpoint:
         assert data["error_message"] == "sanitized"
         assert "error_detail" not in data
         assert "error_traceback" not in data
+        assert data["triggered_by_user"] == _user_reference(admin)
 
     async def test_running_run_has_null_finished_at_and_duration(
         self,
@@ -1129,21 +1140,34 @@ class TestGetFetcherTimelineEndpoint:
 
         assert response.status_code == 200
 
-    async def test_disabled_period_actor_hidden_without_manage_fetchers(
+    async def test_roleless_caller_sees_the_disabled_period_actors(
         self,
         authenticated_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
         fetcher_audit_event_factory: FetcherAuditEventFactory,
         user_factory: UserFactory,
+        user_role_factory: UserRoleFactory,
     ) -> None:
+        """A caller with no roles (no `manage_fetchers`) receives the
+        complete user references of the administrators who disabled and
+        enabled the fetcher (`docs/features/identity/rbac.md`, Actor
+        Identities)."""
         config = await fetcher_config_factory()
-        actor = await user_factory()
+        admin = await _fetcher_admin(user_factory, user_role_factory)
+        enabler = await user_factory(username="fictional.enabler")
+        await user_role_factory(user_id=enabler.id, role=Role.ADMIN.value)
         now = datetime.now(UTC)
         await fetcher_audit_event_factory(
             fetcher_name=config.fetcher_name,
             event_type="disabled",
+            created_at=now - timedelta(days=2),
+            user_id=admin.id,
+        )
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name,
+            event_type="enabled",
             created_at=now - timedelta(days=1),
-            user_id=actor.id,
+            user_id=enabler.id,
         )
 
         response = await authenticated_client.get(
@@ -1156,36 +1180,8 @@ class TestGetFetcherTimelineEndpoint:
 
         assert response.status_code == 200
         period = response.json()["data"]["disabled_periods"][0]
-        assert period["disabled_by"] is None
-
-    async def test_disabled_period_actor_visible_with_manage_fetchers(
-        self,
-        admin_client: AsyncClient,
-        fetcher_config_factory: FetcherConfigFactory,
-        fetcher_audit_event_factory: FetcherAuditEventFactory,
-        user_factory: UserFactory,
-    ) -> None:
-        config = await fetcher_config_factory()
-        actor = await user_factory()
-        now = datetime.now(UTC)
-        await fetcher_audit_event_factory(
-            fetcher_name=config.fetcher_name,
-            event_type="disabled",
-            created_at=now - timedelta(days=1),
-            user_id=actor.id,
-        )
-
-        response = await admin_client.get(
-            f"/api/v1/fetchers/{config.fetcher_name}/timeline",
-            params={
-                "from_date": (now - timedelta(days=5)).date().isoformat(),
-                "to_date": now.date().isoformat(),
-            },
-        )
-
-        assert response.status_code == 200
-        period = response.json()["data"]["disabled_periods"][0]
-        assert period["disabled_by"]["id"] == str(actor.id)
+        assert period["disabled_by"] == _user_reference(admin)
+        assert period["enabled_by"] == _user_reference(enabler)
 
 
 # ---------------------------------------------------------------------------

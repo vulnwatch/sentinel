@@ -18,7 +18,7 @@ import pytest
 from pydantic import MISSING, ValidationError
 
 from app.core.enums import SortOrder, UserDirectorySortField, UserSortField
-from app.schemas.common import PaginationMeta
+from app.schemas.common import PaginationMeta, UserReference
 from app.schemas.user import (
     AdminPasswordResetRequest,
     AdminUserCreateRequest,
@@ -157,7 +157,13 @@ def _make_role_assignment_kwargs(**overrides: object) -> dict[str, object]:
     defaults: dict[str, object] = {
         "role": "admin",
         "group_name": "_manual",
-        "assigned_by": uuid4(),
+        "assigned_by": UserReference(
+            id=uuid4(),
+            username="asmith",
+            full_name="Alice Smith",
+            active=True,
+            bot=False,
+        ),
         "created_at": datetime(2026, 5, 1, tzinfo=UTC),
     }
     defaults.update(overrides)
@@ -251,6 +257,15 @@ class TestUserRoleAssignmentData:
             **_make_role_assignment_kwargs(assigned_by=None)
         )
         assert assignment.assigned_by is None
+
+    def test_assigned_by_is_a_user_reference(self) -> None:
+        assignment = UserRoleAssignmentData(**_make_role_assignment_kwargs())
+        assert assignment.assigned_by is not None
+        assert assignment.assigned_by.username == "asmith"
+
+    def test_assigned_by_rejects_a_bare_uuid(self) -> None:
+        with pytest.raises(ValidationError):
+            UserRoleAssignmentData(**_make_role_assignment_kwargs(assigned_by=uuid4()))
 
     def test_group_name_carries_external_origin(self) -> None:
         assignment = UserRoleAssignmentData(

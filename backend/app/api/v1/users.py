@@ -40,7 +40,7 @@ from app.core.permissions import role_from_wire, role_to_wire
 from app.database import DatabaseSession, register_post_commit_callback
 from app.models.user import User
 from app.schemas.auth import CurrentUserData, CurrentUserResponse
-from app.schemas.common import PaginationMeta
+from app.schemas.common import PaginationMeta, UserReference
 from app.schemas.errors import ErrorResponse, ValidationErrorResponse
 from app.schemas.user import (
     AdminPasswordResetRequest,
@@ -299,7 +299,11 @@ def _serialize_user(user: User) -> UserData:
         UserRoleAssignmentData(
             role=role_to_wire(Role(user_role.role)),
             group_name=user_role.group_name,
-            assigned_by=user_role.assigned_by,
+            assigned_by=(
+                UserReference.model_validate(user_role.assigning_user)
+                if user_role.assigning_user is not None
+                else None
+            ),
             created_at=user_role.created_at,
         )
         for user_role in sorted_roles

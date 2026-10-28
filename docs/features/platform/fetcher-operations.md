@@ -116,9 +116,9 @@ dedicated exception type.
 
 #### `list_fetchers`
 
-**Q1 (inputs)**: `db: AsyncSession`, `has_manage_fetchers: bool`,
-`celery_app: Celery` — the Celery application whose configured RedBeat
-schedule is read to resolve `next_run_at` (see Q3, step 5).
+**Q1 (inputs)**: `db: AsyncSession`, `celery_app: Celery` — the Celery
+application whose configured RedBeat schedule is read to resolve
+`next_run_at` (see Q3, step 5).
 
 **Q3 (behavior)**:
 
@@ -163,8 +163,6 @@ schedule is read to resolve `next_run_at` (see Q3, step 5).
    `Settings` schema (registered fetchers only). Orphaned keys are
    excluded. For deregistered fetchers: total JSONB key count (no schema
    to validate against).
-9. If `has_manage_fetchers` is `false`, omit `triggered_by_user` from
-   `last_run` (set to `null` regardless of actual value).
 
 **Q6 (exceptions)**: none — the function always succeeds (Redis
 degradation is handled internally).
@@ -172,9 +170,8 @@ degradation is handled internally).
 #### `list_fetcher_runs`
 
 **Q1 (inputs)**: `db: AsyncSession`, `fetcher_name: str`,
-`has_manage_fetchers: bool`, `page: int`, `per_page: int`,
-`status: str | None`, `from_date: datetime | None`,
-`to_date: datetime | None`.
+`page: int`, `per_page: int`, `status: str | None`,
+`from_date: datetime | None`, `to_date: datetime | None`.
 
 **Q2 (guards)**: raises `FetcherNotFoundError` if `fetcher_name` is
 neither in the registry nor in `FetcherConfig`.
@@ -192,9 +189,7 @@ neither in the registry nor in `FetcherConfig`.
 3. Order: `created_at DESC, id DESC` (fixed, not client-controlled).
 4. Apply pagination.
 5. Exclude `error_detail` and `error_traceback` from all items.
-6. If `has_manage_fetchers` is `false`, set `triggered_by_user` to
-   `null` for all items.
-7. Include `items_succeeded`, `items_failed`, `items_created`, and
+6. Include `items_succeeded`, `items_failed`, `items_created`, and
    `items_updated` on every item. Active runs expose zero for all four because
    the counters are persisted only during finalization.
 
@@ -203,7 +198,7 @@ neither in the registry nor in `FetcherConfig`.
 #### `get_fetcher_run`
 
 **Q1 (inputs)**: `db: AsyncSession`, `fetcher_name: str`,
-`run_id: UUID`, `has_manage_fetchers: bool`.
+`run_id: UUID`.
 
 **Q2 (guards)**:
 - `FetcherNotFoundError` if `fetcher_name` is unknown.
@@ -217,12 +212,11 @@ neither in the registry nor in `FetcherConfig`.
 3. Return all fields, including `created_at` and the nullable
    `started_at`/`finished_at`/`duration_seconds` (see
    `docs/features/platform/fetcher-infrastructure.md`, Data Model —
-   FetcherRun, for their nullability by status). Include `error_detail`
-   and `error_traceback` only if `has_manage_fetchers` is `true`;
-   otherwise these fields are absent from the response.
-4. If `has_manage_fetchers` is `false`, set `triggered_by_user` to
-   `null`.
-5. Include all four finalized counters: `items_succeeded`, `items_failed`,
+   FetcherRun, for their nullability by status), and the raw stored
+   `error_detail` and `error_traceback`. Whether the response includes
+   these two fields depends on the caller's capability and is decided by
+   the endpoint (see Access Control, `has_manage_fetchers` derivation).
+4. Include all four finalized counters: `items_succeeded`, `items_failed`,
    `items_created`, and `items_updated`. They are zero for a queued or running
    row and remain available for diagnostics when a run-level exception wins
    finalization precedence.
@@ -232,8 +226,7 @@ neither in the registry nor in `FetcherConfig`.
 #### `get_fetcher_timeline`
 
 **Q1 (inputs)**: `db: AsyncSession`, `fetcher_name: str`,
-`has_manage_fetchers: bool`, `from_date: datetime`,
-`to_date: datetime`.
+`from_date: datetime`, `to_date: datetime`.
 
 **Q2 (guards)**:
 - `FetcherNotFoundError` if `fetcher_name` is unknown.
@@ -252,9 +245,7 @@ neither in the registry nor in `FetcherConfig`.
    both).
 3. Derive disabled periods from `FetcherAuditEvent` records — see
    Disabled Period Derivation below.
-4. If `has_manage_fetchers` is `false`, omit `disabled_by` and
-   `enabled_by` from each disabled period (set to `null`).
-5. Project `items_succeeded`, `items_failed`, `items_created`, and
+4. Project `items_succeeded`, `items_failed`, `items_created`, and
    `items_updated` on every point. Queued and running points contain zero for
    all four counters.
 
@@ -293,13 +284,12 @@ disabled, derived from `FetcherAuditEvent` records with
 
 **Actor fields**:
 
-- `disabled_by` / `enabled_by`: when `has_manage_fetchers` is `true`,
-  return a User Reference Object
+- `disabled_by` / `enabled_by`: the User Reference Object
   (`{"id": "uuid", "username": "...", "full_name": "...", "active": bool,
-  "bot": bool}`).
-  When `has_manage_fetchers` is `false`, both fields are `null`.
-- This ensures a read endpoint open to every authenticated user does not
-  expose admin identities.
+  "bot": bool}`) of the actor of the `disabled` and of the `enabled` event
+  that delimit the period, for every caller
+  (`docs/features/identity/rbac.md`, Actor Identities). `enabled_by` is
+  `null` when `enabled_at` is `null`.
 
 #### `get_fetcher_config`
 
@@ -559,8 +549,8 @@ Reconciliation").
    value, so this is equivalent to `created_at DESC` with a
    deterministic tiebreak, in a single column.
 4. Apply pagination.
-5. Actor field in response: always a User Reference Object (this
-   endpoint requires `manage_fetchers`).
+5. Actor field in response: always a User Reference Object (every
+   fetcher audit event records a user actor).
 
 **Q6 (exceptions)**: `FetcherNotFoundError`.
 
@@ -934,8 +924,9 @@ distinction.
     `FetcherConfig.run_timeout` when the column is `NULL` — see
     `docs/features/platform/fetcher-infrastructure.md`, Stale Run
     Detection). Always `false` for a terminal status.
-  - `triggered_by_user`: User Reference Object when `triggered_by` is
-    `manual` AND the caller has `manage_fetchers`. Otherwise `null`.
+  - `triggered_by_user`: User Reference Object of the user who triggered
+    the run when `triggered_by` is `manual`, for every caller
+    (`docs/features/identity/rbac.md`, Actor Identities). Otherwise `null`.
   - `error_message`: sanitized message visible to every caller (never
     contains raw broker, database, or system details). `null` for successful
     runs.
@@ -1017,9 +1008,8 @@ still appears in its correct chronological position.
 - `error_detail` and `error_traceback` are NOT included in list responses
 - `triggered_by_user`: User Reference Object
   (`{"id": "uuid", "username": "...", "full_name": "...", "active": bool,
-  "bot": bool}`)
-  when `triggered_by` is `manual` AND the caller has `manage_fetchers`.
-  Otherwise `null`
+  "bot": bool}`) of the user who triggered the run when `triggered_by` is
+  `manual`, for every caller. Otherwise `null`
 - For a run with `status = queued`: `started_at = null`,
   `finished_at = null`, `duration_seconds = null`
 - For a run with `status = running`: `finished_at = null`,
@@ -1189,9 +1179,21 @@ layer) mitigates abuse.
     "disabled_periods": [
       {
         "disabled_at": "2025-03-15T10:00:00Z",
-        "disabled_by": null,
+        "disabled_by": {
+          "id": "uuid",
+          "username": "jdoe",
+          "full_name": "John Doe",
+          "active": true,
+          "bot": false
+        },
         "enabled_at": "2025-03-17T08:30:00Z",
-        "enabled_by": null
+        "enabled_by": {
+          "id": "uuid",
+          "username": "jdoe",
+          "full_name": "John Doe",
+          "active": true,
+          "bot": false
+        }
       }
     ]
   }
@@ -1215,8 +1217,9 @@ layer) mitigates abuse.
   `points[].items_created/updated`: finalized durable-effect counts. All four
   are zero for queued and running points because counters are not live progress
 - `disabled_periods`: derived from `FetcherAuditEvent` records (see
-  Disabled Period Derivation). `disabled_by` / `enabled_by` are `null`
-  without `manage_fetchers`, User Reference Objects with it
+  Disabled Period Derivation). `disabled_by` / `enabled_by` are the User
+  Reference Objects of the users who disabled and enabled the fetcher, for
+  every caller; `enabled_by` is `null` while the period is open
 
 **Sorting**: fixed chronological order (`timestamp ASC, run_id ASC`,
 i.e. `created_at ASC, id ASC`). Client-controlled sorting is not
@@ -1541,8 +1544,8 @@ endpoints in the system (`identity-audit-log.md`,
 | View run error messages (sanitized) | Authenticated |
 | View run error details (raw) | `manage_fetchers` |
 | View run error tracebacks | `manage_fetchers` |
-| View triggered_by_user identity | `manage_fetchers` |
-| View disabled_by/enabled_by actors | `manage_fetchers` |
+| View who triggered a manual run (`triggered_by_user`) | Authenticated |
+| View who disabled or enabled a fetcher (`disabled_by`/`enabled_by`) | Authenticated |
 | Trigger manual run | `manage_fetchers` |
 | Enable/disable fetcher | `manage_fetchers` |
 | Modify fetcher config | `manage_fetchers` |
@@ -1550,11 +1553,14 @@ endpoints in the system (`identity-audit-log.md`,
 | View audit log | `manage_fetchers` |
 
 **`has_manage_fetchers` derivation**: the four read endpoints above require
-authentication. The `has_manage_fetchers` boolean passed to the service is
-`true` if and only if the capabilities resolved from the authenticated
-principal's current roles include `manage_fetchers`. This derivation never
-produces a 403 — it only controls field-level visibility (null vs populated,
-present vs absent).
+authentication. Get Fetcher Run Detail derives `has_manage_fetchers`, which
+is `true` if and only if the capabilities resolved from the authenticated
+principal's current roles include `manage_fetchers`, and includes
+`error_detail` and `error_traceback` in the response only when it is `true`.
+This derivation never produces a 403 — it only controls whether those two
+fields are present. Every other field of the four read endpoints, the actors
+of runs and disabled periods included, is the same for every authenticated
+caller (`docs/features/identity/rbac.md`, Actor Identities).
 
 ## Background Tasks
 
