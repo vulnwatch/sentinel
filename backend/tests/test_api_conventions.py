@@ -42,7 +42,15 @@ from fastapi import FastAPI
 from fastapi import routing as fastapi_routing
 from fastapi.dependencies.models import Dependant
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, Field, Strict
+from pydantic import (
+    MISSING,
+    BaseModel,
+    Field,
+    Strict,
+    ValidationError,
+    WithJsonSchema,
+    field_validator,
+)
 from pydantic.fields import FieldInfo
 from starlette.routing import BaseRoute
 
@@ -819,6 +827,204 @@ class TestStrictJsonBodyScalars:
             "_Body.field_strict_counts",
             "_Body.ratios",
             "_Inner.lax",
+        ]
+
+
+def _body_models(info: _RouteInfo) -> list[type[BaseModel]]:
+    """The models that declare `info`'s JSON request body, collected from
+    its effective dependency graph."""
+    return [
+        model
+        for node in _iter_dependants(info.dependant)
+        for param in node.body_params
+        for model in _nested_models(param.field_info.annotation)
+    ]
+
+
+def _with_nested_models(models: Iterable[type[BaseModel]]) -> list[type[BaseModel]]:
+    """`models` and every model their fields reference at any depth, each
+    once, in discovery order."""
+    found: list[type[BaseModel]] = []
+    pending = list(models)
+    while pending:
+        model = pending.pop(0)
+        if model in found:
+            continue
+        found.append(model)
+        for field_info in model.model_fields.values():
+            pending.extend(_nested_models(field_info.annotation))
+    return found
+
+
+def _component(document: dict[str, Any], model: type[BaseModel]) -> dict[str, Any]:
+    """The OpenAPI component of the request model `model`."""
+    schemas: dict[str, Any] = document["components"]["schemas"]
+    for name in (model.__name__, f"{model.__name__}-Input"):
+        if name in schemas:
+            component: dict[str, Any] = schemas[name]
+            return component
+    raise AssertionError(f"{model.__name__} has no OpenAPI component")
+
+
+def _admits_null(schema: dict[str, Any], document: dict[str, Any]) -> bool:
+    """Whether `schema`, with its `$ref`s resolved in `document`, admits
+    JSON `null`."""
+    schema = _resolve_schema_ref(document, schema)
+    declared = schema.get("type")
+    if declared == "null" or (isinstance(declared, list) and "null" in declared):
+        return True
+    if None in schema.get("enum", ()) or (
+        "const" in schema and schema["const"] is None
+    ):
+        return True
+    return any(
+        _admits_null(option, document)
+        for option in (*schema.get("anyOf", ()), *schema.get("oneOf", ()))
+    )
+
+
+def _validation_accepts_null(model: type[BaseModel], key: str) -> bool:
+    """Whether validating `model` with `null` as its only member `key`
+    reports no error at `key`. Errors at other members, such as a missing
+    required member, and at the whole model are not about this `null`."""
+    try:
+        model.model_validate({key: None})
+    except ValidationError as exc:
+        return all(error["loc"][:1] != (key,) for error in exc.errors())
+    return True
+
+
+def _nullability_violations(
+    model: type[BaseModel], component: dict[str, Any], document: dict[str, Any]
+) -> list[str]:
+    """Every member of `model` whose published nullability in `component`
+    differs from whether validation accepts `null` for it."""
+    violations: list[str] = []
+    properties: dict[str, Any] = component.get("properties", {})
+    for name, field_info in model.model_fields.items():
+        key = field_info.alias or name
+        published = _admits_null(properties[key], document)
+        accepted = _validation_accepts_null(model, key)
+        if published != accepted:
+            violations.append(
+                f"{model.__name__}.{name}: published "
+                f"{'nullable' if published else 'non-nullable'}, but validation "
+                f"{'accepts' if accepted else 'rejects'} null"
+            )
+    return violations
+
+
+def _optional_members_not_missing(model: type[BaseModel]) -> list[str]:
+    """Every optional member of `model` whose default is not `MISSING`."""
+    return [
+        f"{model.__name__}.{name} does not default to MISSING"
+        for name, field_info in model.model_fields.items()
+        if not field_info.is_required() and field_info.default is not MISSING
+    ]
+
+
+@pytest.mark.unit
+class TestRequestBodyNullability:
+    """Every JSON request-body member is published as nullable exactly when
+    validation accepts `null` for it, and every optional member of a `PATCH`
+    body defaults to `MISSING`.
+
+    See `docs/api-spec.md` (Partial Update Semantics) and
+    `docs/conventions.md` (Pydantic Conventions, Omitted request members;
+    Omitted Values). A `None` default with a validator that rejects `null`
+    publishes a member as nullable although the request rejects it, and a
+    hand-written schema can hide a `null` that the request accepts; both
+    mislead a client generated from the document. Body models are collected
+    from every route's effective dependency graph, nested models included.
+    """
+
+    def test_published_nullability_matches_validation(self) -> None:
+        document = app.openapi()
+        models = _with_nested_models(
+            model for info in _api_routes() for model in _body_models(info)
+        )
+        assert models, "no JSON request-body model found"
+
+        violations = [
+            violation
+            for model in models
+            for violation in _nullability_violations(
+                model, _component(document, model), document
+            )
+        ]
+
+        assert not violations, "\n".join(violations)
+
+    def test_every_optional_patch_member_defaults_to_missing(self) -> None:
+        patch_models = [
+            (info.path, model)
+            for info in _api_routes()
+            if "PATCH" in info.methods
+            for model in _body_models(info)
+        ]
+        assert patch_models, "no PATCH request-body model found"
+
+        violations = sorted(
+            {
+                f"Route '{path}': {violation}"
+                for path, model in patch_models
+                for violation in _optional_members_not_missing(model)
+            }
+        )
+
+        assert not violations, "\n".join(violations)
+
+    def test_nullability_detection_covers_validators_overrides_and_nesting(
+        self,
+    ) -> None:
+        """Guards the checker itself against passing vacuously."""
+
+        class _Inner(BaseModel):
+            hidden: Annotated[str | None, WithJsonSchema({"type": "string"})] = None
+            count: int = Field(strict=True)
+
+        class _Body(BaseModel):
+            nullable: str | None = None
+            omittable: str | MISSING = MISSING
+            rejected: str | None = None
+            required: int = Field(strict=True)
+            inner: _Inner | MISSING = MISSING
+
+            @field_validator("rejected", mode="before")
+            @classmethod
+            def _reject_null(cls, value: Any) -> Any:
+                if value is None:
+                    raise ValueError("rejected cannot be null.")
+                return value
+
+        document = _Body.model_json_schema(mode="validation")
+        models = _with_nested_models([_Body])
+        components = {_Body: document, _Inner: document["$defs"]["_Inner"]}
+
+        violations = [
+            violation
+            for model in models
+            for violation in _nullability_violations(model, components[model], document)
+        ]
+
+        assert models == [_Body, _Inner]
+        assert violations == [
+            "_Body.rejected: published nullable, but validation rejects null",
+            "_Inner.hidden: published non-nullable, but validation accepts null",
+        ]
+
+    def test_patch_default_detection_covers_none_and_factories(self) -> None:
+        """Guards the checker itself against passing vacuously."""
+
+        class _Patch(BaseModel):
+            cleared: int | None = Field(default=None, strict=True)
+            listed: list[str] = Field(default_factory=list)
+            omittable: str | MISSING = MISSING
+            required: str
+
+        assert _optional_members_not_missing(_Patch) == [
+            "_Patch.cleared does not default to MISSING",
+            "_Patch.listed does not default to MISSING",
         ]
 
 
