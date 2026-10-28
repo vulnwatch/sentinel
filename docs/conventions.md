@@ -531,6 +531,20 @@ forms (see `docs/features/platform/testing-strategy.md`, Structural Tests).
   responses, and that each description names a registered code; the OpenAPI
   response contract check (`docs/features/platform/testing-strategy.md`)
   checks every response the tests receive against the document
+- **Optional parameters**: implement `docs/api-spec.md` (Parameter
+  Nullability) as follows. An optional query parameter whose omission has an
+  outcome that no value of its type selects, such as a filter whose omission
+  applies no filter, is declared `X | None` with a `None` default, and the
+  route and service read `None` as that outcome. No request can send `null`
+  for a parameter, so `None` never stands for a sent value and the parameter
+  does not default to `MISSING` (Omitted Values). FastAPI publishes the
+  `None` as a `null` alternative; `app/api/openapi.py` removes it from every
+  path and query parameter of the generated document. An endpoint therefore
+  does not hide it itself, neither through `SkipJsonSchema`, which also
+  changes the validation errors of the parameter, nor through a hand-written
+  parameter schema. A structural test in
+  `backend/tests/test_api_conventions.py` enforces that no path or query
+  parameter is published as nullable
 - **User identifier resolution**: parameters that identify a user follow
   `docs/api-spec.md` (User Identifier Resolution), including its distinction
   between target resources and optional list filters. API dependencies may
