@@ -60,10 +60,12 @@ sentinel manage-user create \
   --username <username> \
   --email <email> \
   [--full-name <name>] \
-  [--role <role>] ...
+  [--role <role>] ... \
+  [--bot]
 ```
 
-Password is collected interactively (hidden prompt, requires TTY).
+Password is collected interactively (hidden prompt, requires TTY). `--bot`
+marks the account as a bot account, an account that an automation operates.
 
 **Idempotency**: Not idempotent (interactive).
 
@@ -79,7 +81,8 @@ sentinel manage-user update \
   --username <username> \
   [--email <new_email>] \
   [--full-name <new_name>] \
-  [--clear-full-name]
+  [--clear-full-name] \
+  [--bot | --no-bot]
 
 sentinel manage-user update \
   --username <username> \
@@ -91,10 +94,11 @@ sentinel manage-user update \
   --reactivate
 ```
 
-Profile fields (`--email`, `--full-name`, `--clear-full-name`) are only
-permitted on local users; `--full-name` and `--clear-full-name` are mutually
-exclusive. Role changes are permitted on local and external users and manage
-only the `_manual` origin. Reactivation is only permitted on local users.
+Profile fields (`--email`, `--full-name`, `--clear-full-name`, `--bot`,
+`--no-bot`) are only permitted on local users; `--full-name` and
+`--clear-full-name` are mutually exclusive, as are `--bot` and `--no-bot`.
+Role changes are permitted on local and external users and manage only the
+`_manual` origin. Reactivation is only permitted on local users.
 
 **Idempotency**: Idempotent (no-op if state already reached).
 
@@ -145,7 +149,8 @@ sentinel manage-user unlock \
 
 ### `sentinel manage-user list`
 
-Lists all users with their key attributes, with optional filters.
+Lists all users with their key attributes, including whether each is a bot
+account, with optional filters.
 
 ```
 sentinel manage-user list \
@@ -160,8 +165,8 @@ sentinel manage-user list \
 
 ### `sentinel manage-user show`
 
-Displays detailed information about a single user, including roles
-with their origin (manual or external group name).
+Displays detailed information about a single user, including the bot
+marker and roles with their origin (manual or external group name).
 
 ```
 sentinel manage-user show \

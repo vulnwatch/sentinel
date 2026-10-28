@@ -532,7 +532,8 @@ semantics and are ignored.
         "id": "uuid",
         "username": "asmith",
         "full_name": "Alice Smith",
-        "active": true
+        "active": true,
+        "bot": false
       }
     }
   ],

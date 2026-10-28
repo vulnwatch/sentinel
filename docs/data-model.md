@@ -317,6 +317,7 @@ erDiagram
         VARCHAR_64 username UK "NOT NULL"
         VARCHAR_255 email UK "NOT NULL"
         BOOLEAN active "NOT NULL, DEFAULT true"
+        BOOLEAN bot "NOT NULL, DEFAULT false"
         UUID external_id UK "nullable"
         UUID manager_id FK "nullable, self-ref"
         VARCHAR_72 password_hash "nullable"
@@ -1489,6 +1490,7 @@ confidential tickets via `TicketAccessGrant` or an included
 | email            | VARCHAR(255) | UNIQUE, NOT NULL         | Email address (stored as lowercase) |
 | full_name        | VARCHAR(255) | nullable                 | Display name                     |
 | active           | BOOLEAN     | NOT NULL, DEFAULT true   | Whether the account is active. For external users, synced from the identity provider |
+| bot              | BOOLEAN     | NOT NULL, DEFAULT false  | Whether an automation operates the account instead of a person. Descriptive only: no authorization or business rule reads it. Set by administrators for local users and by external provisioning for external users. See `docs/features/identity/user-management.md` (Bot Accounts) |
 | password_hash    | VARCHAR(72)  | nullable                 | bcrypt hash of password (with SHA-256 pre-hash). NULL for external users. See `docs/features/identity/local-authentication.md` |
 | external_id      | UUID        | UNIQUE, nullable         | Stable external identifier from the identity provider (immutable after creation). Used as the matching key during external sync. NULL for local users |
 | manager_id       | UUID        | FK(user.id), nullable    | Direct line manager (resolved from external provider's manager reference during sync). Self-referencing foreign key |
@@ -1692,6 +1694,7 @@ change.
 | api_key_revoked | API key revoked by user, admin, or system |
 | email_changed | Email address updated by authenticated API, CLI, or external sync |
 | full_name_changed | Full name updated by authenticated API, CLI, or external sync |
+| bot_changed | Bot marker updated by authenticated API, CLI, or external sync |
 | manager_changed | Direct manager updated by external sync |
 
 See `docs/features/identity/identity-audit-log.md` for the full event

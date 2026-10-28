@@ -295,7 +295,8 @@ disabled, derived from `FetcherAuditEvent` records with
 
 - `disabled_by` / `enabled_by`: when `has_manage_fetchers` is `true`,
   return a User Reference Object
-  (`{"id": "uuid", "username": "...", "full_name": "...", "active": bool}`).
+  (`{"id": "uuid", "username": "...", "full_name": "...", "active": bool,
+  "bot": bool}`).
   When `has_manage_fetchers` is `false`, both fields are `null`.
 - This ensures a read endpoint open to every authenticated user does not
   expose admin identities.
@@ -1490,7 +1491,8 @@ endpoints in the system (`identity-audit-log.md`,
         "id": "uuid",
         "username": "jdoe",
         "full_name": "John Doe",
-        "active": true
+        "active": true,
+        "bot": false
       },
       "old_value": "0 */6 * * *",
       "new_value": "0 */4 * * *",
@@ -1505,7 +1507,8 @@ endpoints in the system (`identity-audit-log.md`,
         "id": "uuid",
         "username": "jdoe",
         "full_name": "John Doe",
-        "active": true
+        "active": true,
+        "bot": false
       },
       "old_value": null,
       "new_value": null,

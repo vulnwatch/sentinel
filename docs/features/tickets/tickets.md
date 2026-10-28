@@ -1267,8 +1267,8 @@ capture and reuse contract in `docs/features/packages/package-model.md`
 
 **UserSummary** — inline representation of a user reference. Fields:
 `id` (UUID), `username` (string), `full_name` (string | null), `active`
-(boolean). See `docs/api-spec.md`, "User References in Responses" for
-the canonical definition.
+(boolean), `bot` (boolean). See `docs/api-spec.md`, "User References in
+Responses" for the canonical definition.
 
 **TicketAccessGrantResponse** — current projection of one explicit manual
 grant:
@@ -2161,14 +2161,16 @@ List all users with explicit access grants for a confidential ticket.
           "id": "uuid",
           "username": "jdoe",
           "full_name": "John Doe",
-          "active": true
+          "active": true,
+          "bot": false
         },
         "granted_at": "2025-03-15T10:30:00Z",
         "granted_by": {
           "id": "uuid",
           "username": "asmith",
           "full_name": "Alice Smith",
-          "active": true
+          "active": true,
+          "bot": false
         }
       }
     ]

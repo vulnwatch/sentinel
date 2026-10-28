@@ -85,6 +85,7 @@ Manual CLI lifecycle events leave that source detail absent.
 | `api_key_revoked` | User, admin, or system revokes API key | Acting user or `NULL` (system) | Key owner | Key name/label | `NULL` | `{"key_id": "uuid", "reason": "user_deactivated"}` (reason only for bulk revocation during deactivation) |
 | `email_changed` | Email address updated (authenticated API, CLI, or external sync) | Per Actor Contract | Target user | Old email | New email | External sync only: `{"source": "external_sync"}`; otherwise `NULL` |
 | `full_name_changed` | Full name updated (authenticated API, CLI, or external sync) | Per Actor Contract | Target user | Old full name (or `NULL`) | New full name (or `NULL`) | External sync only: `{"source": "external_sync"}`; otherwise `NULL` |
+| `bot_changed` | Bot marker updated (authenticated API, CLI, or external sync) | Per Actor Contract | Target user | Old marker: `"true"` or `"false"` | New marker: `"true"` or `"false"` | External sync only: `{"source": "external_sync"}`; otherwise `NULL` |
 | `manager_changed` | Direct manager updated (external sync) | `NULL` (system) | Target user | Old manager username (or `NULL`) | New manager username (or `NULL`) | `NULL` |
 
 ### detail JSONB Schema Contract
@@ -107,6 +108,7 @@ Event types not listed here MUST set `detail` to `NULL`.
 | `api_key_revoked` | `key_id` (UUID string) | `reason` (string) | `{"key_id": "550e8400-e29b-41d4-a716-446655440000", "reason": "user_deactivated"}` |
 | `email_changed` | — | `source` (literal `"external_sync"`) | `{"source": "external_sync"}` |
 | `full_name_changed` | — | `source` (literal `"external_sync"`) | `{"source": "external_sync"}` |
+| `bot_changed` | — | `source` (literal `"external_sync"`) | `{"source": "external_sync"}` |
 | `username_changed` | — | `source` (literal `"external_sync"`) | `{"source": "external_sync"}` |
 
 **Notes**:
@@ -125,9 +127,10 @@ Event types not listed here MUST set `detail` to `NULL`.
 - `user_created`: manual API and CLI creation uses `detail = NULL`; external
   synchronization requires `{"source": "external_sync"}`
 - `user_deactivated`, `user_reactivated`, `email_changed`,
-  `full_name_changed`, and `username_changed`: an external-sync mutation requires
-  `source = "external_sync"`; authenticated API and manual CLI mutations omit
-  the key. `user_deactivated.reason` remains required for every source
+  `full_name_changed`, `bot_changed`, and `username_changed`: an external-sync
+  mutation requires `source = "external_sync"`; authenticated API and manual
+  CLI mutations omit the key. `user_deactivated.reason` remains required for
+  every source
 - For `user_deactivated`, the `source` key is derived from the actor and the
   locked target, never passed as an invocation-source parameter; see
   `docs/features/identity/user-service.md` (Audit attribution) for the exact
@@ -267,7 +270,8 @@ endpoint is available at `GET /api/v1/users/me/audit-log` (see below).
         "id": "uuid",
         "username": "jdoe",
         "full_name": "John Doe",
-        "active": true
+        "active": true,
+        "bot": false
       }
     }
   ],
@@ -387,7 +391,8 @@ Session invalidation during deactivation does NOT produce audit events
 (sessions are excluded from the audit trail scope).
 
 **Field-change events**: the `user_service.update_user()` function
-produces one audit event per changed lifecycle field; `synced_at` is an
+produces one audit event per changed lifecycle field, the bot marker
+included (`bot_changed`); `synced_at` is an
 operational metadata exclusion and never produces an event (see Operational
 metadata exclusions above). If a single `update_user()` call modifies both
 `email` and `full_name`, two events are created (`email_changed` +
@@ -414,8 +419,9 @@ creation regardless of source (manual admin creation AND external sync). On
 initial external sync this may produce hundreds of `user_created` events —
 this is intentional to maintain a complete, coherent history for every
 user. Field-change events (`email_changed`, `full_name_changed`,
-`manager_changed`, `username_changed`) are likewise produced by external sync
-when the corresponding fields change at the external identity provider.
+`bot_changed`, `manager_changed`, `username_changed`) are likewise produced by
+external sync when the corresponding fields change at the external identity
+provider.
 
 **Future fields**: if a new mutable field is added to the User table in
 the future, a corresponding `{field}_changed` event type MUST be added

@@ -384,7 +384,7 @@ When adding a new audit trail, update this index.
 |---|---|---|---|---|
 | Ticket | `ticket_audit_event` | 31 | Indefinite | `docs/features/tickets/ticket-audit-log.md` |
 | Fetcher | `fetcher_audit_event` | 4 | Indefinite | `docs/features/platform/fetcher-infrastructure.md` |
-| Identity | `identity_audit_event` | 14 | Indefinite | `docs/features/identity/identity-audit-log.md` |
+| Identity | `identity_audit_event` | 15 | Indefinite | `docs/features/identity/identity-audit-log.md` |
 | Setting | `setting_audit_event` | 1 | Indefinite | `docs/features/platform/system-settings.md` |
 
 The Identity count includes `role_mapping_created`, `role_mapping_deleted`,
