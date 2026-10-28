@@ -248,7 +248,8 @@ form, so there remains one matching policy.
 #### `list_users(session, filters, pagination, sorting)`
 
 Accepts the typed filters, pagination values, and sorting selection defined by
-`user-management.md` (List Users). Return `UserPage(items: list[User], total:
+`user-management.md` (List Users (Admin)); the directory read (List Users)
+passes a subset of them. Return `UserPage(items: list[User], total:
 int)` with deterministic secondary ordering by `User.id`. When sorting by
 `full_name`, rows with `NULL` sort last per `api-spec.md` (Nullable Sort
 Field Ordering). The function applies every documented filter and loads
@@ -258,9 +259,11 @@ no ORM query or filtering themselves.
 #### `get_user(session, identifier)`
 
 Resolves the UUID or username through `resolve_user_identifier()` and returns
-the complete profile data defined by `user-management.md` (Get User), including
-roles and manager. Unknown users raise `UserNotFoundError`. This is the API
-identifier contract; CLI commands use `get_user_by_username()` instead.
+the complete profile data defined by `user-management.md` (Get User (Admin)),
+including roles and manager; the directory read (Get User) uses the same
+function and serializes only the directory entry. Unknown users raise
+`UserNotFoundError`. This is the API identifier contract; CLI commands use
+`get_user_by_username()` instead.
 
 #### `get_user_by_username(session, username)`
 
@@ -403,9 +406,10 @@ The User returned by a profile-mutating operation — directly by
 `create_user()`, or as the result's `user` for `update_user()`,
 `reactivate_user()`, `deactivate_user()`, and `update_roles()` — has roles
 and manager loaded for API profile serialization. Callers do not execute
-follow-up ORM queries to construct the Get User response shape. API and
-external synchronization callers serialize the result's `user`; they do not
-infer the outcome from a read taken before the mutation.
+follow-up ORM queries to construct the complete user profile
+(`user-management.md`, Get User (Admin)). API and external synchronization
+callers serialize the result's `user`; they do not infer the outcome from a
+read taken before the mutation.
 
 ### Password handling
 
