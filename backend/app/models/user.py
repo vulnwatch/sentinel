@@ -18,6 +18,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     String,
+    false,
     func,
     text,
 )
@@ -58,6 +59,11 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Descriptive only: no authorization or business rule reads it
+    # (docs/features/identity/user-management.md, Bot Accounts).
+    bot: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
     password_hash: Mapped[str | None] = mapped_column(String(72), nullable=True)
     external_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), unique=True, nullable=True

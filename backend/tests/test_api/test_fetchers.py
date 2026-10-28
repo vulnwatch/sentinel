@@ -2368,7 +2368,13 @@ class TestListFetcherAuditEventsEndpoint:
             "created_at",
         }
         assert item["fetcher_name"] == config.fetcher_name
-        assert set(item["actor"].keys()) == {"id", "username", "full_name", "active"}
+        assert set(item["actor"].keys()) == {
+            "id",
+            "username",
+            "full_name",
+            "active",
+            "bot",
+        }
 
     async def test_populated_old_new_value_and_detail_round_trip(
         self,

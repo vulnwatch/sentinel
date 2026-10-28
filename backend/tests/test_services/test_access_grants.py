@@ -173,7 +173,7 @@ def _profile(
     """The expected current `UserSummary`-like profile, with the literal
     values the test assigned."""
     return TicketUserProjection(
-        id=user.id, username=username, full_name=full_name, active=active
+        id=user.id, username=username, full_name=full_name, active=active, bot=False
     )
 
 

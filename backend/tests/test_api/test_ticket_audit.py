@@ -160,6 +160,7 @@ class TestListTicketEventsEndpoint:
                     "username": "fictional.analyst",
                     "full_name": "Fictional Analyst",
                     "active": True,
+                    "bot": False,
                 },
             },
             {

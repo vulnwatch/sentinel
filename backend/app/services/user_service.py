@@ -259,6 +259,11 @@ class _MissingType:
 
 _MISSING: Final = _MissingType()
 
+# Public names for callers that forward each optional `update_user()` field
+# only when their own input provides it (the admin API and the CLI).
+MissingType = _MissingType
+MISSING: Final = _MISSING
+
 
 @dataclass(frozen=True)
 class DeactivationResult:
@@ -318,8 +323,9 @@ class UserUpdateResult:
     See `docs/features/identity/user-service.md` (Mutation Result Types).
     `changed_fields` is the deterministic sequence of field names effectively
     changed by one invocation relative to the locked-current row, in the fixed
-    order `username`, `email`, `full_name`, `manager_id`, `synced_at`. An empty
-    sequence is a no-op: no field was persisted and no audit event was created.
+    order `username`, `email`, `full_name`, `bot`, `manager_id`, `synced_at`.
+    An empty sequence is a no-op: no field was persisted and no audit event
+    was created.
     """
 
     user: User
@@ -795,6 +801,12 @@ async def _external_id_taken(
     return result.scalar_one_or_none() is not None
 
 
+def _audit_bool(value: bool) -> str:
+    """The `bot_changed` value format: `"true"` or `"false"`
+    (identity-audit-log.md, IdentityAuditEventType Enum)."""
+    return "true" if value else "false"
+
+
 async def _resolve_username(session: AsyncSession, user_id: UUID | None) -> str | None:
     """Return the stored username for `user_id`, or `None` if `user_id`
     is `None`. Used to build `manager_changed`'s human-readable
@@ -838,6 +850,7 @@ async def create_user(
     manager_id: UUID | None = None,
     password: str | None = None,
     roles: list[tuple[Role, str]] | None = None,
+    bot: bool = False,
     acting_user_id: UUID | None,
 ) -> User:
     """Create a new `User` with optional initial roles.
@@ -847,8 +860,10 @@ async def create_user(
     user); `password` is the plaintext password, required for a local user
     and forbidden for an external one (hashed here, never persisted or
     logged in plaintext); `roles` is an optional list of `(role,
-    group_name)` pairs for initial role assignment; `acting_user_id` is the
-    audit actor (`None` for CLI/external-sync system callers).
+    group_name)` pairs for initial role assignment; `bot` is the bot marker
+    (`docs/features/identity/user-management.md`, Bot Accounts), allowed for
+    local and external users; `acting_user_id` is the audit actor (`None`
+    for CLI/external-sync system callers).
 
     Q2 (guards, in this order): invalid `username` format raises
     `UsernameFormatError`; invalid `email` format raises `EmailFormatError`;
@@ -887,7 +902,8 @@ async def create_user(
     created `User` with `roles` and `manager` eagerly loaded.
 
     Q4: creates exactly one `user_created` event plus one `role_added`
-    event per deduplicated initial role, all in this transaction.
+    event per deduplicated initial role, all in this transaction. The
+    initial `bot` value creates no `bot_changed` event.
 
     Q5: not idempotent. Repeating a successful creation with the same
     normalized username, email, or external ID raises `UserConflictError`
@@ -926,6 +942,7 @@ async def create_user(
         email=normalized_email,
         full_name=full_name,
         active=active,
+        bot=bot,
         external_id=external_id,
         manager_id=manager_id,
         password_hash=password_hash,
@@ -990,20 +1007,22 @@ async def update_user(
     username: str | None = None,
     email: str | _MissingType = _MISSING,
     full_name: str | _MissingType | None = _MISSING,
+    bot: bool | _MissingType = _MISSING,
     manager_id: UUID | _MissingType | None = _MISSING,
     synced_at: datetime | _MissingType | None = _MISSING,
 ) -> UserUpdateResult:
-    """Update mutable identity fields of an existing `User`.
+    """Update mutable identity fields and the bot marker of an existing `User`.
 
     Q1: `user_id` identifies the target; `acting_user_id` is the audit actor
     (`None` for CLI/external-sync system callers). `username` is `None`
     when not provided (usernames are never cleared, so `None` unambiguously
-    means "no change"). `email`, `full_name`, `manager_id`, and `synced_at`
-    default to the `_MISSING` sentinel (`docs/conventions.md`,
+    means "no change"). `email`, `full_name`, `bot`, `manager_id`, and
+    `synced_at` default to the `_MISSING` sentinel (`docs/conventions.md`,
     `dataclasses.MISSING` pattern) to distinguish "not provided" from an
-    explicit `None` (clear a nullable field). `email` excludes `None` from
-    its type entirely — a caller passing `email=None` violates the type
-    contract and is caught by static type checking, not a runtime guard.
+    explicit `None` (clear a nullable field). `email` and `bot` exclude
+    `None` from their types entirely — a caller passing `None` violates the
+    type contract and is caught by static type checking, not a runtime
+    guard.
 
     Q2 (guards, in this order): missing `user_id` raises `UserNotFoundError`;
     a human caller (`acting_user_id is not None`) targeting an external user
@@ -1021,7 +1040,7 @@ async def update_user(
     database operation (`populate_existing=True` refreshes any stale
     identity-map state after waiting for the lock). Evaluates the guards
     above against the locked row. For each of `username`/`email`/
-    `full_name`/`manager_id`/`synced_at` whose requested value differs from
+    `full_name`/`bot`/`manager_id`/`synced_at` whose requested value differs from
     the current stored value (using the normalized value for `username` and
     `email`), stages the change; a requested value equal to the current one is
     a no-op for that field (no write). Each
@@ -1033,8 +1052,9 @@ async def update_user(
     without issuing an UPDATE. Otherwise flushes every staged field inside a
     `SAVEPOINT`, so a concurrent same-value winner's `IntegrityError` on the
     username or email UNIQUE constraint is translated to `UserConflictError`.
-    Then creates one `username_changed`/`email_changed`/`full_name_changed`
-    event per changed field (`detail = {"source": "external_sync"}` when
+    Then creates one `username_changed`/`email_changed`/`full_name_changed`/
+    `bot_changed` event per changed field (`bot_changed` renders both values
+    as `"true"` or `"false"`; `detail = {"source": "external_sync"}` when
     `external_id IS NOT NULL` — every mutation reaching this point for an
     external user is by construction performed by external sync, since
     guard 2 already blocks every human caller — otherwise `detail = None`),
@@ -1046,7 +1066,7 @@ async def update_user(
     `manager` eagerly loaded.
 
     Q4: creates one event per effectively changed field among
-    `username_changed`, `email_changed`, `full_name_changed`,
+    `username_changed`, `email_changed`, `full_name_changed`, `bot_changed`,
     `manager_changed`; zero events when every field is a no-op or omitted.
     `synced_at` never produces an audit event.
 
@@ -1061,8 +1081,8 @@ async def update_user(
 
     Q7: returns `UserUpdateResult(user, changed_fields)`, where
     `changed_fields` lists every effective change in the fixed order
-    `username`, `email`, `full_name`, `manager_id`, `synced_at`, and is empty
-    for a no-op.
+    `username`, `email`, `full_name`, `bot`, `manager_id`, `synced_at`, and
+    is empty for a no-op.
     """
     result = await session.execute(
         select(User)
@@ -1114,6 +1134,10 @@ async def update_user(
     if not isinstance(full_name, _MissingType) and full_name != user.full_name:
         pending_full_name = full_name
 
+    pending_bot: bool | _MissingType = _MISSING
+    if not isinstance(bot, _MissingType) and bot != user.bot:
+        pending_bot = bot
+
     pending_manager_id: UUID | _MissingType | None = _MISSING
     if not isinstance(manager_id, _MissingType) and manager_id != user.manager_id:
         pending_manager_id = manager_id
@@ -1126,6 +1150,7 @@ async def update_user(
         pending_username is None
         and pending_email is None
         and isinstance(pending_full_name, _MissingType)
+        and isinstance(pending_bot, _MissingType)
         and isinstance(pending_manager_id, _MissingType)
         and isinstance(pending_synced_at, _MissingType)
     ):
@@ -1186,6 +1211,19 @@ async def update_user(
                     )
                 )
                 changed_fields.append("full_name")
+
+            if not isinstance(pending_bot, _MissingType):
+                old_bot = user.bot
+                user.bot = pending_bot
+                audit_events.append(
+                    (
+                        IdentityAuditEventType.BOT_CHANGED,
+                        _audit_bool(old_bot),
+                        _audit_bool(pending_bot),
+                        sync_detail,
+                    )
+                )
+                changed_fields.append("bot")
 
             if not isinstance(pending_manager_id, _MissingType):
                 old_manager_id = user.manager_id

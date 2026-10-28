@@ -192,6 +192,7 @@ class TicketUserProjection:
     username: str
     full_name: str | None
     active: bool
+    bot: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -318,6 +319,7 @@ def _detail_statement(evaluation_date: date) -> Select[*tuple[Any, ...]]:
             _ASSIGNEE.username.label("assignee_username"),
             _ASSIGNEE.full_name.label("assignee_full_name"),
             _ASSIGNEE.active.label("assignee_active"),
+            _ASSIGNEE.bot.label("assignee_bot"),
             _DUPLICATE_TARGET.sequence_id.label("duplicate_sequence_id"),
             *cve_detail_columns(),
             *package_service.ticket_tree_context_columns(),
@@ -356,6 +358,7 @@ def _project(
             username=row.assignee_username,
             full_name=row.assignee_full_name,
             active=row.assignee_active,
+            bot=row.assignee_bot,
         )
         if row.assignee_id is not None
         else None
@@ -755,6 +758,7 @@ def _summary(row: Row[*tuple[Any, ...]]) -> TicketSummaryProjection:
                 username=row.assignee_username,
                 full_name=row.assignee_full_name,
                 active=row.assignee_active,
+                bot=row.assignee_bot,
             )
             if row.assignee_id is not None
             else None
@@ -979,6 +983,7 @@ async def list_tickets(
             _LIST_ASSIGNEE.username.label("assignee_username"),
             _LIST_ASSIGNEE.full_name.label("assignee_full_name"),
             _LIST_ASSIGNEE.active.label("assignee_active"),
+            _LIST_ASSIGNEE.bot.label("assignee_bot"),
             _LIST_DUPLICATE_TARGET.sequence_id.label("duplicate_sequence_id"),
             CVE.cve_id.label("cve_id"),
             CVE.title.label("cve_title"),
@@ -2577,7 +2582,11 @@ class AccessGrantMutationResult:
 
 def _user_projection(user: User) -> TicketUserProjection:
     return TicketUserProjection(
-        id=user.id, username=user.username, full_name=user.full_name, active=user.active
+        id=user.id,
+        username=user.username,
+        full_name=user.full_name,
+        active=user.active,
+        bot=user.bot,
     )
 
 
@@ -2822,10 +2831,12 @@ async def list_access_grants(
             _GRANT_TARGET.username.label("target_username"),
             _GRANT_TARGET.full_name.label("target_full_name"),
             _GRANT_TARGET.active.label("target_active"),
+            _GRANT_TARGET.bot.label("target_bot"),
             _GRANT_GRANTOR.id.label("grantor_id"),
             _GRANT_GRANTOR.username.label("grantor_username"),
             _GRANT_GRANTOR.full_name.label("grantor_full_name"),
             _GRANT_GRANTOR.active.label("grantor_active"),
+            _GRANT_GRANTOR.bot.label("grantor_bot"),
         )
         .select_from(Ticket)
         .outerjoin(_LISTED_GRANT, _LISTED_GRANT.ticket_id == Ticket.id)
@@ -2846,6 +2857,7 @@ async def list_access_grants(
                 username=row.target_username,
                 full_name=row.target_full_name,
                 active=row.target_active,
+                bot=row.target_bot,
             ),
             granted_at=row.granted_at,
             granted_by=TicketUserProjection(
@@ -2853,6 +2865,7 @@ async def list_access_grants(
                 username=row.grantor_username,
                 full_name=row.grantor_full_name,
                 active=row.grantor_active,
+                bot=row.grantor_bot,
             ),
         )
         for row in rows

@@ -148,7 +148,7 @@ class TestHealthCheckStatusEnum:
 
 @pytest.mark.unit
 class TestIdentityAuditEventTypeEnum:
-    """IdentityAuditEventType must have exactly the 14 members defined
+    """IdentityAuditEventType must have exactly the 15 members defined
     in identity-audit-log.md (IdentityAuditEventType Enum)."""
 
     def test_exact_members(self) -> None:
@@ -166,11 +166,12 @@ class TestIdentityAuditEventTypeEnum:
             "api_key_revoked",
             "email_changed",
             "full_name_changed",
+            "bot_changed",
             "manager_changed",
         }
 
     def test_count(self) -> None:
-        assert len(list(IdentityAuditEventType)) == 14
+        assert len(list(IdentityAuditEventType)) == 15
 
 
 @pytest.mark.unit

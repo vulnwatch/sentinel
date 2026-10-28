@@ -407,6 +407,56 @@ class TestUserIdentifierResolution:
                 assignee.id,
             )
 
+    async def test_bot_accounts_assign_and_are_assigned_like_any_other_account(
+        self,
+        authenticated_client: AsyncClient,
+        va_user: User,
+        db_session: AsyncSession,
+        ticket_factory: Factory,
+        target_user: TargetUser,
+    ) -> None:
+        """user-management.md (Bot Accounts): the marker changes no
+        capability check and no assignment eligibility. A bot caller holding
+        `vulnerability_analyst` assigns a bot assignee holding it, and the
+        assignee reference carries the marker."""
+        assignee = await target_user()
+        va_user.bot = True
+        assignee.bot = True
+        await db_session.flush()
+        ticket: Ticket = await ticket_factory()
+
+        response = await authenticated_client.patch(
+            _url(ticket), json={"user_id": str(assignee.id)}
+        )
+
+        assert response.status_code == 200
+        body = response.json()["data"]
+        assert body["status"] == "analysis"
+        assert body["assignee"] == user_reference(assignee)
+        assert body["assignee"]["bot"] is True
+
+    async def test_bot_caller_without_triage_ticket_gets_the_generic_403(
+        self,
+        authenticated_client: AsyncClient,
+        authenticated_user: User,
+        db_session: AsyncSession,
+        ticket_factory: Factory,
+        target_user: TargetUser,
+    ) -> None:
+        """The marker grants nothing: a role-less bot account lacks
+        `triage_ticket` exactly like a role-less person."""
+        authenticated_user.bot = True
+        await db_session.flush()
+        ticket: Ticket = await ticket_factory()
+        assignee = await target_user()
+
+        response = await authenticated_client.patch(
+            _url(ticket), json={"user_id": str(assignee.id)}
+        )
+
+        assert response.status_code == 403
+        assert response.json() == FORBIDDEN
+
     @pytest.mark.parametrize("form", ["uuid", "username"])
     async def test_nonexistent_user_returns_user_not_found_without_effect(
         self,

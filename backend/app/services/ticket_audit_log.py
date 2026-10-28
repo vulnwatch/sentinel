@@ -417,6 +417,7 @@ class TicketEventActor:
     username: str
     full_name: str | None
     active: bool
+    bot: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -573,6 +574,7 @@ async def list_ticket_events(
             actor_user.username.label("actor_username"),
             actor_user.full_name.label("actor_full_name"),
             actor_user.active.label("actor_active"),
+            actor_user.bot.label("actor_bot"),
         )
         .select_from(parent)
         .join(total, true())
@@ -601,6 +603,7 @@ async def list_ticket_events(
                     username=row.actor_username,
                     full_name=row.actor_full_name,
                     active=row.actor_active,
+                    bot=row.actor_bot,
                 )
                 if row.actor_id is not None
                 else None

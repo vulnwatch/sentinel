@@ -261,6 +261,7 @@ class TestGetTicketEndpoint:
                 "username": "fictional.analyst",
                 "full_name": "Fictional Analyst",
                 "active": True,
+                "bot": False,
             },
             "cve": {
                 "cve_id": "CVE-2099-50001",

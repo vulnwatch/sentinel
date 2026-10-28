@@ -63,6 +63,31 @@ class TestUserCreation:
         await db_session.flush()
         assert user.active is True
 
+    async def test_default_bot_is_false(self, db_session: AsyncSession) -> None:
+        user = User(
+            username="cscanner",
+            email="cscanner@example.com",
+            password_hash=_FICTIONAL_PASSWORD_HASH,
+        )
+        db_session.add(user)
+        await db_session.flush()
+        assert user.bot is False
+
+    async def test_server_default_bot_is_false(self, db_session: AsyncSession) -> None:
+        """An INSERT that bypasses the ORM default still stores `false`
+        (docs/data-model.md, User: `NOT NULL, DEFAULT false`)."""
+        await db_session.execute(
+            text(
+                'INSERT INTO "user" (username, email, active, password_hash) '
+                "VALUES ('dscanner', 'dscanner@example.com', true, :hash)"
+            ),
+            {"hash": _FICTIONAL_PASSWORD_HASH},
+        )
+        stored = await db_session.scalar(
+            select(User.bot).where(User.username == "dscanner")
+        )
+        assert stored is False
+
     async def test_timestamps_auto_populated(self, db_session: AsyncSession) -> None:
         user = User(
             username="ctaylor",
@@ -198,6 +223,16 @@ class TestUserExplicitNullRejection:
         with pytest.raises(IntegrityError):
             await db_session.execute(
                 text('UPDATE "user" SET active = NULL WHERE id = :id'),
+                {"id": user.id},
+            )
+
+    async def test_explicit_null_bot_rejected(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        user = await user_factory()
+        with pytest.raises(IntegrityError):
+            await db_session.execute(
+                text('UPDATE "user" SET bot = NULL WHERE id = :id'),
                 {"id": user.id},
             )
 

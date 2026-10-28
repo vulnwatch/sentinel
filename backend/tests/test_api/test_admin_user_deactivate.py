@@ -121,6 +121,7 @@ _PROFILE_FIELDS = {
     "email",
     "full_name",
     "active",
+    "bot",
     "source",
     "external_id",
     "manager",
@@ -554,6 +555,7 @@ class TestEffectiveDeactivation:
             "username": "dave.manager",
             "full_name": "Dave Example",
             "active": True,
+            "bot": False,
             "email": manager.email,
         }
         assert [

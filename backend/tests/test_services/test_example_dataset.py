@@ -127,35 +127,47 @@ STEP_NAMES: Final = (
 )
 """Steps and Transactions."""
 
-USERS: Final[dict[str, tuple[str, str, bool, tuple[Role, ...]]]] = {
-    "jdoe": ("John Doe", "john.doe@example.com", True, (Role.ADMIN,)),
+USERS: Final[dict[str, tuple[str, str, bool, bool, tuple[Role, ...]]]] = {
+    "jdoe": ("John Doe", "john.doe@example.com", True, False, (Role.ADMIN,)),
     "asmith": (
         "Alice Smith",
         "alice.smith@example.com",
         True,
+        False,
         (Role.VULNERABILITY_ANALYST,),
     ),
     "bwilson": (
         "Bob Wilson",
         "bob.wilson@example.com",
         True,
+        False,
         (Role.VULNERABILITY_ANALYST,),
     ),
     "cwhite": (
         "Carol White",
         "carol.white@example.com",
         True,
+        False,
         (Role.RESTRICTED_ANALYST,),
     ),
-    "dbrown": ("Dave Brown", "dave.brown@example.com", True, ()),
+    "dbrown": ("Dave Brown", "dave.brown@example.com", True, False, ()),
     "eblack": (
         "Eve Black",
         "eve.black@example.com",
         False,
+        False,
         (Role.VULNERABILITY_ANALYST,),
     ),
+    "security-scanner": (
+        "Security Scanner",
+        "security-scanner@example.com",
+        True,
+        True,
+        (Role.RESTRICTED_ANALYST,),
+    ),
 }
-"""Users: username -> (full name, email, active, roles), in creation order."""
+"""Users: username -> (full name, email, active, bot, roles), in creation
+order."""
 
 ROLE_WIRE: Final = {
     Role.ADMIN: "admin",
@@ -571,6 +583,13 @@ REFERENCES: Final = {
         "sync_nvd_cves",
     ),
     (
+        10,
+        "https://scanner.example.com/findings/CVE-2099-0010",
+        "Fictional scanner finding",
+        "issue",
+        "manual",
+    ),
+    (
         12,
         "https://bugzilla.example.com/show_bug.cgi?id=1000012",
         "Fictional bug report",
@@ -614,6 +633,7 @@ ATTRIBUTED_TICKET_EVENTS: Final = frozenset(
         (22, "ticket_created", "bwilson"),
         (18, "coordinated_release_changed", "asmith"),
         # Ticket work: the direct event of each operation, by its actor.
+        (10, "reference_added", "security-scanner"),
         (11, "package_added", "bwilson"),
         (11, "track_status_changed", "bwilson"),
         (12, "assignment", "bwilson"),
@@ -846,7 +866,7 @@ class TestUsers:
         async def reader(
             db: AsyncSession,
         ) -> tuple[
-            dict[str, tuple[str | None, str, bool, str | None, uuid.UUID | None]],
+            dict[str, tuple[str | None, str, bool, bool, str | None, uuid.UUID | None]],
             set[tuple[str, str, str, str | None]],
         ]:
             names = await usernames(db)
@@ -855,6 +875,7 @@ class TestUsers:
                     user.full_name,
                     user.email,
                     user.active,
+                    user.bot,
                     user.password_hash,
                     user.external_id,
                 )
@@ -874,19 +895,19 @@ class TestUsers:
         users, roles = read(loaded.url, reader)
 
         assert {
-            name: (full_name, email, active)
-            for name, (full_name, email, active, _, _) in users.items()
+            name: (full_name, email, active, bot)
+            for name, (full_name, email, active, bot, _, _) in users.items()
         } == {
-            name: (full_name, email, active)
-            for name, (full_name, email, active, _) in USERS.items()
+            name: (full_name, email, active, bot)
+            for name, (full_name, email, active, bot, _) in USERS.items()
         }
         assert roles == {
             (name, role.value, "_manual", None if name == "jdoe" else "jdoe")
-            for name, (_, _, _, user_roles) in USERS.items()
+            for name, (_, _, _, _, user_roles) in USERS.items()
             for role in user_roles
         }
         assert not any(name == "dbrown" for name, *_ in roles)
-        for name, (_, _, _, password_hash, external_id) in users.items():
+        for name, (_, _, _, _, password_hash, external_id) in users.items():
             assert external_id is None, name
             assert password_hash is not None, name
             assert verify_password(DATASET_PASSWORD, password_hash), name
@@ -926,7 +947,7 @@ class TestUsers:
                 ROLE_WIRE[role],
                 None,
             )
-            for name, (_, _, _, roles) in USERS.items()
+            for name, (_, _, _, _, roles) in USERS.items()
             for role in roles
         ] + [
             ("user_created", None if name == "jdoe" else "jdoe", name, None, name, None)
@@ -1630,6 +1651,7 @@ class Covered:
     tables: dict[str, int]
     roles: set[str]
     users_without_roles: int
+    bot_accounts: int
     ticket_statuses: set[str]
     package_statuses: set[str]
     delivery_statuses: set[str]
@@ -1649,10 +1671,14 @@ def test_dataset_covers_every_table_and_enumeration(loaded: Loaded) -> None:
             .select_from(User)
             .where(~select(UserRole.id).where(UserRole.user_id == User.id).exists())
         )
+        bot_accounts = await db.scalar(
+            select(func.count()).select_from(User).where(User.bot.is_(True))
+        )
         return Covered(
             tables=await table_counts(db),
             roles=await values(UserRole.role),
             users_without_roles=int(without_roles or 0),
+            bot_accounts=int(bot_accounts or 0),
             ticket_statuses=await values(Ticket.status),
             package_statuses=await values(TicketPackageTrack.status),
             delivery_statuses=await values(TicketPackageTrack.delivery_status),
@@ -1715,6 +1741,7 @@ def test_dataset_covers_every_table_and_enumeration(loaded: Loaded) -> None:
     }
     assert violations == {name: [] for name in violations}
     assert covered.users_without_roles >= 1
+    assert covered.bot_accounts >= 1
     assert None in covered.severities  # an unresolved Ticket severity
     assert None in covered.phases  # an unavailable lifecycle phase
 
@@ -1871,10 +1898,10 @@ def test_failure_keeps_the_operations_committed_before_it(
         users, events, value, counts = read(url, identity_state)
 
     assert raised.value is error
-    # Six user creations and the deactivation committed; the failing step
+    # Seven user creations and the deactivation committed; the failing step
     # started and did not complete.
-    assert progress.events == [*users_step(7), ("started", "System settings")]
-    assert users == {name: active for name, (_, _, active, _) in USERS.items()}
+    assert progress.events == [*users_step(8), ("started", "System settings")]
+    assert users == {name: active for name, (_, _, active, _, _) in USERS.items()}
     assert events.count("user_deactivated") == 1
     # Nothing of the failed or later steps exists.
     assert value == "3.1"
@@ -1945,10 +1972,10 @@ def test_interruption_before_commit_rolls_back_that_operation_only(
         users, events, value, counts = read(url, identity_state)
 
     assert raised.value.code == 143
-    assert progress.events == [("started", "Users"), *[("committed",)] * 6]
+    assert progress.events == [("started", "Users"), *[("committed",)] * 7]
     assert users == dict.fromkeys(USERS, True)
     assert "user_deactivated" not in events
-    assert sorted(events) == sorted(["user_created"] * 6 + ["role_added"] * 5)
+    assert sorted(events) == sorted(["user_created"] * 7 + ["role_added"] * 6)
     assert value == "3.1"
     assert populated(counts) == IDENTITY_TABLES
 
@@ -1979,12 +2006,12 @@ def test_registered_post_commit_callback_rolls_back_the_operation(
             load(url, progress)
         users, _, value, counts = read(url, identity_state)
 
-    assert progress.events == [*users_step(7), ("started", "System settings")]
+    assert progress.events == [*users_step(8), ("started", "System settings")]
     # The first setting change rolled back: no change and no setting event.
     assert value == "3.1"
     assert counts["setting_audit_event"] == 0
     assert populated(counts) == IDENTITY_TABLES
-    assert users == {name: active for name, (_, _, active, _) in USERS.items()}
+    assert users == {name: active for name, (_, _, active, _, _) in USERS.items()}
 
 
 def test_registered_ticket_convergence_rolls_back_the_operation(

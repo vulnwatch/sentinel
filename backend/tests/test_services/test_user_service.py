@@ -425,6 +425,65 @@ class TestCreateUser:
         )
         assert user.active is False
 
+    async def test_bot_defaults_to_false_and_can_be_set(
+        self, db_session: AsyncSession
+    ) -> None:
+        person = await create_user(
+            db_session,
+            username="person-new",
+            email="person-new@example.com",
+            password=_VALID_PASSWORD,
+            acting_user_id=None,
+        )
+        bot = await create_user(
+            db_session,
+            username="scanner-new",
+            email="scanner-new@example.com",
+            password=_VALID_PASSWORD,
+            bot=True,
+            acting_user_id=None,
+        )
+
+        assert person.bot is False
+        assert bot.bot is True
+
+    async def test_bot_creation_creates_no_bot_changed_event(
+        self, db_session: AsyncSession
+    ) -> None:
+        """user-service.md (`create_user()`, step 8): the initial marker is
+        part of the created record, like the initial email."""
+        bot = await create_user(
+            db_session,
+            username="scanner-events",
+            email="scanner-events@example.com",
+            password=_VALID_PASSWORD,
+            bot=True,
+            acting_user_id=None,
+        )
+
+        events = await _audit_events_for(db_session, bot.id)
+        assert [event.event_type for event in events] == [
+            IdentityAuditEventType.USER_CREATED.value
+        ]
+
+    async def test_external_user_can_be_created_as_bot(
+        self, db_session: AsyncSession
+    ) -> None:
+        """External provisioning owns the marker of external users
+        (user-management.md, Bot Accounts): no guard ties it to local
+        users."""
+        user = await create_user(
+            db_session,
+            username="ext-scanner",
+            email="ext-scanner@example.com",
+            external_id=uuid.uuid4(),
+            bot=True,
+            acting_user_id=None,
+        )
+
+        assert user.bot is True
+        assert user.external_id is not None
+
     async def test_creates_external_user_without_password(
         self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
     ) -> None:
@@ -1352,6 +1411,108 @@ class TestUpdateUser:
         assert result.user.full_name == "Same Name"
         assert await _audit_events_for(db_session, target.id) == []
 
+    @pytest.mark.parametrize(
+        ("stored", "requested"),
+        [(False, True), (True, False)],
+        ids=["mark", "unmark"],
+    )
+    async def test_bot_change_creates_one_bot_changed_event(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        stored: bool,
+        requested: bool,
+    ) -> None:
+        target = await user_factory(bot=stored)
+        admin = await user_factory()
+
+        result = await update_user(
+            db_session, target.id, acting_user_id=admin.id, bot=requested
+        )
+
+        assert result.changed_fields == ["bot"]
+        assert result.user.bot is requested
+        events = await _audit_events_for(db_session, target.id)
+        assert len(events) == 1
+        assert events[0].event_type == IdentityAuditEventType.BOT_CHANGED.value
+        assert events[0].old_value == str(stored).lower()
+        assert events[0].new_value == str(requested).lower()
+        assert events[0].user_id == admin.id
+        assert events[0].target_user_id == target.id
+        assert events[0].detail is None
+
+    async def test_bot_changed_actor_is_null_for_a_cli_caller(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        target = await user_factory()
+
+        await update_user(db_session, target.id, acting_user_id=None, bot=True)
+
+        events = await _audit_events_for(db_session, target.id)
+        assert events[0].user_id is None
+        assert events[0].detail is None
+
+    async def test_bot_same_value_is_a_no_op(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        target = await user_factory(bot=True)
+
+        result = await update_user(db_session, target.id, acting_user_id=None, bot=True)
+
+        assert result.changed_fields == []
+        assert result.user.bot is True
+        assert await _audit_events_for(db_session, target.id) == []
+
+    async def test_bot_omitted_leaves_it_unchanged(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        target = await user_factory(bot=True)
+
+        result = await update_user(
+            db_session, target.id, acting_user_id=None, full_name="Renamed Bot"
+        )
+
+        assert result.changed_fields == ["full_name"]
+        assert result.user.bot is True
+
+    async def test_bot_changed_detail_includes_source_for_external_user(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        """External provisioning (`acting_user_id = None` on an external
+        user) owns the marker of external users."""
+        target = await user_factory(external_id=uuid.uuid4())
+
+        result = await update_user(db_session, target.id, acting_user_id=None, bot=True)
+
+        assert result.changed_fields == ["bot"]
+        events = await _audit_events_for(db_session, target.id)
+        assert events[0].event_type == IdentityAuditEventType.BOT_CHANGED.value
+        assert events[0].detail == {"source": "external_sync"}
+
+    async def test_human_caller_cannot_change_an_external_users_bot_marker(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        target = await user_factory(external_id=uuid.uuid4())
+        admin = await user_factory()
+
+        with pytest.raises(ExternalUserFieldReadOnlyError):
+            await update_user(db_session, target.id, acting_user_id=admin.id, bot=True)
+
+        await db_session.refresh(target)
+        assert target.bot is False
+        assert await _audit_events_for(db_session, target.id) == []
+
+    async def test_bot_marker_can_change_on_an_inactive_user(
+        self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
+    ) -> None:
+        target = await user_factory(active=False)
+
+        result = await update_user(db_session, target.id, acting_user_id=None, bot=True)
+
+        assert result.changed_fields == ["bot"]
+        assert result.user.bot is True
+        assert result.user.active is False
+
     async def test_manager_id_change_audits_manager_usernames(
         self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]
     ) -> None:
@@ -1470,6 +1631,7 @@ class TestUpdateUser:
             acting_user_id=None,
             full_name="New Name",
             synced_at=new_synced_at,
+            bot=True,
             manager_id=manager_two.id,
             username="order-new",
             email="order-new@example.com",
@@ -1479,12 +1641,14 @@ class TestUpdateUser:
             "username",
             "email",
             "full_name",
+            "bot",
             "manager_id",
             "synced_at",
         ]
         assert result.user.username == "order-new"
         assert result.user.email == "order-new@example.com"
         assert result.user.full_name == "New Name"
+        assert result.user.bot is True
         assert result.user.manager_id == manager_two.id
         assert result.user.synced_at == new_synced_at
 
@@ -1494,9 +1658,10 @@ class TestUpdateUser:
             IdentityAuditEventType.USERNAME_CHANGED.value,
             IdentityAuditEventType.EMAIL_CHANGED.value,
             IdentityAuditEventType.FULL_NAME_CHANGED.value,
+            IdentityAuditEventType.BOT_CHANGED.value,
             IdentityAuditEventType.MANAGER_CHANGED.value,
         }
-        assert len(events) == 4
+        assert len(events) == 5
 
     async def test_synced_at_same_value_is_a_no_op(
         self, db_session: AsyncSession, user_factory: Callable[..., Awaitable[User]]

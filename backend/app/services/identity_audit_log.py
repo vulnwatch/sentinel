@@ -128,6 +128,12 @@ _FIELD_RULES: Final[dict[IdentityAuditEventType, dict[str, str]]] = {
         "old_value": _OPTIONAL,
         "new_value": _OPTIONAL,
     },
+    IdentityAuditEventType.BOT_CHANGED: {
+        "user_id": _OPTIONAL,
+        "target_user_id": _REQUIRED,
+        "old_value": _REQUIRED,
+        "new_value": _REQUIRED,
+    },
     # Intrinsically system-only: user_id (the actor) must be NULL.
     IdentityAuditEventType.MANAGER_CHANGED: {
         "user_id": _FORBIDDEN,
@@ -169,6 +175,7 @@ _DETAIL_SCHEMAS: Final[dict[IdentityAuditEventType, _DetailSchema]] = {
     IdentityAuditEventType.USERNAME_CHANGED: _SOURCE_ONLY_SCHEMA,
     IdentityAuditEventType.EMAIL_CHANGED: _SOURCE_ONLY_SCHEMA,
     IdentityAuditEventType.FULL_NAME_CHANGED: _SOURCE_ONLY_SCHEMA,
+    IdentityAuditEventType.BOT_CHANGED: _SOURCE_ONLY_SCHEMA,
     IdentityAuditEventType.USER_DEACTIVATED: _DetailSchema(
         required=frozenset({"reason"}),
         optional=frozenset({"source"}),

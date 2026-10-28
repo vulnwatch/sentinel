@@ -170,6 +170,7 @@ class TestListEndpoint:
                 "username": "fictional.analyst",
                 "full_name": "Fictional Analyst",
                 "active": True,
+                "bot": False,
             },
             "cve": {
                 "cve_id": "CVE-2099-50001",
@@ -616,6 +617,7 @@ class TestSerializer:
                     username="fictional.user",
                     full_name=None,
                     active=False,
+                    bot=False,
                 ),
                 cve=CVESummaryProjection(
                     cve_id="CVE-2099-1", title=None, description="d"

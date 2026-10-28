@@ -217,6 +217,7 @@ class TestSummaryProjection:
                     username="fictional.analyst",
                     full_name=None,
                     active=False,
+                    bot=False,
                 ),
                 cve=CVESummaryProjection(
                     cve_id="CVE-2099-40001",

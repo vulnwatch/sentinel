@@ -66,9 +66,11 @@ from app.services import user_service
 from app.services.local_auth_service import clear_login_attempts
 from app.services.session_service import purge_session_cache
 from app.services.user_service import (
+    MISSING,
     ExternalUserFieldReadOnlyError,
     ExternalUserPasswordError,
     ExternalUserStatusReadOnlyError,
+    MissingType,
     SelfDeactivationError,
     SelfRoleRemovalError,
     UserConflictError,
@@ -261,6 +263,7 @@ def _serialize_directory_entry(user: User) -> UserDirectoryData:
         email=user.email,
         full_name=user.full_name,
         active=user.active,
+        bot=user.bot,
         roles=sorted({role_to_wire(Role(user_role.role)) for user_role in user.roles}),
     )
 
@@ -282,6 +285,7 @@ def _serialize_user(user: User) -> UserData:
             username=user.manager.username,
             full_name=user.manager.full_name,
             active=user.manager.active,
+            bot=user.manager.bot,
             email=user.manager.email,
         )
 
@@ -309,6 +313,7 @@ def _serialize_user(user: User) -> UserData:
         email=user.email,
         full_name=user.full_name,
         active=user.active,
+        bot=user.bot,
         source="external" if user.external_id is not None else "local",
         external_id=user.external_id,
         manager=manager,
@@ -400,6 +405,7 @@ async def get_current_user_profile(
             full_name=principal.user.full_name,
             roles=sorted(role_to_wire(role) for role in roles),
             active=principal.user.active,
+            bot=principal.user.bot,
         )
     )
 
@@ -606,6 +612,7 @@ async def create_user_admin(
             active=True,
             password=body.password,
             roles=roles,
+            bot=body.bot,
             acting_user_id=principal.user.id,
         )
     except UserConflictError:
@@ -629,8 +636,8 @@ async def create_user_admin(
     response_model=UserResponse,
     summary="Update user (admin)",
     description=(
-        "Updates a local user's email and/or full name. At least one field "
-        "must be provided. Requires the 'manage_users' capability."
+        "Updates a local user's email, full name, and bot marker. At least "
+        "one field must be provided. Requires the 'manage_users' capability."
     ),
     responses={
         404: {
@@ -664,41 +671,31 @@ async def update_user_admin(
     except UserNotFoundError:
         raise user_not_found_error() from None
 
-    email_set = "email" in body.model_fields_set
-    full_name_set = "full_name" in body.model_fields_set
+    # Forward only the provided fields; an omitted one stays `MISSING`.
+    # `AdminUserUpdateRequest` rejects an explicit `null` for `email` and
+    # `bot`, so a provided value of either is never `None`.
+    provided = body.model_fields_set
+    email: str | MissingType = MISSING
+    if "email" in provided:
+        assert body.email is not None
+        email = body.email
+    full_name: str | MissingType | None = (
+        body.full_name if "full_name" in provided else MISSING
+    )
+    bot: bool | MissingType = MISSING
+    if "bot" in provided:
+        assert body.bot is not None
+        bot = body.bot
 
     try:
-        if email_set and full_name_set:
-            # `AdminUserUpdateRequest._validate_email` rejects an explicit
-            # `null`, so a present `email` is always a validated string.
-            assert body.email is not None
-            result = await user_service.update_user(
-                db,
-                target_user.id,
-                acting_user_id=principal.user.id,
-                email=body.email,
-                full_name=body.full_name,
-            )
-        elif email_set:
-            assert body.email is not None
-            result = await user_service.update_user(
-                db,
-                target_user.id,
-                acting_user_id=principal.user.id,
-                email=body.email,
-            )
-        else:
-            # `AdminUserUpdateRequest` guarantees at least one of
-            # `email`/`full_name` is present, so `full_name_set` is True
-            # here — this branch also covers `full_name_set` explicitly
-            # for mypy's exhaustiveness, since both booleans cannot be
-            # False at the same time.
-            result = await user_service.update_user(
-                db,
-                target_user.id,
-                acting_user_id=principal.user.id,
-                full_name=body.full_name,
-            )
+        result = await user_service.update_user(
+            db,
+            target_user.id,
+            acting_user_id=principal.user.id,
+            email=email,
+            full_name=full_name,
+            bot=bot,
+        )
     except ExternalUserFieldReadOnlyError:
         raise AppError(
             status_code=status.HTTP_409_CONFLICT,

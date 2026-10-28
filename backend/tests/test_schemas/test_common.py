@@ -20,6 +20,7 @@ def _make_user_reference_kwargs(**overrides: object) -> dict[str, object]:
         "username": "jdoe",
         "full_name": "John Doe",
         "active": True,
+        "bot": False,
     }
     defaults.update(overrides)
     return defaults
@@ -32,6 +33,7 @@ class TestUserReference:
         assert ref.username == "jdoe"
         assert ref.full_name == "John Doe"
         assert ref.active is True
+        assert ref.bot is False
 
     def test_full_name_accepts_none(self) -> None:
         ref = UserReference(**_make_user_reference_kwargs(full_name=None))

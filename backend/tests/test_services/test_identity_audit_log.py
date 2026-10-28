@@ -184,6 +184,15 @@ def _happy_path_cases() -> list[_HappyPathCase]:
             },
         ),
         (
+            IdentityAuditEventType.BOT_CHANGED,
+            lambda actor, target: {
+                "user_id": actor.id,
+                "target_user_id": target.id,
+                "old_value": "false",
+                "new_value": "true",
+            },
+        ),
+        (
             IdentityAuditEventType.MANAGER_CHANGED,
             lambda actor, target: {
                 "user_id": None,
@@ -371,6 +380,11 @@ _FIELD_RULE_REJECTIONS: dict[IdentityAuditEventType, dict[str, str]] = {
     IdentityAuditEventType.FULL_NAME_CHANGED: {
         "target_user_id": "required",
     },
+    IdentityAuditEventType.BOT_CHANGED: {
+        "target_user_id": "required",
+        "old_value": "required",
+        "new_value": "required",
+    },
     # manager_changed is intrinsically system-only: user_id (the actor)
     # must be NULL — manager assignment is always derived from external
     # sync, never a human action.
@@ -388,7 +402,7 @@ _HAPPY_PATH_BY_TYPE: dict[
 def _rejection_matrix_cases() -> list[tuple[IdentityAuditEventType, str, str]]:
     """One case per (event_type, field_name, rule) combination in
     `_FIELD_RULE_REJECTIONS` — every required/forbidden field the
-    contract defines across all 14 event types."""
+    contract defines across all 15 event types."""
     return [
         (event_type, field_name, rule)
         for event_type, fields in _FIELD_RULE_REJECTIONS.items()
@@ -552,6 +566,33 @@ class TestDetailValidation:
                 target_user_id=target.id,
                 new_value="jdoe",
                 detail={"unexpected_key": "value"},
+            )
+
+    async def test_bot_changed_accepts_only_the_external_sync_source(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        """identity-audit-log.md (detail JSONB Schema Contract): the only
+        `bot_changed` detail key is the optional `source` literal."""
+        target = await user_factory()
+        kwargs = dict(
+            _HAPPY_PATH_BY_TYPE[IdentityAuditEventType.BOT_CHANGED](target, target)
+        )
+        kwargs["user_id"] = None
+
+        await IdentityAuditLog.log_event(
+            db_session,
+            event_type=IdentityAuditEventType.BOT_CHANGED,
+            **kwargs,
+            detail={"source": "external_sync"},
+        )
+        with pytest.raises(ValueError, match="unsupported keys"):
+            await IdentityAuditLog.log_event(
+                db_session,
+                event_type=IdentityAuditEventType.BOT_CHANGED,
+                **kwargs,
+                detail={"reason": "provider type"},
             )
 
     async def test_missing_required_key_rejected(

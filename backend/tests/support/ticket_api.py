@@ -175,6 +175,7 @@ def user_reference(user: User) -> dict[str, Any]:
         "username": user.username,
         "full_name": user.full_name,
         "active": user.active,
+        "bot": user.bot,
     }
 
 

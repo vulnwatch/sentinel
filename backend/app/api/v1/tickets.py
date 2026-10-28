@@ -1575,6 +1575,7 @@ def serialize_access_grant(
             username=grant.user.username,
             full_name=grant.user.full_name,
             active=grant.user.active,
+            bot=grant.user.bot,
         ),
         granted_at=grant.granted_at,
         granted_by=UserReference(
@@ -1582,6 +1583,7 @@ def serialize_access_grant(
             username=grant.granted_by.username,
             full_name=grant.granted_by.full_name,
             active=grant.granted_by.active,
+            bot=grant.granted_by.bot,
         ),
     )
 

@@ -214,6 +214,7 @@ class _User:
     full_name: str
     email: str
     roles: tuple[Role, ...]
+    bot: bool = False
 
 
 _ADMIN: Final = "jdoe"
@@ -241,8 +242,17 @@ _USERS: Final = (
     _User(
         "eblack", "Eve Black", "eve.black@example.com", (Role.VULNERABILITY_ANALYST,)
     ),
+    _User(
+        "security-scanner",
+        "Security Scanner",
+        "security-scanner@example.com",
+        (Role.RESTRICTED_ANALYST,),
+        bot=True,
+    ),
 )
 _INACTIVE: Final = "eblack"
+_BOT: Final = "security-scanner"
+"""The bot account (Users), which adds the manual reference of `SNTL-10`."""
 _DEACTIVATION_REASON: Final = "example dataset"
 _MAINTAINER_EMAIL: Final = "dave.brown@example.com"
 
@@ -537,6 +547,11 @@ _SUSE_PROVIDER: Final = "SUSE"
 _MANUAL_REFERENCE: Final = ManualReferenceCreateInput(
     url="https://bugzilla.example.com/show_bug.cgi?id=1000012",
     title="Fictional bug report",
+    type=ReferenceType.ISSUE,
+)
+_SCANNER_REFERENCE: Final = ManualReferenceCreateInput(
+    url="https://scanner.example.com/findings/CVE-2099-0010",
+    title="Fictional scanner finding",
     type=ReferenceType.ISSUE,
 )
 
@@ -882,6 +897,7 @@ class _Load:
                     full_name=user.full_name,
                     password=PASSWORD,
                     roles=[(role, _MANUAL_ORIGIN) for role in user.roles],
+                    bot=user.bot,
                     acting_user_id=acting,
                 )
                 return created.id
@@ -1188,8 +1204,30 @@ class _Load:
 
         await self.run(release)
 
+    async def manual_reference(
+        self, number: int, reference: ManualReferenceCreateInput, actor: str
+    ) -> None:
+        """`create_reference()` of `reference` on `SNTL-{number}` by `actor`."""
+        ticket_id = self.ticket_ids[number]
+
+        async def create(db: AsyncSession) -> None:
+            sequence_id = await db.scalar(
+                select(Ticket.sequence_id).where(Ticket.id == ticket_id)
+            )
+            assert sequence_id is not None
+            await reference_service.create_reference(
+                db,
+                format_ticket_id(sequence_id),
+                await self.caller(db, actor),
+                reference,
+            )
+
+        await self.run(create)
+
     async def ticket_work(self) -> None:
         affected, fixed = PackageStatus.AFFECTED, PackageStatus.FIXED
+        # SNTL-10
+        await self.manual_reference(10, _SCANNER_REFERENCE, _BOT)
         # SNTL-11
         await self.add_package("fictional-curl")
         await self.track_status("fictional-curl", _GIT_16, affected, "bwilson")
@@ -1214,21 +1252,9 @@ class _Load:
                 caller=await self.caller(db, "bwilson"),
             )
 
-        async def reference(db: AsyncSession) -> None:
-            sequence_id = await db.scalar(
-                select(Ticket.sequence_id).where(Ticket.id == sntl_12)
-            )
-            assert sequence_id is not None
-            await reference_service.create_reference(
-                db,
-                format_ticket_id(sequence_id),
-                await self.caller(db, "asmith"),
-                _MANUAL_REFERENCE,
-            )
-
         await self.run(assign)
         await self.run(prioritize)
-        await self.run(reference)
+        await self.manual_reference(12, _MANUAL_REFERENCE, "asmith")
         # SNTL-13
         await self.add_package("fictional-httpd")
         await self.track_status("fictional-httpd", _SP7_UPDATE, affected, "asmith")
