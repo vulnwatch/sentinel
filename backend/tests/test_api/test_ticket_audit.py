@@ -120,8 +120,9 @@ class TestListTicketEventsEndpoint:
         ticket_audit_event_factory: Factory,
     ) -> None:
         ticket: Ticket = await ticket_factory()
+        # A bot actor proves the marker comes from the current User row.
         actor: User = await user_factory(
-            username="fictional.analyst", full_name="Fictional Analyst"
+            username="fictional.analyst", full_name="Fictional Analyst", bot=True
         )
         system_event = await ticket_audit_event_factory(
             ticket_id=ticket.id,
@@ -160,7 +161,7 @@ class TestListTicketEventsEndpoint:
                     "username": "fictional.analyst",
                     "full_name": "Fictional Analyst",
                     "active": True,
-                    "bot": False,
+                    "bot": True,
                 },
             },
             {

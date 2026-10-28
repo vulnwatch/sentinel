@@ -2815,3 +2815,27 @@ class TestUserDirectoryOpenAPISurface:
         }
         sort_by = _resolve_schema(document, parameters["sort_by"]["schema"])
         assert set(sort_by["enum"]) == {"username", "full_name", "email"}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "schema_name",
+    [
+        "UserReference",
+        "UserDirectoryData",
+        "UserData",
+        "UserManagerData",
+        "CurrentUserData",
+    ],
+)
+def test_user_representation_declares_bot_as_a_required_boolean(
+    schema_name: str,
+) -> None:
+    """Every user representation carries the bot marker
+    (`docs/features/identity/user-management.md`, Bot Accounts;
+    `docs/features/platform/testing-strategy.md`, Bot marker)."""
+    from app.main import app as fastapi_app
+
+    schema = fastapi_app.openapi()["components"]["schemas"][schema_name]
+    assert schema["properties"]["bot"]["type"] == "boolean"
+    assert "bot" in schema["required"]

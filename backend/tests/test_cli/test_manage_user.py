@@ -393,13 +393,27 @@ def test_render_user_row_external_inactive_with_roles() -> None:
 @pytest.mark.unit
 def test_render_list_table_aligns_columns() -> None:
     user = User(
-        username="jdoe", email="jdoe@example.com", full_name="John Doe", active=True
+        username="jdoe",
+        email="jdoe@example.com",
+        full_name="John Doe",
+        active=True,
+        bot=True,
     )
     user.roles = [UserRole(role=Role.ADMIN.value, group_name="_manual")]
     table = manage_user_module._render_list_table([user])
     lines = table.splitlines()
-    assert lines[0].startswith("USERNAME")
+    assert lines[0].split() == [
+        "USERNAME",
+        "FULL",
+        "NAME",
+        "EMAIL",
+        "TYPE",
+        "BOT",
+        "STATUS",
+        "ROLES",
+    ]
     assert lines[1].startswith("jdoe")
+    assert lines[1][lines[0].index("BOT") :].startswith("yes")
     assert "admin" in lines[1]
 
 

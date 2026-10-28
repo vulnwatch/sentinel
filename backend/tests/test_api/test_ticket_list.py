@@ -133,8 +133,9 @@ class TestListEndpoint:
         user_factory: Factory,
         ticket_package_factory: Factory,
     ) -> None:
+        # A bot assignee proves the marker comes from the current User row.
         assignee: User = await user_factory(
-            username="fictional.analyst", full_name="Fictional Analyst"
+            username="fictional.analyst", full_name="Fictional Analyst", bot=True
         )
         cve = await cve_factory(
             cve_id="CVE-2099-50001",
@@ -170,7 +171,7 @@ class TestListEndpoint:
                 "username": "fictional.analyst",
                 "full_name": "Fictional Analyst",
                 "active": True,
-                "bot": False,
+                "bot": True,
             },
             "cve": {
                 "cve_id": "CVE-2099-50001",

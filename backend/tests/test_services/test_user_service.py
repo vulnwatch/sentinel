@@ -1449,6 +1449,8 @@ class TestUpdateUser:
         await update_user(db_session, target.id, acting_user_id=None, bot=True)
 
         events = await _audit_events_for(db_session, target.id)
+        assert len(events) == 1
+        assert events[0].event_type == IdentityAuditEventType.BOT_CHANGED.value
         assert events[0].user_id is None
         assert events[0].detail is None
 
@@ -1486,7 +1488,10 @@ class TestUpdateUser:
 
         assert result.changed_fields == ["bot"]
         events = await _audit_events_for(db_session, target.id)
+        assert len(events) == 1
         assert events[0].event_type == IdentityAuditEventType.BOT_CHANGED.value
+        assert (events[0].old_value, events[0].new_value) == ("false", "true")
+        assert events[0].user_id is None
         assert events[0].detail == {"source": "external_sync"}
 
     async def test_human_caller_cannot_change_an_external_users_bot_marker(
