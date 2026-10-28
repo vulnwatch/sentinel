@@ -17,6 +17,7 @@
 - [Python (Backend)](#python-backend)
   - [Style](#style)
   - [Type Hints](#type-hints)
+  - [Omitted Values](#omitted-values)
   - [Static Type Checking](#static-type-checking)
   - [Static Security Analysis](#static-security-analysis)
   - [Naming](#naming)
@@ -352,6 +353,37 @@ configured MUST use `if not value` (or equivalent), never
 - Use `from __future__ import annotations` for modern annotation syntax
 - Use `Optional[X]` or `X | None` for nullable types
 
+### Omitted Values
+
+An omitted value is an argument, field, or JSON member that a caller does not
+provide, where the code must tell its absence apart from every value it
+accepts, `None` included. Pydantic's `MISSING` sentinel
+(`from pydantic import MISSING`) is the only marker for it in `backend/app/`
+and `backend/tests/`:
+
+- Default the parameter, dataclass field, or model field to `MISSING` and
+  annotate it with the sentinel itself, for example
+  `title: str | None | MISSING = MISSING`. The type checker narrows the type
+  with `is MISSING` and `is not MISSING`.
+- Test it only by identity. `MISSING` is truthy and is not `None`, so a
+  truthiness test or `is None` treats it as a provided value.
+- Every field of a partial update, where omission keeps the current value,
+  defaults to `MISSING`, including a non-nullable one, so that `None` never
+  means "omitted". A field whose omission is equivalent to one of its values,
+  such as an optional filter whose omission means no filter, declares that
+  value as its default instead.
+- Do not define another marker: no `object()` constant, marker class,
+  single-member enum, `typing_extensions` sentinel, `Any`-typed sentinel, or
+  `None` default whose presence is read back from `model_fields_set` or
+  `exclude_unset`. Outside `app/schemas/`, `model_fields_set` is not used;
+  request schemas use it only to reject a body that provides no field.
+
+`MISSING` is a PEP 661 sentinel; on Python 3.15 and later it is an instance of
+the builtin `sentinel` type, so this convention does not change with the
+runtime version. Pydantic Conventions applies the rule to request and response
+schemas. A structural test enforces the absence of other markers (see
+`docs/features/platform/testing-strategy.md`, Structural Tests).
+
 ### Static Type Checking
 
 Type hints are enforced, not just written. Static type checking in strict
@@ -570,6 +602,24 @@ forms (see `docs/features/platform/testing-strategy.md`, Structural Tests).
   `Literal` members valid in their JSON form. A structural test in
   `backend/tests/test_api_conventions.py` enforces the field rule for every
   registered route
+- **Omitted request members**: implement `docs/api-spec.md` (Partial Update
+  Semantics) with Omitted Values. A JSON request-body member whose omission
+  differs from every value it accepts defaults to `MISSING`: every optional
+  member of a `PATCH` body, and a member whose presence alone has an effect,
+  such as `is_confidential` of `POST /api/v1/tickets`. A member whose omission
+  is equivalent to one of its values declares that value as its default, for
+  example `bot: bool = Field(default=False, strict=True)`. A member's type
+  includes `None` exactly when the member accepts `null`, so the OpenAPI
+  document publishes `null` only where the request accepts it: do not reject
+  `null` in a validator, and do not hand-write a member's JSON schema
+  (`WithJsonSchema`, `json_schema_extra`) to hide `null`. Routes pass the
+  validated members to services unchanged. A response member that some
+  responses omit likewise defaults to `MISSING`, which Pydantic leaves out of
+  the serialized body; routes do not use `response_model_exclude_unset`.
+  Structural tests in `backend/tests/test_api_conventions.py` enforce, for
+  every registered route, that a request-body member is published as nullable
+  exactly when validation accepts `null` for it, and that every optional
+  member of a `PATCH` body defaults to `MISSING`
 
 ## Database, Transactions, and State
 

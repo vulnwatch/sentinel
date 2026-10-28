@@ -1639,8 +1639,10 @@ Request body:
   it requires the `manage_confidentiality` capability in addition to
   `create_ticket`; if the caller lacks `manage_confidentiality`, the
   endpoint returns 403 `AUTH_INSUFFICIENT_PERMISSION`. When the field is
-  absent, the capability is not checked (see
-  [rbac.md](../identity/rbac.md), Business Rule 13). Default: `false`
+  absent, the Ticket is created non-confidential and the capability is not
+  checked (see [rbac.md](../identity/rbac.md), Business Rule 13). Omitting
+  the field is therefore not equivalent to sending `false`, and the OpenAPI
+  document publishes no default for it
 - `coordinated_release_at` (datetime | null, optional): initial
   [Coordinated Release Date](#coordinated-release-date). Accepted only
   together with `is_confidential: true`; a non-null value with
