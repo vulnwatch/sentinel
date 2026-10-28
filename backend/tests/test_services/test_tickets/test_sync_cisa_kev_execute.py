@@ -61,6 +61,7 @@ from typing import Any, Final, NamedTuple
 import httpx
 import pytest
 from celery.exceptions import SoftTimeLimitExceeded
+from pydantic import MISSING
 from sqlalchemy import delete, event, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
@@ -153,8 +154,6 @@ SKIPPED_EVENT_KEYS: Final = frozenset(
 RECEIVED_EVENT_KEYS: Final = frozenset(
     {"event", "log_level", "fetcher_name", "count", "entries"}
 )
-ABSENT: Final = object()
-"""Marks a member removed from an entry or the catalog."""
 
 
 class Counters(NamedTuple):
@@ -211,11 +210,11 @@ def _skipped(cve_id: str) -> dict[str, Any]:
 
 
 def _entry(cve_id: Any, **members: Any) -> dict[str, Any]:
-    """A live-shaped entry; `ABSENT` removes a member."""
+    """A live-shaped entry; `MISSING` removes a member."""
     entry = entry_for("CVE-2099-0000")
     members = {"cveID": cve_id, **members}
     for key, value in members.items():
-        if value is ABSENT:
+        if value is MISSING:
             del entry[key]
         else:
             entry[key] = value
@@ -1069,7 +1068,7 @@ class TestEntrySuccess:
         assert counters(batch.fetcher) == Counters(5, 0, 5, 0)
 
     @pytest.mark.parametrize(
-        "cwes", [ABSENT, None, []], ids=["absent", "null", "empty"]
+        "cwes", [MISSING, None, []], ids=["absent", "null", "empty"]
     )
     async def test_missing_null_or_empty_cwes_retain_prior_rows(
         self, cwes: Any, env: Env
@@ -1225,7 +1224,7 @@ _INVALID_ENTRIES: Final[list[Any]] = [
     None,
     [],
     ["CVE-2099-0001"],
-    _entry(ABSENT),
+    _entry(MISSING),
     _entry(None),
     _entry(20990001),
     _entry(["CVE-2099-0001"]),
@@ -1361,7 +1360,7 @@ class TestEntryFailure:
     @pytest.mark.parametrize(
         "date_added",
         [
-            ABSENT,
+            MISSING,
             None,
             20261001,
             "2026-1-01",
@@ -2008,7 +2007,7 @@ class TestCatalogReceivedLog:
     @pytest.mark.parametrize(
         ("count", "logged"),
         [
-            (ABSENT, None),
+            (MISSING, None),
             ("1", None),
             (1.0, None),
             (True, None),
@@ -2035,7 +2034,7 @@ class TestCatalogReceivedLog:
     ) -> None:
         cve = await env.cve()
         env.serve(_entry(cve.cve_id))
-        if count is ABSENT:
+        if count is MISSING:
             del env.server.catalog["count"]
         else:
             env.server.catalog["count"] = count

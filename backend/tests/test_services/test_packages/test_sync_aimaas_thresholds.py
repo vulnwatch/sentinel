@@ -45,6 +45,7 @@ import httpx
 import pytest
 from celery.exceptions import OperationalError as KombuOperationalError
 from celery.exceptions import SoftTimeLimitExceeded
+from pydantic import MISSING
 from sqlalchemy import Select, Update, delete, event, func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -1693,15 +1694,14 @@ _RETRIEVAL_FAILURES: Final[list[RetrievalCase]] = [
 
 
 def _break_item(server: AimaasServer, field: str, value: Any, position: int) -> None:
-    """Break the item at the 0-based collection `position`."""
+    """Break the item at the 0-based collection `position`; `MISSING`
+    removes the field."""
     item = server.pages[position // 100 + 1]["items"][position % 100]
-    if value is _DELETE:
+    if value is MISSING:
         del item[field]
     else:
         item[field] = value
 
-
-_DELETE: Final = object()
 
 SchemaCase = tuple[str, str, str, Any, str, int]
 """`(id, phase, field, value, category, position)`; `position` is the
@@ -1714,8 +1714,8 @@ _UNTHRESHOLDED_ITEM: Final = 220
 """Product 221 (page 3), beyond the 150 thresholds of `_failing_router()`."""
 
 _SCHEMA_FAILURES: Final[list[SchemaCase]] = [
-    ("missing-id", "products", "id", _DELETE, "item 105: id is missing", 105),
-    ("missing-cpe", "products", "cpe", _DELETE, "item 105: cpe is missing", 105),
+    ("missing-id", "products", "id", MISSING, "item 105: id is missing", 105),
+    ("missing-cpe", "products", "cpe", MISSING, "item 105: cpe is missing", 105),
     ("string-id", "products", "id", MARKER, "item 105: id must be an integer", 105),
     ("bool-id", "products", "id", True, "item 105: id must be an integer", 105),
     ("int-cpe", "products", "cpe", 7, "item 105: cpe must be a string", 105),
@@ -1738,7 +1738,7 @@ _SCHEMA_FAILURES: Final[list[SchemaCase]] = [
         "missing-product",
         "cvss_thresholds",
         "product",
-        _DELETE,
+        MISSING,
         "item 105: product is missing",
         105,
     ),
@@ -1746,7 +1746,7 @@ _SCHEMA_FAILURES: Final[list[SchemaCase]] = [
         "missing-threshold",
         "cvss_thresholds",
         "threshold",
-        _DELETE,
+        MISSING,
         "item 105: threshold is missing",
         105,
     ),

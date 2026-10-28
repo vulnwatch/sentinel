@@ -67,7 +67,7 @@ from datetime import datetime
 from typing import Annotated, Any, Final, Literal, NotRequired, TypedDict
 
 import pytest
-from pydantic import Field, TypeAdapter, ValidationError
+from pydantic import MISSING, Field, TypeAdapter, ValidationError
 
 from app.core.enums import CVSSVersion
 from app.core.external_strings import contains_inadmissible_character
@@ -319,7 +319,6 @@ class _SourcePage(TypedDict):
 _ELEMENT = TypeAdapter(_Element)
 _PAGE = TypeAdapter(_Page)
 _SOURCE_PAGE = TypeAdapter(_SourcePage)
-_ABSENT: Final = object()
 
 
 def _validated(element: Any) -> _Element:
@@ -345,12 +344,12 @@ def _project(raw: Any, validated: Any) -> Any:
 
 def _mutated(body: Any, path: tuple[str | int, ...], value: Any) -> Any:
     """A deep copy of `body` whose member at `path` is `value`, or removed
-    when `value` is `_ABSENT`."""
+    when `value` is `MISSING`."""
     copy = deepcopy(body)
     target = copy
     for key in path[:-1]:
         target = target[key]
-    if value is _ABSENT:
+    if value is MISSING:
         del target[path[-1]]
     else:
         target[path[-1]] = value
@@ -565,7 +564,7 @@ class TestStrictModels:
         ("path", "value"),
         [
             pytest.param(("cve",), [], id="cve-array"),
-            pytest.param(("cve", "id"), _ABSENT, id="id-absent"),
+            pytest.param(("cve", "id"), MISSING, id="id-absent"),
             pytest.param(("cve", "id"), 2025, id="id-int"),
             pytest.param(("cve", "published"), 20260408, id="published-int"),
             pytest.param(("cve", "published"), None, id="published-null"),
@@ -669,7 +668,7 @@ class TestStrictModels:
             pytest.param(("totalResults",), "1", id="total-str"),
             pytest.param(("totalResults",), True, id="total-bool"),
             pytest.param(("totalResults",), -1, id="total-negative"),
-            pytest.param(("totalResults",), _ABSENT, id="total-absent"),
+            pytest.param(("totalResults",), MISSING, id="total-absent"),
             pytest.param(("vulnerabilities",), None, id="vulnerabilities-null"),
             pytest.param(("vulnerabilities",), {}, id="vulnerabilities-object"),
         ],

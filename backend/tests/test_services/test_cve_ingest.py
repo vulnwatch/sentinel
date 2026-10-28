@@ -4,7 +4,7 @@ backend/app/services/cve_ingest.py.
 Implements docs/features/tickets/cve-service.md:
 
 - CVEIngestPayload Schema (and its Design notes): every field optional,
-  `model_fields_set` as the authority for global-field presence, UTC
+  an omitted global field `MISSING` rather than `None`, UTC
   timestamp normalization, field bounds aligned with CVE JSON 5.x and the
   data model, untrusted vector-only CVSS candidates, and the
   affected-version operation shapes.
@@ -39,7 +39,7 @@ from types import SimpleNamespace
 from typing import Annotated, Any, get_args, get_origin
 
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import MISSING, BaseModel, ValidationError
 
 from app.core.enums import (
     CVEExternalIdentifierSource,
@@ -133,19 +133,21 @@ def _payload_with_operations(
 @pytest.mark.unit
 class TestFieldPresence:
     def test_empty_payload_is_valid_with_every_field_unset(self) -> None:
+        """An omitted global field is `MISSING` and an omitted child field
+        `None` (cve-service.md, CVEIngestPayload Schema)."""
         payload = CVEIngestPayload()
 
         assert payload.model_fields_set == set()
-        assert all(
-            getattr(payload, name) is None for name in CVEIngestPayload.model_fields
-        )
+        for name in CVEIngestPayload.model_fields:
+            expected = MISSING if name in _GLOBAL_FIELDS else None
+            assert getattr(payload, name) is expected, name
 
     @pytest.mark.parametrize("field", _GLOBAL_FIELDS)
-    def test_omitted_global_field_is_not_in_fields_set(self, field: str) -> None:
+    def test_omitted_global_field_is_missing(self, field: str) -> None:
         payload = CVEIngestPayload(resolved_packages=["example-package"])
 
         assert payload.model_fields_set == {"resolved_packages"}
-        assert getattr(payload, field) is None
+        assert getattr(payload, field) is MISSING
 
     @pytest.mark.parametrize("field", _NULLABLE_GLOBAL_FIELDS)
     def test_explicit_null_global_field_is_in_fields_set(self, field: str) -> None:
@@ -198,10 +200,10 @@ class TestFieldPresence:
         """Only an explicit `PUBLISHED` state conflicts with a rejection date."""
         payload = CVEIngestPayload(date_rejected=datetime(2099, 1, 1, tzinfo=UTC))
 
-        assert payload.cve_state is None
+        assert payload.cve_state is MISSING
 
 
-_DATETIME_FIELDS: list[tuple[str, Callable[[datetime], datetime | None]]] = [
+_DATETIME_FIELDS: list[tuple[str, Callable[[datetime], object]]] = [
     ("published_date", lambda v: CVEIngestPayload(published_date=v).published_date),
     ("modified_date", lambda v: CVEIngestPayload(modified_date=v).modified_date),
     (
@@ -221,25 +223,25 @@ _DATETIME_FIELDS: list[tuple[str, Callable[[datetime], datetime | None]]] = [
 class TestDatetimeNormalization:
     @pytest.mark.parametrize(("field", "parse"), _DATETIME_FIELDS)
     def test_naive_datetime_is_utc_with_same_wall_clock(
-        self, field: str, parse: Callable[[datetime], datetime | None]
+        self, field: str, parse: Callable[[datetime], object]
     ) -> None:
         naive = datetime(2099, 3, 4, 5, 6, 7, 890)  # noqa: DTZ001 - naive input under test
 
         value = parse(naive)
 
-        assert value is not None
+        assert isinstance(value, datetime)
         assert value.tzinfo is UTC
         assert value.replace(tzinfo=None) == naive
 
     @pytest.mark.parametrize(("field", "parse"), _DATETIME_FIELDS)
     def test_offset_datetime_is_converted_to_the_utc_instant(
-        self, field: str, parse: Callable[[datetime], datetime | None]
+        self, field: str, parse: Callable[[datetime], object]
     ) -> None:
         offset = datetime(2099, 3, 4, 1, 30, tzinfo=timezone(timedelta(hours=+2)))
 
         value = parse(offset)
 
-        assert value is not None
+        assert isinstance(value, datetime)
         assert value.tzinfo is UTC
         assert value == offset
         assert (value.day, value.hour, value.minute) == (3, 23, 30)
@@ -252,7 +254,7 @@ class TestDatetimeNormalization:
 
         assert payload.published_date == datetime(2099, 3, 4, 5, 6, 7, tzinfo=UTC)
         assert payload.modified_date == datetime(2099, 3, 4, 10, 6, 7, tzinfo=UTC)
-        assert payload.modified_date is not None
+        assert isinstance(payload.modified_date, datetime)
         assert payload.modified_date.tzinfo is UTC
 
     def test_ssvc_assessed_at_may_be_omitted(self) -> None:

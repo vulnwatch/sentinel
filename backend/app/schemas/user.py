@@ -13,7 +13,7 @@ from typing import Any
 from uuid import UUID
 
 from email_validator import EmailNotValidError, validate_email
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import MISSING, BaseModel, Field, field_validator, model_validator
 
 from app.core.enums import SortOrder, UserDirectorySortField, UserSortField
 from app.core.permissions import role_from_wire
@@ -267,33 +267,23 @@ class AdminUserUpdateRequest(BaseModel):
     (`user-management.md`, Update User (Admin)).
 
     Every field is optional but at least one must be provided
-    (`docs/api-spec.md`, Partial Update Semantics). `email` and `bot`
-    reject explicit `null` (non-nullable fields); `full_name` accepts
-    explicit `null` to clear the stored display name. `bot` accepts only a
-    JSON boolean (`docs/api-spec.md`, JSON Request Body Scalar Types). The
-    route distinguishes "omitted" from "explicitly provided" via
-    `model_fields_set` — see `docs/features/identity/user-service.md`
-    (`update_user()`, the `_MISSING` sentinel pattern) for how the route
-    threads this into the service call.
+    (`docs/api-spec.md`, Partial Update Semantics). An omitted field stays
+    `MISSING` (`docs/conventions.md`, Omitted Values), which the route
+    passes to `user_service.update_user()` unchanged. `email` and `bot` are
+    non-nullable, so their types exclude `None` and an explicit `null` fails
+    type validation; `full_name` accepts explicit `null` to clear the stored
+    display name. `bot` accepts only a JSON boolean (`docs/api-spec.md`, JSON
+    Request Body Scalar Types).
     """
 
-    email: str | None = None
-    full_name: str | None = Field(default=None, max_length=255)
-    bot: bool | None = Field(default=None, strict=True)
+    email: str | MISSING = MISSING
+    full_name: str | MISSING | None = Field(default=MISSING, max_length=255)
+    bot: bool | MISSING = Field(default=MISSING, strict=True)
 
     @field_validator("email", mode="before")
     @classmethod
     def _validate_email(cls, value: Any) -> Any:
-        if value is None:
-            raise ValueError("email cannot be null.")
         return _normalize_email_field(value)
-
-    @field_validator("bot", mode="before")
-    @classmethod
-    def _reject_null_bot(cls, value: Any) -> Any:
-        if value is None:
-            raise ValueError("bot cannot be null.")
-        return value
 
     @model_validator(mode="after")
     def _require_at_least_one_field(self) -> AdminUserUpdateRequest:

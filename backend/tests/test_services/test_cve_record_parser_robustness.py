@@ -30,7 +30,7 @@ from datetime import UTC, date, datetime
 from typing import Any, Final
 
 import pytest
-from pydantic import ValidationError
+from pydantic import MISSING, ValidationError
 
 from app.core.enums import CveState
 from app.core.external_strings import contains_inadmissible_character
@@ -371,9 +371,6 @@ def _mutations(record: dict[str, Any]) -> Iterator[tuple[Path, Callable[[], None
             yield path, undo
 
 
-_ABSENT_MARKER: Final = object()
-
-
 def _random_variant(
     pristine: dict[str, Any], paths: list[Path], rng: random.Random
 ) -> dict[str, Any]:
@@ -392,9 +389,9 @@ def _random_variant(
         if not reachable:
             continue
         current = parent[key]
-        choices = [*_REPLACEMENTS, *_swaps(current), _ABSENT_MARKER]
+        choices = [*_REPLACEMENTS, *_swaps(current), MISSING]
         replacement = rng.choice(choices)
-        if replacement is _ABSENT_MARKER:
+        if replacement is MISSING:
             if isinstance(parent, dict):
                 del parent[key]
         else:

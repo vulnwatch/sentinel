@@ -486,12 +486,12 @@ async def _update_profile(
     bound, then one `user_service.update_user()` call in its own
     transaction. `bot` is `None` when neither `--bot` nor `--no-bot` was
     given."""
+    from pydantic import MISSING
+
     from app.core.exceptions import UserNotFoundError
     from app.services import user_service
     from app.services.user_service import (
-        MISSING,
         ExternalUserFieldReadOnlyError,
-        MissingType,
         UserConflictError,
     )
 
@@ -503,13 +503,13 @@ async def _update_profile(
     # Forward only the provided fields; an omitted one stays `MISSING`.
     # `--clear-full-name` sends an explicit `None`; `--full-name ""` is an
     # ordinary provided value.
-    email_arg: str | MissingType = (
+    email_arg: str | MISSING = (
         normalized_email if normalized_email is not None else MISSING
     )
-    full_name_arg: str | MissingType | None = (
+    full_name_arg: str | MISSING | None = (
         full_name if clear_full_name or full_name is not None else MISSING
     )
-    bot_arg: bool | MissingType = bot if bot is not None else MISSING
+    bot_arg: bool | MISSING = bot if bot is not None else MISSING
 
     async with session_factory() as db:
         try:

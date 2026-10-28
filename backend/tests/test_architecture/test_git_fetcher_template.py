@@ -33,6 +33,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 import pytest
+from pydantic import MISSING
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.services.fetcher_discovery  # noqa: F401 — production discovery
@@ -136,10 +137,6 @@ def _compliant_namespace() -> dict[str, Any]:
     }
 
 
-_ABSENT = object()
-"""Marks an attribute removed from the compliant namespace."""
-
-
 def _define(
     class_name: str,
     source: CVESourceType,
@@ -148,11 +145,11 @@ def _define(
     **overrides: Any,
 ) -> type[BaseGitFetcher]:
     """Register one Git fetcher: the compliant namespace with `overrides`
-    applied (`_ABSENT` removes an attribute)."""
+    applied (`MISSING` removes an attribute)."""
     namespace = _compliant_namespace()
     namespace["cve_source_type"] = source
     for attribute, value in overrides.items():
-        if value is _ABSENT:
+        if value is MISSING:
             namespace.pop(attribute)
         else:
             namespace[attribute] = value
@@ -190,15 +187,15 @@ _VIOLATIONS = [
         {"queue": "general"}, "does not inherit queue = 'git'", id="queue-changed"
     ),
     pytest.param(
-        {"process_item": _ABSENT}, "does not implement process_item()", id="no-process"
+        {"process_item": MISSING}, "does not implement process_item()", id="no-process"
     ),
     pytest.param(
-        {"_construct_candidate_paths": _ABSENT},
+        {"_construct_candidate_paths": MISSING},
         "does not implement _construct_candidate_paths()",
         id="no-candidate-paths",
     ),
     pytest.param(
-        {"repo_url": _ABSENT}, "repo_url is not a non-empty string", id="no-repo-url"
+        {"repo_url": MISSING}, "repo_url is not a non-empty string", id="no-repo-url"
     ),
     pytest.param(
         {"repo_url": ""}, "repo_url is not a non-empty string", id="empty-repo-url"
@@ -214,7 +211,7 @@ _VIOLATIONS = [
         id="none-delta-prefix",
     ),
     pytest.param(
-        {"recovery_path_prefix": _ABSENT},
+        {"recovery_path_prefix": MISSING},
         "recovery_path_prefix is not a non-empty string",
         id="no-recovery-prefix",
     ),
@@ -224,7 +221,7 @@ _VIOLATIONS = [
         id="bytes-recovery-prefix",
     ),
     pytest.param(
-        {"clone_dir_name": _ABSENT},
+        {"clone_dir_name": MISSING},
         "clone_dir_name is not a single path component",
         id="no-clone-dir",
     ),

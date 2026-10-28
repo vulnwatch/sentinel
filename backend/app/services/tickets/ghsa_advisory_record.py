@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Final
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict
+from pydantic import MISSING, BaseModel, BeforeValidator, ConfigDict
 
 from app.core.enums import CVEExternalIdentifierSource, ReferenceType
 from app.core.external_strings import contains_inadmissible_character
@@ -137,17 +137,18 @@ class GhsaCwe(_Model):
 class GhsaAdvisory(_Model):
     """The consumed fields of one advisory (§ Response Validation).
 
-    `model_fields_set` records which presence-sensitive globals (`summary`,
-    `description`, `updated_at`) the advisory carried. `published_at` is the
+    A presence-sensitive global (`summary`, `description`, `updated_at`) is
+    `MISSING` when the advisory lacks its key (`docs/conventions.md`,
+    Omitted Values) and `None` for an explicit `null`. `published_at` is the
     GitHub advisory publication, not the CVE publication, so it is not
     consumed (§ Field Mapping, Explicitly ignored fields).
     """
 
     ghsa_id: str
     html_url: str
-    summary: str | None = None
-    description: str | None = None
-    updated_at: IsoDateTime | None = None
+    summary: str | MISSING | None = MISSING
+    description: str | MISSING | None = MISSING
+    updated_at: IsoDateTime | MISSING | None = MISSING
     source_code_location: str | None = None
     references: list[str] | None = None
     cwes: list[GhsaCwe] | None = None
@@ -292,17 +293,16 @@ def extract(advisory: GhsaAdvisory) -> GhsaExtraction:
 def _global_fields(advisory: GhsaAdvisory) -> dict[str, object]:
     """Presence-sensitive globals: an absent key is omitted, an explicit
     `null` passes as `None`, and text is truncated to its bound."""
-    present = advisory.model_fields_set
     fields: dict[str, object] = {}
-    if "summary" in present:
-        summary = advisory.summary
+    summary = advisory.summary
+    if summary is not MISSING:
         fields["title"] = None if summary is None else summary[:TITLE_MAX_LENGTH]
-    if "description" in present:
-        description = advisory.description
+    description = advisory.description
+    if description is not MISSING:
         fields["description"] = (
             None if description is None else description[:DESCRIPTION_MAX_LENGTH]
         )
-    if "updated_at" in present:
+    if advisory.updated_at is not MISSING:
         fields["modified_date"] = advisory.updated_at
     return fields
 

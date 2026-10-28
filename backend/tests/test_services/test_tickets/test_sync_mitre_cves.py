@@ -44,6 +44,7 @@ from typing import Any, Final, cast
 
 import pytest
 from celery.app.task import Task
+from pydantic import MISSING
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 from structlog.testing import capture_logs
@@ -803,7 +804,7 @@ class TestProcessItem:
 
         [(cve_id, source_type, payload)] = ingest.upserts
         assert (cve_id, source_type) == (CVE_ID, MITRE)
-        assert payload.title is None
+        assert payload.title is MISSING
         assert (
             payload.description == "example: fictional description of CVE-2024-21182."
         )

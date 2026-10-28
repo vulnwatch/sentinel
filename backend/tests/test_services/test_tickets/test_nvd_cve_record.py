@@ -33,7 +33,7 @@ from types import MappingProxyType
 from typing import Any, Final, get_args
 
 import pytest
-from pydantic import ValidationError
+from pydantic import MISSING, ValidationError
 
 from app.core.enums import CveState, ReferenceType
 from app.services.cve_ingest import CVEIngestPayload
@@ -957,7 +957,7 @@ class TestVulnStatus:
 
         assert "date_rejected" not in payload.model_fields_set
         assert "title" not in payload.model_fields_set
-        assert payload.date_rejected is None
+        assert payload.date_rejected is MISSING
 
 
 # ---------------------------------------------------------------------------

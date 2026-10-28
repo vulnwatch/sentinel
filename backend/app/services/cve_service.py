@@ -88,7 +88,7 @@ from typing import Any, Final, cast
 import redis.asyncio as redis_asyncio
 import structlog
 from celery.exceptions import SoftTimeLimitExceeded
-from pydantic import ValidationError
+from pydantic import MISSING, ValidationError
 from pydantic_core import PydanticCustomError
 from redis.exceptions import RedisError
 from sqlalchemy import (
@@ -1843,21 +1843,21 @@ def _assign(cve: CVE, name: str, value: object) -> bool:
 def _merge_global_fields(cve: CVE, payload: CVEIngestPayload) -> bool:
     """Step 4 global merge (cve-service.md, Merge Strategy).
 
-    Presence (`model_fields_set`) decides: omitted preserves, explicit
-    `null` clears, a value sets or replaces, an equal value is a no-op. A
+    Presence decides: omitted (`MISSING`) preserves, explicit `null`
+    clears, a value sets or replaces, an equal value is a no-op. A
     resulting `PUBLISHED` always clears `date_rejected`; for `REJECTED` an
     omitted date is preserved.
     """
-    supplied = payload.model_fields_set
     changed = False
     for name in _NULLABLE_GLOBAL_FIELDS:
-        if name in supplied:
-            changed |= _assign(cve, name, getattr(payload, name))
-    if payload.cve_state is not None:
+        value = getattr(payload, name)
+        if value is not MISSING:
+            changed |= _assign(cve, name, value)
+    if payload.cve_state is not MISSING:
         changed |= _assign(cve, "cve_state", payload.cve_state.value)
     if cve.cve_state == CveState.PUBLISHED:
         changed |= _assign(cve, "date_rejected", None)
-    elif "date_rejected" in supplied:
+    elif payload.date_rejected is not MISSING:
         changed |= _assign(cve, "date_rejected", payload.date_rejected)
     return changed
 

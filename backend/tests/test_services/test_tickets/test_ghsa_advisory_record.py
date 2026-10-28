@@ -22,7 +22,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Final
 
 import pytest
-from pydantic import ValidationError
+from pydantic import MISSING, ValidationError
 
 from app.core.enums import CVEExternalIdentifierSource, ReferenceType
 from app.services.cve_ingest import (
@@ -303,7 +303,7 @@ class TestResponseValidation:
         advisory = parse_advisory(_advisory(updated_at=value))
 
         assert advisory.updated_at == expected
-        assert advisory.updated_at is not None
+        assert isinstance(advisory.updated_at, datetime)
         assert advisory.updated_at.utcoffset() is not None
 
     @pytest.mark.parametrize(
@@ -463,7 +463,7 @@ class TestGlobalFields:
         assert payload.description == "Fictional **markdown** description."
         assert "published_date" not in payload.model_fields_set
         assert payload.modified_date == datetime(2026, 9, 24, 14, 45, 27, tzinfo=UTC)
-        assert payload.modified_date is not None
+        assert isinstance(payload.modified_date, datetime)
         assert payload.modified_date.utcoffset() == timedelta(0)
 
     def test_absent_globals_are_omitted(self) -> None:
@@ -545,8 +545,8 @@ class TestGlobalFields:
 
         assert "cve_state" not in payload.model_fields_set
         assert "date_rejected" not in payload.model_fields_set
-        assert payload.cve_state is None
-        assert payload.date_rejected is None
+        assert payload.cve_state is MISSING
+        assert payload.date_rejected is MISSING
 
     def test_minimal_advisory_carries_only_the_external_identifier(self) -> None:
         extraction = _extract()
@@ -1470,7 +1470,7 @@ class TestIgnoredFields:
         ).payload
 
         assert "published_date" not in payload.model_fields_set
-        assert payload.published_date is None
+        assert payload.published_date is MISSING
         assert payload.modified_date == datetime(2026, 9, 24, 16, 45, 27, tzinfo=UTC)
         assert SECRET_INPUT not in payload.model_dump_json()
 

@@ -1867,7 +1867,9 @@ class TestUpdateUserAdmin:
         )
 
         assert response.status_code == 422
-        assert response.json()["code"] == "VALIDATION_ERROR"
+        body = response.json()
+        assert body["code"] == "VALIDATION_ERROR"
+        assert [error["loc"] for error in body["errors"]] == [["body", "email"]]
 
     async def test_explicit_null_full_name_clears_it(
         self,
@@ -2839,3 +2841,21 @@ def test_user_representation_declares_bot_as_a_required_boolean(
     schema = fastapi_app.openapi()["components"]["schemas"][schema_name]
     assert schema["properties"]["bot"]["type"] == "boolean"
     assert "bot" in schema["required"]
+
+
+@pytest.mark.unit
+def test_admin_update_request_publishes_null_only_for_full_name() -> None:
+    """`email` and `bot` are optional but non-nullable, so the document
+    publishes them without `null`; `full_name` accepts `null` to clear it
+    (`docs/api-spec.md`, Partial Update Semantics; `user-management.md`,
+    Update User (Admin))."""
+    from app.main import app as fastapi_app
+
+    schema = fastapi_app.openapi()["components"]["schemas"]["AdminUserUpdateRequest"]
+    properties = schema["properties"]
+    assert "required" not in schema
+    assert properties["email"]["type"] == "string"
+    assert properties["bot"]["type"] == "boolean"
+    assert "anyOf" not in properties["email"]
+    assert "anyOf" not in properties["bot"]
+    assert {"type": "null"} in properties["full_name"]["anyOf"]

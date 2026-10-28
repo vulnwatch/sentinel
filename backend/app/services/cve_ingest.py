@@ -33,6 +33,7 @@ from enum import StrEnum
 from typing import Annotated, Any, Final, Self, TypedDict
 
 from pydantic import (
+    MISSING,
     AfterValidator,
     BaseModel,
     ConfigDict,
@@ -355,15 +356,17 @@ class CVEIngestPayload(_PayloadModel):
     """Canonical structure for CVE data flowing into `cve_service`.
 
     All fields optional; fetchers populate only what their source provides.
-    `model_fields_set` is the authority for global-field presence.
+    An omitted global field is `MISSING` (`docs/conventions.md`, Omitted
+    Values), distinct from an explicit `None`, which clears a nullable
+    global. `cve_state` is non-null when supplied.
     """
 
-    title: str | None = Field(None, max_length=256)
-    description: str | None = None
-    published_date: UTCDateTime | None = None
-    modified_date: UTCDateTime | None = None
-    cve_state: CveState | None = None
-    date_rejected: UTCDateTime | None = None
+    title: str | MISSING | None = Field(MISSING, max_length=256)
+    description: str | MISSING | None = MISSING
+    published_date: UTCDateTime | MISSING | None = MISSING
+    modified_date: UTCDateTime | MISSING | None = MISSING
+    cve_state: CveState | MISSING = MISSING
+    date_rejected: UTCDateTime | MISSING | None = MISSING
 
     cvss_assessments: list[CVSSAssessmentEntry] | None = None
     cwe_classifications: list[CWEEntry] | None = None
@@ -378,9 +381,9 @@ class CVEIngestPayload(_PayloadModel):
 
     @model_validator(mode="after")
     def _check_invariants(self) -> Self:
-        if "cve_state" in self.model_fields_set and self.cve_state is None:
-            raise ValueError("cve_state must not be explicitly null.")
-        if self.cve_state is CveState.PUBLISHED and self.date_rejected is not None:
+        if self.cve_state is CveState.PUBLISHED and isinstance(
+            self.date_rejected, datetime
+        ):
             raise ValueError("A PUBLISHED cve_state cannot carry date_rejected.")
         normalize_affected_version_operations(self.affected_version_operations)
         normalize_external_identifiers(self.external_identifiers)

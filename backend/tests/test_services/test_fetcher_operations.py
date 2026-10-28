@@ -2741,7 +2741,7 @@ class TestUpdateFetcherConfigBehavior:
         user_factory: UserFactory,
     ) -> None:
         """An explicitly submitted empty `custom_settings` object
-        (`{}`) is distinct from omission (`MissingType`) and from
+        (`{}`) is distinct from omission (`MISSING`) and from
         `null` (rejected at the schema layer) — the merge/validation
         block is skipped because there are no keys to process. For a
         fetcher with no `Settings` model, this guard also prevents an

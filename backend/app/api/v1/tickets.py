@@ -34,6 +34,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Final
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
+from pydantic import MISSING
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.dependencies import (
@@ -499,7 +500,7 @@ async def create_ticket(
     `get_ticket_detail()`).
     """
     if (
-        "is_confidential" in body.model_fields_set
+        body.is_confidential is not MISSING
         and Capability.MANAGE_CONFIDENTIALITY not in get_capabilities(roles)
     ):
         raise insufficient_permission_error()
@@ -514,7 +515,7 @@ async def create_ticket(
             severity_manual=(
                 _SEVERITY_INPUT[body.severity] if body.severity is not None else None
             ),
-            is_confidential=body.is_confidential,
+            is_confidential=body.is_confidential is True,
             coordinated_release_at=body.coordinated_release_at,
             source=TicketCreationSource.MANUAL,
         )

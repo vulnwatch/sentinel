@@ -15,7 +15,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from pydantic import ValidationError
+from pydantic import MISSING, ValidationError
 
 from app.core.enums import SortOrder, UserDirectorySortField, UserSortField
 from app.schemas.common import PaginationMeta
@@ -468,15 +468,17 @@ class TestAdminUserCreateRequest:
 @pytest.mark.unit
 class TestAdminUserUpdateRequest:
     def test_email_only_is_accepted(self) -> None:
+        """An omitted field is `MISSING`, not `None` (`docs/conventions.md`,
+        Omitted Values)."""
         request = AdminUserUpdateRequest(email="new@example.com")
         assert request.email == "new@example.com"
-        assert request.full_name is None
-        assert "full_name" not in request.model_fields_set
+        assert request.full_name is MISSING
+        assert request.bot is MISSING
 
     def test_full_name_only_is_accepted(self) -> None:
         request = AdminUserUpdateRequest(full_name="New Name")
         assert request.full_name == "New Name"
-        assert "email" not in request.model_fields_set
+        assert request.email is MISSING
 
     def test_empty_body_is_rejected(self) -> None:
         with pytest.raises(ValidationError):
