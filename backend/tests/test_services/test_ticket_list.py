@@ -179,8 +179,10 @@ class TestSummaryProjection:
         user_factory: Factory,
         ticket_package_factory: Factory,
     ) -> None:
+        # An inactive bot assignee: `active` and `bot` differ, so neither
+        # projected field can be filled from the other.
         assignee: User = await user_factory(
-            username="fictional.analyst", full_name=None, active=False
+            username="fictional.analyst", full_name=None, active=False, bot=True
         )
         target: Ticket = await ticket_factory()
         cve: CVE = await cve_factory(
@@ -217,7 +219,7 @@ class TestSummaryProjection:
                     username="fictional.analyst",
                     full_name=None,
                     active=False,
-                    bot=False,
+                    bot=True,
                 ),
                 cve=CVESummaryProjection(
                     cve_id="CVE-2099-40001",
