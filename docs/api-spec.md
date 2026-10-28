@@ -1277,6 +1277,10 @@ other fallback value. The `bot` field is `true` for a bot account, an
 account that an automation operates instead of a person, and lets a client
 present its actions differently; it has no effect on authorization or
 business rules (`docs/features/identity/user-management.md`, Bot Accounts).
+A user reference that identifies who performed a recorded action is the same
+for every caller that can read the response; it is never masked or
+anonymized according to the caller (`docs/features/identity/rbac.md`, Actor
+Identities).
 
 Users are never physically deleted from the database — all foreign keys
 referencing the User table use `ON DELETE RESTRICT`. Deactivated users

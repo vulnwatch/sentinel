@@ -309,8 +309,8 @@ Sorting is fixed at `created_at` descending — client-controlled
 | `to_date` | string | -- | ISO 8601 date/datetime. Include events up to this date (inclusive) |
 
 The `actor` and `target_user` filters are not available on this
-endpoint. The target is always the authenticated user; the actor is
-anonymized in the response (see below).
+endpoint. The target is always the authenticated user, so the response
+omits `target_user`.
 
 **`Access: Authenticated`**
 
@@ -321,12 +321,27 @@ anonymized in the response (see below).
   "data": [
     {
       "id": "uuid",
+      "event_type": "password_reset",
+      "old_value": null,
+      "new_value": null,
+      "detail": null,
+      "created_at": "2026-05-14T09:15:00Z",
+      "actor": {
+        "id": "uuid",
+        "username": "fictional.admin",
+        "full_name": "Fictional Admin",
+        "active": true,
+        "bot": false
+      }
+    },
+    {
+      "id": "uuid",
       "event_type": "role_added",
       "old_value": null,
       "new_value": "admin",
       "detail": {"source": "external_sync", "mapping": "SecurityTeam"},
       "created_at": "2026-05-13T10:30:00Z",
-      "actor": "system"
+      "actor": null
     }
   ],
   "meta": {
@@ -337,19 +352,15 @@ anonymized in the response (see below).
 }
 ```
 
-**Actor anonymization**: the `actor` field is returned as a string
-(not an object) to prevent non-admin users from identifying which
-specific administrator performed an action. The mapping is:
-
-| DB condition | `actor` value |
-|---|---|
-| `user_id IS NULL` | `"system"` |
-| `user_id = target_user_id` | `"self"` |
-| `user_id IS NOT NULL AND user_id ≠ target_user_id` | `"admin"` |
-
-This gives users visibility into whether an event was triggered by
-themselves, by an administrator, or by an automated system process,
-without exposing the administrator's identity.
+**Actor**: `actor` has the same representation as in List Identity Audit
+Events: the user reference object of the user who performed the action
+(`docs/api-spec.md`, User References in Responses), or `null` when
+`user_id IS NULL` (see Actor Contract). An action that the user performed
+on their own account carries their own reference, and an action by an
+administrator carries that administrator's reference
+(`docs/features/identity/rbac.md`, Actor Identities). The user can therefore
+tell who acted on their account, for example which administrator reset their
+password, and whom to ask or report.
 
 **`detail` field transparency**: the `detail` JSONB field is returned
 unredacted in the self-service response. This includes external group names in
@@ -445,9 +456,11 @@ Tests for `IdentityAuditLog.log_event()` itself MUST cover every documented
 validation rejection, truncation at 512 Unicode code points, and acceptance at
 4096 UTF-8 bytes with rejection above that boundary.
 
-Self-service endpoint tests MUST verify all three actor-anonymization branches,
-that `actor` is always a string rather than a User object, and that events with
-`target_user_id IS NULL` are excluded.
+Self-service endpoint tests MUST verify that `actor` is `null` for an event
+with `user_id IS NULL`, the caller's own user reference for the caller's own
+action, and the acting administrator's complete user reference for an
+administrator's action to a caller without `manage_users`, and that events
+with `target_user_id IS NULL` are excluded.
 
 ## Cross-references
 
@@ -467,5 +480,5 @@ that `actor` is always a string rather than a User object, and that events with
   events
 - `docs/features/identity/api-key-management.md` — API key lifecycle and
   management surfaces
-- `docs/features/identity/rbac.md` — Endpoint Permission Map (add new
-  endpoint)
+- `docs/features/identity/rbac.md` — Actor Identities (the actor of the
+  self-service log); Endpoint Permission Map (add new endpoint)

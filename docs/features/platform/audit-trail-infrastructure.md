@@ -334,6 +334,11 @@ caller's transaction governs durability.
   `SettingAuditLog`, `FetcherAuditLog`) MUST override `log_event()` to
   validate that `user_id` is provided, raising `ValueError` if it is
   `None`
+- Every audit trail API endpoint returns the actor of each event as the user
+  reference object of the current User record (Human-Readable Subjects), or
+  `null` when `user_id` is `NULL`, to every caller that can read the
+  endpoint; it never masks or anonymizes the actor according to the caller
+  (`docs/features/identity/rbac.md`, Actor Identities)
 
 ## Date Filtering
 
@@ -401,8 +406,7 @@ exist:
 
 - **Ticket audit log** (`GET /api/v1/tickets/{ticket_id}/audit-log`):
   **Authenticated**, like every read of Ticket data (see
-  `docs/features/identity/rbac.md`, Access Levels), although the response
-  includes actor details (username, full name, UUID). This endpoint is
+  `docs/features/identity/rbac.md`, Access Levels). This endpoint is
   entity-scoped (always filtered by `ticket_id`) and does not expose
   cross-entity audit data.
 
@@ -410,15 +414,15 @@ exist:
   **Authenticated**, scoped to `target_user_id = current_user.id`. Users can
   view events that affect their own account (role changes, password resets,
   API key operations, and field changes from external sync, which only
-  external provisioning produces). The actor field is anonymized to
-  `"system"`, `"self"`, or `"admin"` to prevent identification of the specific
-  administrator. The full, unmasked audit log remains restricted to users with
-  `manage_users` capability at `GET /api/v1/admin/identity/audit-log`.
+  external provisioning produces). The audit log of every user's events
+  remains restricted to users with `manage_users` capability at
+  `GET /api/v1/admin/identity/audit-log`.
 
 The self-service pattern (authenticated access with implicit user
-scoping and actor anonymization) is reusable for future audit trails
-that need to give users visibility into events affecting them without
-exposing cross-user data or actor identities.
+scoping) is reusable for future audit trails that need to give users
+visibility into events affecting them without exposing the events of other
+users or entities. Like every audit trail endpoint, each of these endpoints
+identifies the actor of every event it returns (Actor Field).
 
 ## Immutability
 

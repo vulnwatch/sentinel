@@ -2128,6 +2128,17 @@ UUID and username inputs. At minimum:
 - Non-existent UUID → 404
 - Non-existent username → 404
 
+### Actor Identities
+
+Every read open to callers without an administrator capability that returns
+the actor of an action an administrator can perform
+(`docs/features/identity/rbac.md`, Actor Identities) MUST be tested with a
+caller that lacks that capability, for example a role-less user: the response
+carries the acting administrator's complete user reference, and `null` for an
+action without an authenticated actor. This covers the self-service identity
+audit log, the fetcher list (`last_run`), run list, run detail, and timeline
+(`disabled_periods`), and the self-service API key list (`revoked_by`).
+
 ### Service Functions
 
 Every new or modified service function MUST be tested for:
@@ -3894,6 +3905,11 @@ or identity audit validation are affected, tests MUST cover:
   complete user profile, including `last_login_at` (`null` before the first
   login and the login time after it), and return 403 to an authenticated
   caller without `manage_users`
+- every response that returns the complete user profile, the list and detail
+  reads and the administrator mutation responses alike, renders
+  `roles[].assigned_by` as the complete user reference of the administrator
+  who assigned a role through the API and as `null` for a role assigned
+  through the CLI
 - every API accepting a user identifier exercises both UUID and username, and
   route handlers delegate user reads to `user_service` rather than executing
   ORM queries directly
@@ -3928,8 +3944,9 @@ or identity audit validation are affected, tests MUST cover:
 - every user representation carries `bot` from the current User record: the
   user reference object in each response that embeds one (including Ticket
   assignees and access grants, Ticket, identity, setting, and fetcher audit
-  actors, and API-key owners and revokers), the directory entry, the
-  complete profile and its `manager`, and `GET /api/v1/users/me`; the
+  actors, API-key owners and revokers, and role assigners), the directory
+  entry, the complete profile and its `manager`, and `GET /api/v1/users/me`;
+  the
   OpenAPI document declares `bot` as a required boolean of each of these
   schemas
 - the marker has no authorization or business-rule effect: a bot account
