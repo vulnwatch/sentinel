@@ -38,6 +38,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 from celery.exceptions import SoftTimeLimitExceeded
+from pydantic import MISSING
 from sqlalchemy import String
 from structlog.testing import capture_logs
 
@@ -96,11 +97,6 @@ NOT_FOUND_ENVELOPE: Final = {"status": "error", "data": f"Package {PACKAGE} not 
 
 Respond = Callable[[httpx.Request], httpx.Response]
 
-_DEFAULT: Final[Any] = object()
-"""Builder default: use the standard valid value."""
-_OMIT: Final[Any] = object()
-"""Builder value: omit the key entirely."""
-
 _DECLARED_TYPES = ("SLFO", "SLFO_IBS", "SLE_15", "UNKNOWN")
 _SUPPORTED_TYPES = ("SLFO", "SLE_15")
 _SKIPPED_TYPES = ("SLFO_IBS", "UNKNOWN")
@@ -117,63 +113,65 @@ def _smelt_api_url(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _compact(mapping: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in mapping.items() if value is not _OMIT}
+    """`mapping` without the members whose value is `MISSING`."""
+    return {key: value for key, value in mapping.items() if value is not MISSING}
+
+
+def _replaced(standard: dict[str, Any], members: dict[str, Any]) -> dict[str, Any]:
+    """`standard` with `members` replacing its top-level members, where
+    `MISSING` removes one; an unknown member name is a test error."""
+    unknown = members.keys() - standard.keys()
+    assert not unknown, f"unknown builder members: {sorted(unknown)}"
+    return _compact(standard | members)
 
 
 def _target(
     cpe: Any = CPE_ONE,
     friendly_name: Any = FRIENDLY_ONE,
     *,
-    product: Any = _DEFAULT,
     definition_type: str = "channel",
+    **members: Any,
 ) -> dict[str, Any]:
-    """One target with every upstream field (unconsumed ones included)."""
-    if product is _DEFAULT:
-        product = _compact(
+    """One target with every upstream field (unconsumed ones included);
+    `members` replaces a top-level member, and `MISSING` removes it."""
+    target = {
+        "product": _compact(
             {
                 "id": 1001,
                 "friendly_name": friendly_name,
                 "cpe": cpe,
                 "support_status": "General Support",
             }
-        )
-    return _compact(
-        {
-            "product": product,
-            "repository": "EXAMPLE:Products:Product:1",
-            "product_definition": {
-                "name": "Example-Product_1",
-                "url": "https://build.example.invalid/fictional/definition",
-                "type": definition_type,
-            },
-        }
-    )
+        ),
+        "repository": "EXAMPLE:Products:Product:1",
+        "product_definition": {
+            "name": "Example-Product_1",
+            "url": "https://build.example.invalid/fictional/definition",
+            "type": definition_type,
+        },
+    }
+    return _replaced(target, members)
 
 
 def _entry(
-    *,
-    name: Any = SLE_CODESTREAM,
-    process: Any = "SLE_15",
-    targets: Any = _DEFAULT,
-    codestream: Any = _DEFAULT,
+    *, name: Any = SLE_CODESTREAM, process: Any = "SLE_15", **members: Any
 ) -> dict[str, Any]:
-    """One grouped entry with every upstream field (unconsumed ones included)."""
-    if codestream is _DEFAULT:
-        codestream = _compact(
+    """One grouped entry with every upstream field (unconsumed ones
+    included); `members` replaces a top-level member, and `MISSING` removes
+    it."""
+    entry = {
+        "codestream": _compact(
             {
                 "name": name,
                 "url": "https://build.example.invalid/fictional/codestream",
                 "type": process,
             }
-        )
-    return _compact(
-        {
-            "codestream": codestream,
-            "binary_packages": [{"name": "example-binary", "support_status": "L3"}],
-            "targets": [_target()] if targets is _DEFAULT else targets,
-            "support_status": "General Support",
-        }
-    )
+        ),
+        "binary_packages": [{"name": "example-binary", "support_status": "L3"}],
+        "targets": [_target()],
+        "support_status": "General Support",
+    }
+    return _replaced(entry, members)
 
 
 def _success(*entries: Any) -> dict[str, Any]:
@@ -192,12 +190,12 @@ def _slfo_entry() -> dict[str, Any]:
     )
 
 
-def _ibs_entry(targets: Any = _DEFAULT) -> dict[str, Any]:
-    return _entry(name=SLFO_IBS_CODESTREAM, process="SLFO_IBS", targets=targets)
+def _ibs_entry(**members: Any) -> dict[str, Any]:
+    return _entry(name=SLFO_IBS_CODESTREAM, process="SLFO_IBS", **members)
 
 
-def _unknown_entry(targets: Any = _DEFAULT) -> dict[str, Any]:
-    return _entry(name=UNKNOWN_CODESTREAM, process="UNKNOWN", targets=targets)
+def _unknown_entry(**members: Any) -> dict[str, Any]:
+    return _entry(name=UNKNOWN_CODESTREAM, process="UNKNOWN", **members)
 
 
 SLE_RECORD = MaintainedCodestream(
@@ -937,7 +935,7 @@ _NON_OBJECTS: list[tuple[str, Any]] = [
     ("null", None),
 ]
 _BAD_NAMES: list[tuple[str, Any]] = [
-    ("missing", _OMIT),
+    ("missing", MISSING),
     ("empty", ""),
     ("int", 1),
     ("null", None),
@@ -947,7 +945,7 @@ _BAD_NAMES: list[tuple[str, Any]] = [
     *_inadmissible(BROKEN_CODESTREAM),
 ]
 _BAD_TYPES: list[tuple[str, Any]] = [
-    ("missing", _OMIT),
+    ("missing", MISSING),
     ("null", None),
     ("int", 1),
     ("list", ["SLFO"]),
@@ -958,7 +956,7 @@ _BAD_TYPES: list[tuple[str, Any]] = [
     ("padded", " SLFO"),
 ]
 _BAD_TARGETS: list[tuple[str, Any]] = [
-    ("missing", _OMIT),
+    ("missing", MISSING),
     ("null", None),
     ("string", CPE_ONE),
     ("object", {"product": {"cpe": CPE_ONE}}),
@@ -966,13 +964,13 @@ _BAD_TARGETS: list[tuple[str, Any]] = [
     ("empty", []),
 ]
 _BAD_PRODUCTS: list[tuple[str, Any]] = [
-    ("missing", _OMIT),
+    ("missing", MISSING),
     ("null", None),
     ("string", CPE_ONE),
     ("list", [{"cpe": CPE_ONE}]),
 ]
 _BAD_CPES: list[tuple[str, Any]] = [
-    ("missing", _OMIT),
+    ("missing", MISSING),
     ("empty", ""),
     ("int", 1),
     ("null", None),
@@ -983,7 +981,7 @@ _BAD_CPES: list[tuple[str, Any]] = [
 
 _SCHEMA_REJECTIONS: list[tuple[str, dict[str, Any]]] = [
     *[(f"entry-{kind}", _rejected(value)) for kind, value in _NON_OBJECTS],
-    ("codestream-missing", _rejected(_broken(codestream=_OMIT))),
+    ("codestream-missing", _rejected(_broken(codestream=MISSING))),
     *[
         (f"codestream-{kind}", _rejected(_broken(codestream=value)))
         for kind, value in _NON_OBJECTS
@@ -1107,7 +1105,7 @@ class TestEntryValidation:
 # ---------------------------------------------------------------------------
 
 _UNVALIDATED_TARGETS: list[tuple[str, Any]] = [
-    ("missing", _OMIT),
+    ("missing", MISSING),
     ("null", None),
     ("string", "fictional"),
     ("object", {"product": None}),
@@ -1127,7 +1125,9 @@ class TestSkippedCodestreams:
     async def test_slfo_ibs_entry_is_skipped_with_one_unsupported_warning(
         self, targets: Any
     ) -> None:
-        outcome = await _fetch(_json(200, _success(_sle_entry(), _ibs_entry(targets))))
+        outcome = await _fetch(
+            _json(200, _success(_sle_entry(), _ibs_entry(targets=targets)))
+        )
 
         assert _found(outcome) == MaintainedPackage(codestreams=(SLE_RECORD,))
         assert outcome.logs == [_unsupported_warning()]
@@ -1139,7 +1139,7 @@ class TestSkippedCodestreams:
         self, targets: Any
     ) -> None:
         outcome = await _fetch(
-            _json(200, _success(_sle_entry(), _unknown_entry(targets)))
+            _json(200, _success(_sle_entry(), _unknown_entry(targets=targets)))
         )
 
         assert _found(outcome) == MaintainedPackage(codestreams=(SLE_RECORD,))
@@ -1149,7 +1149,10 @@ class TestSkippedCodestreams:
         self,
     ) -> None:
         outcome = await _fetch(
-            _json(200, _success(_ibs_entry(None), _unknown_entry(_OMIT)))
+            _json(
+                200,
+                _success(_ibs_entry(targets=None), _unknown_entry(targets=MISSING)),
+            )
         )
 
         result = _found(outcome)
@@ -1162,7 +1165,7 @@ class TestSkippedCodestreams:
     ) -> None:
         second_ibs = "Example:SLFO-IBS:2.0"
         body = _success(
-            _ibs_entry("fictional"),
+            _ibs_entry(targets="fictional"),
             _slfo_entry(),
             _unknown_entry(),
             _entry(name=second_ibs, process="SLFO_IBS", targets=[None]),
@@ -1242,7 +1245,7 @@ def _expected_from_fixture(body: dict[str, Any]) -> MaintainedPackage:
 
 
 _ABSENT_FRIENDLY_NAMES: list[tuple[str, Any]] = [
-    ("missing", _OMIT),
+    ("missing", MISSING),
     ("null", None),
     ("empty", ""),
     ("int", 42),
@@ -1736,8 +1739,8 @@ class TestPrivacy:
         ]
         body = _success(
             _private_entry(),
-            _ibs_entry(private_targets),
-            _unknown_entry(private_targets),
+            _ibs_entry(targets=private_targets),
+            _unknown_entry(targets=private_targets),
         )
 
         outcome = await _fetch(_json(200, body))

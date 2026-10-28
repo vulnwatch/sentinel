@@ -7,21 +7,21 @@ authoritative contracts.
 
 Pydantic owns transport shape, nullability, enum membership, and the
 declared string lengths; URLs are validated through the shared Core URL
-boundary. The handler distinguishes an omitted field from an explicit
-`null` through `model_fields_set`; `reference_service` reruns every
-domain check for every caller.
+boundary. An omitted field whose omission differs from every value stays
+`MISSING` (`docs/conventions.md`, Omitted Values), distinct from an explicit
+`null`; `reference_service` reruns every domain check for every caller.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Any, Literal, Self
+from typing import Literal, Self
 from uuid import UUID
 
 from pydantic import (
+    MISSING,
     BaseModel,
     Field,
-    WithJsonSchema,
     field_validator,
     model_validator,
 )
@@ -86,8 +86,8 @@ class TicketReferenceCreate(BaseModel):
             f"{_DESCRIPTION_DESCRIPTION} Omitted or `null` stores no description."
         ),
     )
-    type: ReferenceTypeValue | None = Field(
-        default=None,
+    type: ReferenceTypeValue | MISSING | None = Field(
+        default=MISSING,
         description=(
             "`advisory`, `patch`, `issue`, or `article`. Omitted: classified from "
             "the normalized URL, or uncategorized when no pattern matches. "
@@ -103,53 +103,38 @@ class TicketReferenceUpdate(BaseModel):
     """Request body of `PATCH .../references/{reference_id}`.
 
     Partial update (`docs/api-spec.md`, Partial Update Semantics): an
-    omitted field preserves the current value; `null` clears `title`,
-    `description`, or `type`; `url` rejects `null`. An empty object is
-    rejected. Changing `url` without `type` preserves the current type.
+    omitted field stays `MISSING` and preserves the current value; `null`
+    clears `title`, `description`, or `type`; `url` is non-nullable, so its
+    type excludes `None` and `null` fails type validation. An empty object
+    is rejected. Changing `url` without `type` preserves the current type.
     """
 
-    # `None` is only the internal "omitted" default: explicit JSON `null` is
-    # rejected below, so the published schema is a plain string.
-    url: Annotated[
-        str | None,
-        WithJsonSchema({"type": "string", "maxLength": MAX_REFERENCE_URL_LENGTH}),
-    ] = Field(
-        default=None,
+    url: str | MISSING = Field(
+        default=MISSING,
         max_length=MAX_REFERENCE_URL_LENGTH,
         description=f"{_URL_DESCRIPTION} Omitted preserves; `null` is invalid.",
     )
-    title: str | None = Field(
-        default=None,
+    title: str | MISSING | None = Field(
+        default=MISSING,
         min_length=1,
         max_length=500,
         description=f"{_TITLE_DESCRIPTION} Omitted preserves; `null` clears.",
     )
-    description: str | None = Field(
-        default=None,
+    description: str | MISSING | None = Field(
+        default=MISSING,
         min_length=1,
         max_length=2000,
         description=f"{_DESCRIPTION_DESCRIPTION} Omitted preserves; `null` clears.",
     )
-    type: ReferenceTypeValue | None = Field(
-        default=None,
+    type: ReferenceTypeValue | MISSING | None = Field(
+        default=MISSING,
         description=(
             "`advisory`, `patch`, `issue`, or `article`. Omitted preserves (also "
             "when `url` changes); `null` clears to uncategorized."
         ),
     )
 
-    @field_validator("url", mode="before")
-    @classmethod
-    def _reject_null_url(cls, value: Any) -> Any:
-        if value is None:
-            raise ValueError("url cannot be null.")
-        return value
-
-    @field_validator("url")
-    @classmethod
-    def _check_url(cls, value: str | None) -> str | None:
-        return None if value is None else _validate_url(value)
-
+    _check_url = field_validator("url")(_validate_url)
     _check_text = field_validator("title", "description")(_reject_whitespace_only)
 
     @model_validator(mode="after")

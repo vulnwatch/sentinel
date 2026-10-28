@@ -22,7 +22,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Literal, Self
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import MISSING, BaseModel, Field, field_validator, model_validator
 
 from app.core.enums import SortOrder, TicketSortField
 from app.core.identifiers import parse_ticket_id
@@ -388,13 +388,13 @@ class TicketCreateRequest(BaseModel):
     See `docs/features/tickets/tickets.md` (Create Ticket). Every field is
     optional. `cve_id` carries no schema length limit, so any string —
     including an empty or over-length one — reaches the endpoint's
-    `422 CVE_INVALID_FORMAT` check. The endpoint distinguishes an omitted
-    `is_confidential` from an explicit `false` through `model_fields_set`
-    (the field-level `manage_confidentiality` check is presence-based);
-    the field accepts only a JSON boolean (`docs/api-spec.md`, JSON
-    Request Body Scalar Types). A non-null `coordinated_release_at`
-    without `is_confidential: true` fails with the global
-    `422 VALIDATION_ERROR`.
+    `422 CVE_INVALID_FORMAT` check. An omitted `is_confidential` stays
+    `MISSING` (`docs/conventions.md`, Omitted Values), distinct from an
+    explicit `false`, because the field-level `manage_confidentiality`
+    check is presence-based; it creates a non-confidential Ticket. The
+    field accepts only a JSON boolean (`docs/api-spec.md`, JSON Request
+    Body Scalar Types). A non-null `coordinated_release_at` without
+    `is_confidential: true` fails with the global `422 VALIDATION_ERROR`.
     """
 
     cve_id: str | None = Field(
@@ -418,14 +418,15 @@ class TicketCreateRequest(BaseModel):
         ),
         examples=["high"],
     )
-    is_confidential: bool = Field(
-        default=False,
+    is_confidential: bool | MISSING = Field(
+        default=MISSING,
         strict=True,
         description=(
             "Create the Ticket as confidential. When present (`true` or "
             "`false`), the caller also needs the `manage_confidentiality` "
             "capability; otherwise `403 AUTH_INSUFFICIENT_PERMISSION`. "
-            "Default `false`."
+            "Omitted: the Ticket is not confidential and the capability is "
+            "not checked."
         ),
         examples=[True],
     )
@@ -448,7 +449,7 @@ class TicketCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def _crd_requires_confidential_creation(self) -> Self:
-        if self.coordinated_release_at is not None and not self.is_confidential:
+        if self.coordinated_release_at is not None and self.is_confidential is not True:
             raise ValueError(
                 "coordinated_release_at requires is_confidential to be true."
             )

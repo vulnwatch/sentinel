@@ -30,10 +30,10 @@ import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
 from typing import Final
 
 import structlog
+from pydantic import MISSING
 from sqlalchemy import ColumnElement, and_, case, false, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
@@ -74,16 +74,6 @@ are the `ReferenceUrlRejection` values of the Core URL boundary.
 _UNIQUE_URL_CONSTRAINT: Final = "uq_ticket_reference_ticket_id_url"
 
 
-class Unset(Enum):
-    """Sentinel type of an omitted semantic input field."""
-
-    UNSET = "UNSET"
-
-
-UNSET: Final = Unset.UNSET
-"""An omitted field, distinct from an explicit `None` (Semantic Types)."""
-
-
 # ---------------------------------------------------------------------------
 # Semantic types (ticket-references.md, Semantic Types)
 # ---------------------------------------------------------------------------
@@ -112,28 +102,29 @@ class ManualReferenceCreateInput:
     """Manual create input (`ManualReferenceCreateInput`).
 
     Omitted `title` and `description` persist as `NULL`. An omitted
-    `type` (`UNSET`) requests URL-pattern classification; an explicit
-    `None` stores `NULL` without classification.
+    `type` (`MISSING`, `docs/conventions.md`, Omitted Values) requests
+    URL-pattern classification; an explicit `None` stores `NULL` without
+    classification.
     """
 
     url: str
     title: str | None = None
     description: str | None = None
-    type: ReferenceType | Unset | None = UNSET
+    type: ReferenceType | MISSING | None = MISSING
 
 
 @dataclass(frozen=True, slots=True)
 class ManualReferenceUpdateInput:
     """Manual partial-update input (`ManualReferenceUpdateInput`).
 
-    `UNSET` preserves the current value; `None` clears a nullable field.
+    `MISSING` preserves the current value; `None` clears a nullable field.
     `url` cannot be `None`, and at least one field must be supplied.
     """
 
-    url: str | Unset = UNSET
-    title: str | Unset | None = UNSET
-    description: str | Unset | None = UNSET
-    type: ReferenceType | Unset | None = UNSET
+    url: str | MISSING = MISSING
+    title: str | MISSING | None = MISSING
+    description: str | MISSING | None = MISSING
+    type: ReferenceType | MISSING | None = MISSING
 
 
 @dataclass(frozen=True, slots=True)
@@ -724,7 +715,7 @@ async def create_reference(
     )
     reference_type = (
         classify_reference_url(url)
-        if isinstance(input.type, Unset)
+        if input.type is MISSING
         else _validate_type(input.type)
     )
 
@@ -791,29 +782,31 @@ async def update_reference(
     """
     actor_id = caller.user_id
     if all(
-        isinstance(value, Unset)
+        value is MISSING
         for value in (input.url, input.title, input.description, input.type)
     ):
         raise ValueError("At least one field must be provided.")
     if input.url is None:
         raise ValueError("Reference url cannot be null.")
-    url = UNSET if isinstance(input.url, Unset) else normalize_reference_url(input.url)
-    title = (
-        UNSET
-        if isinstance(input.title, Unset)
+    url: str | MISSING = (
+        MISSING if input.url is MISSING else normalize_reference_url(input.url)
+    )
+    title: str | MISSING | None = (
+        MISSING
+        if input.title is MISSING
         else _validate_text(input.title, field="title", max_length=TITLE_MAX_LENGTH)
     )
-    description = (
-        UNSET
-        if isinstance(input.description, Unset)
+    description: str | MISSING | None = (
+        MISSING
+        if input.description is MISSING
         else _validate_text(
             input.description,
             field="description",
             max_length=DESCRIPTION_MAX_LENGTH,
         )
     )
-    reference_type = (
-        UNSET if isinstance(input.type, Unset) else _validate_type(input.type)
+    reference_type: ReferenceType | MISSING | None = (
+        MISSING if input.type is MISSING else _validate_type(input.type)
     )
 
     ticket = await lock_accessible_ticket_by_locator(session, ticket_id, caller)
@@ -821,7 +814,7 @@ async def update_reference(
         session, ticket_id=ticket.id, reference_id=reference_id
     )
     if (
-        not isinstance(url, Unset)
+        url is not MISSING
         and url != reference.url
         and await _url_owned_by_other(
             session, ticket_id=ticket.id, url=url, exclude_id=reference.id
@@ -835,12 +828,12 @@ async def update_reference(
     old_description = reference.description
     new_type = (
         old_type
-        if isinstance(reference_type, Unset)
+        if reference_type is MISSING
         else (None if reference_type is None else reference_type.value)
     )
-    new_url = old_url if isinstance(url, Unset) else url
-    new_title = old_title if isinstance(title, Unset) else title
-    new_description = old_description if isinstance(description, Unset) else description
+    new_url = old_url if url is MISSING else url
+    new_title = old_title if title is MISSING else title
+    new_description = old_description if description is MISSING else description
     changes: list[tuple[TicketAuditEventType, str | None, str | None]] = [
         (event_type, old, new)
         for event_type, old, new in (

@@ -964,11 +964,7 @@ class TestRequestValidation:
                 ),
                 id="empty-object",
             ),
-            pytest.param(
-                {"url": None},
-                _url_error("url cannot be null."),
-                id="url-null",
-            ),
+            pytest.param({"url": None}, _string_type("url"), id="url-null"),
         ],
     )
     async def test_update_rejects_an_empty_object_and_a_null_url(

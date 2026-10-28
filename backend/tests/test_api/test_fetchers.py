@@ -813,6 +813,33 @@ class TestGetFetcherRunEndpoint:
         assert data["error_detail"] == "raw detail"
         assert data["error_traceback"] == "raw traceback"
 
+    async def test_admin_sees_absent_diagnostics_as_null_members(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+    ) -> None:
+        """For a `manage_fetchers` caller the diagnostic members are always
+        present, `null` when the run stored none; only a caller without the
+        capability receives them as absent keys (fetcher-operations.md, Get
+        Fetcher Run Detail, Fields)."""
+        config = await fetcher_config_factory()
+        run = await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="success",
+            error_detail=None,
+            error_traceback=None,
+        )
+
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/runs/{run.id}"
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["error_detail"] is None
+        assert data["error_traceback"] is None
+
     async def test_admin_api_key_sees_raw_diagnostics(
         self,
         admin_api_key_client: AsyncClient,
@@ -1862,63 +1889,43 @@ class TestUpdateFetcherConfigEndpoint:
         assert response.status_code == 422
         assert response.json()["code"] == "VALIDATION_ERROR"
 
-    async def test_enabled_null_returns_422(
+    @pytest.mark.parametrize(
+        "body",
+        [
+            *(
+                pytest.param({field: None}, id=f"{field}-null")
+                for field in (
+                    "enabled",
+                    "run_timeout",
+                    "request_delay",
+                    "custom_settings",
+                )
+            ),
+            pytest.param({"custom_settings": []}, id="custom_settings-array"),
+            pytest.param({"custom_settings": "x"}, id="custom_settings-string"),
+        ],
+    )
+    async def test_null_or_wrong_type_non_nullable_field_returns_422_at_it(
         self,
         admin_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
+        body: dict[str, Any],
     ) -> None:
-        _register(_StubFetcher)
-        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
-        response = await admin_client.patch(
-            f"/api/v1/fetchers/{config.fetcher_name}/config",
-            json={"enabled": None},
-        )
-        assert response.status_code == 422
-        assert response.json()["code"] == "VALIDATION_ERROR"
-
-    async def test_run_timeout_null_returns_422(
-        self,
-        admin_client: AsyncClient,
-        fetcher_config_factory: FetcherConfigFactory,
-    ) -> None:
-        _register(_StubFetcher)
-        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
-        response = await admin_client.patch(
-            f"/api/v1/fetchers/{config.fetcher_name}/config",
-            json={"run_timeout": None},
-        )
-        assert response.status_code == 422
-        assert response.json()["code"] == "VALIDATION_ERROR"
-
-    async def test_request_delay_null_returns_422(
-        self,
-        admin_client: AsyncClient,
-        fetcher_config_factory: FetcherConfigFactory,
-    ) -> None:
-        _register(_StubFetcher)
-        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
-        response = await admin_client.patch(
-            f"/api/v1/fetchers/{config.fetcher_name}/config",
-            json={"request_delay": None},
-        )
-        assert response.status_code == 422
-        assert response.json()["code"] == "VALIDATION_ERROR"
-
-    async def test_custom_settings_null_returns_422(
-        self,
-        admin_client: AsyncClient,
-        fetcher_config_factory: FetcherConfigFactory,
-    ) -> None:
+        """An explicit `null` for a non-nullable member is a type error of
+        that member alone (api-spec.md, Partial Update Semantics), like any
+        other value of the wrong JSON type."""
         _register(_StubFetcherWithSettings)
         config = await fetcher_config_factory(
             fetcher_name=_StubFetcherWithSettings.name
         )
+        (field,) = body
         response = await admin_client.patch(
-            f"/api/v1/fetchers/{config.fetcher_name}/config",
-            json={"custom_settings": None},
+            f"/api/v1/fetchers/{config.fetcher_name}/config", json=body
         )
         assert response.status_code == 422
-        assert response.json()["code"] == "VALIDATION_ERROR"
+        payload = response.json()
+        assert payload["code"] == "VALIDATION_ERROR"
+        assert [error["loc"] for error in payload["errors"]] == [["body", field]]
 
     async def test_admin_jwt_updates_config_and_returns_updated_shape(
         self,
@@ -1927,7 +1934,10 @@ class TestUpdateFetcherConfigEndpoint:
     ) -> None:
         _register(_StubFetcher)
         config = await fetcher_config_factory(
-            fetcher_name=_StubFetcher.name, enabled=True
+            fetcher_name=_StubFetcher.name,
+            enabled=True,
+            schedule_override="0 */4 * * *",
+            run_timeout=900,
         )
         response = await admin_client.patch(
             f"/api/v1/fetchers/{config.fetcher_name}/config",
@@ -1937,6 +1947,11 @@ class TestUpdateFetcherConfigEndpoint:
         data = response.json()["data"]
         assert data["enabled"] is False
         assert data["request_delay"] == 3.5
+        # Omitted members keep their values (api-spec.md, Partial Update
+        # Semantics).
+        assert data["schedule_override"] == "0 */4 * * *"
+        assert data["run_timeout"] == 900
+        assert data["custom_settings"] == {}
 
         # The change is durable — a subsequent GET observes it.
         follow_up = await admin_client.get(

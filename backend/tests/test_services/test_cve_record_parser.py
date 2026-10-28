@@ -28,7 +28,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Final
 
 import pytest
-from pydantic import ValidationError
+from pydantic import MISSING, ValidationError
 
 from app.core.enums import (
     CveState,
@@ -96,10 +96,6 @@ SIBLING_ENTRY: Final = AffectedVersionEntry(
     vendor=VENDOR, product="example-sibling", version="1.0", status="affected"
 )
 
-_ABSENT: Final = object()
-"""Marks a key to omit from a crafted object."""
-
-
 # ---------------------------------------------------------------------------
 # Builders
 # ---------------------------------------------------------------------------
@@ -107,14 +103,14 @@ _ABSENT: Final = object()
 
 def _element(**fields: Any) -> dict[str, Any]:
     """An `affected[]` element with the fictional vendor and product unless
-    overridden; `_ABSENT` omits a key."""
+    overridden; `MISSING` omits a key."""
     element: dict[str, Any] = {"vendor": VENDOR, "product": PRODUCT, **fields}
-    return {k: v for k, v in element.items() if v is not _ABSENT}
+    return {k: v for k, v in element.items() if v is not MISSING}
 
 
 def _version(**fields: Any) -> dict[str, Any]:
     version: dict[str, Any] = {"version": "1.0", "status": "affected", **fields}
-    return {k: v for k, v in version.items() if v is not _ABSENT}
+    return {k: v for k, v in version.items() if v is not MISSING}
 
 
 def _entry(**fields: Any) -> AffectedVersionEntry:
@@ -144,7 +140,7 @@ def _ssvc_content(
             ("Automatable", automatable),
             ("Technical Impact", technical_impact),
         )
-        if value is not _ABSENT
+        if value is not MISSING
     ]
     content: dict[str, Any] = {
         "id": CVE_ID,
@@ -153,7 +149,7 @@ def _ssvc_content(
         "version": version,
         "timestamp": timestamp,
     }
-    return {k: v for k, v in content.items() if v is not _ABSENT}
+    return {k: v for k, v in content.items() if v is not MISSING}
 
 
 def _other(type_: str, content: Any) -> dict[str, Any]:
@@ -164,7 +160,7 @@ def _kev_content(
     *, date_added: Any = "2024-01-15", reference: Any = KEV_REFERENCE
 ) -> dict[str, Any]:
     content: dict[str, Any] = {"dateAdded": date_added, "reference": reference}
-    return {k: v for k, v in content.items() if v is not _ABSENT}
+    return {k: v for k, v in content.items() if v is not MISSING}
 
 
 def _ssvc_entry(**fields: Any) -> SSVCEntry:
@@ -304,8 +300,8 @@ def _caller_payload(name: str) -> CVEIngestPayload:
 
 
 class TestAffectedSentinels:
-    @pytest.mark.parametrize("vendor", ["n/a", "", None, _ABSENT])
-    @pytest.mark.parametrize("product", ["n/a", "", None, _ABSENT])
+    @pytest.mark.parametrize("vendor", ["n/a", "", None, MISSING])
+    @pytest.mark.parametrize("product", ["n/a", "", None, MISSING])
     def test_both_sentinels_without_a_coordinate_skip_the_element(
         self, vendor: Any, product: Any
     ) -> None:
@@ -313,13 +309,13 @@ class TestAffectedSentinels:
 
         assert parse_affected_versions([element, SIBLING]) == [SIBLING_ENTRY]
 
-    @pytest.mark.parametrize("sentinel", ["n/a", "", None, _ABSENT])
+    @pytest.mark.parametrize("sentinel", ["n/a", "", None, MISSING])
     def test_sentinel_vendor_alone_is_none(self, sentinel: Any) -> None:
         (entry,) = parse_affected_versions([_element(vendor=sentinel)])
 
         assert (entry.vendor, entry.product) == (None, PRODUCT)
 
-    @pytest.mark.parametrize("sentinel", ["n/a", "", None, _ABSENT])
+    @pytest.mark.parametrize("sentinel", ["n/a", "", None, MISSING])
     def test_sentinel_product_alone_is_none(self, sentinel: Any) -> None:
         (entry,) = parse_affected_versions([_element(product=sentinel)])
 
@@ -334,7 +330,7 @@ class TestAffectedSentinels:
 
         assert (entry.vendor, entry.product, entry.version) == ("N/A", "N/A", "N/A")
 
-    @pytest.mark.parametrize("sentinel", ["n/a", "", None, _ABSENT])
+    @pytest.mark.parametrize("sentinel", ["n/a", "", None, MISSING])
     def test_sentinel_version_is_none(self, sentinel: Any) -> None:
         element = _element(versions=[_version(version=sentinel)])
 
@@ -440,7 +436,7 @@ class TestAffectedSentinels:
 
 
 class TestAffectedFields:
-    @pytest.mark.parametrize("versions", [_ABSENT, None, []])
+    @pytest.mark.parametrize("versions", [MISSING, None, []])
     def test_absent_or_empty_versions_yield_one_unversioned_entry(
         self, versions: Any
     ) -> None:
@@ -567,7 +563,7 @@ class TestAffectedFields:
 
         assert entry.cpe == "cpe:/a:example:first"
 
-    @pytest.mark.parametrize("cpes", [[], None, _ABSENT])
+    @pytest.mark.parametrize("cpes", [[], None, MISSING])
     def test_empty_or_absent_cpes_yield_none(self, cpes: Any) -> None:
         (entry,) = parse_affected_versions([_element(cpes=cpes)])
 
@@ -577,7 +573,7 @@ class TestAffectedFields:
         ("package_url", "expected"),
         [
             ("pkg:generic/example-package", "pkg:generic/example-package"),
-            (_ABSENT, None),
+            (MISSING, None),
             (None, None),
         ],
     )
@@ -594,7 +590,7 @@ class TestAffectedFields:
             (["src/a.c", "src/b.c"], ["src/a.c", "src/b.c"]),
             ([], []),
             (None, None),
-            (_ABSENT, None),
+            (MISSING, None),
         ],
     )
     def test_program_files_with_several_versions_are_copied_to_each(
@@ -683,7 +679,7 @@ class TestAffectedDeduplication:
             ),
             pytest.param(
                 _element(vendor="", defaultStatus="affected"),
-                _element(vendor=_ABSENT, defaultStatus="unaffected"),
+                _element(vendor=MISSING, defaultStatus="unaffected"),
                 id="vendor-empty-normalized-vs-absent",
             ),
             pytest.param(
@@ -821,7 +817,7 @@ class TestAffectedDeduplication:
             _element(versions=[_version(versionType="", lessThan="")]),
             _element(versions=[_version(lessThanOrEqual="")]),
             _element(vendor="", versions=[_version()]),
-            _element(vendor=_ABSENT, versions=[_version(status="unknown")]),
+            _element(vendor=MISSING, versions=[_version(status="unknown")]),
             _element(packageName="", repo=""),
             _element(packageName=None, repo=None, defaultStatus="affected"),
             SIBLING,
@@ -1607,14 +1603,14 @@ def _problem(*descriptions: Any) -> dict[str, Any]:
     return {"descriptions": list(descriptions)}
 
 
-def _cwe(cwe_id: Any = _ABSENT, type_: Any = "CWE") -> dict[str, Any]:
+def _cwe(cwe_id: Any = MISSING, type_: Any = "CWE") -> dict[str, Any]:
     description: dict[str, Any] = {
         "lang": "en",
         "description": "Fictional weakness",
         "type": type_,
         "cweId": cwe_id,
     }
-    return {k: v for k, v in description.items() if v is not _ABSENT}
+    return {k: v for k, v in description.items() if v is not MISSING}
 
 
 def _cwe_ids(entries: list[CWEEntry]) -> list[str]:
@@ -1651,7 +1647,7 @@ class TestCweClassifications:
 
         assert entries == [CWEEntry(cwe_id="CWE-79", source=SOURCE)]
 
-    @pytest.mark.parametrize("type_", [_ABSENT, None, "text", 1])
+    @pytest.mark.parametrize("type_", [MISSING, None, "text", 1])
     def test_present_cwe_id_selects_without_cwe_type(self, type_: Any) -> None:
         entries = parse_cwe_classifications([_problem(_cwe("CWE-79", type_))], SOURCE)
 
@@ -1737,11 +1733,11 @@ class TestCweClassifications:
 
         assert parse_cwe_classifications([problem], source) == []
 
-    @pytest.mark.parametrize("descriptions", [None, {}, "CWE-79", 1, _ABSENT])
+    @pytest.mark.parametrize("descriptions", [None, {}, "CWE-79", 1, MISSING])
     def test_malformed_descriptions_skip_only_that_problem_type(
         self, descriptions: Any
     ) -> None:
-        malformed = {} if descriptions is _ABSENT else {"descriptions": descriptions}
+        malformed = {} if descriptions is MISSING else {"descriptions": descriptions}
         problem_types = [malformed, _problem(_cwe("CWE-89"))]
 
         assert _cwe_ids(parse_cwe_classifications(problem_types, SOURCE)) == ["CWE-89"]
@@ -1800,20 +1796,20 @@ class TestDescription:
 
         assert parse_description(descriptions) == "Fiktive Beschreibung."
 
-    @pytest.mark.parametrize("lang", ["EN", "En-us", " en", "fr-en", None, 1, _ABSENT])
+    @pytest.mark.parametrize("lang", ["EN", "En-us", " en", "fr-en", None, 1, MISSING])
     def test_non_english_or_mistyped_lang_falls_back_to_the_first(
         self, lang: Any
     ) -> None:
         first = {"lang": lang, "value": "First fictional description."}
-        first = {k: v for k, v in first.items() if v is not _ABSENT}
+        first = {k: v for k, v in first.items() if v is not MISSING}
         descriptions = [first, {"lang": "de", "value": "Fiktive Beschreibung."}]
 
         assert parse_description(descriptions) == "First fictional description."
 
-    @pytest.mark.parametrize("value", [None, 1, ["x"], {"x": "y"}, True, _ABSENT])
+    @pytest.mark.parametrize("value", [None, 1, ["x"], {"x": "y"}, True, MISSING])
     def test_entry_with_non_string_value_is_ignored(self, value: Any) -> None:
         ignored = {
-            k: v for k, v in {"lang": "en", "value": value}.items() if v is not _ABSENT
+            k: v for k, v in {"lang": "en", "value": value}.items() if v is not MISSING
         }
         descriptions = [ignored, {"lang": "de", "value": "Fiktive Beschreibung."}]
 
@@ -1892,9 +1888,9 @@ class TestTitle:
     ) -> None:
         assert parse_title({"title": title}) == expected
 
-    @pytest.mark.parametrize("title", [None, 1, 1.5, True, ["x"], {"x": "y"}, _ABSENT])
+    @pytest.mark.parametrize("title", [None, 1, 1.5, True, ["x"], {"x": "y"}, MISSING])
     def test_non_string_title_is_none(self, title: Any) -> None:
-        cna = {} if title is _ABSENT else {"title": title}
+        cna = {} if title is MISSING else {"title": title}
 
         assert parse_title(cna) is None
 
@@ -2000,7 +1996,7 @@ class TestSsvc:
         assert entry.assessed_at == expected
         assert entry.assessed_at.tzinfo is UTC
 
-    @pytest.mark.parametrize("timestamp", [_ABSENT, None])
+    @pytest.mark.parametrize("timestamp", [MISSING, None])
     def test_absent_timestamp_yields_no_assessed_at(self, timestamp: Any) -> None:
         entry = parse_ssvc_assessment(
             [_other("ssvc", _ssvc_content(timestamp=timestamp))]
@@ -2049,8 +2045,8 @@ class TestSsvc:
     @pytest.mark.parametrize(
         "last",
         [
-            _ssvc_content(exploitation=_ABSENT),
-            _ssvc_content(version=_ABSENT),
+            _ssvc_content(exploitation=MISSING),
+            _ssvc_content(version=MISSING),
             _ssvc_content(timestamp="garbage"),
             None,
             [],
@@ -2063,7 +2059,7 @@ class TestSsvc:
 
     def test_complete_last_entry_after_incomplete_yields_the_assessment(self) -> None:
         metrics = [
-            _other("ssvc", _ssvc_content(exploitation=_ABSENT)),
+            _other("ssvc", _ssvc_content(exploitation=MISSING)),
             _other("ssvc", _ssvc_content()),
         ]
 
@@ -2104,7 +2100,7 @@ class TestSsvc:
     @pytest.mark.parametrize(
         "point", ["exploitation", "automatable", "technical_impact", "version"]
     )
-    @pytest.mark.parametrize("missing", [_ABSENT, None, ""])
+    @pytest.mark.parametrize("missing", [MISSING, None, ""])
     def test_missing_field_yields_none(self, point: str, missing: Any) -> None:
         content = _ssvc_content(**{point: missing})
 
@@ -2176,20 +2172,20 @@ class TestSsvc:
 
         assert parse_ssvc_assessment(metrics) is None
 
-    @pytest.mark.parametrize("options", [None, {}, "Exploitation", 1, _ABSENT])
+    @pytest.mark.parametrize("options", [None, {}, "Exploitation", 1, MISSING])
     def test_malformed_options_yield_none(self, options: Any) -> None:
         content = _ssvc_content()
-        if options is _ABSENT:
+        if options is MISSING:
             del content["options"]
         else:
             content["options"] = options
 
         assert parse_ssvc_assessment([_other("ssvc", content)]) is None
 
-    @pytest.mark.parametrize("content", [None, [], "ssvc", 1, _ABSENT])
+    @pytest.mark.parametrize("content", [None, [], "ssvc", 1, MISSING])
     def test_malformed_content_yields_none(self, content: Any) -> None:
         metric: dict[str, Any] = {"other": {"type": "ssvc"}}
-        if content is not _ABSENT:
+        if content is not MISSING:
             metric["other"]["content"] = content
 
         assert parse_ssvc_assessment([metric]) is None
@@ -2316,7 +2312,7 @@ class TestKev:
     @pytest.mark.parametrize(
         "date_added",
         [
-            _ABSENT,
+            MISSING,
             None,
             "",
             "garbage",
@@ -2347,7 +2343,7 @@ class TestKev:
 
         assert parse_kev_data(metrics) is None
 
-    @pytest.mark.parametrize("reference", [_ABSENT, None])
+    @pytest.mark.parametrize("reference", [MISSING, None])
     def test_absent_reference_yields_no_reference_url(self, reference: Any) -> None:
         entry = parse_kev_data([_other("kev", _kev_content(reference=reference))])
 

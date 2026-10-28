@@ -66,11 +66,9 @@ from app.services import user_service
 from app.services.local_auth_service import clear_login_attempts
 from app.services.session_service import purge_session_cache
 from app.services.user_service import (
-    MISSING,
     ExternalUserFieldReadOnlyError,
     ExternalUserPasswordError,
     ExternalUserStatusReadOnlyError,
-    MissingType,
     SelfDeactivationError,
     SelfRoleRemovalError,
     UserConflictError,
@@ -671,30 +669,15 @@ async def update_user_admin(
     except UserNotFoundError:
         raise user_not_found_error() from None
 
-    # Forward only the provided fields; an omitted one stays `MISSING`.
-    # `AdminUserUpdateRequest` rejects an explicit `null` for `email` and
-    # `bot`, so a provided value of either is never `None`.
-    provided = body.model_fields_set
-    email: str | MissingType = MISSING
-    if "email" in provided:
-        assert body.email is not None
-        email = body.email
-    full_name: str | MissingType | None = (
-        body.full_name if "full_name" in provided else MISSING
-    )
-    bot: bool | MissingType = MISSING
-    if "bot" in provided:
-        assert body.bot is not None
-        bot = body.bot
-
+    # An omitted field is `MISSING` in both the body and the service call.
     try:
         result = await user_service.update_user(
             db,
             target_user.id,
             acting_user_id=principal.user.id,
-            email=email,
-            full_name=full_name,
-            bot=bot,
+            email=body.email,
+            full_name=body.full_name,
+            bot=body.bot,
         )
     except ExternalUserFieldReadOnlyError:
         raise AppError(

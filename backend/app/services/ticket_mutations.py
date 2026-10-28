@@ -57,11 +57,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from enum import Enum, StrEnum
-from typing import Final, Literal
+from enum import StrEnum
+from typing import Final
 from uuid import UUID
 
 import structlog
+from pydantic import MISSING
 from sqlalchemy import ColumnElement, and_, case, exists, not_, or_, select
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -979,15 +980,6 @@ class CVSSChainResult:
     evaluation_date: date
 
 
-class _Unset(Enum):
-    """Marker distinguishing an omitted argument from an explicit `None`."""
-
-    UNSET = "unset"
-
-
-_UNSET: Final = _Unset.UNSET
-
-
 def _eligibility_value(eligible: bool) -> str:
     """The `product_eligibility_changed` old/new value (`true`/`false`)."""
     return "true" if eligible else "false"
@@ -1146,7 +1138,7 @@ async def recalculate_cvss_chain(
     *,
     cve_id: UUID,
     mode: CVSSChainMode,
-    association_previous_severity: Severity | Literal[_Unset.UNSET] | None = _UNSET,
+    association_previous_severity: Severity | MISSING | None = MISSING,
     default_cvss_version: str | None = None,
     evaluation_date: date | None = None,
 ) -> CVSSChainResult:
@@ -1206,9 +1198,9 @@ async def recalculate_cvss_chain(
     complete transaction.
     """
     association = mode is CVSSChainMode.ASSOCIATION
-    if association and association_previous_severity is _UNSET:
+    if association and association_previous_severity is MISSING:
         raise ValueError("association mode requires association_previous_severity.")
-    if not association and association_previous_severity is not _UNSET:
+    if not association and association_previous_severity is not MISSING:
         raise ValueError(
             "association_previous_severity is only valid in association mode."
         )

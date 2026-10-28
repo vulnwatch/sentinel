@@ -29,6 +29,7 @@ from uuid import UUID, uuid4
 import click
 import pytest
 from click.testing import CliRunner, Result
+from pydantic import MISSING
 from sqlalchemy import delete, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -49,7 +50,6 @@ from app.models.user import User
 from app.models.user_role import UserRole
 from app.services import user_service as user_service_module
 from app.services.user_service import (
-    MISSING,
     ExternalUserFieldReadOnlyError,
     ExternalUserStatusReadOnlyError,
     ReactivationResult,

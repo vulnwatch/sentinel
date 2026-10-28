@@ -444,6 +444,19 @@ that endpoint's dedicated validation error. The only such case is
 returns `422 FETCHER_SETTING_INVALID` (see
 [fetcher-operations.md](features/platform/fetcher-operations.md#update-fetcher-config)).
 
+### Request Body Nullability and Defaults
+
+The OpenAPI document states which request-body members accept `null`. In
+every JSON request body, at every nesting level, a member is published as
+nullable exactly when the operation accepts `null` for it, so an optional
+non-nullable member is published without a `null` alternative. A member is
+published with a `default` only when omitting it is equivalent to sending that
+value. A member whose presence alone has an effect therefore has no published
+default, for example `is_confidential` of `POST /api/v1/tickets`, which
+requires an additional capability whenever it is present
+([tickets.md](features/tickets/tickets.md), Create Ticket). Partial Update
+Semantics defines which members of a PATCH body accept `null`.
+
 ### Pagination
 
 List endpoints support pagination via query parameters:
@@ -1409,6 +1422,9 @@ Sending `null` is only meaningful for fields that are nullable in the
 data model. Sending `null` for a non-nullable field results in a `422
 VALIDATION_ERROR`.
 
+The OpenAPI document publishes `null` only for the nullable fields (see
+Request Body Nullability and Defaults).
+
 When all fields in a PATCH request body are optional, the endpoint MUST
 reject an empty body (no fields provided) with `422 VALIDATION_ERROR`
 and the message `"At least one field must be provided."`. This does not
@@ -1420,11 +1436,13 @@ resetting a computed value to automatic calculation, reverting to a
 system default). The partial update semantics defined here are the
 baseline; domain-specific meaning is additive.
 
-Implementation note: in Pydantic v2, distinguishing "field omitted" from
-"field explicitly set to `null`" requires a sentinel pattern (e.g., an
-`UNSET` constant as the field default) or inspecting `model_fields_set`
-after parsing. Standard `Optional[X] = None` conflates the two cases and
-MUST NOT be used for PATCH request schemas with nullable fields.
+Implementation note: a request schema defaults every member whose omission
+differs from every value it accepts, including every optional PATCH member,
+to Pydantic's `MISSING` sentinel, and includes `None` in a member's type only
+when the member is nullable (`docs/conventions.md`, Omitted Values and
+Pydantic Conventions). A `None` default conflates an omitted member with an
+explicit `null` and publishes a non-nullable member as nullable; it MUST NOT
+be used for an optional PATCH member.
 
 ## Naming Conventions
 

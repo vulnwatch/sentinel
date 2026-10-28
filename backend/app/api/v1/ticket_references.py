@@ -20,6 +20,7 @@ from typing import Annotated, Final
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
+from pydantic import MISSING
 
 from app.api.dependencies import (
     AuthenticatedPrincipal,
@@ -35,6 +36,7 @@ from app.core.exceptions import TicketNotFoundError
 from app.database import DatabaseSession
 from app.schemas.errors import ErrorResponse
 from app.schemas.ticket_reference import (
+    ReferenceTypeValue,
     TicketReferenceCreate,
     TicketReferenceDataResponse,
     TicketReferenceListResponse,
@@ -43,7 +45,6 @@ from app.schemas.ticket_reference import (
 )
 from app.services import reference_service
 from app.services.reference_service import (
-    UNSET,
     ManualReferenceCreateInput,
     ManualReferenceUpdateInput,
     ReferenceConflictError,
@@ -104,6 +105,16 @@ def resource_conflict_error() -> AppError:
         code=ErrorCode.RESOURCE_CONFLICT,
         detail="Another reference already uses this URL on the Ticket.",
     )
+
+
+def _reference_type(
+    value: ReferenceTypeValue | MISSING | None,
+) -> ReferenceType | MISSING | None:
+    """The service value of a request `type`; `MISSING` and `None` pass
+    through unchanged."""
+    if value is MISSING or value is None:
+        return value
+    return ReferenceType(value)
 
 
 def serialize_reference(
@@ -203,16 +214,11 @@ async def add_reference(
     caller: AuthenticatedTicketCaller,
 ) -> TicketReferenceDataResponse:
     """Add Reference — see `docs/features/tickets/ticket-references.md`."""
-    supplied = body.model_fields_set
     input_ = ManualReferenceCreateInput(
         url=body.url,
         title=body.title,
         description=body.description,
-        type=(
-            UNSET
-            if "type" not in supplied
-            else (None if body.type is None else ReferenceType(body.type))
-        ),
+        type=_reference_type(body.type),
     )
     try:
         projection = await reference_service.create_reference(
@@ -258,16 +264,11 @@ async def update_reference(
     caller: AuthenticatedTicketCaller,
 ) -> TicketReferenceDataResponse:
     """Update Reference — see `docs/features/tickets/ticket-references.md`."""
-    supplied = body.model_fields_set
     input_ = ManualReferenceUpdateInput(
-        url=body.url if "url" in supplied and body.url is not None else UNSET,
-        title=body.title if "title" in supplied else UNSET,
-        description=body.description if "description" in supplied else UNSET,
-        type=(
-            UNSET
-            if "type" not in supplied
-            else (None if body.type is None else ReferenceType(body.type))
-        ),
+        url=body.url,
+        title=body.title,
+        description=body.description,
+        type=_reference_type(body.type),
     )
     try:
         projection = await reference_service.update_reference(

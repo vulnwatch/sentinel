@@ -23,6 +23,7 @@ from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, Query, status
+from pydantic import MISSING
 from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -73,7 +74,6 @@ from app.schemas.fetcher import (
 )
 from app.services import fetcher_operations, fetcher_schedule, user_service
 from app.services.fetcher_operations import (
-    UNSET,
     FetcherAlreadyRunningError,
     FetcherBrokerUnavailableError,
     FetcherDeregisteredError,
@@ -85,7 +85,6 @@ from app.services.fetcher_operations import (
     FetcherSettingInvalidError,
     FetcherSettingUnknownError,
     FetcherTimeline,
-    MissingType,
     UpdateConfigPayload,
 )
 
@@ -484,7 +483,6 @@ async def list_fetcher_runs(
 @router.get(
     "/fetchers/{fetcher_name}/runs/{run_id}",
     response_model=FetcherRunDetailResponse,
-    response_model_exclude_unset=True,
     summary="Get fetcher run detail",
     description=(
         "Returns full detail for a single run. Raw error detail and "
@@ -521,12 +519,12 @@ async def get_fetcher_run(
     except (FetcherNotFoundError, FetcherRunNotFoundError) as exc:
         raise _not_found(exc) from exc
 
-    extra: dict[str, Any] = {}
-    if has_manage_fetchers:
-        extra["error_detail"] = run.error_detail
-        extra["error_traceback"] = run.error_traceback
+    # A `MISSING` field is left out of the body, not rendered as `null`.
     data = FetcherRunDetailData(
-        fetcher_name=run.fetcher_name, **_common_run_fields(run), **extra
+        fetcher_name=run.fetcher_name,
+        **_common_run_fields(run),
+        error_detail=run.error_detail if has_manage_fetchers else MISSING,
+        error_traceback=run.error_traceback if has_manage_fetchers else MISSING,
     )
     return FetcherRunDetailResponse(data=data)
 
@@ -714,53 +712,6 @@ async def get_fetcher_config(
     return FetcherConfigResponse(data=_serialize_config(config))
 
 
-def _build_update_payload(body: FetcherConfigUpdateRequest) -> UpdateConfigPayload:
-    """Translate `body.model_fields_set` into an `UpdateConfigPayload`
-    where an omitted field maps to `UNSET` and a present field carries
-    its parsed value through unchanged.
-
-    `enabled`, `run_timeout`, and `request_delay` are asserted non-`None`
-    when present: `FetcherConfigUpdateRequest`'s `_reject_null_*` field
-    validators already reject an explicit `null` for these three fields
-    before this function ever sees the body, so a present value is
-    always the validated type — mirrors the `AdminUserUpdateRequest`
-    `email` precedent (`app/api/v1/users.py`).
-    """
-    fields = body.model_fields_set
-
-    enabled: bool | MissingType = UNSET
-    if "enabled" in fields:
-        assert body.enabled is not None
-        enabled = body.enabled
-
-    schedule_override: str | MissingType | None = UNSET
-    if "schedule_override" in fields:
-        schedule_override = body.schedule_override
-
-    run_timeout: int | MissingType = UNSET
-    if "run_timeout" in fields:
-        assert body.run_timeout is not None
-        run_timeout = body.run_timeout
-
-    request_delay: float | MissingType = UNSET
-    if "request_delay" in fields:
-        assert body.request_delay is not None
-        request_delay = body.request_delay
-
-    custom_settings: dict[str, Any] | MissingType = UNSET
-    if "custom_settings" in fields:
-        assert body.custom_settings is not None
-        custom_settings = body.custom_settings
-
-    return UpdateConfigPayload(
-        enabled=enabled,
-        schedule_override=schedule_override,
-        run_timeout=run_timeout,
-        request_delay=request_delay,
-        custom_settings=custom_settings,
-    )
-
-
 @router.patch(
     "/fetchers/{fetcher_name}/config",
     response_model=FetcherConfigResponse,
@@ -811,7 +762,14 @@ async def update_fetcher_config(
             db,
             fetcher_name=fetcher_name,
             user_id=principal.user.id,
-            payload=_build_update_payload(body),
+            # An omitted field is `MISSING` in both the body and the payload.
+            payload=UpdateConfigPayload(
+                enabled=body.enabled,
+                schedule_override=body.schedule_override,
+                run_timeout=body.run_timeout,
+                request_delay=body.request_delay,
+                custom_settings=body.custom_settings,
+            ),
         )
     except FetcherNotFoundError as exc:
         raise _not_found(exc) from exc

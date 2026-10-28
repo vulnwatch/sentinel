@@ -626,12 +626,12 @@ operations with their own business rules.
 |------------------|-----------------------------|----------|--------------------------------------|
 | `user_id`        | `UUID`                      | Yes      | User to update                       |
 | `acting_user_id` | `UUID \| None`              | No       | Who is performing the action         |
-| `username`       | `str \| None`               | No       | New username (updated by external sync when username changes at provider) |
-| `email`          | `str \| _Missing`             | No       | New non-null email (normalized; uniqueness validated) |
-| `full_name`      | `str \| None \| _Missing`     | No       | New display name; NULL clears it     |
-| `bot`            | `bool \| _Missing`            | No       | New non-null bot marker (`user-management.md`, Bot Accounts) |
-| `manager_id`     | `UUID \| None \| _Missing`    | No       | New manager (FK to user.id); NULL clears it |
-| `synced_at`      | `datetime \| None \| _Missing` | No       | Operational sync timestamp           |
+| `username`       | `str \| MISSING`            | No       | New non-null username (updated by external sync when username changes at provider) |
+| `email`          | `str \| MISSING`            | No       | New non-null email (normalized; uniqueness validated) |
+| `full_name`      | `str \| MISSING \| None`    | No       | New display name; NULL clears it     |
+| `bot`            | `bool \| MISSING`           | No       | New non-null bot marker (`user-management.md`, Bot Accounts) |
+| `manager_id`     | `UUID \| MISSING \| None`   | No       | New manager (FK to user.id); NULL clears it |
+| `synced_at`      | `datetime \| MISSING \| None` | No       | Operational sync timestamp           |
 
 **Behavior**:
 
@@ -645,7 +645,7 @@ operations with their own business rules.
    blocked for human callers on external users — there is no field of this
    operation that an admin should modify manually.
 3. If `user.external_id IS NULL` and `manager_id` or
-   `synced_at` is provided (not `_MISSING`): raise
+   `synced_at` is provided (not `MISSING`): raise
    `ExternalUserFieldReadOnlyError`. These fields are external-provider-specific and have
    no source of truth for local users.
 4. **Username validation** (if `username` is provided): normalize and
@@ -665,26 +665,25 @@ operations with their own business rules.
    value rather than `email-validator`'s own `.normalized` result). Then
    validate uniqueness using the normalized value, excluding the current
    user and including inactive users. If violated, raise `UserConflictError`
-6. Apply provided field updates. Optional parameters use a `_MISSING`
-   sentinel as default to distinguish three states:
-   - `_MISSING` (default): field is not modified
-    - `None`: a nullable field is explicitly cleared to NULL in the database
+6. Apply provided field updates. Optional parameters default to Pydantic's
+   `MISSING` sentinel (`docs/conventions.md`, Omitted Values) to distinguish
+   three states:
+   - `MISSING` (default): field is not modified
+   - `None`: a nullable field is explicitly cleared to NULL in the database
    - Any other value: field is updated to the new value
 
-    `email` and `bot` are non-nullable and therefore do not permit this
-    state; the type of `bot` (`bool | _Missing`) excludes `None`. This is
-    necessary because nullable fields (`full_name`,
-    `manager_id`) may need to be explicitly cleared — e.g.,
-   when external sync discovers that a provider attribute has been removed. The
-   pattern follows Python's standard sentinel convention
-   (`dataclasses.MISSING`).
+   `username`, `email`, and `bot` are non-nullable and therefore do not
+   permit the `None` state; their types exclude `None`. The three states are
+   necessary because nullable fields (`full_name`, `manager_id`) may need to
+   be explicitly cleared — e.g., when external sync discovers that a provider
+   attribute has been removed.
 
-    A provided field is effectively changed only when its requested value
-    differs from the locked-current value. `_MISSING` is never a change, and
-    the comparison uses the normalized requested value for `username` and
-    `email`. If no provided field differs, this is a no-op: no UPDATE is
-    issued, no audit event is created, `changed_fields` is empty, and the
-    result's `user` is the locked row loaded in step 1.
+   A provided field is effectively changed only when its requested value
+   differs from the locked-current value. `MISSING` is never a change, and
+   the comparison uses the normalized requested value for `username` and
+   `email`. If no provided field differs, this is a no-op: no UPDATE is
+   issued, no audit event is created, `changed_fields` is empty, and the
+   result's `user` is the locked row loaded in step 1.
 7. For each changed field other than `synced_at`, create an
    `IdentityAuditEvent` via `IdentityAuditLog.log_event()`:
    `username_changed`, `email_changed`, `full_name_changed`, `bot_changed`,

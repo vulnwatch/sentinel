@@ -40,6 +40,7 @@ from uuid import UUID
 
 import structlog
 from email_validator import EmailNotValidError, validate_email
+from pydantic import MISSING
 from sqlalchemy import (
     ColumnElement,
     Select,
@@ -242,27 +243,6 @@ class SelfDeactivationError(UserServiceError):
 
     def __init__(self) -> None:
         super().__init__("Cannot deactivate your own account.")
-
-
-class _MissingType:
-    """Sentinel type for an omitted optional `update_user()` parameter.
-
-    Distinguishes "field not provided" (this sentinel) from an explicit
-    `None` (clear the field) — see `docs/features/identity/user-service.md`
-    (`update_user()`) and `docs/conventions.md`'s reference to
-    `dataclasses.MISSING`.
-    """
-
-    def __repr__(self) -> str:
-        return "MISSING"
-
-
-_MISSING: Final = _MissingType()
-
-# Public names for callers that forward each optional `update_user()` field
-# only when their own input provides it (the admin API and the CLI).
-MissingType = _MissingType
-MISSING: Final = _MISSING
 
 
 @dataclass(frozen=True)
@@ -1004,31 +984,28 @@ async def update_user(
     user_id: UUID,
     *,
     acting_user_id: UUID | None,
-    username: str | None = None,
-    email: str | _MissingType = _MISSING,
-    full_name: str | _MissingType | None = _MISSING,
-    bot: bool | _MissingType = _MISSING,
-    manager_id: UUID | _MissingType | None = _MISSING,
-    synced_at: datetime | _MissingType | None = _MISSING,
+    username: str | MISSING = MISSING,
+    email: str | MISSING = MISSING,
+    full_name: str | MISSING | None = MISSING,
+    bot: bool | MISSING = MISSING,
+    manager_id: UUID | MISSING | None = MISSING,
+    synced_at: datetime | MISSING | None = MISSING,
 ) -> UserUpdateResult:
     """Update mutable identity fields and the bot marker of an existing `User`.
 
     Q1: `user_id` identifies the target; `acting_user_id` is the audit actor
-    (`None` for CLI/external-sync system callers). `username` is `None`
-    when not provided (usernames are never cleared, so `None` unambiguously
-    means "no change"). `email`, `full_name`, `bot`, `manager_id`, and
-    `synced_at` default to the `_MISSING` sentinel (`docs/conventions.md`,
-    `dataclasses.MISSING` pattern) to distinguish "not provided" from an
-    explicit `None` (clear a nullable field). `email` and `bot` exclude
-    `None` from their types entirely — a caller passing `None` violates the
-    type contract and is caught by static type checking, not a runtime
-    guard.
+    (`None` for CLI/external-sync system callers). Every other field
+    defaults to `MISSING` (`docs/conventions.md`, Omitted Values), which
+    leaves it unchanged; an explicit `None` clears a nullable field.
+    `username`, `email`, and `bot` exclude `None` from their types entirely
+    — a caller passing `None` violates the type contract and is caught by
+    static type checking, not a runtime guard.
 
     Q2 (guards, in this order): missing `user_id` raises `UserNotFoundError`;
     a human caller (`acting_user_id is not None`) targeting an external user
     (`external_id IS NOT NULL`) raises `ExternalUserFieldReadOnlyError` for
     the entire operation; `manager_id` or `synced_at` provided (not
-    `_MISSING`) for a local user (`external_id IS NULL`) raises
+    `MISSING`) for a local user (`external_id IS NULL`) raises
     `ExternalUserFieldReadOnlyError` (see External User Data Ownership);
     invalid `username` format raises `UsernameFormatError`; invalid `email`
     format raises `EmailFormatError`; a normalized `username` or `email`
@@ -1098,7 +1075,7 @@ async def update_user(
 
     if is_external and acting_user_id is not None:
         raise ExternalUserFieldReadOnlyError()
-    if not is_external and (manager_id is not _MISSING or synced_at is not _MISSING):
+    if not is_external and (manager_id is not MISSING or synced_at is not MISSING):
         raise ExternalUserFieldReadOnlyError()
 
     sync_detail = {"source": "external_sync"} if is_external else None
@@ -1114,45 +1091,45 @@ async def update_user(
     # mutation applied before entering that block would be flushed
     # unprotected by the SAVEPOINT, exactly like a mutation applied before
     # Phase 1. Only mutations applied *inside* the block are covered.
-    pending_username: str | None = None
-    if username is not None:
+    pending_username: str | MISSING = MISSING
+    if username is not MISSING:
         normalized_username = _normalize_username(username)
         if normalized_username != user.username:
             if await _username_taken(session, normalized_username, user_id):
                 raise UserConflictError("username")
             pending_username = normalized_username
 
-    pending_email: str | None = None
-    if not isinstance(email, _MissingType):
+    pending_email: str | MISSING = MISSING
+    if email is not MISSING:
         normalized_email = _normalize_and_validate_email(email)
         if normalized_email != user.email:
             if await _email_taken(session, normalized_email, user_id):
                 raise UserConflictError("email")
             pending_email = normalized_email
 
-    pending_full_name: str | _MissingType | None = _MISSING
-    if not isinstance(full_name, _MissingType) and full_name != user.full_name:
+    pending_full_name: str | MISSING | None = MISSING
+    if full_name is not MISSING and full_name != user.full_name:
         pending_full_name = full_name
 
-    pending_bot: bool | _MissingType = _MISSING
-    if not isinstance(bot, _MissingType) and bot != user.bot:
+    pending_bot: bool | MISSING = MISSING
+    if bot is not MISSING and bot != user.bot:
         pending_bot = bot
 
-    pending_manager_id: UUID | _MissingType | None = _MISSING
-    if not isinstance(manager_id, _MissingType) and manager_id != user.manager_id:
+    pending_manager_id: UUID | MISSING | None = MISSING
+    if manager_id is not MISSING and manager_id != user.manager_id:
         pending_manager_id = manager_id
 
-    pending_synced_at: datetime | _MissingType | None = _MISSING
-    if not isinstance(synced_at, _MissingType) and synced_at != user.synced_at:
+    pending_synced_at: datetime | MISSING | None = MISSING
+    if synced_at is not MISSING and synced_at != user.synced_at:
         pending_synced_at = synced_at
 
     if (
-        pending_username is None
-        and pending_email is None
-        and isinstance(pending_full_name, _MissingType)
-        and isinstance(pending_bot, _MissingType)
-        and isinstance(pending_manager_id, _MissingType)
-        and isinstance(pending_synced_at, _MissingType)
+        pending_username is MISSING
+        and pending_email is MISSING
+        and pending_full_name is MISSING
+        and pending_bot is MISSING
+        and pending_manager_id is MISSING
+        and pending_synced_at is MISSING
     ):
         return UserUpdateResult(
             user=await _load_user_profile(session, user.id),
@@ -1173,7 +1150,7 @@ async def update_user(
 
     try:
         async with session.begin_nested():
-            if pending_username is not None:
+            if pending_username is not MISSING:
                 old_username = user.username
                 user.username = pending_username
                 audit_events.append(
@@ -1186,7 +1163,7 @@ async def update_user(
                 )
                 changed_fields.append("username")
 
-            if pending_email is not None:
+            if pending_email is not MISSING:
                 old_email = user.email
                 user.email = pending_email
                 audit_events.append(
@@ -1199,7 +1176,7 @@ async def update_user(
                 )
                 changed_fields.append("email")
 
-            if not isinstance(pending_full_name, _MissingType):
+            if pending_full_name is not MISSING:
                 old_full_name = user.full_name
                 user.full_name = pending_full_name
                 audit_events.append(
@@ -1212,7 +1189,7 @@ async def update_user(
                 )
                 changed_fields.append("full_name")
 
-            if not isinstance(pending_bot, _MissingType):
+            if pending_bot is not MISSING:
                 old_bot = user.bot
                 user.bot = pending_bot
                 audit_events.append(
@@ -1225,14 +1202,14 @@ async def update_user(
                 )
                 changed_fields.append("bot")
 
-            if not isinstance(pending_manager_id, _MissingType):
+            if pending_manager_id is not MISSING:
                 old_manager_id = user.manager_id
                 new_manager_id = pending_manager_id
                 user.manager_id = pending_manager_id
                 manager_changed = True
                 changed_fields.append("manager_id")
 
-            if not isinstance(pending_synced_at, _MissingType):
+            if pending_synced_at is not MISSING:
                 user.synced_at = pending_synced_at
                 changed_fields.append("synced_at")
 

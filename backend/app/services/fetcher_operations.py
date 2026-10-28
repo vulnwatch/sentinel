@@ -38,7 +38,7 @@ from uuid import UUID
 
 import structlog
 from celery import Celery
-from pydantic import TypeAdapter, ValidationError
+from pydantic import MISSING, TypeAdapter, ValidationError
 from redbeat import RedBeatSchedulerEntry
 from redis.exceptions import RedisError
 from sqlalchemy import func, select
@@ -308,48 +308,22 @@ class FetcherConfigResult:
     updated_at: datetime
 
 
-class MissingType:
-    """Sentinel type for an omitted `UpdateConfigPayload` field.
-
-    Distinguishes "field not provided" (this sentinel) from an
-    explicit value — including `None` for the two fields where `None`
-    is meaningful (`schedule_override` reverts to the fetcher's
-    `default_schedule`; a `custom_settings` key set to `None` resets
-    that key to its `Settings` field default). Conceptually mirrors
-    `app.services.user_service._MissingType` (each service module
-    defining its own sentinel is the established pattern — see
-    `docs/features/identity/user-service.md`, `update_user()`, and
-    `docs/conventions.md`'s reference to `dataclasses.MISSING`), but is
-    public (no leading underscore): unlike `user_service._MissingType`,
-    which is only ever referenced inside its own module, the API router
-    (`app/api/v1/fetchers.py`) must reference this type directly to
-    annotate the locals it builds from
-    `FetcherConfigUpdateRequest.model_fields_set`.
-    """
-
-    def __repr__(self) -> str:
-        return "UNSET"
-
-
-UNSET: Any = MissingType()
-"""Public singleton instance of `MissingType`, typed `Any` so it can be
-assigned to any of `UpdateConfigPayload`'s per-field union types
-without a mypy complaint at every call site."""
-
-
 @dataclass(frozen=True)
 class UpdateConfigPayload:
     """The set of changes requested via one `update_fetcher_config()`
     call — see `docs/features/platform/fetcher-operations.md`
-    (`update_fetcher_config`, Q1). Each field defaults to `UNSET`
+    (`update_fetcher_config`, Q1). Each field defaults to `MISSING`
     (omitted — the corresponding `FetcherConfig` column is left
-    untouched)."""
+    untouched; `docs/conventions.md`, Omitted Values). `None` is meaningful
+    only for `schedule_override`, where it reverts to the fetcher's
+    `default_schedule`; a `custom_settings` key set to `None` resets that
+    key to its `Settings` field default."""
 
-    enabled: bool | MissingType = UNSET
-    schedule_override: str | MissingType | None = UNSET
-    run_timeout: int | MissingType = UNSET
-    request_delay: float | MissingType = UNSET
-    custom_settings: dict[str, Any] | MissingType = UNSET
+    enabled: bool | MISSING = MISSING
+    schedule_override: str | MISSING | None = MISSING
+    run_timeout: int | MISSING = MISSING
+    request_delay: float | MISSING = MISSING
+    custom_settings: dict[str, Any] | MISSING = MISSING
 
 
 @dataclass(frozen=True)
@@ -1099,7 +1073,7 @@ async def update_fetcher_config(
        or via `null` reset) in the same PATCH.
 
     Q3 (behavior): for each of `enabled`, `schedule_override`,
-    `run_timeout`, `request_delay` present in `payload` (not `UNSET`),
+    `run_timeout`, `request_delay` present in `payload` (not `MISSING`),
     compare against the current persisted value; only actually-changed
     fields are applied. For `custom_settings`, each non-null submitted
     key is validated then **canonicalized**: the persisted value, the
@@ -1173,7 +1147,7 @@ async def update_fetcher_config(
     # (Stale Run Detection, Running Stale Threshold, "Relationship to
     # hard time limit") for why a `run_timeout` change must not be
     # allowed while a manual run is still `queued`.
-    if not isinstance(run_timeout, MissingType) and run_timeout != config.run_timeout:
+    if run_timeout is not MISSING and run_timeout != config.run_timeout:
         active_result = await db.execute(
             select(FetcherRun).where(
                 FetcherRun.fetcher_name == fetcher_name,
@@ -1210,7 +1184,7 @@ async def update_fetcher_config(
 
     # --- Guards 4-5: custom_settings validation and canonicalization -----
     canonical_changes: dict[str, Any | None] = {}
-    if not isinstance(custom_settings, MissingType):
+    if custom_settings is not MISSING:
         settings_cls = fetcher_cls.Settings
         declared_fields = settings_cls.model_fields if settings_cls is not None else {}
         for key in custom_settings:
@@ -1244,21 +1218,18 @@ async def update_fetcher_config(
 
     # --- Compute diff: standard fields -------------------------------------
     changes: list[tuple[str, Any, Any]] = []
-    if not isinstance(enabled, MissingType) and enabled != config.enabled:
+    if enabled is not MISSING and enabled != config.enabled:
         changes.append(("enabled", config.enabled, enabled))
     if (
-        not isinstance(schedule_override, MissingType)
+        schedule_override is not MISSING
         and schedule_override != config.schedule_override
     ):
         changes.append(
             ("schedule_override", config.schedule_override, schedule_override)
         )
-    if not isinstance(run_timeout, MissingType) and run_timeout != config.run_timeout:
+    if run_timeout is not MISSING and run_timeout != config.run_timeout:
         changes.append(("run_timeout", config.run_timeout, run_timeout))
-    if (
-        not isinstance(request_delay, MissingType)
-        and request_delay != config.request_delay
-    ):
+    if request_delay is not MISSING and request_delay != config.request_delay:
         changes.append(("request_delay", config.request_delay, request_delay))
 
     # --- Compute diff: custom settings (alphabetical) ----------------------

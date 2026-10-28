@@ -1867,7 +1867,9 @@ class TestUpdateUserAdmin:
         )
 
         assert response.status_code == 422
-        assert response.json()["code"] == "VALIDATION_ERROR"
+        body = response.json()
+        assert body["code"] == "VALIDATION_ERROR"
+        assert [error["loc"] for error in body["errors"]] == [["body", "email"]]
 
     async def test_explicit_null_full_name_clears_it(
         self,
@@ -1981,14 +1983,19 @@ class TestUpdateUserAdmin:
         requested: bool,
     ) -> None:
         admin, client = admin_user_and_client
-        target = await user_factory(username="botpatchtarget", bot=stored)
+        target = await user_factory(
+            username="botpatchtarget", bot=stored, full_name="Stored Name"
+        )
 
         response = await client.patch(
             f"/api/v1/admin/users/{target.id}", json={"bot": requested}
         )
 
         assert response.status_code == 200
-        assert response.json()["data"]["bot"] is requested
+        data = response.json()["data"]
+        assert data["bot"] is requested
+        # The omitted members keep their values; the only event is bot's.
+        assert data["full_name"] == "Stored Name"
         events = await _audit_events_for(db_session, target.id)
         assert [
             (event.event_type, event.old_value, event.new_value, event.user_id)

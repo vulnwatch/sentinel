@@ -27,6 +27,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, Literal
 
+from pydantic import MISSING
+
 from app.core.enums import CveState, ReferenceType
 from app.core.external_strings import contains_inadmissible_character
 from app.core.identifiers import is_valid_cve_id
@@ -102,8 +104,6 @@ _DECISION_POINTS: Final[tuple[SsvcField, ...]] = SSVC_FIELDS[:3]
 _UUID_SHAPE: Final = re.compile(
     r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}"
 )
-
-_NO_ENTRY: Final = object()
 
 
 class MitreRecordError(ValueError):
@@ -403,13 +403,13 @@ def _ssvc_skip(metrics: object) -> SsvcSkip | None:
     """The skip of the last `ssvc` entry `parse_ssvc_assessment()` rejected;
     `None` when the container has no `ssvc` entry. Call only after the parser
     returned `None`."""
-    content: object = _NO_ENTRY
+    content: object = MISSING
     if isinstance(metrics, list):
         for metric in metrics:
             other = metric.get("other") if isinstance(metric, dict) else None
             if isinstance(other, dict) and other.get("type") == "ssvc":
                 content = other.get("content")
-    if content is _NO_ENTRY:
+    if content is MISSING:
         return None
     values: dict[str, object] = {}
     if isinstance(content, dict):

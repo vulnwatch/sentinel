@@ -107,22 +107,23 @@ ManualReferenceCreateInput(
     url: str,
     title: str | None = None,
     description: str | None = None,
-    type: ReferenceType | None | Unset = UNSET,
+    type: ReferenceType | MISSING | None = MISSING,
 )
 ```
 
-`url` is required. Omitted `title` and `description` persist as `NULL`.
-Omitted `type` requests URL-pattern classification; an explicit `null` stores
-`NULL` and suppresses automatic classification.
+`MISSING` is Pydantic's omitted-value sentinel (`docs/conventions.md`,
+Omitted Values). `url` is required. Omitted `title` and `description` persist
+as `NULL`. Omitted `type` requests URL-pattern classification; an explicit
+`null` stores `NULL` and suppresses automatic classification.
 
 ### ManualReferenceUpdateInput
 
 ```python
 ManualReferenceUpdateInput(
-    url: str | Unset = UNSET,
-    title: str | None | Unset = UNSET,
-    description: str | None | Unset = UNSET,
-    type: ReferenceType | None | Unset = UNSET,
+    url: str | MISSING = MISSING,
+    title: str | MISSING | None = MISSING,
+    description: str | MISSING | None = MISSING,
+    type: ReferenceType | MISSING | None = MISSING,
 )
 ```
 

@@ -46,7 +46,7 @@ from typing import Any, Final, cast
 import httpx
 import pytest
 from celery.exceptions import SoftTimeLimitExceeded
-from pydantic import SecretStr, ValidationError
+from pydantic import MISSING, SecretStr, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
@@ -121,8 +121,6 @@ SECRET: Final = "Example-Secret-Upstream-Value"
 CREDIT_LOGIN: Final = "example-researcher"
 """The fictional credited login of every sanitized fixture."""
 INGESTION_COMMENT: Final = "CVE ingested from GitHub Advisory Database"
-ABSENT: Final = object()
-"""Marks a member removed from an advisory."""
 
 SINGLE_PARAMS: Final = {"type": "reviewed", "is_withdrawn": "false"}
 
@@ -259,12 +257,12 @@ async def target(db_session: AsyncSession) -> Target:
 
 
 def _advisory(cve_id: object, **members: Any) -> dict[str, Any]:
-    """A minimal fictional advisory; `ABSENT` removes a member."""
+    """A minimal fictional advisory; `MISSING` removes a member."""
     advisory: dict[str, Any] = {"ghsa_id": GHSA_ID, "html_url": HTML_URL}
-    if cve_id is not ABSENT:
+    if cve_id is not MISSING:
         advisory["cve_id"] = cve_id
     for key, value in members.items():
-        if value is ABSENT:
+        if value is MISSING:
             advisory.pop(key, None)
         else:
             advisory[key] = value
@@ -616,7 +614,7 @@ class TestMissingBeforeMutation:
         "first_cve_id",
         [
             None,
-            ABSENT,
+            MISSING,
             "CVE-24-1",
             "GHSA-fict-0001-aaaa",
             20990001,
@@ -863,9 +861,9 @@ class TestErrorPropagation:
     @pytest.mark.parametrize(
         "members",
         [
-            {"ghsa_id": ABSENT},
+            {"ghsa_id": MISSING},
             {"ghsa_id": None},
-            {"html_url": ABSENT},
+            {"html_url": MISSING},
             {"html_url": 1},
             {"summary": [SECRET]},
             {"updated_at": SECRET},
@@ -1241,7 +1239,7 @@ class TestIngestion:
                 references=[URL_1],
                 vulnerabilities=[_vulnerability(name) for name in packages]
                 if packages
-                else ABSENT,
+                else MISSING,
             ),
         )
 

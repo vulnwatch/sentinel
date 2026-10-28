@@ -21,6 +21,7 @@ from datetime import date
 from typing import Any, Final
 
 import pytest
+from pydantic import MISSING
 
 from app.services.cve_ingest import CWEEntry, KEVEntry
 from app.services.tickets.cisa_kev_catalog import (
@@ -49,15 +50,12 @@ URL: Final = reference_url(CVE_ID)
 SECRET_TEXT: Final = "Reported by Alice Example <alice.example@example.invalid>"
 """A feed value that must never reach an exception message."""
 
-ABSENT: Final = object()
-"""Marks a member removed from the entry."""
-
 
 def _entry(**members: Any) -> dict[str, Any]:
-    """A live-shaped entry for `CVE_ID`; `ABSENT` removes a member."""
+    """A live-shaped entry for `CVE_ID`; `MISSING` removes a member."""
     entry = entry_for(CVE_ID)
     for key, value in members.items():
-        if value is ABSENT:
+        if value is MISSING:
             del entry[key]
         else:
             entry[key] = value
@@ -106,14 +104,14 @@ class TestParseCatalog:
 
     @pytest.mark.parametrize(
         "vulnerabilities",
-        [ABSENT, None, {}, {"cveID": CVE_ID}, "[]", 0, True],
+        [MISSING, None, {}, {"cveID": CVE_ID}, "[]", 0, True],
         ids=["missing", "null", "empty_object", "object", "string", "int", "bool"],
     )
     def test_missing_or_non_list_vulnerabilities_is_an_unexpected_structure(
         self, vulnerabilities: Any
     ) -> None:
         document = load_catalog()
-        if vulnerabilities is ABSENT:
+        if vulnerabilities is MISSING:
             del document["vulnerabilities"]
         else:
             document["vulnerabilities"] = vulnerabilities
@@ -123,12 +121,12 @@ class TestParseCatalog:
 
     @pytest.mark.parametrize(
         "count",
-        [ABSENT, "5", 5.0, True, False, None, [5], {"count": 5}],
+        [MISSING, "5", 5.0, True, False, None, [5], {"count": 5}],
         ids=["absent", "string", "float", "true", "false", "null", "list", "object"],
     )
     def test_absent_or_non_integer_count_is_none(self, count: Any) -> None:
         document = load_catalog()
-        if count is ABSENT:
+        if count is MISSING:
             del document["count"]
         else:
             document["count"] = count
@@ -186,7 +184,7 @@ class TestEntryCveId:
         assert entry_cve_id(entry) is None
 
     def test_missing_cve_id_is_none(self) -> None:
-        assert entry_cve_id(_entry(cveID=ABSENT)) is None
+        assert entry_cve_id(_entry(cveID=MISSING)) is None
 
     @pytest.mark.parametrize(
         "value",
@@ -290,7 +288,7 @@ class TestExtractCwes:
         assert enrichment.skipped_cwes == 0
 
     @pytest.mark.parametrize(
-        "cwes", [ABSENT, None, []], ids=["absent", "null", "empty"]
+        "cwes", [MISSING, None, []], ids=["absent", "null", "empty"]
     )
     def test_absent_null_or_empty_cwes_supply_nothing(self, cwes: Any) -> None:
         enrichment = extract(_entry(cwes=cwes), reference_url=URL)
@@ -420,7 +418,7 @@ class TestExtractDateAdded:
     @pytest.mark.parametrize(
         "value",
         [
-            ABSENT,
+            MISSING,
             None,
             20261001,
             2026.1,

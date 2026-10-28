@@ -15,7 +15,7 @@ from typing import Any
 from uuid import UUID
 
 from celery.schedules import crontab
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import MISSING, BaseModel, Field, field_validator, model_validator
 
 from app.schemas.common import PaginationMeta, UserReference
 
@@ -144,19 +144,16 @@ class FetcherRunListResponse(BaseModel):
 class FetcherRunDetailData(FetcherRunListItemData):
     """The `data` object for `GET /api/v1/fetchers/{fetcher_name}/runs/{run_id}`.
 
-    `error_detail`/`error_traceback` default to unset. The endpoint
-    constructs this model without passing them for callers lacking
-    `manage_fetchers` and declares `response_model_exclude_unset=True`,
-    so Pydantic renders them as fully absent JSON keys — not
-    `"error_detail": null` — for those callers, per
+    `error_detail`/`error_traceback` are `MISSING` for callers lacking
+    `manage_fetchers` (`docs/conventions.md`, Omitted Values), so Pydantic
+    leaves them out of the body — absent JSON keys, not
+    `"error_detail": null` — per
     `docs/features/platform/fetcher-operations.md` (Get Fetcher Run
-    Detail, Fields). Every other field on this model is always
-    explicitly set at construction time, so `exclude_unset` has no
-    effect on them.
+    Detail, Fields).
     """
 
-    error_detail: str | None = None
-    error_traceback: str | None = None
+    error_detail: str | MISSING | None = MISSING
+    error_traceback: str | MISSING | None = MISSING
 
 
 class FetcherRunDetailResponse(BaseModel):
@@ -247,15 +244,14 @@ class FetcherConfigUpdateRequest(BaseModel):
     (`fetcher-operations.md`, Update Fetcher Config).
 
     All fields are optional but at least one must be provided
-    (`docs/api-spec.md`, Partial Update Semantics). The route
-    distinguishes "omitted" from "explicitly provided" via
-    `model_fields_set` (see `AdminUserUpdateRequest` for the same
-    pattern). `enabled`, `run_timeout`, and `request_delay` are
-    non-nullable in the data model — an explicit `null` for any of
-    them is rejected here, before the service is called.
-    `schedule_override` accepts `null` to revert to the fetcher's
-    `default_schedule`. `custom_settings`, when provided, cannot itself
-    be `null` (the JSONB column is non-nullable) — but an individual
+    (`docs/api-spec.md`, Partial Update Semantics). An omitted field stays
+    `MISSING` (`docs/conventions.md`, Omitted Values), which the route
+    passes to the service unchanged. `enabled`, `run_timeout`, and
+    `request_delay` are non-nullable in the data model, so their types
+    exclude `None` and an explicit `null` fails type validation before the
+    service is called. `schedule_override` accepts `null` to revert to the
+    fetcher's `default_schedule`. `custom_settings`, when provided, cannot
+    itself be `null` (the JSONB column is non-nullable) — but an individual
     key *within* it may be `null`, resetting that key to its
     `Settings` field default (`fetcher-operations.md`,
     `update_fetcher_config`, step 6). Per-key/per-value validation
@@ -275,18 +271,11 @@ class FetcherConfigUpdateRequest(BaseModel):
     is not a valid `run_timeout`.
     """
 
-    enabled: bool | None = Field(default=None, strict=True)
-    schedule_override: str | None = Field(default=None, max_length=50)
-    run_timeout: int | None = Field(default=None, strict=True, ge=60, le=604_800)
-    request_delay: float | None = Field(default=None, strict=True, ge=0, le=300)
-    custom_settings: dict[str, Any] | None = None
-
-    @field_validator("enabled", mode="before")
-    @classmethod
-    def _reject_null_enabled(cls, value: Any) -> Any:
-        if value is None:
-            raise ValueError("enabled cannot be null.")
-        return value
+    enabled: bool | MISSING = Field(default=MISSING, strict=True)
+    schedule_override: str | MISSING | None = Field(default=MISSING, max_length=50)
+    run_timeout: int | MISSING = Field(default=MISSING, strict=True, ge=60, le=604_800)
+    request_delay: float | MISSING = Field(default=MISSING, strict=True, ge=0, le=300)
+    custom_settings: dict[str, Any] | MISSING = MISSING
 
     @field_validator("schedule_override")
     @classmethod
@@ -297,30 +286,6 @@ class FetcherConfigUpdateRequest(BaseModel):
             # `docs/features/platform/fetcher-operations.md`, Update
             # Fetcher Config, Validation rules).
             crontab.from_string(value)
-        return value
-
-    @field_validator("run_timeout", mode="before")
-    @classmethod
-    def _reject_null_run_timeout(cls, value: Any) -> Any:
-        if value is None:
-            raise ValueError("run_timeout cannot be null.")
-        return value
-
-    @field_validator("request_delay", mode="before")
-    @classmethod
-    def _reject_null_request_delay(cls, value: Any) -> Any:
-        if value is None:
-            raise ValueError("request_delay cannot be null.")
-        return value
-
-    @field_validator("custom_settings", mode="before")
-    @classmethod
-    def _reject_null_custom_settings(cls, value: Any) -> Any:
-        if value is None:
-            raise ValueError(
-                "custom_settings cannot be null; provide an object with the "
-                "individual keys to change."
-            )
         return value
 
     @model_validator(mode="after")
