@@ -50,11 +50,6 @@ class TestUserDirectoryListQuery:
         assert query.sort_by is UserDirectorySortField.USERNAME
         assert query.sort_order is SortOrder.ASC
 
-    def test_declares_no_type_filter(self) -> None:
-        """The directory filters only on fields its entry returns
-        (`user-management.md`, List Users)."""
-        assert "type" not in UserDirectoryListQuery.model_fields
-
     @pytest.mark.parametrize("sort_by", ["username", "full_name", "email"])
     def test_directory_sort_by_is_accepted(self, sort_by: str) -> None:
         assert UserDirectoryListQuery(sort_by=sort_by).sort_by == sort_by

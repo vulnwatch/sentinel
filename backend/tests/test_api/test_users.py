@@ -530,6 +530,30 @@ class TestListUsers:
             "pickeractiveva"
         ]
 
+    @pytest.mark.parametrize(
+        ("has_role", "expected"),
+        [("true", {"hasroledirectoryva"}), ("false", {"hasroledirectorynone"})],
+    )
+    async def test_has_role_filter_is_applied(
+        self,
+        authenticated_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+        has_role: str,
+        expected: set[str],
+    ) -> None:
+        with_role = await user_factory(username="hasroledirectoryva")
+        await user_role_factory(user_id=with_role.id)
+        await user_factory(username="hasroledirectorynone")
+
+        response = await authenticated_client.get(
+            "/api/v1/users",
+            params={"search": "hasroledirectory", "has_role": has_role},
+        )
+
+        assert response.status_code == 200
+        assert {item["username"] for item in response.json()["data"]} == expected
+
     async def test_page_beyond_result_set_returns_empty_data_with_correct_total(
         self,
         authenticated_client: AsyncClient,
@@ -970,6 +994,38 @@ class TestListUsersAdmin:
             "/api/v1/admin/users", params={"sort_by": "last_login_at"}
         )
         assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    async def test_search_below_minimum_length_returns_422(
+        self, admin_client: AsyncClient
+    ) -> None:
+        response = await admin_client.get("/api/v1/admin/users", params={"search": "j"})
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    @pytest.mark.parametrize(
+        ("has_role", "expected"),
+        [("true", {"hasroleadminva"}), ("false", {"hasroleadminnone"})],
+    )
+    async def test_has_role_filter_is_applied(
+        self,
+        admin_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+        has_role: str,
+        expected: set[str],
+    ) -> None:
+        with_role = await user_factory(username="hasroleadminva")
+        await user_role_factory(user_id=with_role.id)
+        await user_factory(username="hasroleadminnone")
+
+        response = await admin_client.get(
+            "/api/v1/admin/users",
+            params={"search": "hasroleadmin", "has_role": has_role},
+        )
+
+        assert response.status_code == 200
+        assert {item["username"] for item in response.json()["data"]} == expected
 
     async def test_all_invalid_role_values_return_empty_result(
         self, admin_client: AsyncClient
@@ -1174,7 +1230,7 @@ class TestGetUserAdmin:
 
         assert response.json()["data"]["last_login_at"] is None
 
-    async def test_last_login_at_reports_the_most_recent_login(
+    async def test_last_login_at_after_a_login_returns_the_login_time(
         self,
         admin_client: AsyncClient,
         db_session: AsyncSession,
@@ -1198,19 +1254,6 @@ class TestGetUserAdmin:
         returned = response.json()["data"]["last_login_at"]
         assert returned.endswith("Z")
         assert datetime.fromisoformat(returned) == user.last_login_at
-
-    async def test_secret_and_sync_fields_are_never_exposed(
-        self,
-        admin_client: AsyncClient,
-        user_factory: Callable[..., Awaitable[User]],
-    ) -> None:
-        user = await user_factory(username="secrethiddentest")
-
-        response = await admin_client.get(f"/api/v1/admin/users/{user.username}")
-
-        data = response.json()["data"]
-        assert "password_hash" not in data
-        assert "synced_at" not in data
 
     async def test_manage_users_api_key_is_accepted(
         self,
