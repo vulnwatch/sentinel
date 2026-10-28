@@ -363,8 +363,9 @@ and `backend/tests/`:
 
 - Default the parameter, dataclass field, or model field to `MISSING` and
   annotate it with the sentinel itself, for example
-  `title: str | None | MISSING = MISSING`. The type checker narrows the type
-  with `is MISSING` and `is not MISSING`.
+  `title: str | MISSING | None = MISSING` (the linter keeps `None` last in a
+  union). The type checker narrows the type with `is MISSING` and
+  `is not MISSING`.
 - Test it only by identity. `MISSING` is truthy and is not `None`, so a
   truthiness test or `is None` treats it as a provided value.
 - Every field of a partial update, where omission keeps the current value,
@@ -373,10 +374,11 @@ and `backend/tests/`:
   such as an optional filter whose omission means no filter, declares that
   value as its default instead.
 - Do not define another marker: no `object()` constant, marker class,
-  single-member enum, `typing_extensions` sentinel, `Any`-typed sentinel, or
-  `None` default whose presence is read back from `model_fields_set` or
-  `exclude_unset`. Outside `app/schemas/`, `model_fields_set` is not used;
-  request schemas use it only to reject a body that provides no field.
+  single-member enum, sentinel of `typing_extensions` or of the builtin
+  `sentinel` type, `Any`-typed sentinel, or `None` default whose presence is
+  read back from `model_fields_set` or `exclude_unset`. In `backend/app/`,
+  `model_fields_set` appears only in `app/schemas/`, where a request schema
+  rejects a body that provides no field.
 
 `MISSING` is a PEP 661 sentinel; on Python 3.15 and later it is an instance of
 the builtin `sentinel` type, so this convention does not change with the

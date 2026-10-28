@@ -107,7 +107,7 @@ ManualReferenceCreateInput(
     url: str,
     title: str | None = None,
     description: str | None = None,
-    type: ReferenceType | None | MISSING = MISSING,
+    type: ReferenceType | MISSING | None = MISSING,
 )
 ```
 
@@ -122,9 +122,9 @@ Omitted `type` requests URL-pattern classification; an explicit `null` stores
 ```python
 ManualReferenceUpdateInput(
     url: str | MISSING = MISSING,
-    title: str | None | MISSING = MISSING,
-    description: str | None | MISSING = MISSING,
-    type: ReferenceType | None | MISSING = MISSING,
+    title: str | MISSING | None = MISSING,
+    description: str | MISSING | None = MISSING,
+    type: ReferenceType | MISSING | None = MISSING,
 )
 ```
 

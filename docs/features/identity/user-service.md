@@ -628,10 +628,10 @@ operations with their own business rules.
 | `acting_user_id` | `UUID \| None`              | No       | Who is performing the action         |
 | `username`       | `str \| MISSING`            | No       | New non-null username (updated by external sync when username changes at provider) |
 | `email`          | `str \| MISSING`            | No       | New non-null email (normalized; uniqueness validated) |
-| `full_name`      | `str \| None \| MISSING`    | No       | New display name; NULL clears it     |
+| `full_name`      | `str \| MISSING \| None`    | No       | New display name; NULL clears it     |
 | `bot`            | `bool \| MISSING`           | No       | New non-null bot marker (`user-management.md`, Bot Accounts) |
-| `manager_id`     | `UUID \| None \| MISSING`   | No       | New manager (FK to user.id); NULL clears it |
-| `synced_at`      | `datetime \| None \| MISSING` | No       | Operational sync timestamp           |
+| `manager_id`     | `UUID \| MISSING \| None`   | No       | New manager (FK to user.id); NULL clears it |
+| `synced_at`      | `datetime \| MISSING \| None` | No       | Operational sync timestamp           |
 
 **Behavior**:
 
