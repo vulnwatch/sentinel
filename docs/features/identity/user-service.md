@@ -678,12 +678,12 @@ operations with their own business rules.
    be explicitly cleared — e.g., when external sync discovers that a provider
    attribute has been removed.
 
-    A provided field is effectively changed only when its requested value
-    differs from the locked-current value. `MISSING` is never a change, and
-    the comparison uses the normalized requested value for `username` and
-    `email`. If no provided field differs, this is a no-op: no UPDATE is
-    issued, no audit event is created, `changed_fields` is empty, and the
-    result's `user` is the locked row loaded in step 1.
+   A provided field is effectively changed only when its requested value
+   differs from the locked-current value. `MISSING` is never a change, and
+   the comparison uses the normalized requested value for `username` and
+   `email`. If no provided field differs, this is a no-op: no UPDATE is
+   issued, no audit event is created, `changed_fields` is empty, and the
+   result's `user` is the locked row loaded in step 1.
 7. For each changed field other than `synced_at`, create an
    `IdentityAuditEvent` via `IdentityAuditLog.log_event()`:
    `username_changed`, `email_changed`, `full_name_changed`, `bot_changed`,

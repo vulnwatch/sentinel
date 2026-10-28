@@ -113,9 +113,8 @@ ManualReferenceCreateInput(
 
 `MISSING` is Pydantic's omitted-value sentinel (`docs/conventions.md`,
 Omitted Values). `url` is required. Omitted `title` and `description` persist
-as `NULL`.
-Omitted `type` requests URL-pattern classification; an explicit `null` stores
-`NULL` and suppresses automatic classification.
+as `NULL`. Omitted `type` requests URL-pattern classification; an explicit
+`null` stores `NULL` and suppresses automatic classification.
 
 ### ManualReferenceUpdateInput
 

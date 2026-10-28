@@ -604,20 +604,23 @@ forms (see `docs/features/platform/testing-strategy.md`, Structural Tests).
   `Literal` members valid in their JSON form. A structural test in
   `backend/tests/test_api_conventions.py` enforces the field rule for every
   registered route
-- **Omitted request members**: implement `docs/api-spec.md` (Partial Update
-  Semantics) with Omitted Values. A JSON request-body member whose omission
-  differs from every value it accepts defaults to `MISSING`: every optional
-  member of a `PATCH` body, and a member whose presence alone has an effect,
-  such as `is_confidential` of `POST /api/v1/tickets`. A member whose omission
-  is equivalent to one of its values declares that value as its default, for
-  example `bot: bool = Field(default=False, strict=True)`. A member's type
-  includes `None` exactly when the member accepts `null`, so the OpenAPI
-  document publishes `null` only where the request accepts it: do not reject
-  `null` in a validator, and do not hand-write a member's JSON schema
-  (`WithJsonSchema`, `json_schema_extra`) to hide `null`. Routes pass the
-  validated members to services unchanged. A response member that some
-  responses omit likewise defaults to `MISSING`, which Pydantic leaves out of
-  the serialized body; routes do not use `response_model_exclude_unset`.
+- **Omitted request members**: implement `docs/api-spec.md` (Request Body
+  Nullability and Defaults; Partial Update Semantics) with Omitted Values. A
+  JSON request-body member whose omission differs from every value it accepts
+  defaults to `MISSING`: every optional member of a `PATCH` body, and a
+  member whose presence alone has an effect, such as `is_confidential` of
+  `POST /api/v1/tickets`. A member whose omission is equivalent to one of its
+  values declares that value as its default, for example
+  `bot: bool = Field(default=False, strict=True)`. A member's type includes
+  `None` exactly when the member accepts `null`, so the OpenAPI document
+  publishes `null` only where the operation accepts it: do not reject `null`
+  in a validator, and do not hand-write a member's JSON schema
+  (`WithJsonSchema`, `json_schema_extra`) to hide `null`. A route passes a
+  `MISSING` member unchanged to a service parameter that distinguishes
+  omission, and does not rebuild presence from `model_fields_set`. A response
+  member that some responses omit likewise defaults to `MISSING`, which
+  Pydantic leaves out of the serialized body; routes do not use
+  `response_model_exclude_unset`.
   Structural tests in `backend/tests/test_api_conventions.py` enforce, for
   every registered route, that a request-body member is published as nullable
   exactly when validation accepts `null` for it, and that every optional
