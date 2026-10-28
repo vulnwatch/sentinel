@@ -1,10 +1,11 @@
-"""Tests for the OpenAPI documentation of the global and shared responses
-(`app/api/openapi.py`).
+"""Tests for the OpenAPI documentation of the global and shared responses,
+and of parameters without `null` (`app/api/openapi.py`).
 
 See `docs/api-spec.md` (Global Responses, Response Applicability
-Derivation). Every case builds a standalone `SentinelAPI` whose routes use
-the real authentication and capability dependencies and the methods that
-derive the cross-origin rejection; only the generated
+Derivation, Parameter Nullability). Every case builds a standalone
+`SentinelAPI` whose routes use the real authentication and capability
+dependencies and the methods that derive the cross-origin rejection, or
+optional parameters with a `None` default; only the generated
 document is inspected, so no request runs. The registered application is
 covered by the structural tests in `tests/test_api_conventions.py`, by the
 required-authentication `401` check in
@@ -14,10 +15,12 @@ contract check over every test request (`tests/support/openapi_contract.py`).
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Annotated, Any
 
 import pytest
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, FastAPI, Query
+from pydantic import BaseModel
 
 from app.api.dependencies import (
     AuthenticatedPrincipal,
@@ -25,7 +28,11 @@ from app.api.dependencies import (
     require_any_capability,
     require_capability,
 )
-from app.api.openapi import API_V1_RESPONSES, SentinelAPI
+from app.api.openapi import (
+    API_V1_RESPONSES,
+    SentinelAPI,
+    publish_parameters_without_null,
+)
 from app.core.enums import Capability
 from app.schemas.errors import ErrorResponse
 
@@ -301,3 +308,169 @@ class TestApiV1Responses:
             "$ref": "#/components/schemas/ValidationErrorItem"
         }
         assert schemas["ValidationErrorItem"]["required"] == ["loc", "msg", "type"]
+
+
+class _Order(StrEnum):
+    ASC = "asc"
+    DESC = "desc"
+
+
+class _Note(BaseModel):
+    text: str | None = None
+
+
+def _search(
+    search: Annotated[str | None, Query(min_length=2, description="Text.")] = None,
+) -> None:
+    """An optional parameter of a query builder that two operations share,
+    as the list endpoints do."""
+
+
+def _build_parameter_app(app_class: type[FastAPI] = SentinelAPI) -> FastAPI:
+    router = APIRouter(prefix="/api/v1")
+
+    @router.get("/items/{item_id}", dependencies=[Depends(_search)])
+    async def item(
+        item_id: str,
+        active: Annotated[bool | None, Query()] = None,
+        number: Annotated[int | None, Query(ge=1, le=10)] = None,
+        order: Annotated[_Order | None, Query()] = None,
+        mixed: Annotated[int | str | None, Query()] = None,
+        page: Annotated[int, Query(ge=1)] = 1,
+    ) -> None:
+        """Optional parameters of several types, and two without `None`."""
+
+    @router.get("/other", dependencies=[Depends(_search)])
+    async def other() -> None:
+        """Shares the query builder."""
+
+    @router.post("/notes")
+    async def notes(note: _Note) -> None:
+        """A request body with a nullable member."""
+
+    test_app = app_class()
+    test_app.include_router(router)
+    return test_app
+
+
+def _parameters(test_app: FastAPI, path: str) -> dict[str, Any]:
+    """The schema of each parameter of the `GET` operation of `path`."""
+    operation = test_app.openapi()["paths"][f"/api/v1{path}"]["get"]
+    return {
+        parameter["name"]: parameter["schema"] for parameter in operation["parameters"]
+    }
+
+
+@pytest.mark.unit
+class TestParametersWithoutNull:
+    """`SentinelAPI` publishes every path and query parameter without the
+    `null` alternative that FastAPI generates for a `None` default
+    (`docs/api-spec.md`, Parameter Nullability)."""
+
+    def test_fastapi_publishes_a_none_default_as_null(self) -> None:
+        """Guards the cases below against passing vacuously."""
+        parameters = _parameters(_build_parameter_app(FastAPI), "/items/{item_id}")
+
+        assert parameters["active"] == {
+            "anyOf": [{"type": "boolean"}, {"type": "null"}],
+            "title": "Active",
+        }
+
+    def test_optional_parameter_is_published_as_its_type(self) -> None:
+        parameters = _parameters(_build_parameter_app(), "/items/{item_id}")
+
+        assert parameters["active"] == {"type": "boolean", "title": "Active"}
+        assert parameters["number"] == {
+            "type": "integer",
+            "maximum": 10,
+            "minimum": 1,
+            "title": "Number",
+        }
+        assert parameters["order"] == {
+            "$ref": "#/components/schemas/_Order",
+            "title": "Order",
+        }
+        assert parameters["mixed"] == {
+            "anyOf": [{"type": "integer"}, {"type": "string"}],
+            "title": "Mixed",
+        }
+
+    def test_parameters_without_none_are_unchanged(self) -> None:
+        parameters = _parameters(_build_parameter_app(), "/items/{item_id}")
+
+        assert parameters["item_id"] == {"type": "string", "title": "Item Id"}
+        assert parameters["page"] == {
+            "type": "integer",
+            "minimum": 1,
+            "default": 1,
+            "title": "Page",
+        }
+
+    def test_shared_builder_parameter_is_published_without_null_everywhere(
+        self,
+    ) -> None:
+        test_app = _build_parameter_app()
+        expected = {
+            "type": "string",
+            "minLength": 2,
+            "description": "Text.",
+            "title": "Search",
+        }
+
+        assert _parameters(test_app, "/items/{item_id}")["search"] == expected
+        assert _parameters(test_app, "/other")["search"] == expected
+
+    def test_nullable_request_body_member_keeps_its_null(self) -> None:
+        schemas = _build_parameter_app().openapi()["components"]["schemas"]
+
+        assert schemas["_Note"]["properties"]["text"]["anyOf"] == [
+            {"type": "string"},
+            {"type": "null"},
+        ]
+
+    def test_other_parameters_and_schemas_are_left_as_they_are(self) -> None:
+        """Cases that FastAPI does not generate for Sentinel's routes: a
+        header parameter, a parameter described by `content`, one whose
+        only alternative is `null`, and a remaining alternative that shares
+        a keyword with the schema around it, which stays an `anyOf`."""
+        null = {"type": "null"}
+        document: dict[str, Any] = {
+            "paths": {
+                "/edge": {
+                    "summary": "A path item member that is not an operation.",
+                    "get": {
+                        "parameters": [
+                            {
+                                "name": "trace",
+                                "in": "header",
+                                "schema": {"anyOf": [{"type": "string"}, null]},
+                            },
+                            {"name": "described", "in": "query", "content": {}},
+                            {
+                                "name": "only_null",
+                                "in": "query",
+                                "schema": {"anyOf": [null]},
+                            },
+                            {
+                                "name": "clash",
+                                "in": "query",
+                                "schema": {
+                                    "anyOf": [{"type": "string", "title": "In"}, null],
+                                    "title": "Out",
+                                },
+                            },
+                        ]
+                    },
+                }
+            }
+        }
+
+        publish_parameters_without_null(document)
+
+        parameters = document["paths"]["/edge"]["get"]["parameters"]
+        assert [parameter.get("schema") for parameter in parameters] == [
+            {"anyOf": [{"type": "string"}, null]},
+            None,
+            {"anyOf": [null]},
+            {"anyOf": [{"type": "string", "title": "In"}], "title": "Out"},
+        ]

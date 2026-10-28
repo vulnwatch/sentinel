@@ -38,7 +38,7 @@ from types import UnionType
 from typing import Annotated, Any, Final, Literal, Union, get_args, get_origin
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi import routing as fastapi_routing
 from fastapi.dependencies.models import Dependant
 from fastapi.routing import APIRoute
@@ -1026,6 +1026,133 @@ class TestRequestBodyNullability:
         assert _optional_members_not_missing(_Patch) == [
             "_Patch.cleared does not default to MISSING",
             "_Patch.listed does not default to MISSING",
+        ]
+
+
+# docs/api-spec.md (Parameter Nullability): the parameters that travel as text.
+_TEXT_PARAMETER_LOCATIONS: Final = frozenset({"path", "query"})
+
+
+def _text_parameters(
+    document: dict[str, Any],
+) -> Iterable[tuple[str, dict[str, Any]]]:
+    """Every path and query parameter of `document`, with its operation."""
+    for path, item in document.get("paths", {}).items():
+        for method, operation in item.items():
+            if not isinstance(operation, dict):
+                continue
+            for parameter in operation.get("parameters", ()):
+                if parameter.get("in") in _TEXT_PARAMETER_LOCATIONS:
+                    yield f"{method.upper()} {path}", parameter
+
+
+def _nullable_parameters(document: dict[str, Any]) -> list[str]:
+    """Every path and query parameter of `document` whose schema admits
+    `null` or whose default is `null`."""
+    violations: list[str] = []
+    for operation, parameter in _text_parameters(document):
+        schema: dict[str, Any] = parameter.get("schema", {})
+        if _admits_null(schema, document) or (
+            "default" in schema and schema["default"] is None
+        ):
+            violations.append(
+                f"{operation}: {parameter['in']} parameter {parameter['name']}"
+            )
+    return violations
+
+
+@pytest.mark.unit
+class TestParameterNullability:
+    """No path or query parameter is published as nullable.
+
+    See `docs/api-spec.md` (Parameter Nullability) and `docs/conventions.md`
+    (FastAPI Conventions, Optional parameters). A parameter travels as text,
+    so no request can send `null` for it, but FastAPI publishes the `None`
+    default of an optional parameter as `null`; a client generated from that
+    document accepts a `null` that only fails, or matches the text `null`, at
+    runtime. The check reads the generated document, so it covers every
+    parameter, whichever dependency declares it.
+    """
+
+    def test_no_parameter_is_published_as_nullable(self) -> None:
+        document = app.openapi()
+        assert any(
+            parameter["in"] == "query" for _, parameter in _text_parameters(document)
+        ), "no query parameter found"
+
+        violations = _nullable_parameters(document)
+
+        assert not violations, "\n".join(violations)
+
+    def test_detection_covers_alternatives_type_lists_references_and_defaults(
+        self,
+    ) -> None:
+        """Guards the checker itself against passing vacuously."""
+
+        def parameter(name: str, location: str, schema: Any) -> dict[str, Any]:
+            return {"name": name, "in": location, "schema": schema}
+
+        document: dict[str, Any] = {
+            "paths": {
+                "/items/{item_id}": {
+                    "get": {
+                        "parameters": [
+                            parameter("item_id", "path", {"type": ["string", "null"]}),
+                            parameter(
+                                "active",
+                                "query",
+                                {"anyOf": [{"type": "boolean"}, {"type": "null"}]},
+                            ),
+                            parameter(
+                                "state",
+                                "query",
+                                {"$ref": "#/components/schemas/NullableState"},
+                            ),
+                            parameter(
+                                "search", "query", {"type": "string", "default": None}
+                            ),
+                            parameter(
+                                "page", "query", {"type": "integer", "default": 1}
+                            ),
+                            parameter(
+                                "order", "query", {"$ref": "#/components/schemas/Order"}
+                            ),
+                            parameter(
+                                "trace",
+                                "header",
+                                {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                            ),
+                        ]
+                    }
+                }
+            },
+            "components": {
+                "schemas": {
+                    "NullableState": {"enum": ["open", "closed", None]},
+                    "Order": {"type": "string", "enum": ["asc", "desc"]},
+                }
+            },
+        }
+
+        assert _nullable_parameters(document) == [
+            "GET /items/{item_id}: path parameter item_id",
+            "GET /items/{item_id}: query parameter active",
+            "GET /items/{item_id}: query parameter state",
+            "GET /items/{item_id}: query parameter search",
+        ]
+
+    def test_detection_covers_the_schema_fastapi_generates(self) -> None:
+        """A plain `FastAPI` application, without the publication of
+        `SentinelAPI`, publishes the `None` default of an optional parameter
+        as a `null` alternative."""
+        plain = FastAPI()
+
+        @plain.get("/items")
+        async def items(active: Annotated[bool | None, Query()] = None) -> None:
+            """An optional parameter with a `None` default."""
+
+        assert _nullable_parameters(plain.openapi()) == [
+            "GET /items: query parameter active"
         ]
 
 

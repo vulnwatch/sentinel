@@ -1,4 +1,5 @@
-"""OpenAPI documentation of the global and shared responses.
+"""OpenAPI documentation of the global and shared responses, and of
+parameters without `null`.
 
 `docs/api-spec.md` (Global Responses, Response Applicability Derivation)
 derives these responses from an endpoint's access level, method, and query
@@ -26,6 +27,12 @@ describes endpoint-specific codes for that status. For `422`, its schema
 must therefore also admit `ValidationErrorResponse`
 (`backend/tests/test_api_conventions.py`); for a derived status, the derived
 condition is appended to its description.
+
+`SentinelAPI` also publishes every path and query parameter without a `null`
+alternative (`docs/api-spec.md`, Parameter Nullability;
+`publish_parameters_without_null`). FastAPI publishes the `None` default of an
+optional parameter as `null`, which no request can send, because a parameter
+travels as text.
 """
 
 from __future__ import annotations
@@ -108,6 +115,10 @@ _CROSS_ORIGIN: Final = DerivedResponse(
     "a browser sent the request for a page of an origin that is neither the "
     "API's own nor a configured browser client.",
 )
+
+_NULL_SCHEMA: Final = {"type": "null"}
+# docs/api-spec.md (Parameter Nullability): the parameters that travel as text.
+_TEXT_PARAMETER_LOCATIONS: Final = frozenset({"path", "query"})
 
 
 def _dependants(dependant: Dependant) -> Iterator[Dependant]:
@@ -193,13 +204,48 @@ def document_derived_responses(
         ).setdefault(ErrorResponse.__name__, ErrorResponse.model_json_schema())
 
 
+def _without_null(schema: dict[str, Any]) -> dict[str, Any]:
+    """`schema` without its `null` alternative, or `schema` itself when it
+    has none. A single remaining alternative replaces the `anyOf`, so the
+    result equals the schema generated for the type without `None`."""
+    alternatives: list[dict[str, Any]] = schema.get("anyOf", [])
+    remaining = [option for option in alternatives if option != _NULL_SCHEMA]
+    if not remaining or len(remaining) == len(alternatives):
+        return schema
+    outer = {key: value for key, value in schema.items() if key != "anyOf"}
+    if len(remaining) == 1 and not remaining[0].keys() & outer.keys():
+        return {**remaining[0], **outer}
+    return {**outer, "anyOf": remaining}
+
+
+def publish_parameters_without_null(openapi_schema: dict[str, Any]) -> None:
+    """Remove from `openapi_schema`, in place, the `null` alternative of every
+    path and query parameter (`docs/api-spec.md`, Parameter Nullability).
+
+    Each schema is replaced, not edited, because the operations of a shared
+    query builder can share one schema object.
+    """
+    for item in openapi_schema.get("paths", {}).values():
+        for operation in item.values():
+            if not isinstance(operation, dict):
+                continue
+            for parameter in operation.get("parameters", ()):
+                if parameter.get("in") in _TEXT_PARAMETER_LOCATIONS and (
+                    "schema" in parameter
+                ):
+                    parameter["schema"] = _without_null(parameter["schema"])
+
+
 class SentinelAPI(FastAPI):
     """FastAPI, whose generated OpenAPI document also describes the
-    derived responses (`document_derived_responses`)."""
+    derived responses (`document_derived_responses`) and publishes every
+    path and query parameter without `null`
+    (`publish_parameters_without_null`)."""
 
     def openapi(self) -> dict[str, Any]:
         if self.openapi_schema is None:
             openapi_schema = super().openapi()
             document_derived_responses(openapi_schema, self.routes)
+            publish_parameters_without_null(openapi_schema)
             return openapi_schema
         return self.openapi_schema
