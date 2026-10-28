@@ -1983,14 +1983,19 @@ class TestUpdateUserAdmin:
         requested: bool,
     ) -> None:
         admin, client = admin_user_and_client
-        target = await user_factory(username="botpatchtarget", bot=stored)
+        target = await user_factory(
+            username="botpatchtarget", bot=stored, full_name="Stored Name"
+        )
 
         response = await client.patch(
             f"/api/v1/admin/users/{target.id}", json={"bot": requested}
         )
 
         assert response.status_code == 200
-        assert response.json()["data"]["bot"] is requested
+        data = response.json()["data"]
+        assert data["bot"] is requested
+        # The omitted members keep their values; the only event is bot's.
+        assert data["full_name"] == "Stored Name"
         events = await _audit_events_for(db_session, target.id)
         assert [
             (event.event_type, event.old_value, event.new_value, event.user_id)
@@ -2841,21 +2846,3 @@ def test_user_representation_declares_bot_as_a_required_boolean(
     schema = fastapi_app.openapi()["components"]["schemas"][schema_name]
     assert schema["properties"]["bot"]["type"] == "boolean"
     assert "bot" in schema["required"]
-
-
-@pytest.mark.unit
-def test_admin_update_request_publishes_null_only_for_full_name() -> None:
-    """`email` and `bot` are optional but non-nullable, so the document
-    publishes them without `null`; `full_name` accepts `null` to clear it
-    (`docs/api-spec.md`, Partial Update Semantics; `user-management.md`,
-    Update User (Admin))."""
-    from app.main import app as fastapi_app
-
-    schema = fastapi_app.openapi()["components"]["schemas"]["AdminUserUpdateRequest"]
-    properties = schema["properties"]
-    assert "required" not in schema
-    assert properties["email"]["type"] == "string"
-    assert properties["bot"]["type"] == "boolean"
-    assert "anyOf" not in properties["email"]
-    assert "anyOf" not in properties["bot"]
-    assert {"type": "null"} in properties["full_name"]["anyOf"]

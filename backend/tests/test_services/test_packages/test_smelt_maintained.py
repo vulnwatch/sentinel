@@ -117,6 +117,14 @@ def _compact(mapping: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in mapping.items() if value is not MISSING}
 
 
+def _replaced(standard: dict[str, Any], members: dict[str, Any]) -> dict[str, Any]:
+    """`standard` with `members` replacing its top-level members, where
+    `MISSING` removes one; an unknown member name is a test error."""
+    unknown = members.keys() - standard.keys()
+    assert not unknown, f"unknown builder members: {sorted(unknown)}"
+    return _compact(standard | members)
+
+
 def _target(
     cpe: Any = CPE_ONE,
     friendly_name: Any = FRIENDLY_ONE,
@@ -142,7 +150,7 @@ def _target(
             "type": definition_type,
         },
     }
-    return _compact(target | members)
+    return _replaced(target, members)
 
 
 def _entry(
@@ -163,7 +171,7 @@ def _entry(
         "targets": [_target()],
         "support_status": "General Support",
     }
-    return _compact(entry | members)
+    return _replaced(entry, members)
 
 
 def _success(*entries: Any) -> dict[str, Any]:

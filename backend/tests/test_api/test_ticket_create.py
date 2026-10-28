@@ -1335,8 +1335,9 @@ class TestOpenApiContract:
         assert enum_variant["enum"] == ["critical", "high", "medium", "low", "none"]
         assert properties["is_confidential"]["type"] == "boolean"
         # Omitting the field is not equivalent to sending `false`: only a
-        # present field requires `manage_confidentiality` (api-spec.md,
-        # Partial Update Semantics), so the document publishes no default.
+        # present field requires `manage_confidentiality`, so the document
+        # publishes no default (api-spec.md, Request Body Nullability and
+        # Defaults).
         assert "default" not in properties["is_confidential"]
         assert "manage_confidentiality" in properties["is_confidential"]["description"]
         assert {"type": "string", "format": "date-time"} in properties[

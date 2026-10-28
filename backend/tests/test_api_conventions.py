@@ -929,13 +929,14 @@ class TestRequestBodyNullability:
     validation accepts `null` for it, and every optional member of a `PATCH`
     body defaults to `MISSING`.
 
-    See `docs/api-spec.md` (Partial Update Semantics) and
-    `docs/conventions.md` (Pydantic Conventions, Omitted request members;
-    Omitted Values). A `None` default with a validator that rejects `null`
-    publishes a member as nullable although the request rejects it, and a
-    hand-written schema can hide a `null` that the request accepts; both
-    mislead a client generated from the document. Body models are collected
-    from every route's effective dependency graph, nested models included.
+    See `docs/api-spec.md` (Request Body Nullability and Defaults; Partial
+    Update Semantics) and `docs/conventions.md` (Pydantic Conventions,
+    Omitted request members; Omitted Values). A `None` default with a
+    validator that rejects `null` publishes a member as nullable although
+    the request rejects it, and a hand-written schema can hide a `null` that
+    the request accepts; both mislead a client generated from the document.
+    Body models are collected from every route's effective dependency graph,
+    nested models included.
     """
 
     def test_published_nullability_matches_validation(self) -> None:

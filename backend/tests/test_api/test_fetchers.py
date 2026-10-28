@@ -1890,29 +1890,42 @@ class TestUpdateFetcherConfigEndpoint:
         assert response.json()["code"] == "VALIDATION_ERROR"
 
     @pytest.mark.parametrize(
-        "field", ["enabled", "run_timeout", "request_delay", "custom_settings"]
+        "body",
+        [
+            *(
+                pytest.param({field: None}, id=f"{field}-null")
+                for field in (
+                    "enabled",
+                    "run_timeout",
+                    "request_delay",
+                    "custom_settings",
+                )
+            ),
+            pytest.param({"custom_settings": []}, id="custom_settings-array"),
+            pytest.param({"custom_settings": "x"}, id="custom_settings-string"),
+        ],
     )
-    async def test_null_non_nullable_field_returns_422_at_that_field(
+    async def test_null_or_wrong_type_non_nullable_field_returns_422_at_it(
         self,
         admin_client: AsyncClient,
         fetcher_config_factory: FetcherConfigFactory,
-        field: str,
+        body: dict[str, Any],
     ) -> None:
         """An explicit `null` for a non-nullable member is a type error of
-        that member alone (api-spec.md, Partial Update Semantics); the
-        document publishes the member without `null`."""
+        that member alone (api-spec.md, Partial Update Semantics), like any
+        other value of the wrong JSON type."""
         _register(_StubFetcherWithSettings)
         config = await fetcher_config_factory(
             fetcher_name=_StubFetcherWithSettings.name
         )
+        (field,) = body
         response = await admin_client.patch(
-            f"/api/v1/fetchers/{config.fetcher_name}/config",
-            json={field: None},
+            f"/api/v1/fetchers/{config.fetcher_name}/config", json=body
         )
         assert response.status_code == 422
-        body = response.json()
-        assert body["code"] == "VALIDATION_ERROR"
-        assert [error["loc"] for error in body["errors"]] == [["body", field]]
+        payload = response.json()
+        assert payload["code"] == "VALIDATION_ERROR"
+        assert [error["loc"] for error in payload["errors"]] == [["body", field]]
 
     async def test_admin_jwt_updates_config_and_returns_updated_shape(
         self,
@@ -2671,28 +2684,6 @@ class TestFetchersConfigAndAuditLogOpenAPISurface:
         openapi_paths = app.openapi()["paths"]
         config_patch = openapi_paths["/api/v1/fetchers/{fetcher_name}/config"]["patch"]
         assert "requestBody" in config_patch
-
-    def test_update_config_publishes_null_only_for_schedule_override(self) -> None:
-        """The non-nullable members are optional but published without
-        `null`; `schedule_override` accepts `null` to revert to the default
-        schedule (`docs/api-spec.md`, Partial Update Semantics)."""
-        schema = app.openapi()["components"]["schemas"]["FetcherConfigUpdateRequest"]
-        properties = schema["properties"]
-
-        non_nullable = {
-            name: member["type"]
-            for name, member in properties.items()
-            if name != "schedule_override"
-        }
-
-        assert "required" not in schema
-        assert non_nullable == {
-            "enabled": "boolean",
-            "run_timeout": "integer",
-            "request_delay": "number",
-            "custom_settings": "object",
-        }
-        assert {"type": "null"} in properties["schedule_override"]["anyOf"]
 
     def test_audit_log_query_parameters_are_declared(self) -> None:
         openapi_paths = app.openapi()["paths"]
