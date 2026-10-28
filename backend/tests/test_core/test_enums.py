@@ -77,6 +77,7 @@ from app.core.enums import (
     TicketPriority,
     TicketSortField,
     TicketStatus,
+    UserDirectorySortField,
     UserSortField,
     UserType,
     WorkflowType,
@@ -261,7 +262,7 @@ class TestUserTypeEnum:
 @pytest.mark.unit
 class TestUserSortFieldEnum:
     """UserSortField must have exactly the four members defined in
-    user-management.md (List Users)."""
+    user-management.md (List Users (Admin))."""
 
     def test_exact_members(self) -> None:
         assert {member.value for member in UserSortField} == {
@@ -269,6 +270,25 @@ class TestUserSortFieldEnum:
             "full_name",
             "email",
             "created_at",
+        }
+
+
+@pytest.mark.unit
+class TestUserDirectorySortFieldEnum:
+    """UserDirectorySortField must have exactly the three members defined
+    in user-management.md (List Users): the directory sorts only on fields
+    its entry returns."""
+
+    def test_exact_members(self) -> None:
+        assert {member.value for member in UserDirectorySortField} == {
+            "username",
+            "full_name",
+            "email",
+        }
+
+    def test_is_a_subset_of_the_administrator_sort_fields(self) -> None:
+        assert {member.value for member in UserDirectorySortField} < {
+            member.value for member in UserSortField
         }
 
 

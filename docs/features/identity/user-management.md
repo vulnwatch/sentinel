@@ -770,17 +770,42 @@ stderr.
 
 ## Access Level Requirements
 
-User listing and user detail are accessible to every authenticated user
-(read-only). Administrator API operations (create, edit, deactivate,
+The API exposes user records to two audiences:
+
+- **The user directory** (List Users and Get User under Directory API
+  endpoints) is accessible to every authenticated user (read-only) and
+  returns the directory entry: a user's identity, email, active status, and
+  role values.
+- **The complete user profile** is returned only by the administrator API: its
+  list and detail reads (List Users (Admin) and Get User (Admin)) and the
+  responses of the administrator mutation operations.
+
+Administrator API operations (list, view, create, edit, deactivate,
 reactivate, reset password, unlock, role management) require the
 `manage_users` capability. CLI commands are authorized by direct shell or
 container access and pass `acting_user_id = None`; they do not evaluate an HTTP
 caller capability.
 
-### Read API endpoints
+> **Design note — two audiences**: every read of application data requires
+> authentication (`docs/features/identity/rbac.md`, Access Levels), so the
+> directory serves every user account, role-less readers included. Its
+> consumers, such as an assignment picker (active Vulnerability Analysts), an
+> access-grant picker (a search by name, username, or email), and Ticket
+> filters, need a user's identity, email, and role values. The other fields of
+> the profile serve only user administration: the authentication source, the
+> external identity provider's identifier, the manager, the origin of each
+> role (the granting external group, the assigning administrator, and the
+> assignment time), the record timestamps, and the last login. The directory
+> therefore omits them, and it filters, searches, and sorts only on the fields
+> that its entry returns, so a query cannot reveal a value that the response
+> withholds. The omitted fields remain part of the User record. Adding a field
+> to the directory entry later is an additive change; removing one is breaking
+> (`docs/api-spec.md`, Versioning).
+
+### Directory API endpoints
 
 These read-only endpoints are accessible to every authenticated user,
-regardless of role.
+regardless of role, and return directory entries.
 
 #### List Users
 
@@ -790,9 +815,116 @@ GET /api/v1/users
 
 **`Access: Authenticated`**
 
-User search and autocomplete. Returns a paginated list of users.
+User search and autocomplete. Returns a paginated list of directory entries.
 The route delegates filtering, sorting, pagination, and relationship loading to
 `user_service.list_users()` and performs no ORM query directly.
+
+Query parameters:
+- `search` (string, optional): searches across `username`, `email`, and
+  `full_name`. Minimum 2 characters.
+  Case-insensitive substring match (SQL `ILIKE '%query%'`)
+- `active` (boolean, optional): filter by active status
+- `role` (enum, repeatable, optional): filter by role (`admin`,
+  `vulnerability_analyst`, `restricted_analyst`). Multiple values use
+  OR semantics — returns users with at least one of the specified
+  roles (e.g., `?role=admin&role=vulnerability_analyst`)
+- `has_role` (boolean, optional): `true` to return only users with at
+  least one role, `false` for users with no roles
+- Standard pagination (`page`, `per_page`) and sorting (`sort_by`,
+  `sort_order`). Valid `sort_by` fields: `username` (default),
+  `full_name`, `email`
+
+Default `sort_order` is `asc`, producing alphabetical username ordering.
+
+Filters of different kinds combine with AND semantics (e.g., `role=admin`
+and `active=true` together return only active administrators); repeated
+values of the same filter combine with OR semantics as stated above.
+
+The directory declares neither the authentication-type filter nor sorting by
+creation time, because its entry returns neither value; List Users (Admin)
+declares both.
+
+`full_name` is nullable (see Field notes below). Sorting by `full_name`
+follows `api-spec.md` (Nullable Sort Field Ordering).
+
+Response uses the standard paginated envelope (`data` array + `meta`
+object). Each item is the directory entry defined by Get User below.
+
+#### Get User
+
+```
+GET /api/v1/users/{user}
+```
+
+**`Access: Authenticated`**
+
+Returns the directory entry of one user. Response uses the standard
+single-resource envelope.
+The route delegates UUID-or-username resolution and relationship loading to
+`user_service.get_user()` and performs no ORM query directly.
+
+```json
+{
+  "data": {
+    "id": "uuid",
+    "username": "string",
+    "email": "string",
+    "full_name": "string | null",
+    "active": true,
+    "roles": ["admin", "vulnerability_analyst"]
+  }
+}
+```
+
+Field notes:
+- `full_name`: nullable. A user record (local or external) may have no
+  display name on file. The API returns `null` verbatim — it does not
+  substitute `username` or any other fallback value. Consumers that need
+  a display fallback (e.g., a UI showing `full_name ?? username`) apply
+  it at presentation time
+- `roles`: the distinct role values that the user currently holds from any
+  origin, manual or external; a role held from several origins appears once,
+  and a user without roles has an empty array. Values use the wire format and
+  the order of `rbac.md` (Role Wire Format, Deterministic ordering). The
+  origin of each role is part of the complete user profile only
+
+The directory entry has the same fields as the authenticated caller's own
+profile (`docs/features/identity/authentication.md`, Get Current User).
+
+**Error responses**:
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| 404 | `USER_NOT_FOUND` | No user found matching the given UUID or username |
+
+### Admin API endpoints
+
+The administrator API is defined here: the list and detail reads of the
+complete user profile and every user mutation endpoint. This is the single
+source of truth for the user management API surface. Other specs define the
+business rules and service-layer contracts that these endpoints invoke.
+
+All endpoints below require the `manage_users` capability unless
+otherwise stated.
+
+For every endpoint with a `{user}` path parameter, the route resolves the
+identifier through `user_service.resolve_user_identifier()` and passes the
+resolved UUID to the owning service; Get User (Admin) instead passes the
+identifier to `user_service.get_user()`, which applies the same resolution.
+`UserNotFoundError` maps to 404 `USER_NOT_FOUND`. Route handlers execute no ORM
+lookup directly.
+
+#### List Users (Admin)
+
+```
+GET /api/v1/admin/users
+```
+
+**`Capability: manage_users`**
+
+User administration listing. Returns a paginated list of complete user
+profiles. The route delegates filtering, sorting, pagination, and relationship
+loading to `user_service.list_users()` and performs no ORM query directly.
 
 Query parameters:
 - `search` (string, optional): searches across `username`, `email`, and
@@ -817,23 +949,23 @@ Filters of different kinds combine with AND semantics (e.g., `type=local`
 and `active=true` together return only active local users); repeated
 values of the same filter combine with OR semantics as stated above.
 
-`full_name` is nullable (see Field notes below). Sorting by `full_name`
-follows `api-spec.md` (Nullable Sort Field Ordering).
+`full_name` is nullable. Sorting by `full_name` follows `api-spec.md`
+(Nullable Sort Field Ordering).
 
 Response uses the standard paginated envelope (`data` array + `meta`
-object). Each user object follows the same schema as
-`GET /api/v1/users/{user}` (see below).
+object). Each item is the complete user profile defined by Get User (Admin)
+below.
 
-#### Get User
+#### Get User (Admin)
 
 ```
-GET /api/v1/users/{user}
+GET /api/v1/admin/users/{user}
 ```
 
-**`Access: Authenticated`**
+**`Capability: manage_users`**
 
-Returns full user profile. Response uses the standard single-resource
-envelope:
+Returns the complete user profile of one user. Response uses the standard
+single-resource envelope.
 The route delegates UUID-or-username resolution and relationship loading to
 `user_service.get_user()` and performs no ORM query directly.
 
@@ -862,6 +994,7 @@ The route delegates UUID-or-username resolution and relationship loading to
         "created_at": "ISO8601"
       }
     ],
+    "last_login_at": "ISO8601 | null",
     "created_at": "ISO8601",
     "updated_at": "ISO8601"
   }
@@ -872,37 +1005,24 @@ Field notes:
 - `source`: derived field — `"external"` if `external_id IS NOT NULL`,
   otherwise `"local"`
 - `external_id`: unique identifier from the external identity provider. NULL for local users
-- `full_name`: nullable. A user record (local or external) may have no
-  display name on file. The API returns `null` verbatim — it does not
-  substitute `username` or any other fallback value. Consumers that need
-  a display fallback (e.g., a UI showing `full_name ?? username`) apply
-  it at presentation time
+- `full_name`: nullable, with the same semantics as in the directory entry
+  (Get User above)
 - `manager`: resolved manager object or `null`. `manager.full_name`
   follows the same nullability as above
 - `roles`: array of all roles from both external group mappings and manual
   assignments. `group_name` is `'_manual'` for manually assigned roles.
   See `rbac.md` (Role Wire Format, Deterministic ordering) for the
   array's sort order
+- `last_login_at`: the time of the user's most recent login, which every
+  Session creation records (`docs/features/identity/authentication.md`,
+  `last_login_at` field); `null` when the user has never logged in.
+  Authentication with an API key does not change it
 
 **Error responses**:
 
 | Status | Code | Condition |
 |--------|------|-----------|
 | 404 | `USER_NOT_FOUND` | No user found matching the given UUID or username |
-
-### Admin API endpoints
-
-All user mutation endpoints are defined here. This is the single source
-of truth for the user management API surface. Other specs define the
-business rules and service-layer contracts that these endpoints invoke.
-
-All endpoints below require the `manage_users` capability unless
-otherwise stated.
-
-For every endpoint with a `{user}` path parameter, the route resolves the
-identifier through `user_service.resolve_user_identifier()` and passes the
-resolved UUID to the owning service. `UserNotFoundError` maps to 404
-`USER_NOT_FOUND`. Route handlers execute no ORM lookup directly.
 
 #### Create User (Admin)
 
@@ -963,8 +1083,8 @@ Password policy failure is domain validation and returns the error below.
 4. Return HTTP 201 with the complete user profile in the standard data
    envelope. The response never contains `password` or `password_hash`.
 
-**Response** (201 Created): the same user profile schema defined by Get User,
-including the initial roles, wrapped in `{"data": {...}}`.
+**Response** (201 Created): the complete user profile defined by Get User
+(Admin), including the initial roles, wrapped in `{"data": {...}}`.
 
 **Error responses**:
 
@@ -1018,8 +1138,8 @@ in `docs/features/identity/user-service.md`).
 7. If the service raises `UserConflictError` (duplicate email), return
    HTTP 409 with code `USER_ALREADY_EXISTS`:
    `"A user with this email already exists."`
-8. Return HTTP 200 with `UserUpdateResult.user` — the updated user profile —
-   in the standard `{"data": ...}` envelope
+8. Return HTTP 200 with `UserUpdateResult.user` — the updated complete user
+   profile — in the standard `{"data": ...}` envelope
 
 **Error responses**:
 
@@ -1029,9 +1149,8 @@ in `docs/features/identity/user-service.md`).
 | 409 | `USER_EXTERNAL_FIELD_READONLY` | Authenticated administrator attempts to modify an external user's identity fields |
 | 409 | `USER_ALREADY_EXISTS` | Normalized email is already used |
 
-**Response**: user profile in `{"data": {...}}` envelope (see
-`GET /api/v1/users/{user}` in Read API endpoints above for the full
-response schema).
+**Response**: complete user profile in `{"data": {...}}` envelope (see
+Get User (Admin) above).
 
 #### Set User Roles
 
@@ -1119,10 +1238,9 @@ overlapping input first.
   `docs/features/identity/rbac.md` (Role Origins and Coexistence) for the
   independent-origin semantics
 
-**Response**: HTTP 200 with updated user profile including all roles,
-wrapped in the standard `{"data": ...}` envelope (see
-`GET /api/v1/users/{user}` in Read API endpoints above for the full
-response schema).
+**Response**: HTTP 200 with the updated complete user profile including all
+roles, wrapped in the standard `{"data": ...}` envelope (see Get User (Admin)
+above).
 
 #### Reset User Password
 
@@ -1251,9 +1369,8 @@ See `docs/features/identity/user-service.md` for the full side effect contract
 deactivation). Deactivation creates no grant event and the impact response does
 not count grants or maintainership rows because neither is mutated.
 
-**Response**: user profile in `{"data": {...}}` envelope (see
-`GET /api/v1/users/{user}` in Read API endpoints above for the full
-response schema).
+**Response**: complete user profile in `{"data": {...}}` envelope (see
+Get User (Admin) above).
 
 #### Reactivate User
 
@@ -1290,9 +1407,8 @@ Ticket grant event.
   `docs/features/identity/user-service.md`, External Active Status
   Ownership, "Evaluation point differs by function")
 
-**Response**: user profile in `{"data": {...}}` envelope (see
-`GET /api/v1/users/{user}` in Read API endpoints above for the full
-response schema).
+**Response**: complete user profile in `{"data": {...}}` envelope (see
+Get User (Admin) above).
 
 #### Get Deactivation Impact
 
@@ -1485,6 +1601,22 @@ handling is required.
   files. A TTY is required — these commands cannot be scripted
 - **Admin UI is authenticated and capability-protected**: only callers with
   `manage_users` can use administrator user-management operations
+- **The user directory is readable by every authenticated user (accepted)**:
+  any authenticated caller, including the account behind a role-less API key,
+  can page through every user, active or not, local or external, and read
+  their username, display name, email, active status, and role values,
+  including which users hold the Admin role. This is accepted because the
+  corporate directory already exposes names and email addresses to every
+  employee, searching colleagues by email is a directory use case, and role
+  values identify whom to assign a Ticket or ask for access. The directory
+  also lists deactivated users and local accounts, whose email the corporate
+  directory may not show. This is accepted too: deactivated users remain the
+  subject of historical assignments, references, and Ticket filters; a
+  username grants nothing without the password of a local account; and the
+  lockout of a known username, an administrator's included, is the accepted
+  risk stated below (Per-username lockout DoS vector). The fields that serve
+  only user administration are never part of the directory (see Access Level
+  Requirements)
 - **Password policy**: minimum 16 characters, no complexity rules.
   Length is the primary defense (see
   `docs/features/identity/local-authentication.md`)

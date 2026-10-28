@@ -337,11 +337,11 @@ class UserType(StrEnum):
 
 
 class UserSortField(StrEnum):
-    """Sortable fields for the public user directory list query.
+    """Sortable fields for the administrator user list query.
 
     Category B — classification (Python Enum only; never stored in the
     database). See `docs/features/identity/user-management.md` (List
-    Users) for the supported fields and NULL-placement rule for
+    Users (Admin)) for the supported fields and NULL-placement rule for
     `full_name`.
     """
 
@@ -349,6 +349,21 @@ class UserSortField(StrEnum):
     FULL_NAME = "full_name"
     EMAIL = "email"
     CREATED_AT = "created_at"
+
+
+class UserDirectorySortField(StrEnum):
+    """Sortable fields for the user directory list query.
+
+    Category B — classification (Python Enum only; never stored in the
+    database). The subset of `UserSortField` whose values the directory
+    entry returns: the directory sorts only on fields it returns
+    (`docs/features/identity/user-management.md`, Access Level
+    Requirements and List Users).
+    """
+
+    USERNAME = "username"
+    FULL_NAME = "full_name"
+    EMAIL = "email"
 
 
 class TicketSortField(StrEnum):

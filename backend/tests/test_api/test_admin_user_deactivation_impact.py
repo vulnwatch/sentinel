@@ -285,7 +285,7 @@ class TestIdentifierResolution:
         _admin, client = admin_user_and_client
 
         response = await client.get(_url(identifier))
-        profile = await client.get(f"/api/v1/users/{identifier}")
+        profile = await client.get(f"/api/v1/admin/users/{identifier}")
 
         assert response.status_code == 404
         assert response.json() == _USER_NOT_FOUND

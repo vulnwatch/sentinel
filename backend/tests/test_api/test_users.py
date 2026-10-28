@@ -1,9 +1,9 @@
-"""End-to-end tests for user directory/profile read, current-user, and
-ticket-independent admin user mutation endpoints
+"""End-to-end tests for the user directory, current-user, administrator
+user read, and ticket-independent admin user mutation endpoints
 (`backend/app/api/v1/users.py`).
 
-See `docs/features/identity/user-management.md` (Read API endpoints, Admin
-API endpoints) and `docs/features/identity/authentication.md`
+See `docs/features/identity/user-management.md` (Directory API endpoints,
+Admin API endpoints) and `docs/features/identity/authentication.md`
 (Get Current User) for the authoritative endpoint contracts under test.
 Filter/sort/pagination combination coverage and lifecycle/audit/rollback
 coverage for the underlying `user_service` functions already lives in
@@ -19,6 +19,7 @@ import hashlib
 import secrets
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -194,6 +195,53 @@ class TestParseRoleFilters:
 
 
 # ---------------------------------------------------------------------------
+# Field sets of the two audiences
+# (`docs/features/identity/user-management.md`, Access Level Requirements)
+# ---------------------------------------------------------------------------
+
+_DIRECTORY_ENTRY_FIELDS = {"id", "username", "email", "full_name", "active", "roles"}
+
+_COMPLETE_PROFILE_FIELDS = {
+    "id",
+    "username",
+    "email",
+    "full_name",
+    "active",
+    "source",
+    "external_id",
+    "manager",
+    "roles",
+    "last_login_at",
+    "created_at",
+    "updated_at",
+}
+
+
+async def _profile_rich_user(
+    user_factory: Callable[..., Awaitable[User]],
+    user_role_factory: Callable[..., Awaitable[UserRole]],
+) -> User:
+    """An external user with a manager and roles from two origins: every
+    field that only the complete user profile returns has a non-null
+    value, so a directory leak of any of them is observable."""
+    manager = await user_factory(username="richmanager")
+    user = await user_factory(
+        username="richprofile",
+        external_id=uuid4(),
+        password_hash=None,
+        manager_id=manager.id,
+    )
+    await user_role_factory(user_id=user.id, role=Role.VULNERABILITY_ANALYST.value)
+    await user_role_factory(
+        user_id=user.id,
+        role=Role.VULNERABILITY_ANALYST.value,
+        group_name="O SUSE Security",
+    )
+    await user_role_factory(user_id=user.id, role=Role.ADMIN.value)
+    return user
+
+
+# ---------------------------------------------------------------------------
 # GET /api/v1/users
 # ---------------------------------------------------------------------------
 
@@ -203,7 +251,7 @@ class TestListUsers:
     async def test_request_without_credential_returns_401(
         self, client: AsyncClient
     ) -> None:
-        """See `docs/features/identity/user-management.md` (Read API
+        """See `docs/features/identity/user-management.md` (Directory API
         endpoints): every caller must be authenticated."""
         response = await client.get("/api/v1/users")
         assert response.status_code == 401
@@ -221,42 +269,84 @@ class TestListUsers:
         assert body["data"] == []
         assert body["meta"] == {"total": 0, "page": 1, "per_page": 20}
 
-    async def test_full_profile_item_shape(
+    async def test_item_is_exactly_the_directory_entry(
         self,
         authenticated_client: AsyncClient,
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
         await user_factory(username="jdoe", email="jdoe@example.com")
 
-        response = await authenticated_client.get("/api/v1/users")
+        response = await authenticated_client.get(
+            "/api/v1/users", params={"search": "jdoe"}
+        )
 
         item = response.json()["data"][0]
-        assert set(item.keys()) == {
-            "id",
-            "username",
-            "email",
-            "full_name",
-            "active",
-            "source",
-            "external_id",
-            "manager",
-            "roles",
-            "created_at",
-            "updated_at",
-        }
+        assert set(item.keys()) == _DIRECTORY_ENTRY_FIELDS
+        assert item["email"] == "jdoe@example.com"
 
-    async def test_datetimes_end_with_z(
+    async def test_administrator_caller_receives_only_directory_entries(
+        self,
+        admin_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        """The audience is set by the endpoint, not by the caller's
+        capabilities: `manage_users` reads the complete profile only
+        through `GET /api/v1/admin/users`."""
+        await _profile_rich_user(user_factory, user_role_factory)
+
+        response = await admin_client.get(
+            "/api/v1/users", params={"search": "richprofile"}
+        )
+
+        assert response.status_code == 200
+        [item] = response.json()["data"]
+        assert set(item.keys()) == _DIRECTORY_ENTRY_FIELDS
+
+    async def test_roles_are_distinct_plain_values_in_wire_order(
+        self,
+        authenticated_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        """A role held from a manual and an external origin appears once,
+        and the origin is never returned (`rbac.md`, Deterministic
+        ordering)."""
+        await _profile_rich_user(user_factory, user_role_factory)
+
+        response = await authenticated_client.get(
+            "/api/v1/users", params={"search": "richprofile"}
+        )
+
+        [item] = response.json()["data"]
+        assert item["roles"] == ["admin", "vulnerability_analyst"]
+
+    async def test_user_without_roles_has_empty_roles(
         self,
         authenticated_client: AsyncClient,
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
-        await user_factory()
+        await user_factory(username="norolesuser")
 
-        response = await authenticated_client.get("/api/v1/users")
+        response = await authenticated_client.get(
+            "/api/v1/users", params={"search": "norolesuser"}
+        )
 
-        item = response.json()["data"][0]
-        assert item["created_at"].endswith("Z")
-        assert item["updated_at"].endswith("Z")
+        [item] = response.json()["data"]
+        assert item["roles"] == []
+
+    async def test_search_matches_email(
+        self,
+        authenticated_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        await user_factory(username="mailsearch", email="unique.mailbox@example.com")
+
+        response = await authenticated_client.get(
+            "/api/v1/users", params={"search": "unique.mailbox"}
+        )
+
+        assert [item["username"] for item in response.json()["data"]] == ["mailsearch"]
 
     async def test_search_below_minimum_length_returns_422(
         self, authenticated_client: AsyncClient
@@ -296,6 +386,48 @@ class TestListUsers:
         )
         assert response.status_code == 422
 
+    async def test_sort_by_created_at_returns_422(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """The directory sorts only on fields its entry returns; creation
+        time is sortable only on `GET /api/v1/admin/users`."""
+        response = await authenticated_client.get(
+            "/api/v1/users", params={"sort_by": "created_at"}
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    @pytest.mark.parametrize(
+        ("sort_by", "sort_order", "expected"),
+        [
+            ("username", "asc", ["sortalpha", "sortbravo"]),
+            ("email", "desc", ["sortalpha", "sortbravo"]),
+            ("full_name", "asc", ["sortbravo", "sortalpha"]),
+        ],
+    )
+    async def test_directory_sort_fields_are_applied(
+        self,
+        authenticated_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        sort_by: str,
+        sort_order: str,
+        expected: list[str],
+    ) -> None:
+        await user_factory(
+            username="sortalpha", email="sortz@example.com", full_name="Zed Sort"
+        )
+        await user_factory(
+            username="sortbravo", email="sorta@example.com", full_name="Abe Sort"
+        )
+
+        response = await authenticated_client.get(
+            "/api/v1/users",
+            params={"search": "sort", "sort_by": sort_by, "sort_order": sort_order},
+        )
+
+        assert response.status_code == 200
+        assert [item["username"] for item in response.json()["data"]] == expected
+
     async def test_invalid_sort_order_returns_422(
         self, authenticated_client: AsyncClient
     ) -> None:
@@ -304,19 +436,31 @@ class TestListUsers:
         )
         assert response.status_code == 422
 
-    async def test_invalid_type_filter_returns_empty_result(
+    @pytest.mark.parametrize("type_value", ["local", "external", "bogus"])
+    async def test_type_parameter_is_ignored(
         self,
         authenticated_client: AsyncClient,
         user_factory: Callable[..., Awaitable[User]],
+        type_value: str,
     ) -> None:
-        await user_factory()
+        """The directory declares no authentication-type filter, so an
+        undeclared `type` is ignored (`docs/api-spec.md`, Undeclared Query
+        Parameters): it neither narrows the result nor reveals which
+        accounts are local or external."""
+        await user_factory(username="ignoredtypelocal")
+        await user_factory(
+            username="ignoredtypeexternal", external_id=uuid4(), password_hash=None
+        )
 
         response = await authenticated_client.get(
-            "/api/v1/users", params={"type": "bogus"}
+            "/api/v1/users", params={"search": "ignoredtype", "type": type_value}
         )
 
         assert response.status_code == 200
-        assert response.json()["meta"]["total"] == 0
+        assert {item["username"] for item in response.json()["data"]} == {
+            "ignoredtypelocal",
+            "ignoredtypeexternal",
+        }
 
     async def test_all_invalid_role_values_return_empty_result(
         self,
@@ -355,6 +499,61 @@ class TestListUsers:
         usernames = {item["username"] for item in response.json()["data"]}
         assert usernames == {"repeatadmin", "repeatanalyst"}
 
+    async def test_active_role_filters_select_active_vulnerability_analysts(
+        self,
+        authenticated_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        """The assignment-picker query of the design note: active users
+        holding `vulnerability_analyst`."""
+        eligible = await user_factory(username="pickeractiveva")
+        await user_role_factory(
+            user_id=eligible.id, role=Role.VULNERABILITY_ANALYST.value
+        )
+        inactive = await user_factory(username="pickerinactiveva", active=False)
+        await user_role_factory(
+            user_id=inactive.id, role=Role.VULNERABILITY_ANALYST.value
+        )
+        await user_factory(username="pickernorole")
+
+        response = await authenticated_client.get(
+            "/api/v1/users",
+            params={
+                "role": "vulnerability_analyst",
+                "active": "true",
+                "search": "picker",
+            },
+        )
+
+        assert [item["username"] for item in response.json()["data"]] == [
+            "pickeractiveva"
+        ]
+
+    @pytest.mark.parametrize(
+        ("has_role", "expected"),
+        [("true", {"hasroledirectoryva"}), ("false", {"hasroledirectorynone"})],
+    )
+    async def test_has_role_filter_is_applied(
+        self,
+        authenticated_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+        has_role: str,
+        expected: set[str],
+    ) -> None:
+        with_role = await user_factory(username="hasroledirectoryva")
+        await user_role_factory(user_id=with_role.id)
+        await user_factory(username="hasroledirectorynone")
+
+        response = await authenticated_client.get(
+            "/api/v1/users",
+            params={"search": "hasroledirectory", "has_role": has_role},
+        )
+
+        assert response.status_code == 200
+        assert {item["username"] for item in response.json()["data"]} == expected
+
     async def test_page_beyond_result_set_returns_empty_data_with_correct_total(
         self,
         authenticated_client: AsyncClient,
@@ -370,25 +569,11 @@ class TestListUsers:
         # The created user and the authenticated caller.
         assert body["meta"]["total"] == 2
 
-    async def test_no_undocumented_fields_leak(
-        self,
-        authenticated_client: AsyncClient,
-        user_factory: Callable[..., Awaitable[User]],
-    ) -> None:
-        await user_factory()
-
-        response = await authenticated_client.get("/api/v1/users")
-
-        item = response.json()["data"][0]
-        assert "password_hash" not in item
-        assert "last_login_at" not in item
-        assert "synced_at" not in item
-
     async def test_valid_jwt_authentication_is_accepted(
         self,
         authenticated_user_and_client: tuple[User, AsyncClient],
     ) -> None:
-        """See `docs/features/identity/user-management.md` (Read API
+        """See `docs/features/identity/user-management.md` (Directory API
         endpoints): a role-less caller with a valid session reads the
         directory."""
         _user, client = authenticated_user_and_client
@@ -476,7 +661,7 @@ class TestGetUser:
         client: AsyncClient,
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
-        """See `docs/features/identity/user-management.md` (Read API
+        """See `docs/features/identity/user-management.md` (Directory API
         endpoints): every caller must be authenticated."""
         user = await user_factory(username="nocredentialtarget")
 
@@ -523,76 +708,70 @@ class TestGetUser:
         assert response.status_code == 404
         assert response.json()["code"] == "USER_NOT_FOUND"
 
-    async def test_manager_and_roles_are_fully_rendered(
+    async def test_returns_exactly_the_directory_entry(
         self,
         authenticated_client: AsyncClient,
         user_factory: Callable[..., Awaitable[User]],
         user_role_factory: Callable[..., Awaitable[UserRole]],
     ) -> None:
-        manager = await user_factory(username="managerforprofile")
-        user = await user_factory(username="profiletarget", manager_id=manager.id)
-        await user_role_factory(user_id=user.id, role=Role.ADMIN.value)
+        user = await _profile_rich_user(user_factory, user_role_factory)
 
         response = await authenticated_client.get(f"/api/v1/users/{user.username}")
 
-        data = response.json()["data"]
-        assert data["manager"]["username"] == "managerforprofile"
-        assert data["manager"]["email"] == manager.email
-        assert data["roles"] == [
-            {
-                "role": "admin",
-                "group_name": "_manual",
-                "assigned_by": None,
-                "created_at": data["roles"][0]["created_at"],
-            }
-        ]
+        assert response.status_code == 200
+        assert response.json()["data"] == {
+            "id": str(user.id),
+            "username": "richprofile",
+            "email": user.email,
+            "full_name": None,
+            "active": True,
+            "roles": ["admin", "vulnerability_analyst"],
+        }
 
-    async def test_external_user_has_external_source(
+    async def test_administrator_caller_receives_the_directory_entry(
+        self,
+        admin_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        user = await _profile_rich_user(user_factory, user_role_factory)
+
+        response = await admin_client.get(f"/api/v1/users/{user.id}")
+
+        assert response.status_code == 200
+        assert set(response.json()["data"].keys()) == _DIRECTORY_ENTRY_FIELDS
+
+    async def test_full_name_null_is_returned_verbatim(
         self,
         authenticated_client: AsyncClient,
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
-        external_id = uuid4()
-        user = await user_factory(
-            username="externaltest", external_id=external_id, password_hash=None
-        )
+        user = await user_factory(username="nofullname", full_name=None)
 
         response = await authenticated_client.get(f"/api/v1/users/{user.username}")
 
-        data = response.json()["data"]
-        assert data["source"] == "external"
-        assert data["external_id"] == str(external_id)
+        assert response.json()["data"]["full_name"] is None
 
-    async def test_last_login_at_is_never_exposed(
+    async def test_inactive_user_is_resolved(
         self,
         authenticated_client: AsyncClient,
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
-        user = await user_factory(username="loginhiddentest")
+        user = await user_factory(username="inactivedirectory", active=False)
 
         response = await authenticated_client.get(f"/api/v1/users/{user.username}")
 
-        assert "last_login_at" not in response.json()["data"]
-
-    async def test_password_hash_is_never_exposed(
-        self,
-        authenticated_client: AsyncClient,
-        user_factory: Callable[..., Awaitable[User]],
-    ) -> None:
-        user = await user_factory(username="passwordhiddentest")
-
-        response = await authenticated_client.get(f"/api/v1/users/{user.username}")
-
-        assert "password_hash" not in response.json()["data"]
+        assert response.status_code == 200
+        assert response.json()["data"]["active"] is False
 
     async def test_valid_jwt_authentication_is_accepted(
         self,
         authenticated_user_and_client: tuple[User, AsyncClient],
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
-        """See `docs/features/identity/user-management.md` (Read API
+        """See `docs/features/identity/user-management.md` (Directory API
         endpoints): a role-less caller with a valid session reads another
-        user's profile."""
+        user's directory entry."""
         _actor, client = authenticated_user_and_client
         target = await user_factory(username="jwttargetuser")
 
@@ -674,6 +853,430 @@ class TestGetUser:
         assert response.status_code == 200
         assert "set-cookie" in response.headers
         assert response.headers["set-cookie"].startswith(f"{SESSION_COOKIE_NAME}=")
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/admin/users
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+class TestListUsersAdmin:
+    async def test_request_without_credential_returns_401(
+        self, client: AsyncClient
+    ) -> None:
+        response = await client.get("/api/v1/admin/users")
+        assert response.status_code == 401
+        assert response.json() == UNAUTHENTICATED
+
+    async def test_role_less_caller_returns_403(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        response = await authenticated_client.get("/api/v1/admin/users")
+        assert response.status_code == 403
+        assert response.json() == {
+            "code": "AUTH_INSUFFICIENT_PERMISSION",
+            "detail": "Insufficient permissions",
+        }
+
+    @pytest.mark.parametrize(
+        "role", [Role.VULNERABILITY_ANALYST, Role.RESTRICTED_ANALYST]
+    )
+    async def test_caller_without_manage_users_returns_403(
+        self,
+        authenticated_user_and_client: tuple[User, AsyncClient],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+        role: Role,
+    ) -> None:
+        user, client = authenticated_user_and_client
+        await user_role_factory(user_id=user.id, role=role.value)
+
+        response = await client.get("/api/v1/admin/users")
+
+        assert response.status_code == 403
+        assert response.json()["code"] == "AUTH_INSUFFICIENT_PERMISSION"
+
+    async def test_item_is_the_complete_user_profile(
+        self,
+        admin_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        user = await _profile_rich_user(user_factory, user_role_factory)
+
+        response = await admin_client.get(
+            "/api/v1/admin/users", params={"search": "richprofile"}
+        )
+
+        assert response.status_code == 200
+        [item] = response.json()["data"]
+        assert set(item.keys()) == _COMPLETE_PROFILE_FIELDS
+        assert item["source"] == "external"
+        assert item["external_id"] == str(user.external_id)
+        assert item["manager"]["username"] == "richmanager"
+        assert [(role["role"], role["group_name"]) for role in item["roles"]] == [
+            ("admin", "_manual"),
+            ("vulnerability_analyst", "O SUSE Security"),
+            ("vulnerability_analyst", "_manual"),
+        ]
+        assert item["last_login_at"] is None
+
+    async def test_datetimes_end_with_z(
+        self,
+        admin_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        await user_factory(username="zsuffixuser")
+
+        response = await admin_client.get(
+            "/api/v1/admin/users", params={"search": "zsuffixuser"}
+        )
+
+        [item] = response.json()["data"]
+        assert item["created_at"].endswith("Z")
+        assert item["updated_at"].endswith("Z")
+
+    @pytest.mark.parametrize(
+        ("type_value", "expected"),
+        [
+            ("local", {"adminlisttypelocal"}),
+            ("external", {"adminlisttypeexternal"}),
+            ("bogus", set()),
+        ],
+    )
+    async def test_type_filter_is_applied(
+        self,
+        admin_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        type_value: str,
+        expected: set[str],
+    ) -> None:
+        """An invalid single-value enum filter yields an empty result
+        (`docs/api-spec.md`, Enum Filter Validation)."""
+        await user_factory(username="adminlisttypelocal")
+        await user_factory(
+            username="adminlisttypeexternal", external_id=uuid4(), password_hash=None
+        )
+
+        response = await admin_client.get(
+            "/api/v1/admin/users",
+            params={"search": "adminlisttype", "type": type_value},
+        )
+
+        assert response.status_code == 200
+        assert {item["username"] for item in response.json()["data"]} == expected
+
+    async def test_sort_by_created_at_is_accepted(
+        self,
+        admin_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        first = await user_factory(username="createdorderfirst")
+        second = await user_factory(username="createdordersecond")
+
+        response = await admin_client.get(
+            "/api/v1/admin/users",
+            params={
+                "search": "createdorder",
+                "sort_by": "created_at",
+                "sort_order": "desc",
+            },
+        )
+
+        assert response.status_code == 200
+        assert [item["id"] for item in response.json()["data"]] == [
+            str(second.id),
+            str(first.id),
+        ]
+
+    async def test_invalid_sort_by_returns_422(self, admin_client: AsyncClient) -> None:
+        response = await admin_client.get(
+            "/api/v1/admin/users", params={"sort_by": "last_login_at"}
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    async def test_search_below_minimum_length_returns_422(
+        self, admin_client: AsyncClient
+    ) -> None:
+        response = await admin_client.get("/api/v1/admin/users", params={"search": "j"})
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    @pytest.mark.parametrize(
+        ("has_role", "expected"),
+        [("true", {"hasroleadminva"}), ("false", {"hasroleadminnone"})],
+    )
+    async def test_has_role_filter_is_applied(
+        self,
+        admin_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+        has_role: str,
+        expected: set[str],
+    ) -> None:
+        with_role = await user_factory(username="hasroleadminva")
+        await user_role_factory(user_id=with_role.id)
+        await user_factory(username="hasroleadminnone")
+
+        response = await admin_client.get(
+            "/api/v1/admin/users",
+            params={"search": "hasroleadmin", "has_role": has_role},
+        )
+
+        assert response.status_code == 200
+        assert {item["username"] for item in response.json()["data"]} == expected
+
+    async def test_all_invalid_role_values_return_empty_result(
+        self, admin_client: AsyncClient
+    ) -> None:
+        response = await admin_client.get(
+            "/api/v1/admin/users", params=[("role", "not-a-real-role")]
+        )
+
+        assert response.status_code == 200
+        assert response.json()["meta"]["total"] == 0
+
+    async def test_role_and_active_filters_combine_with_and(
+        self,
+        admin_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        active_admin = await user_factory(username="andfilteractive")
+        await user_role_factory(user_id=active_admin.id, role=Role.ADMIN.value)
+        inactive_admin = await user_factory(username="andfilterinactive", active=False)
+        await user_role_factory(user_id=inactive_admin.id, role=Role.ADMIN.value)
+
+        response = await admin_client.get(
+            "/api/v1/admin/users",
+            params={"search": "andfilter", "role": "admin", "active": "false"},
+        )
+
+        assert [item["username"] for item in response.json()["data"]] == [
+            "andfilterinactive"
+        ]
+
+    async def test_manage_users_api_key_is_accepted(
+        self,
+        client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Unlike Create User (Admin), the administrator reads are not
+        restricted to JWT sessions."""
+        admin = await user_factory()
+        await user_role_factory(user_id=admin.id, role=Role.ADMIN.value)
+        token, digest = _make_api_key_credential()
+        await api_key_factory(user_id=admin.id, key_hash=digest)
+        monkeypatch.setattr(dependencies._last_used_debouncer, "touch", AsyncMock())
+
+        response = await client.get(
+            "/api/v1/admin/users", headers={"Authorization": f"Bearer {token}"}
+        )
+
+        assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/admin/users/{user}
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+class TestGetUserAdmin:
+    async def test_request_without_credential_returns_401(
+        self,
+        client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        user = await user_factory(username="adminnocredential")
+
+        response = await client.get(f"/api/v1/admin/users/{user.username}")
+
+        assert response.status_code == 401
+        assert response.json() == UNAUTHENTICATED
+
+    async def test_caller_without_manage_users_returns_403(
+        self,
+        authenticated_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        actor, client = authenticated_user_and_client
+        await user_role_factory(user_id=actor.id, role=Role.VULNERABILITY_ANALYST.value)
+        target = await user_factory(username="adminforbiddentarget")
+
+        response = await client.get(f"/api/v1/admin/users/{target.username}")
+
+        assert response.status_code == 403
+        assert response.json()["code"] == "AUTH_INSUFFICIENT_PERMISSION"
+
+    async def test_missing_user_without_manage_users_returns_403(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """The capability check precedes user resolution, so a caller
+        without `manage_users` cannot probe for existence."""
+        response = await authenticated_client.get("/api/v1/admin/users/no-such-user")
+        assert response.status_code == 403
+
+    async def test_resolves_by_uuid(
+        self,
+        admin_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        user = await user_factory(username="adminbyuuid")
+
+        response = await admin_client.get(f"/api/v1/admin/users/{user.id}")
+
+        assert response.status_code == 200
+        assert response.json()["data"]["username"] == "adminbyuuid"
+
+    async def test_resolves_by_exact_username(
+        self,
+        admin_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        user = await user_factory(username="adminbyusername")
+
+        response = await admin_client.get(f"/api/v1/admin/users/{user.username}")
+
+        assert response.status_code == 200
+        assert response.json()["data"]["id"] == str(user.id)
+
+    async def test_missing_uuid_returns_404_user_not_found(
+        self, admin_client: AsyncClient
+    ) -> None:
+        response = await admin_client.get(f"/api/v1/admin/users/{uuid4()}")
+        assert response.status_code == 404
+        assert response.json()["code"] == "USER_NOT_FOUND"
+
+    async def test_missing_username_returns_404_user_not_found(
+        self, admin_client: AsyncClient
+    ) -> None:
+        response = await admin_client.get("/api/v1/admin/users/no-such-user")
+        assert response.status_code == 404
+        assert response.json()["code"] == "USER_NOT_FOUND"
+
+    async def test_manager_and_roles_are_fully_rendered(
+        self,
+        admin_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        manager = await user_factory(username="managerforprofile")
+        user = await user_factory(username="profiletarget", manager_id=manager.id)
+        await user_role_factory(user_id=user.id, role=Role.ADMIN.value)
+
+        response = await admin_client.get(f"/api/v1/admin/users/{user.username}")
+
+        data = response.json()["data"]
+        assert set(data.keys()) == _COMPLETE_PROFILE_FIELDS
+        assert data["manager"] == {
+            "id": str(manager.id),
+            "username": "managerforprofile",
+            "full_name": manager.full_name,
+            "active": True,
+            "email": manager.email,
+        }
+        assert data["roles"] == [
+            {
+                "role": "admin",
+                "group_name": "_manual",
+                "assigned_by": None,
+                "created_at": data["roles"][0]["created_at"],
+            }
+        ]
+
+    async def test_external_user_has_external_source(
+        self,
+        admin_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        external_id = uuid4()
+        user = await user_factory(
+            username="externaltest", external_id=external_id, password_hash=None
+        )
+
+        response = await admin_client.get(f"/api/v1/admin/users/{user.username}")
+
+        data = response.json()["data"]
+        assert data["source"] == "external"
+        assert data["external_id"] == str(external_id)
+
+    async def test_local_user_has_local_source(
+        self,
+        admin_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        user = await user_factory(username="localsourcetest")
+
+        response = await admin_client.get(f"/api/v1/admin/users/{user.username}")
+
+        data = response.json()["data"]
+        assert data["source"] == "local"
+        assert data["external_id"] is None
+
+    async def test_last_login_at_is_null_before_the_first_login(
+        self,
+        admin_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        user = await user_factory(username="neverloggedin")
+
+        response = await admin_client.get(f"/api/v1/admin/users/{user.username}")
+
+        assert response.json()["data"]["last_login_at"] is None
+
+    async def test_last_login_at_after_a_login_returns_the_login_time(
+        self,
+        admin_client: AsyncClient,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        """Every Session creation records `last_login_at`
+        (`docs/features/identity/authentication.md`, `last_login_at`
+        field); the complete profile returns it."""
+        user = await user_factory(username="loggedinonce")
+        created = await create_session(
+            db_session,
+            user,
+            SessionCreationReason.LOCAL_LOGIN,
+            expected_password_hash=None,
+        )
+        assert created is not None
+        assert user.last_login_at is not None
+
+        response = await admin_client.get(f"/api/v1/admin/users/{user.username}")
+
+        returned = response.json()["data"]["last_login_at"]
+        assert returned.endswith("Z")
+        assert datetime.fromisoformat(returned) == user.last_login_at
+
+    async def test_manage_users_api_key_is_accepted(
+        self,
+        client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        admin = await user_factory()
+        await user_role_factory(user_id=admin.id, role=Role.ADMIN.value)
+        target = await user_factory(username="adminapikeytarget")
+        token, digest = _make_api_key_credential()
+        await api_key_factory(user_id=admin.id, key_hash=digest)
+        monkeypatch.setattr(dependencies._last_used_debouncer, "touch", AsyncMock())
+
+        response = await client.get(
+            f"/api/v1/admin/users/{target.username}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["username"] == "adminapikeytarget"
 
 
 # ---------------------------------------------------------------------------
@@ -1882,13 +2485,37 @@ class TestUnlockUserAdmin:
 
 
 # ---------------------------------------------------------------------------
-# OpenAPI surface — exactly the eight admin user endpoints
+# OpenAPI surface — the ten admin user endpoints and the directory contract
 # ---------------------------------------------------------------------------
+
+
+def _resolve_schema(document: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
+    """Follow one `$ref` of the OpenAPI document, if present."""
+    reference = schema.get("$ref")
+    if reference is None:
+        return schema
+    name = reference.rsplit("/", 1)[-1]
+    resolved: dict[str, Any] = document["components"]["schemas"][name]
+    return resolved
+
+
+def _success_item_properties(
+    document: dict[str, Any], path: str, *, listed: bool
+) -> set[str]:
+    """Property names of the `data` object (or of each `data` item) of a
+    GET operation's 200 response."""
+    response = document["paths"][path]["get"]["responses"]["200"]
+    envelope = _resolve_schema(
+        document, response["content"]["application/json"]["schema"]
+    )
+    data = envelope["properties"]["data"]
+    item = _resolve_schema(document, data["items"] if listed else data)
+    return set(item["properties"])
 
 
 @pytest.mark.unit
 class TestAdminUserEndpointsOpenAPISurface:
-    def test_exactly_eight_admin_user_endpoints_are_registered(self) -> None:
+    def test_exactly_ten_admin_user_endpoints_are_registered(self) -> None:
         from app.main import app as fastapi_app
 
         openapi_paths = fastapi_app.openapi()["paths"]
@@ -1898,8 +2525,8 @@ class TestAdminUserEndpointsOpenAPISurface:
             if path.startswith("/api/v1/admin/users")
         }
         assert admin_user_paths == {
-            "/api/v1/admin/users": {"post"},
-            "/api/v1/admin/users/{user}": {"patch"},
+            "/api/v1/admin/users": {"get", "post"},
+            "/api/v1/admin/users/{user}": {"get", "patch"},
             "/api/v1/admin/users/{user}/reactivate": {"post"},
             "/api/v1/admin/users/{user}/password": {"post"},
             "/api/v1/admin/users/{user}/unlock": {"post"},
@@ -1907,3 +2534,59 @@ class TestAdminUserEndpointsOpenAPISurface:
             "/api/v1/admin/users/{user}/deactivate": {"post"},
             "/api/v1/admin/users/{user}/deactivation-impact": {"get"},
         }
+
+    @pytest.mark.parametrize(
+        ("path", "listed"),
+        [("/api/v1/admin/users", True), ("/api/v1/admin/users/{user}", False)],
+    )
+    def test_admin_reads_document_the_complete_profile(
+        self, path: str, listed: bool
+    ) -> None:
+        from app.main import app as fastapi_app
+
+        document = fastapi_app.openapi()
+        assert (
+            _success_item_properties(document, path, listed=listed)
+            == _COMPLETE_PROFILE_FIELDS
+        )
+
+
+@pytest.mark.unit
+class TestUserDirectoryOpenAPISurface:
+    @pytest.mark.parametrize(
+        ("path", "listed"),
+        [("/api/v1/users", True), ("/api/v1/users/{user}", False)],
+    )
+    def test_directory_reads_document_only_the_directory_entry(
+        self, path: str, listed: bool
+    ) -> None:
+        from app.main import app as fastapi_app
+
+        document = fastapi_app.openapi()
+        assert (
+            _success_item_properties(document, path, listed=listed)
+            == _DIRECTORY_ENTRY_FIELDS
+        )
+
+    def test_directory_list_declares_no_type_filter_or_created_at_sort(
+        self,
+    ) -> None:
+        from app.main import app as fastapi_app
+
+        document = fastapi_app.openapi()
+        parameters = {
+            parameter["name"]: parameter
+            for parameter in document["paths"]["/api/v1/users"]["get"]["parameters"]
+        }
+        assert set(parameters) == {
+            "search",
+            "active",
+            "role",
+            "has_role",
+            "page",
+            "per_page",
+            "sort_by",
+            "sort_order",
+        }
+        sort_by = _resolve_schema(document, parameters["sort_by"]["schema"])
+        assert set(sort_by["enum"]) == {"username", "full_name", "email"}

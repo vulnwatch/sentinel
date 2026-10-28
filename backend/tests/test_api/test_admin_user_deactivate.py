@@ -5,7 +5,7 @@ stale session-liveness cache around a real deactivation and reactivation.
 Owning specifications:
 
 - docs/features/identity/user-management.md (Admin API endpoints preamble,
-  Deactivate User, Get User response shape).
+  Deactivate User, Get User (Admin) response shape).
 - docs/features/identity/user-service.md (`deactivate_user()`, Mutation
   Result Types).
 - docs/features/identity/authentication.md (Session liveness check,
@@ -114,7 +114,7 @@ _FORBIDDEN = {
     "code": "AUTH_INSUFFICIENT_PERMISSION",
     "detail": "Insufficient permissions",
 }
-# user-management.md, Get User.
+# user-management.md, Get User (Admin).
 _PROFILE_FIELDS = {
     "id",
     "username",
@@ -125,6 +125,7 @@ _PROFILE_FIELDS = {
     "external_id",
     "manager",
     "roles",
+    "last_login_at",
     "created_at",
     "updated_at",
 }
@@ -516,8 +517,9 @@ class TestEffectiveDeactivation:
         user_factory: Factory,
         user_role_factory: Factory,
     ) -> None:
-        """user-management.md, Deactivate User step 6: the Get User profile
-        in the `{"data": ...}` envelope, never the `deactivated` flag."""
+        """user-management.md, Deactivate User step 6: the complete user
+        profile of Get User (Admin) in the `{"data": ...}` envelope, never
+        the `deactivated` flag."""
         _admin, client = admin_user_and_client
         manager: User = await user_factory(
             username="dave.manager", full_name="Dave Example"
@@ -562,8 +564,8 @@ class TestEffectiveDeactivation:
             ("vulnerability_analyst", "_manual", None),
         ]
         assert "deactivated" not in response.text
-        # Same shape and values as the Get User profile.
-        profile = await client.get(f"/api/v1/users/{target.id}")
+        # Same shape and values as the Get User (Admin) profile.
+        profile = await client.get(f"/api/v1/admin/users/{target.id}")
         assert profile.status_code == 200
         assert profile.json() == body
 
@@ -851,7 +853,7 @@ class TestAlreadyInactiveTarget:
         _admin, headers = await committed.admin()
         target = await committed.user("bob.va", active=False)
         before = await committed.client.get(
-            f"/api/v1/users/{target.id}", headers=headers
+            f"/api/v1/admin/users/{target.id}", headers=headers
         )
         assert before.status_code == 200
         committed.journal.clear()

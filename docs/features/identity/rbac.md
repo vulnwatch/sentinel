@@ -32,7 +32,7 @@ endpoint contract.
 
 | Capability | Operations Covered |
 |---|---|
-| `manage_users` | Create local users, update user fields, manage user roles, reset password, deactivate/reactivate, unlock, view deactivation impact, view/revoke all API keys, view admin-scoped identity audit log |
+| `manage_users` | List users and view their complete profiles, create local users, update user fields, manage user roles, reset password, deactivate/reactivate, unlock, view deactivation impact, view/revoke all API keys, view admin-scoped identity audit log |
 | `manage_role_mappings` | Group-to-role mapping CRUD, preview role mapping. These operations belong to [identity-provisioning](identity-provisioning.md), a deferred specification |
 | `manage_settings` | View/update system settings, preview the impact of a default-CVSS version change, trigger CVSS recalculation, view settings audit log |
 | `manage_fetchers` | Trigger manual fetcher run, rerun complete Ticket convergence for an accessible eligible Ticket, enable/disable fetchers, view/modify fetcher config, view fetcher audit log, view error details, view error tracebacks, view triggered_by_user identity, view disabled_by/enabled_by actors |
@@ -165,7 +165,8 @@ Confidential Ticket Visibility). Authenticated access covers:
 - Manage own API keys (list, create, revoke)
 - View own identity audit log (`/api/v1/users/me/audit-log`)
 - View maintainer workbench (own pending, in-progress, and completed packages)
-- View users (list and detail)
+- View the user directory (list and detail; the complete user profile requires
+  `manage_users`)
 - View tickets, CVEs, products, packages, and ticket package trees
 - View ticket references, CVSS assessments, and submission/release requests
 - View ticket audit logs
@@ -197,6 +198,7 @@ Confidential Ticket Visibility). Authenticated access covers:
 | Set/change/clear the Coordinated Release Date of a confidential ticket | `manage_confidentiality` |
 | Set track affectedness to `FIXED` from any status | `admin_ticket_ops` |
 | Rerun complete Ticket convergence | `triage_ticket` OR `manage_fetchers` |
+| List users and view complete user profiles | `manage_users` |
 | Create local user | `manage_users` |
 | Update user fields | `manage_users` |
 | Manage user roles | `manage_users` |
@@ -242,7 +244,7 @@ Confidential Ticket Visibility). Authenticated access covers:
 | View own identity audit log | Authenticated |
 | View maintainer workbench | Authenticated |
 | View ticket audit log | Authenticated |
-| View users (list and detail) | Authenticated |
+| View the user directory (list and detail) | Authenticated |
 | View tickets / CVEs | Authenticated |
 | View packages and ticket package trees | Authenticated |
 | View products | Authenticated |
@@ -613,6 +615,8 @@ here with the required authorization level and a link to the owning spec.
 | GET | `/api/v1/admin/identity/audit-log` | `manage_users` | [identity-audit-log](identity-audit-log.md#list-identity-audit-events) |
 | GET | `/api/v1/admin/api-keys` | `manage_users` | [api-key-management](api-key-management.md#list-all-api-keys) |
 | POST | `/api/v1/admin/api-keys/{key_id}/revoke` | `manage_users` | [api-key-management](api-key-management.md#revoke-api-key) |
+| GET | `/api/v1/admin/users` | `manage_users` | [user-management](user-management.md#list-users-admin) |
+| GET | `/api/v1/admin/users/{user}` | `manage_users` | [user-management](user-management.md#get-user-admin) |
 | POST | `/api/v1/admin/users` | `manage_users` (JWT session only) | [user-management](user-management.md#create-user-admin) |
 | PATCH | `/api/v1/admin/users/{user}` | `manage_users` | [user-management](user-management.md#update-user-admin) |
 | POST | `/api/v1/admin/users/{user}/roles` | `manage_users` | [user-management](user-management.md#set-user-roles) |
@@ -883,15 +887,19 @@ underscores:
 - `vulnerability_analyst`
 - `restricted_analyst`
 
-This applies to all endpoints that accept or return role values:
-`POST /api/v1/admin/users/{user}/roles`, `GET /api/v1/users/{user}`,
-CLI `--role` parameter, and `RoleMapping` API payloads.
+This applies to every endpoint that accepts or returns role values,
+including the `role` filter and the `roles` of the user directory and of the
+administrator user reads (`GET /api/v1/users`, `GET /api/v1/users/{user}`,
+`GET /api/v1/admin/users`, `GET /api/v1/admin/users/{user}`),
+`GET /api/v1/users/me`, `POST /api/v1/admin/users/{user}/roles`, the CLI
+`--role` parameter, and `RoleMapping` API payloads.
 
 **Deterministic ordering**: any response array of role values (e.g.,
-`GET /api/v1/users/me`'s `roles`) is ordered alphabetically by the
-wire-format string. Any response array of role *assignment* objects
-that additionally carries an origin (e.g., `GET /api/v1/users/{user}`'s
-`roles`, each with `role`, `group_name`, `assigned_by`, `created_at`) is
+the `roles` of `GET /api/v1/users/me` and of the user directory entry) is
+ordered alphabetically by the wire-format string. Any response array of role
+*assignment* objects that additionally carries an origin (e.g., the `roles`
+of the complete user profile returned by `GET /api/v1/admin/users/{user}`,
+each with `role`, `group_name`, `assigned_by`, `created_at`) is
 ordered alphabetically by the wire-format role value, then by
 `group_name`, then by `id` — deterministic regardless of assignment
 order or database physical order.
