@@ -335,54 +335,6 @@ class TestListFetchersEndpoint:
         names = [item["fetcher_name"] for item in response.json()["data"]]
         assert config.fetcher_name in names
 
-    async def test_admin_jwt_sees_triggered_by_user(
-        self,
-        admin_client: AsyncClient,
-        fetcher_config_factory: FetcherConfigFactory,
-        fetcher_run_factory: FetcherRunFactory,
-        user_factory: UserFactory,
-    ) -> None:
-        _register(_StubFetcher)
-        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
-        actor = await user_factory()
-        await fetcher_run_factory(
-            fetcher_name=config.fetcher_name,
-            triggered_by="manual",
-            triggered_by_user_id=actor.id,
-        )
-
-        response = await admin_client.get("/api/v1/fetchers")
-
-        assert response.status_code == 200
-        item = next(
-            i for i in response.json()["data"] if i["fetcher_name"] == _StubFetcher.name
-        )
-        assert item["last_run"]["triggered_by_user"]["id"] == str(actor.id)
-
-    async def test_admin_api_key_sees_triggered_by_user(
-        self,
-        admin_api_key_client: AsyncClient,
-        fetcher_config_factory: FetcherConfigFactory,
-        fetcher_run_factory: FetcherRunFactory,
-        user_factory: UserFactory,
-    ) -> None:
-        _register(_StubFetcher)
-        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
-        actor = await user_factory()
-        await fetcher_run_factory(
-            fetcher_name=config.fetcher_name,
-            triggered_by="manual",
-            triggered_by_user_id=actor.id,
-        )
-
-        response = await admin_api_key_client.get("/api/v1/fetchers")
-
-        assert response.status_code == 200
-        item = next(
-            i for i in response.json()["data"] if i["fetcher_name"] == _StubFetcher.name
-        )
-        assert item["last_run"]["triggered_by_user"]["id"] == str(actor.id)
-
     async def test_roleless_caller_sees_the_manual_trigger_actor(
         self,
         authenticated_client: AsyncClient,
@@ -1202,6 +1154,8 @@ class TestGetFetcherTimelineEndpoint:
         Identities)."""
         config = await fetcher_config_factory()
         admin = await _fetcher_admin(user_factory, user_role_factory)
+        enabler = await user_factory(username="fictional.enabler")
+        await user_role_factory(user_id=enabler.id, role=Role.ADMIN.value)
         now = datetime.now(UTC)
         await fetcher_audit_event_factory(
             fetcher_name=config.fetcher_name,
@@ -1213,7 +1167,7 @@ class TestGetFetcherTimelineEndpoint:
             fetcher_name=config.fetcher_name,
             event_type="enabled",
             created_at=now - timedelta(days=1),
-            user_id=admin.id,
+            user_id=enabler.id,
         )
 
         response = await authenticated_client.get(
@@ -1227,36 +1181,7 @@ class TestGetFetcherTimelineEndpoint:
         assert response.status_code == 200
         period = response.json()["data"]["disabled_periods"][0]
         assert period["disabled_by"] == _user_reference(admin)
-        assert period["enabled_by"] == _user_reference(admin)
-
-    async def test_disabled_period_actor_visible_with_manage_fetchers(
-        self,
-        admin_client: AsyncClient,
-        fetcher_config_factory: FetcherConfigFactory,
-        fetcher_audit_event_factory: FetcherAuditEventFactory,
-        user_factory: UserFactory,
-    ) -> None:
-        config = await fetcher_config_factory()
-        actor = await user_factory()
-        now = datetime.now(UTC)
-        await fetcher_audit_event_factory(
-            fetcher_name=config.fetcher_name,
-            event_type="disabled",
-            created_at=now - timedelta(days=1),
-            user_id=actor.id,
-        )
-
-        response = await admin_client.get(
-            f"/api/v1/fetchers/{config.fetcher_name}/timeline",
-            params={
-                "from_date": (now - timedelta(days=5)).date().isoformat(),
-                "to_date": now.date().isoformat(),
-            },
-        )
-
-        assert response.status_code == 200
-        period = response.json()["data"]["disabled_periods"][0]
-        assert period["disabled_by"]["id"] == str(actor.id)
+        assert period["enabled_by"] == _user_reference(enabler)
 
 
 # ---------------------------------------------------------------------------
