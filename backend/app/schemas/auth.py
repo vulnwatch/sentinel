@@ -55,6 +55,7 @@ class CurrentUserData(BaseModel):
     full_name: str | None
     roles: list[str]
     active: bool
+    bot: bool
 
 
 class CurrentUserResponse(BaseModel):

@@ -1050,10 +1050,14 @@ GET /api/v1/users/me
     "email": "string",
     "full_name": "string | null",
     "roles": ["string"],
-    "active": true
+    "active": true,
+    "bot": false
   }
 }
 ```
+
+`bot` is the authenticated user's bot marker
+(`docs/features/identity/user-management.md`, Bot Accounts).
 
 `roles` contains the distinct current role values held by the
 authenticated user (a role held from multiple origins — manual and one

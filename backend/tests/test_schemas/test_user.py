@@ -9,7 +9,9 @@ authoritative contract under test.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -144,6 +146,7 @@ def _make_manager_kwargs(**overrides: object) -> dict[str, object]:
         "username": "bwilson",
         "full_name": "Bob Wilson",
         "active": True,
+        "bot": False,
         "email": "bwilson@example.com",
     }
     defaults.update(overrides)
@@ -168,6 +171,7 @@ def _make_user_data_kwargs(**overrides: object) -> dict[str, object]:
         "email": "jdoe@example.com",
         "full_name": "John Doe",
         "active": True,
+        "bot": False,
         "source": "local",
         "external_id": None,
         "manager": None,
@@ -187,6 +191,7 @@ def _make_directory_kwargs(**overrides: object) -> dict[str, object]:
         "email": "jdoe@example.com",
         "full_name": "John Doe",
         "active": True,
+        "bot": False,
         "roles": ["admin"],
     }
     defaults.update(overrides)
@@ -205,6 +210,7 @@ class TestUserDirectoryData:
             "email",
             "full_name",
             "active",
+            "bot",
             "roles",
         }
 
@@ -327,8 +333,8 @@ class TestResponseEnvelopes:
 # ---------------------------------------------------------------------------
 
 
-def _make_create_kwargs(**overrides: object) -> dict[str, object]:
-    defaults: dict[str, object] = {
+def _make_create_kwargs(**overrides: Any) -> dict[str, Any]:
+    defaults: dict[str, Any] = {
         "username": "jdoe",
         "email": "jdoe@example.com",
         "full_name": "John Doe",
@@ -437,6 +443,23 @@ class TestAdminUserCreateRequest:
         with pytest.raises(ValidationError):
             AdminUserCreateRequest(**_make_create_kwargs(roles=["admin", "admin"]))
 
+    def test_bot_defaults_to_false(self) -> None:
+        request = AdminUserCreateRequest(**_make_create_kwargs())
+        assert request.bot is False
+
+    def test_bot_true_is_accepted(self) -> None:
+        request = AdminUserCreateRequest(**_make_create_kwargs(bot=True))
+        assert request.bot is True
+
+    @pytest.mark.parametrize("value", [None, "true", 1], ids=["null", "string", "int"])
+    def test_bot_accepts_only_a_json_boolean(self, value: object) -> None:
+        """`user-management.md` (Create User (Admin)): explicit null and a
+        non-boolean `bot` are request-validation failures
+        (`docs/api-spec.md`, JSON Request Body Scalar Types)."""
+        payload = json.dumps(_make_create_kwargs(bot=value))
+        with pytest.raises(ValidationError):
+            AdminUserCreateRequest.model_validate_json(payload)
+
     def test_explicit_null_roles_is_rejected(self) -> None:
         with pytest.raises(ValidationError):
             AdminUserCreateRequest(**_make_create_kwargs(roles=None))
@@ -479,6 +502,19 @@ class TestAdminUserUpdateRequest:
     def test_both_fields_present_are_both_tracked_as_set(self) -> None:
         request = AdminUserUpdateRequest(email="new@example.com", full_name="New Name")
         assert request.model_fields_set == {"email", "full_name"}
+
+    @pytest.mark.parametrize("value", [True, False])
+    def test_bot_only_is_accepted_and_tracked_as_set(self, value: bool) -> None:
+        request = AdminUserUpdateRequest(bot=value)
+        assert request.bot is value
+        assert request.model_fields_set == {"bot"}
+
+    @pytest.mark.parametrize("value", [None, "false", 0], ids=["null", "string", "int"])
+    def test_bot_accepts_only_a_json_boolean(self, value: object) -> None:
+        """`user-management.md` (Update User (Admin), step 5): explicit null
+        and a non-boolean `bot` are request-validation failures."""
+        with pytest.raises(ValidationError):
+            AdminUserUpdateRequest.model_validate_json(json.dumps({"bot": value}))
 
 
 @pytest.mark.unit

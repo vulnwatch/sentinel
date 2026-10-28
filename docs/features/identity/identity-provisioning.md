@@ -40,6 +40,7 @@ and implemented when this specification is activated.
 | `full_name` | Display name | — |
 | `email` | Primary email | Normalized to lowercase |
 | `active` | Active/inactive status | Drives deactivation side effects |
+| `bot` | Account type (to be defined) | Bot marker (`user-management.md`, Bot Accounts); see Open questions. `false` until the mapping is defined |
 | `manager_id` | Manager's username/uid | Resolved to User FK |
 | Group memberships | Group names/displayNames | Used for role mapping derivation |
 
@@ -73,7 +74,7 @@ Response:
       "id": "uuid",
       "group_name": "SecurityTeam",
       "role": "vulnerability_analyst",
-      "created_by": { "id": "uuid", "username": "admin1", "full_name": "...", "active": true },
+      "created_by": { "id": "uuid", "username": "admin1", "full_name": "...", "active": true, "bot": false },
       "created_at": "2024-01-01T00:00:00Z"
     }
   ]
@@ -106,8 +107,8 @@ Response:
     "group_name": "SecurityTeam",
     "role": "vulnerability_analyst",
     "affected_users": [
-      { "id": "uuid", "username": "jdoe", "full_name": "John Doe", "active": true, "email": "..." },
-      { "id": "uuid", "username": "asmith", "full_name": "Alice Smith", "active": true, "email": "..." }
+      { "id": "uuid", "username": "jdoe", "full_name": "John Doe", "active": true, "bot": false, "email": "..." },
+      { "id": "uuid", "username": "asmith", "full_name": "Alice Smith", "active": true, "bot": false, "email": "..." }
     ],
     "affected_count": 22,
     "unknown_users": ["newemployee"]
@@ -171,7 +172,7 @@ Response (`201 Created`):
     "id": "uuid",
     "group_name": "SecurityTeam",
     "role": "vulnerability_analyst",
-    "created_by": { "id": "uuid", "username": "admin1", "full_name": "Admin User", "active": true },
+    "created_by": { "id": "uuid", "username": "admin1", "full_name": "Admin User", "active": true, "bot": false },
     "created_at": "2026-05-06T12:00:00Z",
     "affected_users_count": 22
   }
@@ -326,6 +327,16 @@ Provider.
   lifecycle? Options: hard-delete (requires FK cascade analysis),
   soft-delete (= deactivate_user), or new lifecycle status. To be
   resolved when the SCIM contract is defined
+- Service accounts and the bot marker: authentik distinguishes service and
+  agent accounts from human users, and its SCIM provider synchronizes service
+  accounts unless the provider excludes them ("Exclude service accounts") or
+  application bindings filter them out. Its default SCIM user mapping sends
+  no account type; a custom property mapping can, for example in the SCIM
+  `userType` attribute (RFC 7643, section 4.1.1). To be decided: whether
+  SUSEID sends service accounts, and if so how it designates them and how
+  that designation maps to `User.bot` (`user-management.md`, Bot Accounts).
+  Until this is defined, provisioning creates external users with
+  `bot = false` and never changes it
 
 ## Bootstrap Sequence (External Provisioning)
 

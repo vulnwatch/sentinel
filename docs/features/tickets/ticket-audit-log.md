@@ -473,7 +473,8 @@ and a non-null actor's `id` retain their event and User UUID contracts.
         "id": "uuid",
         "username": "fictional.analyst",
         "full_name": "Fictional Analyst",
-        "active": true
+        "active": true,
+        "bot": false
       }
     }
   ],
@@ -489,7 +490,7 @@ and a non-null actor's `id` retain their event and User UUID contracts.
 
 - `actor` is `null` for system-generated events (where `user_id IS NULL`).
 - `actor` is the complete current User reference (`id`, `username`, nullable
-  `full_name`, and current `active`) for user-initiated events.
+  `full_name`, current `active`, and current `bot`) for user-initiated events.
 - The `search` filter applies its normalized literal case-insensitive substring
   to `comment`, `old_value`, `new_value`, and `detail::text` with OR semantics.
   This allows searching for product names, track names, statuses, or contextual
@@ -562,7 +563,8 @@ Behavior:
    empty with the correct total.
 7. Project each event's `ticket_id` as the parent `SNTL-{n}`. Project a non-null
    actor from the current User row as the complete reference (`id`, `username`,
-   nullable `full_name`, current `active`); system events use `actor = null`.
+   nullable `full_name`, current `active`, current `bot`); system events use
+   `actor = null`.
 
 Parent accessibility, filtered events, actor projection, count, ordering, and
 page derive from one coherent PostgreSQL observation. Concurrent changes may be

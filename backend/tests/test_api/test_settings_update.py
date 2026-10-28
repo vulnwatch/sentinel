@@ -949,6 +949,7 @@ class TestAuditLogVisibility:
                 "username": admin.username,
                 "full_name": _ADMIN_FULL_NAME,
                 "active": True,
+                "bot": False,
             },
         }
         assert item["created_at"].endswith("Z")

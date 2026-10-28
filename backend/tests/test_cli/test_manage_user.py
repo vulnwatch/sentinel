@@ -355,10 +355,16 @@ def test_render_roles_with_origins_multiple_roles_sorted_alphabetically() -> Non
 
 @pytest.mark.unit
 def test_render_user_row_absent_full_name_and_roles() -> None:
-    user = User(username="jdoe", email="jdoe@example.com", full_name=None, active=True)
+    user = User(
+        username="jdoe",
+        email="jdoe@example.com",
+        full_name=None,
+        active=True,
+        bot=False,
+    )
     user.roles = []
     row = manage_user_module._render_user_row(user)
-    assert row == ("jdoe", "—", "jdoe@example.com", "local", "active", "—")
+    assert row == ("jdoe", "—", "jdoe@example.com", "local", "no", "active", "—")
 
 
 @pytest.mark.unit
@@ -368,6 +374,7 @@ def test_render_user_row_external_inactive_with_roles() -> None:
         email="bwilson@example.com",
         full_name="Bob Wilson",
         active=False,
+        bot=True,
         external_id=uuid4(),
     )
     user.roles = [UserRole(role=Role.VULNERABILITY_ANALYST.value, group_name="_manual")]
@@ -377,6 +384,7 @@ def test_render_user_row_external_inactive_with_roles() -> None:
         "Bob Wilson",
         "bwilson@example.com",
         "external",
+        "yes",
         "inactive",
         "vulnerability_analyst",
     )
@@ -385,13 +393,27 @@ def test_render_user_row_external_inactive_with_roles() -> None:
 @pytest.mark.unit
 def test_render_list_table_aligns_columns() -> None:
     user = User(
-        username="jdoe", email="jdoe@example.com", full_name="John Doe", active=True
+        username="jdoe",
+        email="jdoe@example.com",
+        full_name="John Doe",
+        active=True,
+        bot=True,
     )
     user.roles = [UserRole(role=Role.ADMIN.value, group_name="_manual")]
     table = manage_user_module._render_list_table([user])
     lines = table.splitlines()
-    assert lines[0].startswith("USERNAME")
+    assert lines[0].split() == [
+        "USERNAME",
+        "FULL",
+        "NAME",
+        "EMAIL",
+        "TYPE",
+        "BOT",
+        "STATUS",
+        "ROLES",
+    ]
     assert lines[1].startswith("jdoe")
+    assert lines[1][lines[0].index("BOT") :].startswith("yes")
     assert "admin" in lines[1]
 
 
@@ -402,6 +424,7 @@ def test_render_user_detail_full_example() -> None:
         email="jdoe@example.com",
         full_name="John Doe",
         active=True,
+        bot=False,
         created_at=datetime(2025, 3, 15, 10, 30, 0, tzinfo=UTC),
         last_login_at=datetime(2025, 6, 1, 14, 22, 0, tzinfo=UTC),
     )
@@ -419,6 +442,7 @@ def test_render_user_detail_full_example() -> None:
         "Full name:    John Doe\n"
         "Email:        jdoe@example.com\n"
         "Type:         local\n"
+        "Bot:          no\n"
         "Status:       active\n"
         "Roles:        admin (manual), vulnerability_analyst (O SUSE Security)\n"
         "Created:      2025-03-15 10:30:00 UTC\n"
@@ -586,6 +610,62 @@ def test_create_persists_full_name(
     user = asyncio.run(_fetch_user(cli_session_factory, username))
     assert user is not None
     assert user.full_name == "Alice Smith"
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(("flags", "expected"), [(["--bot"], True), ([], False)])
+def test_create_bot_flag_sets_the_bot_marker(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+    flags: list[str],
+    expected: bool,
+) -> None:
+    """`--bot` creates a bot account; without it, `bot = false`
+    (user-management.md, `manage-user create`). The confirmation is
+    unchanged."""
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    _allow_tty(monkeypatch)
+    username = f"clicreatebot{str(expected).lower()}"
+    cleanup_users_by_username(username)
+
+    result = _invoke(
+        [
+            "manage-user",
+            "create",
+            "--username",
+            username,
+            "--email",
+            f"{username}@example.com",
+            *flags,
+        ],
+        input=_PASSWORD_INPUT,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (
+        result.stdout.strip().splitlines()[-1]
+        == f"Created user '{username}' ({username}@example.com) with no roles."
+    )
+    user = asyncio.run(_fetch_user(cli_session_factory, username))
+    assert user is not None
+    assert user.bot is expected
+
+
+@pytest.mark.unit
+def test_render_user_detail_shows_a_bot_account() -> None:
+    user = User(
+        username="scanner",
+        email="scanner@example.com",
+        full_name="Security Scanner",
+        active=True,
+        bot=True,
+    )
+    user.roles = []
+
+    detail = manage_user_module._render_user_detail(user)
+
+    assert "Bot:          yes" in detail.splitlines()
 
 
 @pytest.mark.integration

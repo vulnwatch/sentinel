@@ -177,12 +177,14 @@ async def _person(
     *,
     active: bool = True,
     full_name: str | None = None,
+    bot: bool = False,
 ) -> User:
     user: User = await user_factory(
         username=username,
         email=f"{username}@example.com",
         active=active,
         full_name=full_name,
+        bot=bot,
     )
     return user
 
@@ -259,7 +261,12 @@ def _narrow_caller_scope(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _profile(
-    user: User, *, username: str, full_name: str | None, active: bool
+    user: User,
+    *,
+    username: str,
+    full_name: str | None,
+    active: bool,
+    bot: bool = False,
 ) -> dict[str, Any]:
     """The expected `UserSummary` wire object, with the literal values the
     test assigned (docs/api-spec.md, User References in Responses)."""
@@ -268,6 +275,7 @@ def _profile(
         "username": username,
         "full_name": full_name,
         "active": active,
+        "bot": bot,
     }
 
 
@@ -919,14 +927,16 @@ class TestListAccessGrants:
         """`granted_at ASC, user.id ASC`: two grants share one `granted_at`
         and are inserted in descending UUID order, and the earliest grant is
         inserted last. Deactivated target and grantor are complete with
-        `active = false`; another Ticket's grant is not listed; supplied
-        `sort_by`/`sort_order`/`page`/`per_page` are ignored."""
+        `active = false`; a bot target beside a person grantor proves each
+        `bot` value comes from its own current User row; another Ticket's
+        grant is not listed; supplied `sort_by`/`sort_order`/`page`/
+        `per_page` are ignored."""
         ticket: Ticket = await ticket_factory(is_confidential=True)
         other: Ticket = await ticket_factory(is_confidential=True)
         grantee_a = await _person(user_factory, "grantee-a", full_name="Grantee A")
         grantee_b = await _person(user_factory, "grantee-b")
         grantee_c = await _person(
-            user_factory, "grantee-c", active=False, full_name="Grantee C"
+            user_factory, "grantee-c", active=False, full_name="Grantee C", bot=True
         )
         granter_x = await _person(user_factory, "granter-x", full_name="Granter X")
         granter_y = await _person(user_factory, "granter-y", active=False)
@@ -975,6 +985,7 @@ class TestListAccessGrants:
                         username="grantee-c",
                         full_name="Grantee C",
                         active=False,
+                        bot=True,
                     ),
                     "granted_at": _EARLIER_WIRE,
                     "granted_by": _profile(
@@ -1178,6 +1189,7 @@ class TestOpenApiContract:
             "username",
             "full_name",
             "active",
+            "bot",
         }
 
     def test_grant_request_requires_a_non_nullable_string_user(self) -> None:

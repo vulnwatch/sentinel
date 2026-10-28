@@ -342,25 +342,29 @@ dataset user is a local user.
 
 ### Users
 
-| Username | Full name | Email | Roles | Active |
-|---|---|---|---|---|
-| `jdoe` | John Doe | `john.doe@example.com` | `admin` | Yes |
-| `asmith` | Alice Smith | `alice.smith@example.com` | `vulnerability_analyst` | Yes |
-| `bwilson` | Bob Wilson | `bob.wilson@example.com` | `vulnerability_analyst` | Yes |
-| `cwhite` | Carol White | `carol.white@example.com` | `restricted_analyst` | Yes |
-| `dbrown` | Dave Brown | `dave.brown@example.com` | none | Yes |
-| `eblack` | Eve Black | `eve.black@example.com` | `vulnerability_analyst` | No |
+| Username | Full name | Email | Roles | Active | Bot |
+|---|---|---|---|---|---|
+| `jdoe` | John Doe | `john.doe@example.com` | `admin` | Yes | No |
+| `asmith` | Alice Smith | `alice.smith@example.com` | `vulnerability_analyst` | Yes | No |
+| `bwilson` | Bob Wilson | `bob.wilson@example.com` | `vulnerability_analyst` | Yes | No |
+| `cwhite` | Carol White | `carol.white@example.com` | `restricted_analyst` | Yes | No |
+| `dbrown` | Dave Brown | `dave.brown@example.com` | none | Yes | No |
+| `eblack` | Eve Black | `eve.black@example.com` | `vulnerability_analyst` | No | No |
+| `security-scanner` | Security Scanner | `security-scanner@example.com` | `restricted_analyst` | Yes | Yes |
 
 Operations of the `Users` step, in this order:
 
 1. `create_user()` for `jdoe`, without an acting user.
-2. `create_user()` for `asmith`, `bwilson`, `cwhite`, `dbrown`, and `eblack`,
-   in this order, by `jdoe`. Every role has the `_manual` origin.
+2. `create_user()` for `asmith`, `bwilson`, `cwhite`, `dbrown`, `eblack`, and
+   `security-scanner`, in this order, by `jdoe`. Every role has the `_manual`
+   origin, and `security-scanner` is created with `bot = true`.
 3. `deactivate_user()` for `eblack` by `jdoe`, with the reason
    `example dataset`.
 
 `dbrown` holds no role: a user without roles who maintains packages
-(Packages, Tracks, and Maintainers).
+(Packages, Tracks, and Maintainers). `security-scanner` is a bot account
+(`docs/features/identity/user-management.md`, Bot Accounts) whose Ticket work
+lets a client show an automated action in a Ticket audit log.
 
 ### System Settings
 
@@ -519,8 +523,9 @@ named user is a system operation (Attribution).
 
 | Ticket | Operations |
 |---|---|
+| `SNTL-10` | `security-scanner` adds the manual reference of `SNTL-10` (References) |
 | `SNTL-11` | `bwilson` adds `fictional-curl` (Packages, Tracks, and Maintainers). `bwilson` sets the `fles-16.0` track to `AFFECTED` |
-| `SNTL-12` | `bwilson` assigns the Ticket to `asmith`. `bwilson` sets the priority override `P1`. `asmith` adds the manual reference of References |
+| `SNTL-12` | `bwilson` assigns the Ticket to `asmith`. `bwilson` sets the priority override `P1`. `asmith` adds the manual reference of `SNTL-12` (References) |
 | `SNTL-13` | `asmith` adds `fictional-httpd`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-13` are applied in order (IBS Requests) |
 | `SNTL-14` | `asmith` adds `fictional-libxml`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-14` are applied in order. Track release detection sets the track to `FIXED`. Product release detection confirms the release of `Server 15 SP7` at `T − 2d` with the advisory `SUSE-SU-2099:0001-1` |
 | `SNTL-15` | `bwilson` adds `fictional-sudo`, sets the `fles-16.0` track to `NOT_AFFECTED` and the `SUSE:FLES-15-SP4:Update` track to `WONT_FIX`, and adds the SUSE assessment |
@@ -646,6 +651,9 @@ Identity, IBSRequestAction):
   `Vendor Advisory`, and
   `https://git.example.com/fictional-lib/commit/0123abc` with the upstream tag
   `Patch`.
+- `SNTL-10` has one manual reference by `security-scanner`:
+  `https://scanner.example.com/findings/CVE-2099-0010`, titled
+  `Fictional scanner finding`, of type `issue`.
 - `SNTL-12` has one manual reference by `asmith`:
   `https://bugzilla.example.com/show_bug.cgi?id=1000012`, titled
   `Fictional bug report`, of type `issue`.

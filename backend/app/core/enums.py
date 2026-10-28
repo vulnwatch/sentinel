@@ -151,6 +151,7 @@ class IdentityAuditEventType(StrEnum):
     API_KEY_REVOKED = "api_key_revoked"
     EMAIL_CHANGED = "email_changed"
     FULL_NAME_CHANGED = "full_name_changed"
+    BOT_CHANGED = "bot_changed"
     MANAGER_CHANGED = "manager_changed"
 
 

@@ -105,6 +105,10 @@ Design notes:
   capabilities. They can still access specific confidential tickets via
   `TicketAccessGrant` or package maintainership — these per-ticket mechanisms
   are independent of scope
+- Capabilities and scope derive from roles only. The bot marker of a user
+  (`docs/features/identity/user-management.md`, Bot Accounts) is not an
+  authorization input: a bot account holds exactly the capabilities and scope
+  of its roles
 
 > **Design note — VA role granularity**: the VA role intentionally bundles
 > triage, assessment, and package management into a single role. Sentinel
@@ -801,10 +805,12 @@ here with the required authorization level and a link to the owning spec.
     Endpoint Permission Map and `docs/api-spec.md` § What belongs in an
     endpoint error table › Conditional authorization.)
 14. **Restricted analyst account setup**: restricted analyst accounts
-    are local users created via CLI with the `restricted_analyst` role:
+    are local users created via CLI with the `restricted_analyst` role. An
+    account that an automation operates is also marked as a bot account
+    (`docs/features/identity/user-management.md`, Bot Accounts):
 
     ```
-    sentinel manage-user create --username mybot --email mybot@example.com --role restricted_analyst
+    sentinel manage-user create --username mybot --email mybot@example.com --role restricted_analyst --bot
     ```
 
     The `create` command prompts for a password interactively. After

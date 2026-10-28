@@ -13,8 +13,9 @@ Local users serve three primary use cases:
    application workflow without depending on the SUSE internal network
 2. **AI agents and automation**: dedicated accounts for AI agents or
    bots that operate as independent identities with their own audit
-   trail (see `docs/features/identity/api-key-management.md`, Use Cases,
-   Dedicated Automation Identity)
+   trail, marked as bot accounts (see Bot Accounts below and
+   `docs/features/identity/api-key-management.md`, Use Cases, Dedicated
+   Automation Identity)
 3. **Environments without SSO**: deployments outside the SUSE corporate
    network where `id.suse.com` is not reachable
 
@@ -29,6 +30,51 @@ the purposes of authorization, ticket assignment, and API key
 management. The only difference is how they authenticate: local
 credentials instead of SSO (see
 `docs/features/identity/local-authentication.md`).
+
+## Bot Accounts
+
+A bot account is a user account that an automation operates instead of a
+person: a script, a CI pipeline, an AI agent, or another integration. The
+`bot` field of the User records it (`docs/data-model.md`, User); it defaults
+to `false`.
+
+The marker is descriptive only. It changes no authorization, capability,
+scope, role, assignment eligibility, authentication method, session, API key,
+audit attribution, or other business rule: Sentinel treats a bot account
+exactly like every other account with the same origin, roles, and state. No
+operation decides anything on the marker, and no list filters or sorts on it.
+Clients use it only to present the actions of bot accounts differently from
+those of people, for example in a Ticket audit log.
+
+Who sets the marker follows the origin of the user (see External User Data
+Ownership in `docs/features/identity/user-service.md`):
+
+- **Local user**: an administrator sets it at creation (Create User (Admin),
+  `manage-user create --bot`) and can change it later (Update User (Admin),
+  `manage-user update --bot` or `--no-bot`).
+- **External user**: the external identity provider owns it through external
+  provisioning, like the other provider-managed fields; administrators cannot
+  change it. How the provider designates a bot account, and the value that
+  provisioning sets until then, is an open question of
+  `docs/features/identity/identity-provisioning.md`.
+
+Every effective change of the marker creates one `bot_changed` identity audit
+event (`docs/features/identity/identity-audit-log.md`). Every user
+representation that the API returns carries it: the user reference object
+(`docs/api-spec.md`, User References in Responses), the directory entry, the
+complete user profile and its `manager` object, and the authenticated
+caller's own profile (`docs/features/identity/authentication.md`, Get Current
+User). The `manage-user list` and `manage-user show` commands display it.
+
+> **Design note — boolean marker**: the question that clients ask is binary:
+> does a person or an automation operate the account? A closed set of account
+> kinds would not make a later refinement cheaper, because replacing one value
+> with several values in situations that earlier releases report with that
+> value is breaking (`docs/api-spec.md`, Response Enums), and it would be
+> confused with the authentication source (`local` or `external`). Neither
+> List Users nor List Users (Admin) declares a `bot` filter, because no
+> consumer needs one; adding it later is additive (`docs/api-spec.md`,
+> Versioning).
 
 ## CLI Commands
 
@@ -56,7 +102,8 @@ sentinel manage-user create \
   --username <username> \
   --email <email> \
   [--full-name <name>] \
-  [--role <role>] ...
+  [--role <role>] ... \
+  [--bot]
 ```
 
 **Parameters**:
@@ -67,6 +114,7 @@ sentinel manage-user create \
 | `--email`      | Yes      | No         | Unique email address                        |
 | `--full-name`  | No       | No         | Display name, at most 255 characters        |
 | `--role`       | No       | Yes        | Role to assign: `admin`, `vulnerability_analyst`, `restricted_analyst` |
+| `--bot`        | No       | No         | Mark the account as a bot account (see Bot Accounts); without it, `bot = false` |
 
 The password is collected interactively via a hidden prompt (input is not
 echoed to the terminal, like `sudo`). The prompt asks for the password
@@ -115,6 +163,7 @@ interactive terminal (password input).` and exits with code 1.
    - `active = True`
    - `password` = provided password (service handles hashing)
    - `roles = [(role, '_manual') for role in provided_roles]`
+   - `bot = True` when `--bot` is provided, otherwise `bot = False`
    - `acting_user_id = None` (CLI action)
    - See `docs/features/identity/user-service.md` for the service contract
 7. If the service raises `UserConflictError` (duplicate username or
@@ -141,10 +190,11 @@ messages to stderr.
 Updates an existing user account. Each invocation operates in exactly one of
 three mutually exclusive modes:
 
-- **Profile mode** (`--email`, `--full-name`, `--clear-full-name`) updates
-  identity fields. It is permitted on local users only — external users have
-  their identity fields managed exclusively by external sync (see External
-  User Data Ownership in `docs/features/identity/user-service.md`).
+- **Profile mode** (`--email`, `--full-name`, `--clear-full-name`, `--bot`,
+  `--no-bot`) updates identity fields and the bot marker. It is permitted on
+  local users only — external users have their identity fields and bot
+  marker managed exclusively by external sync (see External User Data
+  Ownership in `docs/features/identity/user-service.md`).
 - **Role mode** (`--add-role`, `--remove-role`) changes manual (`_manual`)
   role assignments. It is permitted on both local and external users.
 - **Reactivation mode** (`--reactivate`) reactivates a previously deactivated
@@ -166,7 +216,8 @@ sentinel manage-user update \
   --username <username> \
   [--email <new_email>] \
   [--full-name <new_name>] \
-  [--clear-full-name]
+  [--clear-full-name] \
+  [--bot | --no-bot]
 
 sentinel manage-user update \
   --username <username> \
@@ -186,16 +237,18 @@ sentinel manage-user update \
 | `--email`        | No       | No         | New email address                           |
 | `--full-name`    | No       | No         | New display name, at most 255 characters    |
 | `--clear-full-name` | No    | No         | Clear the display name (`full_name = NULL`); mutually exclusive with `--full-name` |
+| `--bot`          | No       | No         | Mark the account as a bot account (`bot = true`); mutually exclusive with `--no-bot` |
+| `--no-bot`       | No       | No         | Unmark the account as a bot account (`bot = false`); mutually exclusive with `--bot` |
 | `--add-role`     | No       | Yes        | Role to add: `admin`, `vulnerability_analyst`, `restricted_analyst` |
 | `--remove-role`  | No       | Yes        | Role to remove: `admin`, `vulnerability_analyst`, `restricted_analyst` |
 | `--reactivate`   | No       | No         | Reactivate a previously deactivated user    |
 
 **Mode selection**: the mode is determined by the flags present in one
-invocation. Profile options (`--email`, `--full-name`, `--clear-full-name`)
-MUST NOT be combined with role options (`--add-role`, `--remove-role`), and
-`--reactivate` MUST NOT be combined with any other option. Any combination
-spanning more than one mode is rejected before the mutating session is
-opened, with:
+invocation. Profile options (`--email`, `--full-name`, `--clear-full-name`,
+`--bot`, `--no-bot`) MUST NOT be combined with role options (`--add-role`,
+`--remove-role`), and `--reactivate` MUST NOT be combined with any other
+option. Any combination spanning more than one mode is rejected before the
+mutating session is opened, with:
 
 ```
 Error: Profile updates, role updates, and --reactivate cannot be combined.
@@ -209,9 +262,19 @@ opened, with:
 Error: --full-name and --clear-full-name cannot be used together.
 ```
 
-Both rejections go to stderr, exit with code 1, and start no mutating
+Likewise, `--bot` and `--no-bot` are mutually exclusive; their combination is
+rejected before the mutating session is opened, with:
+
+```
+Error: --bot and --no-bot cannot be used together.
+```
+
+These rejections go to stderr, exit with code 1, and start no mutating
 session. The read-only user lookup (Behavior step 3) precedes these checks,
-so an unknown username is reported first.
+so an unknown username is reported first. A cross-mode combination is
+reported before a conflict within profile mode, and the
+`--full-name`/`--clear-full-name` conflict before the `--bot`/`--no-bot`
+conflict.
 
 **Behavior**:
 
@@ -226,14 +289,14 @@ so an unknown username is reported first.
    `user_service.get_user_by_username()` using the normalized username — if
    not found, exit with error: `"Error: User '{username}' not found."`
 4. If no modification flags are provided (`--email`, `--full-name`,
-   `--clear-full-name`, `--add-role`, `--remove-role`, `--reactivate` are
-   all absent), print:
+   `--clear-full-name`, `--bot`, `--no-bot`, `--add-role`, `--remove-role`,
+   `--reactivate` are all absent), print:
    `"No changes specified for user '{username}'."` and exit with code 0 —
    no mode is selected and no mutating session is opened
 5. Determine the single mode from the provided flags. Cross-mode
-   combinations and the `--full-name`/`--clear-full-name` conflict are
-   rejected as described in Mode selection, before the mutating session is
-   opened
+   combinations and the `--full-name`/`--clear-full-name` and
+   `--bot`/`--no-bot` conflicts are rejected as described in Mode selection,
+   before the mutating session is opened
 6. Apply the mode-specific guards and behavior defined below
 7. Invoke exactly one mutating service operation for the selected mode, with
    `acting_user_id = None` (CLI is a system action). No invocation calls
@@ -248,7 +311,9 @@ so an unknown username is reported first.
 1. If the user is an external user (`external_id IS NOT NULL`), exit with
    error: `"Error: User '{username}' is managed by an external identity
    provider. Identity fields cannot be modified manually."` (exit code 1).
-   No other mode is affected by this guard
+   The guard covers `--bot` and `--no-bot` too, because the external identity
+   provider manages the bot marker as well. No other mode is affected by
+   this guard
 2. If `--email` is provided, trim and lowercase it, validate the normalized
    value's format, and pass the normalized value to the service. If the
    format is invalid, exit with error:
@@ -258,21 +323,23 @@ so an unknown username is reported first.
    `"Error: Full name must be at most 255 characters."` (exit code 1) —
    before the mutating session is opened
 4. Delegate once to `user_service.update_user()` with
-   `acting_user_id = None`, passing `--email`, `--full-name`, or
-   `--clear-full-name` (`full_name = None`) together in the same call when
-   more than one is provided. An empty `--full-name ""` carries no special
-   meaning: it is passed through as an ordinary provided value and stored
-   verbatim; clearing the display name requires `--clear-full-name`. If the
-   service raises `UserConflictError` (duplicate email), exit with error:
+   `acting_user_id = None`, passing `--email`, `--full-name`,
+   `--clear-full-name` (`full_name = None`), `--bot` (`bot = True`), or
+   `--no-bot` (`bot = False`) together in the same call when more than one
+   is provided. An empty `--full-name ""` carries no special meaning: it is
+   passed through as an ordinary provided value and stored verbatim;
+   clearing the display name requires `--clear-full-name`. If the service
+   raises `UserConflictError` (duplicate email), exit with error:
    `"Error: A user with email '{email}' already exists."`
 5. Report exclusively from the returned `UserUpdateResult.changed_fields`:
    an empty sequence prints
    `"No changes applied to user '{username}'."` and exits with code 0;
    otherwise print
    `"Updated user '{username}': {list of changed fields}."` — for example
-   `"Updated user 'jdoe': email, full name."` The CLI renders `email` as
-   `email` and `full_name` as `full name`, in the result's fixed order; the
-   other closed values cannot appear because this mode never sends them.
+   `"Updated user 'jdoe': email, full name, bot."` The CLI renders `email` as
+   `email`, `full_name` as `full name`, and `bot` as `bot`, in the result's
+   fixed order; the other closed values cannot appear because this mode
+   never sends them.
    The read-only lookup of Behavior step 3 serves only resolution and the
    guard above; it never classifies the outcome. The service remains
    authoritative: it normalizes and compares against locked-current state,
@@ -694,15 +761,17 @@ provided, all users are shown regardless of status.
 6. Print a table to stdout with columns:
 
 ```
-USERNAME        FULL NAME            EMAIL                    TYPE       STATUS    ROLES
-jdoe            John Doe             jdoe@example.com         local      active    admin, vulnerability_analyst
-bwilson         Bob Wilson           bob.wilson@suse.com      external   active    vulnerability_analyst
-olduser         Old User             old@example.com          local      inactive  —
+USERNAME        FULL NAME            EMAIL                    TYPE       BOT  STATUS    ROLES
+jdoe            John Doe             jdoe@example.com         local      no   active    admin, vulnerability_analyst
+bwilson         Bob Wilson           bob.wilson@suse.com      external   no   active    vulnerability_analyst
+mybot           My Bot               mybot@example.com        local      yes  active    restricted_analyst
+olduser         Old User             old@example.com          local      no   inactive  —
 ```
 
 Column alignment uses fixed-width spaces. The ROLES column shows a
 comma-separated list of roles, or `—` if the user has no roles. The FULL
-NAME column shows `—` if `full_name` is NULL.
+NAME column shows `—` if `full_name` is NULL. The BOT column shows `yes` for a
+bot account and `no` otherwise (see Bot Accounts).
 
 If no users match the filters, prints: `"No users found matching the
 specified criteria."` and exits with code 0.
@@ -745,6 +814,7 @@ Username:     jdoe
 Full name:    John Doe
 Email:        jdoe@example.com
 Type:         local
+Bot:          no
 Status:       active
 Roles:        admin (manual), vulnerability_analyst (O SUSE Security)
 Created:      2025-03-15 10:30:00 UTC
@@ -758,7 +828,8 @@ derived from external sync. If a role has both origins, show both:
 `admin (manual, O SUSE Admins)`.
 
 If `full_name` is NULL, show `—` for `Full name`. If `Last login` is
-never, show `—`. If `Manager` is not set, show `—`.
+never, show `—`. If `Manager` is not set, show `—`. `Bot` shows `yes` for a
+bot account and `no` otherwise.
 
 **Idempotency**: Idempotent. Read-only command, no state changes.
 
@@ -774,8 +845,8 @@ The API exposes user records to two audiences:
 
 - **The user directory** (List Users and Get User under Directory API
   endpoints) is accessible to every authenticated user (read-only) and
-  returns the directory entry: a user's identity, email, active status, and
-  role values.
+  returns the directory entry: a user's identity, email, active status, bot
+  marker, and role values.
 - **The complete user profile** is returned only by the administrator API: its
   list and detail reads (List Users (Admin) and Get User (Admin)) and the
   responses of the administrator mutation operations.
@@ -871,6 +942,7 @@ The route delegates UUID-or-username resolution and relationship loading to
     "email": "string",
     "full_name": "string | null",
     "active": true,
+    "bot": false,
     "roles": ["admin", "vulnerability_analyst"]
   }
 }
@@ -882,6 +954,8 @@ Field notes:
   substitute `username` or any other fallback value. Consumers that need
   a display fallback (e.g., a UI showing `full_name ?? username`) apply
   it at presentation time
+- `bot`: `true` for a bot account, `false` otherwise (see Bot Accounts).
+  Descriptive only; it has no effect on authorization or business rules
 - `roles`: the distinct role values that the user currently holds from any
   origin, manual or external; a role held from several origins appears once,
   and a user without roles has an empty array. Values use the wire format and
@@ -977,6 +1051,7 @@ The route delegates UUID-or-username resolution and relationship loading to
     "email": "string",
     "full_name": "string | null",
     "active": true,
+    "bot": false,
     "source": "external | local",
     "external_id": "uuid | null",
     "manager": {
@@ -984,6 +1059,7 @@ The route delegates UUID-or-username resolution and relationship loading to
       "username": "string",
       "full_name": "string | null",
       "active": true,
+      "bot": false,
       "email": "string"
     } | null,
     "roles": [
@@ -1007,8 +1083,10 @@ Field notes:
 - `external_id`: unique identifier from the external identity provider. NULL for local users
 - `full_name`: nullable, with the same semantics as in the directory entry
   (Get User above)
+- `bot`: the bot marker, with the same semantics as in the directory entry
 - `manager`: resolved manager object or `null`. `manager.full_name`
-  follows the same nullability as above
+  follows the same nullability as above, and `manager.bot` is the manager's
+  own bot marker
 - `roles`: array of all roles from both external group mappings and manual
   assignments. `group_name` is `'_manual'` for manually assigned roles.
   See `rbac.md` (Role Wire Format, Deterministic ordering) for the
@@ -1051,7 +1129,8 @@ Dependency).
   "email": "john.doe@example.com",
   "full_name": "John Doe",
   "password": "a-fictional-password-value",
-  "roles": ["admin"]
+  "roles": ["admin"],
+  "bot": false
 }
 ```
 
@@ -1062,11 +1141,12 @@ Dependency).
 | `full_name` | string | No | Yes | Optional display name; omitted or NULL stores NULL |
 | `password` | string | Yes | No | 16-128 characters; never logged or returned |
 | `roles` | array of Role values | No | No | Initial manual roles; defaults to `[]`, and duplicates are rejected by request validation |
+| `bot` | boolean | No | No | Bot marker (see Bot Accounts); defaults to `false` |
 
-Missing required fields, explicit NULL for `username`, `email`, `password`, or
-`roles`, a malformed or reserved username, a malformed email, unknown role
-values, duplicate role values, and wrong field types return the global HTTP
-422 `VALIDATION_ERROR` response.
+Missing required fields, explicit NULL for `username`, `email`, `password`,
+`roles`, or `bot`, a malformed or reserved username, a malformed email,
+unknown role values, duplicate role values, and wrong field types return the
+global HTTP 422 `VALIDATION_ERROR` response.
 Password policy failure is domain validation and returns the error below.
 
 **Behavior**:
@@ -1074,8 +1154,8 @@ Password policy failure is domain validation and returns the error below.
 1. Validate and normalize the request as specified above.
 2. Delegate to `user_service.create_user()` with `active = true`,
    `external_id = None`, `manager_id = None`, each role represented as
-   `(role, "_manual")`, and `acting_user_id` set to the authenticated user's
-   UUID.
+   `(role, "_manual")`, the requested `bot` value, and `acting_user_id` set
+   to the authenticated user's UUID.
 3. Within the caller-owned API transaction, persist the User, every initial
    UserRole, `user_created`, and one `role_added` event per role. The service
    flushes and the API transaction dependency commits once only after all
@@ -1102,19 +1182,20 @@ PATCH /api/v1/admin/users/{user}
 
 **`Capability: manage_users`**
 
-Update a user's profile fields. Only local users (`external_id IS NULL`)
-can be modified — external users have their identity fields managed by
-external sync (see External User Data Ownership in
-`docs/features/identity/user-service.md`). This endpoint operates on
-both active and inactive users (see Inactive User Management Principle
-in `docs/features/identity/user-service.md`).
+Update a user's profile fields and bot marker. Only local users
+(`external_id IS NULL`) can be modified — external users have their identity
+fields and bot marker managed by external sync (see External User Data
+Ownership in `docs/features/identity/user-service.md`). This endpoint
+operates on both active and inactive users (see Inactive User Management
+Principle in `docs/features/identity/user-service.md`).
 
 **Request body** (all fields optional, at least one required):
 
 ```json
 {
   "email": "new@example.com",
-  "full_name": "New Display Name"
+  "full_name": "New Display Name",
+  "bot": true
 }
 ```
 
@@ -1130,15 +1211,21 @@ in `docs/features/identity/user-service.md`).
    uniqueness validation
 4. `full_name: null` is valid and explicitly clears the stored display name;
    omission leaves it unchanged
-5. If the user is an external user (`external_id IS NOT NULL`), return HTTP 409
+5. `bot` sets the bot marker (see Bot Accounts); omission leaves it
+   unchanged. A non-boolean value and explicit `bot: null` return the global
+   HTTP 422 `VALIDATION_ERROR` response through request-schema validation
+6. If the user is an external user (`external_id IS NOT NULL`), return HTTP 409
    with code `USER_EXTERNAL_FIELD_READONLY`:
    `"Cannot modify identity fields for external users. These fields are managed by the external identity provider."`
-6. Delegate to `user_service.update_user()` with
-   `acting_user_id = authenticated_admin.id`
-7. If the service raises `UserConflictError` (duplicate email), return
+   The bot marker is included: it is managed by the external identity
+   provider too
+7. Delegate to `user_service.update_user()` with
+   `acting_user_id = authenticated_admin.id`, passing only the provided
+   fields
+8. If the service raises `UserConflictError` (duplicate email), return
    HTTP 409 with code `USER_ALREADY_EXISTS`:
    `"A user with this email already exists."`
-8. Return HTTP 200 with `UserUpdateResult.user` — the updated complete user
+9. Return HTTP 200 with `UserUpdateResult.user` — the updated complete user
    profile — in the standard `{"data": ...}` envelope
 
 **Error responses**:
@@ -1146,7 +1233,7 @@ in `docs/features/identity/user-service.md`).
 | Status | Code | Condition |
 |---|---|---|
 | 404 | `USER_NOT_FOUND` | User identifier does not resolve |
-| 409 | `USER_EXTERNAL_FIELD_READONLY` | Authenticated administrator attempts to modify an external user's identity fields |
+| 409 | `USER_EXTERNAL_FIELD_READONLY` | Authenticated administrator attempts to modify an external user's identity fields or bot marker |
 | 409 | `USER_ALREADY_EXISTS` | Normalized email is already used |
 
 **Response**: complete user profile in `{"data": {...}}` envelope (see
@@ -1588,6 +1675,8 @@ handling is required.
    set at creation time. There is no passwordless local user state.
    This invariant is enforced at the database level by a CHECK
    constraint (see `docs/data-model.md`, `chk_user_auth_exclusive`)
+6. **The bot marker is descriptive only**: it has no effect on authorization
+   or business rules (see Bot Accounts)
 
 ## Security Considerations
 
@@ -1604,18 +1693,23 @@ handling is required.
 - **The user directory is readable by every authenticated user (accepted)**:
   any authenticated caller, including the account behind a role-less API key,
   can page through every user, active or not, local or external, and read
-  their username, display name, email, active status, and role values,
-  including which users hold the Admin role. This is accepted because the
-  corporate directory already exposes names and email addresses to every
-  employee, searching colleagues by email is a directory use case, and role
-  values identify whom to assign a Ticket or ask for access. The directory
-  also lists deactivated users and local accounts, whose email the corporate
-  directory may not show. This is accepted too: deactivated users remain the
-  subject of historical assignments, references, and Ticket filters; a
-  username grants nothing without the password of a local account; and the
-  lockout of a known username, an administrator's included, is the accepted
-  risk stated below (Per-username lockout DoS vector). The fields that serve
-  only user administration are never part of the directory (see Access Level
+  their username, display name, email, active status, bot marker, and role
+  values, including which users hold the Admin role. This is accepted
+  because the corporate directory already exposes names and email addresses
+  to every employee, searching colleagues by email is a directory use case,
+  and role values identify whom to assign a Ticket or ask for access. The
+  directory also lists deactivated users and local accounts, whose email the
+  corporate directory may not show. This is accepted too: deactivated users
+  remain the subject of historical assignments, references, and Ticket
+  filters; a username grants nothing without the password of a local
+  account; and the lockout of a known username, an administrator's included,
+  is the accepted risk stated below (Per-username lockout DoS vector). The
+  bot marker is accepted as well: it reveals which accounts an automation
+  operates, which their usernames often reveal already, and it grants
+  nothing; the ongoing requests of such an account use API keys
+  (`docs/features/identity/rbac.md`, Business Rule 14), which the
+  per-username lockout does not affect. The fields that serve only user
+  administration are never part of the directory (see Access Level
   Requirements)
 - **Password policy**: minimum 16 characters, no complexity rules.
   Length is the primary defense (see

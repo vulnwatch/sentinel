@@ -1148,6 +1148,7 @@ class TestListTicketEventsProjection:
             username=actor.username,
             full_name="Fictional Analyst",
             active=True,
+            bot=False,
         )
         assert second.id == older.id
         assert second.actor is None
@@ -1174,7 +1175,11 @@ class TestListTicketEventsProjection:
         )
 
         assert result.items[0].actor == TicketEventActor(
-            id=actor.id, username="fictional.after", full_name=None, active=False
+            id=actor.id,
+            username="fictional.after",
+            full_name=None,
+            active=False,
+            bot=False,
         )
 
     async def test_accessible_ticket_without_events_returns_empty_page(

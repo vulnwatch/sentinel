@@ -424,14 +424,18 @@ mutation and one `api_key_revoked` event.
 
 An existing user creates `my-automation-bot`, stores the returned secret in
 the consumer's secret store, and uses it for programmatic requests. Actions
-performed with the key are attributed to its owner.
+performed with the key are attributed to its owner, a person, so they appear
+as that person's actions: the owner's account is not a bot account.
 
 ### Dedicated Automation Identity
 
 An administrator creates a dedicated local user such as
-`security-scanner`. An operator authenticates as that user and creates an API
-key through the self-service endpoint. The automation then has its own roles
-and attribution. Administrators still cannot create its key on its behalf.
+`security-scanner` and marks it as a bot account
+(`docs/features/identity/user-management.md`, Bot Accounts), so that clients
+present its actions as automated. An operator authenticates as that user and
+creates an API key through the self-service endpoint. The automation then has
+its own roles and attribution. Administrators still cannot create its key on
+its behalf.
 
 ## Security and Audit Guarantees
 

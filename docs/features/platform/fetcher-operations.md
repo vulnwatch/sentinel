@@ -295,7 +295,8 @@ disabled, derived from `FetcherAuditEvent` records with
 
 - `disabled_by` / `enabled_by`: when `has_manage_fetchers` is `true`,
   return a User Reference Object
-  (`{"id": "uuid", "username": "...", "full_name": "...", "active": bool}`).
+  (`{"id": "uuid", "username": "...", "full_name": "...", "active": bool,
+  "bot": bool}`).
   When `has_manage_fetchers` is `false`, both fields are `null`.
 - This ensures a read endpoint open to every authenticated user does not
   expose admin identities.
@@ -1015,7 +1016,8 @@ still appears in its correct chronological position.
 **Notes**:
 - `error_detail` and `error_traceback` are NOT included in list responses
 - `triggered_by_user`: User Reference Object
-  (`{"id": "uuid", "username": "...", "full_name": "...", "active": bool}`)
+  (`{"id": "uuid", "username": "...", "full_name": "...", "active": bool,
+  "bot": bool}`)
   when `triggered_by` is `manual` AND the caller has `manage_fetchers`.
   Otherwise `null`
 - For a run with `status = queued`: `started_at = null`,
@@ -1490,7 +1492,8 @@ endpoints in the system (`identity-audit-log.md`,
         "id": "uuid",
         "username": "jdoe",
         "full_name": "John Doe",
-        "active": true
+        "active": true,
+        "bot": false
       },
       "old_value": "0 */6 * * *",
       "new_value": "0 */4 * * *",
@@ -1505,7 +1508,8 @@ endpoints in the system (`identity-audit-log.md`,
         "id": "uuid",
         "username": "jdoe",
         "full_name": "John Doe",
-        "active": true
+        "active": true,
+        "bot": false
       },
       "old_value": null,
       "new_value": null,

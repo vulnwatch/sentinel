@@ -227,7 +227,13 @@ class TestListSettingAuditEvents:
             "created_at",
             "actor",
         }
-        assert set(item["actor"].keys()) == {"id", "username", "full_name", "active"}
+        assert set(item["actor"].keys()) == {
+            "id",
+            "username",
+            "full_name",
+            "active",
+            "bot",
+        }
 
     async def test_created_at_serializes_with_utc_z_suffix(
         self,

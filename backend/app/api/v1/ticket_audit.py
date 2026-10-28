@@ -70,6 +70,7 @@ def _serialize_event(event: TicketEventItem) -> TicketAuditEventData:
                 username=event.actor.username,
                 full_name=event.actor.full_name,
                 active=event.actor.active,
+                bot=event.actor.bot,
             )
             if event.actor is not None
             else None

@@ -49,6 +49,7 @@ from app.models.user import User
 from app.models.user_role import UserRole
 from app.services import user_service as user_service_module
 from app.services.user_service import (
+    MISSING,
     ExternalUserFieldReadOnlyError,
     ExternalUserStatusReadOnlyError,
     ReactivationResult,
@@ -65,6 +66,7 @@ _COMBINED_MODES_ERROR = (
 _FULL_NAME_CONFLICT_ERROR = (
     "Error: --full-name and --clear-full-name cannot be used together."
 )
+_BOT_CONFLICT_ERROR = "Error: --bot and --no-bot cannot be used together."
 _EXTERNAL_REACTIVATION_ERROR = "Error: Cannot reactivate external users."
 
 # ---------------------------------------------------------------------------
@@ -168,6 +170,7 @@ async def _create_user(
     email: str | None = None,
     full_name: str | None = None,
     active: bool = True,
+    bot: bool = False,
     external: bool = False,
     roles: list[tuple[Role, str]] | None = None,
     user_id: UUID | None = None,
@@ -181,6 +184,7 @@ async def _create_user(
             email=email or f"{username}@example.com",
             full_name=full_name,
             active=active,
+            bot=bot,
             external_id=uuid4() if external else None,
             password_hash=None if external else "$2b$12$" + "a" * 53,
         )
@@ -290,6 +294,7 @@ def _snapshot(
         user.email,
         user.full_name,
         user.active,
+        user.bot,
         [(r.role, r.group_name) for r in roles],
     )
 
@@ -475,9 +480,13 @@ def test_profile_email_only_delegates_normalized_email_without_full_name(
     mutating = _assert_single_transaction(fake_factory)
     _assert_only_service_awaited(fake_services, "update_user")
     fake_services.update_user.assert_awaited_once_with(
-        mutating, _FAKE_USER_ID, acting_user_id=None, email="new.mail@example.com"
+        mutating,
+        _FAKE_USER_ID,
+        acting_user_id=None,
+        email="new.mail@example.com",
+        full_name=MISSING,
+        bot=MISSING,
     )
-    assert "full_name" not in fake_services.update_user.await_args.kwargs
 
 
 @pytest.mark.unit
@@ -494,9 +503,13 @@ def test_profile_full_name_only_delegates_without_email(
     mutating = _assert_single_transaction(fake_factory)
     _assert_only_service_awaited(fake_services, "update_user")
     fake_services.update_user.assert_awaited_once_with(
-        mutating, _FAKE_USER_ID, acting_user_id=None, full_name="Alice Example"
+        mutating,
+        _FAKE_USER_ID,
+        acting_user_id=None,
+        email=MISSING,
+        full_name="Alice Example",
+        bot=MISSING,
     )
-    assert "email" not in fake_services.update_user.await_args.kwargs
 
 
 @pytest.mark.unit
@@ -523,6 +536,7 @@ def test_profile_email_and_full_name_delegate_in_one_call(
         acting_user_id=None,
         email="alice.new@example.com",
         full_name="Alice Example",
+        bot=MISSING,
     )
 
 
@@ -539,9 +553,13 @@ def test_profile_clear_full_name_sends_explicit_none(
     _assert_success(result, "Updated user 'alice.example': full name.")
     mutating = _assert_single_transaction(fake_factory)
     fake_services.update_user.assert_awaited_once_with(
-        mutating, _FAKE_USER_ID, acting_user_id=None, full_name=None
+        mutating,
+        _FAKE_USER_ID,
+        acting_user_id=None,
+        email=MISSING,
+        full_name=None,
+        bot=MISSING,
     )
-    assert "email" not in fake_services.update_user.await_args.kwargs
 
 
 @pytest.mark.unit
@@ -566,6 +584,7 @@ def test_profile_clear_full_name_with_email_delegates_both(
         acting_user_id=None,
         email="alice.new@example.com",
         full_name=None,
+        bot=MISSING,
     )
 
 
@@ -578,7 +597,71 @@ def test_profile_empty_full_name_is_passed_verbatim(
     assert result.exit_code == 0, result.output
     mutating = _assert_single_transaction(fake_factory)
     fake_services.update_user.assert_awaited_once_with(
-        mutating, _FAKE_USER_ID, acting_user_id=None, full_name=""
+        mutating,
+        _FAKE_USER_ID,
+        acting_user_id=None,
+        email=MISSING,
+        full_name="",
+        bot=MISSING,
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(("flag", "expected"), [("--bot", True), ("--no-bot", False)])
+def test_profile_bot_flag_delegates_the_marker_alone(
+    fake_factory: _FakeSessionFactory,
+    fake_services: SimpleNamespace,
+    flag: str,
+    expected: bool,
+) -> None:
+    fake_services.update_user.return_value = UserUpdateResult(
+        user=_result_user(), changed_fields=["bot"]
+    )
+
+    result = _invoke(["--username", "alice.example", flag])
+
+    _assert_success(result, "Updated user 'alice.example': bot.")
+    mutating = _assert_single_transaction(fake_factory)
+    _assert_only_service_awaited(fake_services, "update_user")
+    fake_services.update_user.assert_awaited_once_with(
+        mutating,
+        _FAKE_USER_ID,
+        acting_user_id=None,
+        email=MISSING,
+        full_name=MISSING,
+        bot=expected,
+    )
+
+
+@pytest.mark.unit
+def test_profile_bot_with_email_and_full_name_delegates_in_one_call(
+    fake_factory: _FakeSessionFactory, fake_services: SimpleNamespace
+) -> None:
+    fake_services.update_user.return_value = UserUpdateResult(
+        user=_result_user(), changed_fields=["email", "full_name", "bot"]
+    )
+
+    result = _invoke(
+        [
+            "--username",
+            "alice.example",
+            "--bot",
+            "--email",
+            "Alice.New@Example.com",
+            "--full-name",
+            "Alice Example",
+        ]
+    )
+
+    _assert_success(result, "Updated user 'alice.example': email, full name, bot.")
+    mutating = _assert_single_transaction(fake_factory)
+    fake_services.update_user.assert_awaited_once_with(
+        mutating,
+        _FAKE_USER_ID,
+        acting_user_id=None,
+        email="alice.new@example.com",
+        full_name="Alice Example",
+        bot=True,
     )
 
 
@@ -841,6 +924,7 @@ def test_invalid_username_rejected_before_database_access(
             ["--full-name", "Alice Example", "--clear-full-name"],
             id="full-name-conflict",
         ),
+        pytest.param(["--bot", "--no-bot"], id="bot-conflict"),
         pytest.param(["--add-role", "bogus"], id="invalid-role"),
         pytest.param([], id="no-modification"),
     ],
@@ -975,6 +1059,27 @@ def test_no_modification_flags_prints_no_changes_specified(
             ["--full-name", "Alice Other", "--clear-full-name"],
             _FULL_NAME_CONFLICT_ERROR,
             id="full-name-and-clear",
+        ),
+        pytest.param(
+            ["--bot", "--add-role", "admin"],
+            _COMBINED_MODES_ERROR,
+            id="bot-and-role",
+        ),
+        pytest.param(
+            ["--no-bot", "--reactivate"],
+            _COMBINED_MODES_ERROR,
+            id="no-bot-and-reactivate",
+        ),
+        pytest.param(["--bot", "--no-bot"], _BOT_CONFLICT_ERROR, id="bot-and-no-bot"),
+        pytest.param(
+            ["--bot", "--no-bot", "--add-role", "admin"],
+            _COMBINED_MODES_ERROR,
+            id="cross-mode-before-bot-conflict",
+        ),
+        pytest.param(
+            ["--full-name", "Alice Other", "--clear-full-name", "--bot", "--no-bot"],
+            _FULL_NAME_CONFLICT_ERROR,
+            id="full-name-conflict-before-bot-conflict",
         ),
     ],
 )
@@ -1385,11 +1490,69 @@ def test_profile_stale_pre_read_suggesting_noop_prints_update(
 
 @pytest.mark.integration
 @pytest.mark.parametrize(
+    ("stored", "flag", "expected"),
+    [(False, "--bot", True), (True, "--no-bot", False)],
+    ids=["mark", "unmark"],
+)
+def test_profile_bot_flag_changes_the_marker_with_one_event(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+    stored: bool,
+    flag: str,
+    expected: bool,
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    username = _username("scanner.flag")
+    cleanup_users_by_username(username)
+    user = asyncio.run(_create_user(cli_session_factory, username=username, bot=stored))
+
+    result = _invoke(["--username", username, flag])
+
+    _assert_success(result, f"Updated user '{username}': bot.")
+    assert asyncio.run(_fetch_user(cli_session_factory, user.id)).bot is expected
+    events = asyncio.run(_fetch_identity_events(cli_session_factory, user.id))
+    assert _event_tuples(events) == [
+        (
+            IdentityAuditEventType.BOT_CHANGED.value,
+            None,
+            str(stored).lower(),
+            str(expected).lower(),
+            None,
+        )
+    ]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(("stored", "flag"), [(True, "--bot"), (False, "--no-bot")])
+def test_profile_bot_flag_on_reached_state_is_a_no_op(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+    stored: bool,
+    flag: str,
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    username = _username("scanner.noop")
+    cleanup_users_by_username(username)
+    user = asyncio.run(_create_user(cli_session_factory, username=username, bot=stored))
+
+    result = _invoke(["--username", username, flag])
+
+    _assert_success(result, f"No changes applied to user '{username}'.")
+    assert asyncio.run(_fetch_user(cli_session_factory, user.id)).bot is stored
+    assert asyncio.run(_fetch_identity_events(cli_session_factory, user.id)) == []
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
     "args",
     [
         pytest.param(["--email", "alice.ext.new@example.com"], id="email"),
         pytest.param(["--full-name", "Alice Example"], id="full-name"),
         pytest.param(["--clear-full-name"], id="clear-full-name"),
+        pytest.param(["--bot"], id="bot"),
+        pytest.param(["--no-bot"], id="no-bot"),
         pytest.param(["--email", "not-an-email"], id="guard-before-email-format"),
     ],
 )

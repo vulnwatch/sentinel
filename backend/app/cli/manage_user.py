@@ -55,7 +55,7 @@ _FULL_NAME_MAX_LENGTH = 255
 # the value, matching the alignment in the command's spec example.
 _SHOW_LABEL_WIDTH = 14
 
-_LIST_HEADERS = ("USERNAME", "FULL NAME", "EMAIL", "TYPE", "STATUS", "ROLES")
+_LIST_HEADERS = ("USERNAME", "FULL NAME", "EMAIL", "TYPE", "BOT", "STATUS", "ROLES")
 
 
 @click.group("manage-user")
@@ -160,8 +160,17 @@ def _check_full_name_length_or_exit(full_name: str | None) -> None:
         "Role to assign: admin, vulnerability_analyst, restricted_analyst. Repeatable."
     ),
 )
+@click.option(
+    "--bot",
+    is_flag=True,
+    help="Mark the account as a bot account, which an automation operates.",
+)
 def create(
-    username: str, email: str, full_name: str | None, roles: tuple[str, ...]
+    username: str,
+    email: str,
+    full_name: str | None,
+    roles: tuple[str, ...],
+    bot: bool,
 ) -> None:
     """Create a new local user account with a password.
 
@@ -209,6 +218,7 @@ def create(
             full_name=full_name,
             roles=parsed_roles,
             password=password,
+            bot=bot,
         )
     )
 
@@ -221,6 +231,7 @@ async def _create_flow(
     full_name: str | None,
     roles: list[Role],
     password: str,
+    bot: bool = False,
 ) -> None:
     """Delegate account creation to `user_service.create_user()`.
 
@@ -244,6 +255,7 @@ async def _create_flow(
                 external_id=None,
                 password=password,
                 roles=[(role, "_manual") for role in roles],
+                bot=bot,
                 acting_user_id=None,
             )
             await db.commit()
@@ -298,6 +310,16 @@ _EXTERNAL_USER_REACTIVATION_ERROR = "Error: Cannot reactivate external users."
     help="Clear the display name (profile mode); excludes --full-name.",
 )
 @click.option(
+    "--bot",
+    is_flag=True,
+    help="Mark the account as a bot account (profile mode); excludes --no-bot.",
+)
+@click.option(
+    "--no-bot",
+    is_flag=True,
+    help="Unmark the account as a bot account (profile mode); excludes --bot.",
+)
+@click.option(
     "--add-role",
     "add_roles",
     multiple=True,
@@ -323,6 +345,8 @@ def update(
     email: str | None,
     full_name: str | None,
     clear_full_name: bool,
+    bot: bool,
+    no_bot: bool,
     add_roles: tuple[str, ...],
     remove_roles: tuple[str, ...],
     reactivate: bool,
@@ -344,6 +368,8 @@ def update(
             email=email,
             full_name=full_name,
             clear_full_name=clear_full_name,
+            bot=bot,
+            no_bot=no_bot,
             add_roles=add_roles,
             remove_roles=remove_roles,
             reactivate=reactivate,
@@ -358,6 +384,8 @@ async def _update_flow(
     email: str | None,
     full_name: str | None,
     clear_full_name: bool,
+    bot: bool = False,
+    no_bot: bool = False,
     add_roles: tuple[str, ...],
     remove_roles: tuple[str, ...],
     reactivate: bool,
@@ -387,7 +415,9 @@ async def _update_flow(
         user_id = user.id
         is_external = user.external_id is not None
 
-    profile_mode = email is not None or full_name is not None or clear_full_name
+    profile_mode = (
+        email is not None or full_name is not None or clear_full_name or bot or no_bot
+    )
     role_mode = bool(add_roles or remove_roles)
     if not (profile_mode or role_mode or reactivate):
         click.echo(f"No changes specified for user '{username}'.")
@@ -405,8 +435,15 @@ async def _update_flow(
             err=True,
         )
         raise SystemExit(1)
+    if bot and no_bot:
+        click.echo("Error: --bot and --no-bot cannot be used together.", err=True)
+        raise SystemExit(1)
 
     if profile_mode:
+        # `None` means neither flag was given: the marker is not sent.
+        requested_bot: bool | None = None
+        if bot or no_bot:
+            requested_bot = bot
         await _update_profile(
             session_factory,
             user_id=user_id,
@@ -415,6 +452,7 @@ async def _update_flow(
             email=email,
             full_name=full_name,
             clear_full_name=clear_full_name,
+            bot=requested_bot,
         )
     elif role_mode:
         await _update_roles(
@@ -442,14 +480,18 @@ async def _update_profile(
     email: str | None,
     full_name: str | None,
     clear_full_name: bool,
+    bot: bool | None = None,
 ) -> None:
     """Profile mode: external guard, email validation, full-name length
     bound, then one `user_service.update_user()` call in its own
-    transaction."""
+    transaction. `bot` is `None` when neither `--bot` nor `--no-bot` was
+    given."""
     from app.core.exceptions import UserNotFoundError
     from app.services import user_service
     from app.services.user_service import (
+        MISSING,
         ExternalUserFieldReadOnlyError,
+        MissingType,
         UserConflictError,
     )
 
@@ -458,28 +500,27 @@ async def _update_profile(
         raise SystemExit(1)
     normalized_email = _normalize_email_or_exit(email) if email is not None else None
     _check_full_name_length_or_exit(full_name)
+    # Forward only the provided fields; an omitted one stays `MISSING`.
     # `--clear-full-name` sends an explicit `None`; `--full-name ""` is an
     # ordinary provided value.
-    full_name_provided = clear_full_name or full_name is not None
+    email_arg: str | MissingType = (
+        normalized_email if normalized_email is not None else MISSING
+    )
+    full_name_arg: str | MissingType | None = (
+        full_name if clear_full_name or full_name is not None else MISSING
+    )
+    bot_arg: bool | MissingType = bot if bot is not None else MISSING
 
     async with session_factory() as db:
         try:
-            if normalized_email is not None and full_name_provided:
-                result = await user_service.update_user(
-                    db,
-                    user_id,
-                    acting_user_id=None,
-                    email=normalized_email,
-                    full_name=full_name,
-                )
-            elif normalized_email is not None:
-                result = await user_service.update_user(
-                    db, user_id, acting_user_id=None, email=normalized_email
-                )
-            else:
-                result = await user_service.update_user(
-                    db, user_id, acting_user_id=None, full_name=full_name
-                )
+            result = await user_service.update_user(
+                db,
+                user_id,
+                acting_user_id=None,
+                email=email_arg,
+                full_name=full_name_arg,
+                bot=bot_arg,
+            )
             await db.commit()
         except UserConflictError:
             await db.rollback()
@@ -833,15 +874,29 @@ def _render_list_table(users: list[User]) -> str:
     return "\n".join(lines)
 
 
-def _render_user_row(user: User) -> tuple[str, str, str, str, str, str]:
+def _render_user_row(user: User) -> tuple[str, str, str, str, str, str, str]:
     """Build one `manage-user list` row: username, full name, email, type,
-    status, and comma-separated roles (each rendered `—` when absent)."""
+    bot marker (`yes`/`no`), status, and comma-separated roles (full name
+    and roles rendered `—` when absent)."""
     full_name = user.full_name if user.full_name else "—"
     user_type = "external" if user.external_id is not None else "local"
     status = "active" if user.active else "inactive"
     role_values = sorted({role_to_wire(Role(ur.role)) for ur in user.roles})
     roles = ", ".join(role_values) if role_values else "—"
-    return (user.username, full_name, user.email, user_type, status, roles)
+    return (
+        user.username,
+        full_name,
+        user.email,
+        user_type,
+        _yes_no(user.bot),
+        status,
+        roles,
+    )
+
+
+def _yes_no(value: bool) -> str:
+    """Render the bot marker as the `manage-user list`/`show` display value."""
+    return "yes" if value else "no"
 
 
 # ---------------------------------------------------------------------------
@@ -927,6 +982,7 @@ def _render_user_detail(user: User) -> str:
         ("Full name:", full_name),
         ("Email:", user.email),
         ("Type:", user_type),
+        ("Bot:", _yes_no(user.bot)),
         ("Status:", status),
         ("Roles:", _render_roles_with_origins(user.roles)),
         ("Created:", _format_utc(user.created_at)),

@@ -199,7 +199,15 @@ class TestParseRoleFilters:
 # (`docs/features/identity/user-management.md`, Access Level Requirements)
 # ---------------------------------------------------------------------------
 
-_DIRECTORY_ENTRY_FIELDS = {"id", "username", "email", "full_name", "active", "roles"}
+_DIRECTORY_ENTRY_FIELDS = {
+    "id",
+    "username",
+    "email",
+    "full_name",
+    "active",
+    "bot",
+    "roles",
+}
 
 _COMPLETE_PROFILE_FIELDS = {
     "id",
@@ -207,6 +215,7 @@ _COMPLETE_PROFILE_FIELDS = {
     "email",
     "full_name",
     "active",
+    "bot",
     "source",
     "external_id",
     "manager",
@@ -682,6 +691,18 @@ class TestGetUser:
         assert response.status_code == 200
         assert response.json()["data"]["username"] == "byuuidtest"
 
+    async def test_bot_account_entry_carries_the_marker(
+        self,
+        authenticated_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        bot = await user_factory(username="scannerentry", bot=True)
+
+        response = await authenticated_client.get(f"/api/v1/users/{bot.id}")
+
+        assert response.status_code == 200
+        assert response.json()["data"]["bot"] is True
+
     async def test_resolves_by_exact_username(
         self,
         authenticated_client: AsyncClient,
@@ -725,6 +746,7 @@ class TestGetUser:
             "email": user.email,
             "full_name": None,
             "active": True,
+            "bot": False,
             "roles": ["admin", "vulnerability_analyst"],
         }
 
@@ -1179,6 +1201,7 @@ class TestGetUserAdmin:
             "username": "managerforprofile",
             "full_name": manager.full_name,
             "active": True,
+            "bot": False,
             "email": manager.email,
         }
         assert data["roles"] == [
@@ -1189,6 +1212,20 @@ class TestGetUserAdmin:
                 "created_at": data["roles"][0]["created_at"],
             }
         ]
+
+    async def test_bot_marker_of_the_user_and_its_manager_are_current(
+        self,
+        admin_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        manager = await user_factory(username="botmanager", bot=True)
+        user = await user_factory(username="botprofile", manager_id=manager.id)
+
+        response = await admin_client.get(f"/api/v1/admin/users/{user.username}")
+
+        data = response.json()["data"]
+        assert data["bot"] is False
+        assert data["manager"]["bot"] is True
 
     async def test_external_user_has_external_source(
         self,
@@ -1318,7 +1355,22 @@ class TestGetCurrentUserProfile:
             "full_name",
             "roles",
             "active",
+            "bot",
         }
+
+    async def test_bot_account_reads_its_own_marker(
+        self,
+        authenticated_user_and_client: tuple[User, AsyncClient],
+        db_session: AsyncSession,
+    ) -> None:
+        user, client = authenticated_user_and_client
+        user.bot = True
+        await db_session.flush()
+
+        response = await client.get("/api/v1/users/me")
+
+        assert response.status_code == 200
+        assert response.json()["data"]["bot"] is True
 
     async def test_roles_are_distinct_and_wire_sorted(
         self,
@@ -1483,6 +1535,62 @@ class TestCreateUserAdmin:
         data = response.json()["data"]
         assert data["full_name"] is None
         assert data["roles"] == []
+
+    async def test_creates_a_bot_account_without_a_bot_changed_event(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        db_session: AsyncSession,
+    ) -> None:
+        _admin, client = admin_user_and_client
+
+        response = await client.post(
+            "/api/v1/admin/users",
+            json=_create_payload(
+                username="scanner", email="scanner@example.com", bot=True
+            ),
+        )
+
+        assert response.status_code == 201
+        data = response.json()["data"]
+        assert data["bot"] is True
+        events = await _audit_events_for(db_session, data["id"])
+        assert [event.event_type for event in events] == ["user_created"]
+
+    async def test_omitted_bot_creates_a_person_account(
+        self, admin_user_and_client: tuple[User, AsyncClient]
+    ) -> None:
+        _admin, client = admin_user_and_client
+
+        response = await client.post(
+            "/api/v1/admin/users",
+            json=_create_payload(username="person", email="person@example.com"),
+        )
+
+        assert response.status_code == 201
+        assert response.json()["data"]["bot"] is False
+
+    @pytest.mark.parametrize("value", [None, "true", 1], ids=["null", "string", "int"])
+    async def test_null_or_non_boolean_bot_returns_422_without_a_user(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        db_session: AsyncSession,
+        value: object,
+    ) -> None:
+        _admin, client = admin_user_and_client
+
+        response = await client.post(
+            "/api/v1/admin/users",
+            json=_create_payload(
+                username="invalidbot", email="invalidbot@example.com", bot=value
+            ),
+        )
+
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+        created = await db_session.scalar(
+            select(User).where(User.username == "invalidbot")
+        )
+        assert created is None
 
     async def test_assigns_initial_manual_roles(
         self, admin_user_and_client: tuple[User, AsyncClient]
@@ -1805,9 +1913,8 @@ class TestUpdateUserAdmin:
         user_factory: Callable[..., Awaitable[User]],
         db_session: AsyncSession,
     ) -> None:
-        """Exercises the route's `email_set and full_name_set` branch,
-        which forwards both values in a single `update_user()` call —
-        distinct from the email-only and full_name-only branches covered
+        """Both provided fields reach the single `update_user()` call —
+        distinct from the email-only and full_name-only requests covered
         by the other tests in this class."""
         admin, client = admin_user_and_client
         target = await user_factory(username="bothfieldstarget", full_name="Old Name")
@@ -1861,6 +1968,124 @@ class TestUpdateUserAdmin:
 
         assert response.status_code == 409
         assert response.json()["code"] == "USER_EXTERNAL_FIELD_READONLY"
+
+    @pytest.mark.parametrize(
+        ("stored", "requested"), [(False, True), (True, False)], ids=["mark", "unmark"]
+    )
+    async def test_bot_alone_sets_the_marker_and_creates_bot_changed(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        db_session: AsyncSession,
+        stored: bool,
+        requested: bool,
+    ) -> None:
+        admin, client = admin_user_and_client
+        target = await user_factory(username="botpatchtarget", bot=stored)
+
+        response = await client.patch(
+            f"/api/v1/admin/users/{target.id}", json={"bot": requested}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["bot"] is requested
+        events = await _audit_events_for(db_session, target.id)
+        assert [
+            (event.event_type, event.old_value, event.new_value, event.user_id)
+            for event in events
+        ] == [("bot_changed", str(stored).lower(), str(requested).lower(), admin.id)]
+        assert events[0].detail is None
+
+    async def test_bot_with_email_and_full_name_updates_all_three(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        db_session: AsyncSession,
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="botallfields", full_name="Old Name")
+
+        response = await client.patch(
+            f"/api/v1/admin/users/{target.id}",
+            json={
+                "email": "bot.all.fields@example.com",
+                "full_name": "Scanner",
+                "bot": True,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert (data["email"], data["full_name"], data["bot"]) == (
+            "bot.all.fields@example.com",
+            "Scanner",
+            True,
+        )
+        events = await _audit_events_for(db_session, target.id)
+        assert {event.event_type for event in events} == {
+            "email_changed",
+            "full_name_changed",
+            "bot_changed",
+        }
+
+    async def test_omitted_bot_leaves_the_marker_unchanged(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="botkeeptarget", bot=True)
+
+        response = await client.patch(
+            f"/api/v1/admin/users/{target.id}", json={"full_name": "Renamed"}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["bot"] is True
+
+    @pytest.mark.parametrize("value", [None, "true", 1], ids=["null", "string", "int"])
+    async def test_null_or_non_boolean_bot_returns_422(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        db_session: AsyncSession,
+        value: object,
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="botinvalidtarget")
+
+        response = await client.patch(
+            f"/api/v1/admin/users/{target.id}", json={"bot": value}
+        )
+
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+        await db_session.refresh(target)
+        assert target.bot is False
+        assert await _audit_events_for(db_session, target.id) == []
+
+    async def test_external_user_bot_marker_returns_409_without_mutation(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        db_session: AsyncSession,
+    ) -> None:
+        """The external identity provider owns the bot marker of an
+        external user (user-management.md, Bot Accounts)."""
+        _admin, client = admin_user_and_client
+        target = await user_factory(
+            username="externalbottarget", external_id=uuid4(), password_hash=None
+        )
+
+        response = await client.patch(
+            f"/api/v1/admin/users/{target.id}", json={"bot": True}
+        )
+
+        assert response.status_code == 409
+        assert response.json()["code"] == "USER_EXTERNAL_FIELD_READONLY"
+        await db_session.refresh(target)
+        assert target.bot is False
+        assert await _audit_events_for(db_session, target.id) == []
 
     async def test_race_condition_user_deleted_returns_404(
         self,
@@ -2590,3 +2815,27 @@ class TestUserDirectoryOpenAPISurface:
         }
         sort_by = _resolve_schema(document, parameters["sort_by"]["schema"])
         assert set(sort_by["enum"]) == {"username", "full_name", "email"}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "schema_name",
+    [
+        "UserReference",
+        "UserDirectoryData",
+        "UserData",
+        "UserManagerData",
+        "CurrentUserData",
+    ],
+)
+def test_user_representation_declares_bot_as_a_required_boolean(
+    schema_name: str,
+) -> None:
+    """Every user representation carries the bot marker
+    (`docs/features/identity/user-management.md`, Bot Accounts;
+    `docs/features/platform/testing-strategy.md`, Bot marker)."""
+    from app.main import app as fastapi_app
+
+    schema = fastapi_app.openapi()["components"]["schemas"][schema_name]
+    assert schema["properties"]["bot"]["type"] == "boolean"
+    assert "bot" in schema["required"]

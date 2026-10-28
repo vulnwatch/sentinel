@@ -93,6 +93,7 @@ class TestCurrentUserData:
             "full_name": "John Doe",
             "roles": ["admin"],
             "active": True,
+            "bot": False,
         }
         defaults.update(overrides)
         return CurrentUserData(**defaults)
@@ -115,7 +116,15 @@ class TestCurrentUserData:
         assignment metadata — those belong only to the full profile
         schema (`app.schemas.user.UserData`)."""
         fields = set(CurrentUserData.model_fields)
-        assert fields == {"id", "username", "email", "full_name", "roles", "active"}
+        assert fields == {
+            "id",
+            "username",
+            "email",
+            "full_name",
+            "roles",
+            "active",
+            "bot",
+        }
 
 
 @pytest.mark.unit
@@ -128,6 +137,7 @@ class TestCurrentUserResponse:
             full_name="John Doe",
             roles=["admin"],
             active=True,
+            bot=False,
         )
         response = CurrentUserResponse(data=data)
         assert response.data.username == "jdoe"

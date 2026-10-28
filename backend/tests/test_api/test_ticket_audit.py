@@ -120,8 +120,13 @@ class TestListTicketEventsEndpoint:
         ticket_audit_event_factory: Factory,
     ) -> None:
         ticket: Ticket = await ticket_factory()
+        # An inactive bot actor: `active` and `bot` differ, so the marker
+        # provably comes from its own column of the current User row.
         actor: User = await user_factory(
-            username="fictional.analyst", full_name="Fictional Analyst"
+            username="fictional.analyst",
+            full_name="Fictional Analyst",
+            active=False,
+            bot=True,
         )
         system_event = await ticket_audit_event_factory(
             ticket_id=ticket.id,
@@ -159,7 +164,8 @@ class TestListTicketEventsEndpoint:
                     "id": str(actor.id),
                     "username": "fictional.analyst",
                     "full_name": "Fictional Analyst",
-                    "active": True,
+                    "active": False,
+                    "bot": True,
                 },
             },
             {

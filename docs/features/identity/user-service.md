@@ -78,10 +78,15 @@ load passes the dataset user that stands for the authenticated caller
 
 For external users (`external_id IS NOT NULL`), all identity fields
 (`username`, `email`, `full_name`, `manager_id`,
-`synced_at`) are managed exclusively by the external sync process. No
-human caller — whether via API or CLI — may modify these fields. The only
-legitimate consumer of `update_user()` for external users is the sync process
-itself (`acting_user_id = None`).
+`synced_at`) and the bot marker (`bot`) are managed exclusively by the
+external sync process. No human caller — whether via API or CLI — may modify
+these fields. The only legitimate consumer of `update_user()` for external
+users is the sync process itself (`acting_user_id = None`).
+
+For local users (`external_id IS NULL`), administrators set `bot` at creation
+and change it through `update_user()`. The marker is descriptive only and no
+operation in this service decides anything on it (see
+`docs/features/identity/user-management.md`, Bot Accounts).
 
 Fields managed by dedicated operations have their own ownership rules:
 
@@ -394,7 +399,7 @@ reads.
 - `UserUpdateResult` contains the updated `user` and `changed_fields`: the
   deterministic sequence of field names effectively changed by one
   `update_user()` invocation relative to the locked-current row. The closed
-  value set, in fixed order, is `username`, `email`, `full_name`,
+  value set, in fixed order, is `username`, `email`, `full_name`, `bot`,
   `manager_id`, `synced_at`. An empty sequence is a no-op: no field was
   persisted and no audit event was created.
 - `ReactivationResult` contains the updated `user` and `reactivated: bool`,
@@ -519,6 +524,7 @@ Creates a new User record with optional initial roles.
 | `manager_id`     | `UUID \| None`              | No       | FK to user.id of the direct line manager |
 | `password`       | `str \| None`               | No       | Plain-text password (hashed before storage). Required for local users, must be NULL for external users |
 | `roles`          | `list[tuple[Role, str]]`    | No       | List of (role, group_name) pairs    |
+| `bot`            | `bool`                      | No       | Default: `False`. Bot marker (`user-management.md`, Bot Accounts); allowed for local and external users |
 | `acting_user_id` | `UUID \| None`              | No       | Who is performing the action         |
 
 **Behavior**:
@@ -566,9 +572,11 @@ Creates a new User record with optional initial roles.
    (16–128 characters). If invalid, raise `PasswordValidationError`
 7. If `password` is provided, hash it with bcrypt (see
    `docs/features/identity/local-authentication.md` for hashing parameters)
-8. Create User record with provided fields,
+8. Create User record with provided fields, including `bot`,
    `password_hash` set to the hash (or NULL if no password), and
-   `synced_at = now()` if `external_id` is set
+   `synced_at = now()` if `external_id` is set. The initial `bot` value
+   creates no event of its own: like the initial email and display name, it
+   is part of the created record
 9. For each role in `roles`, create UserRole with specified `group_name`
    and `assigned_by = acting_user_id`. If the list contains duplicate
    entries (same role + same `group_name`), deduplicate silently — only
@@ -603,14 +611,14 @@ acting dataset user of the example dataset load
 (`docs/features/identity/identity-audit-log.md`, Actor Contract), or NULL
 for CLI/external synchronization,
 `target_user_id` = created user, `new_value` = username. Additionally,
-   one `role_added` event per initial role assigned (see step 8). All events
+one `role_added` event per initial role assigned (see step 9). All events
 created via `IdentityAuditLog.log_event()` in the same transaction.
 
 ### `update_user()`
 
-Updates mutable user identity fields. This operation does NOT cover role
-changes or active status changes — those have dedicated operations with
-their own business rules.
+Updates mutable user identity fields and the bot marker. This operation does
+NOT cover role changes or active status changes — those have dedicated
+operations with their own business rules.
 
 **Parameters**:
 
@@ -621,6 +629,7 @@ their own business rules.
 | `username`       | `str \| None`               | No       | New username (updated by external sync when username changes at provider) |
 | `email`          | `str \| _Missing`             | No       | New non-null email (normalized; uniqueness validated) |
 | `full_name`      | `str \| None \| _Missing`     | No       | New display name; NULL clears it     |
+| `bot`            | `bool \| _Missing`            | No       | New non-null bot marker (`user-management.md`, Bot Accounts) |
 | `manager_id`     | `UUID \| None \| _Missing`    | No       | New manager (FK to user.id); NULL clears it |
 | `synced_at`      | `datetime \| None \| _Missing` | No       | Operational sync timestamp           |
 
@@ -630,11 +639,11 @@ their own business rules.
    `UserNotFoundError`. The locked row is the authoritative source for guards,
    old audit values, and no-op detection
 2. If `user.external_id IS NOT NULL` and `acting_user_id` is not None:
-   raise `ExternalUserFieldReadOnlyError`. Identity fields of external users are
-   managed exclusively by external sync (see External User Data Ownership
-   above). The entire `update_user()` operation is blocked for human
-   callers on external users — there is no identity field that an admin
-   should modify manually.
+   raise `ExternalUserFieldReadOnlyError`. Identity fields and the bot marker
+   of external users are managed exclusively by external sync (see External
+   User Data Ownership above). The entire `update_user()` operation is
+   blocked for human callers on external users — there is no field of this
+   operation that an admin should modify manually.
 3. If `user.external_id IS NULL` and `manager_id` or
    `synced_at` is provided (not `_MISSING`): raise
    `ExternalUserFieldReadOnlyError`. These fields are external-provider-specific and have
@@ -662,7 +671,8 @@ their own business rules.
     - `None`: a nullable field is explicitly cleared to NULL in the database
    - Any other value: field is updated to the new value
 
-    `email` is non-nullable and therefore does not permit this state. This is
+    `email` and `bot` are non-nullable and therefore do not permit this
+    state; the type of `bot` (`bool | _Missing`) excludes `None`. This is
     necessary because nullable fields (`full_name`,
     `manager_id`) may need to be explicitly cleared — e.g.,
    when external sync discovers that a provider attribute has been removed. The
@@ -677,17 +687,18 @@ their own business rules.
     result's `user` is the locked row loaded in step 1.
 7. For each changed field other than `synced_at`, create an
    `IdentityAuditEvent` via `IdentityAuditLog.log_event()`:
-   `username_changed`, `email_changed`, `full_name_changed`, or
-   `manager_changed` with `old_value` and `new_value`. `synced_at` is
+   `username_changed`, `email_changed`, `full_name_changed`, `bot_changed`,
+   or `manager_changed` with `old_value` and `new_value`. `bot_changed`
+   renders both values as `"true"` or `"false"`. `synced_at` is
    operational metadata and never produces an audit event (see Operational
    metadata exclusions above). For an external user updated by
-   synchronization, email and full name events include
+   synchronization, email, full name, and bot events include
    `detail = {"source": "external_sync"}`; manual local updates use
    `detail = NULL`. One event per changed field, all in the same transaction.
 8. Flush and return `UserUpdateResult(user, changed_fields)`. The
    `changed_fields` sequence lists every effective change in the fixed order
-   `username`, `email`, `full_name`, `manager_id`, `synced_at`, and `user`
-   is the current User with profile, roles, and manager loaded for API
+   `username`, `email`, `full_name`, `bot`, `manager_id`, `synced_at`, and
+   `user` is the current User with profile, roles, and manager loaded for API
    serialization — updated when fields changed, otherwise the locked row
    from step 1
 
@@ -709,7 +720,7 @@ an empty `changed_fields`.
 **TicketAuditEvent**: none
 
 **IdentityAuditEvent**: one per changed field other than `synced_at`
-(`username_changed`, `email_changed`, `full_name_changed`,
+(`username_changed`, `email_changed`, `full_name_changed`, `bot_changed`,
 `manager_changed`). See
 `docs/features/identity/identity-audit-log.md` for the event type
 contract.

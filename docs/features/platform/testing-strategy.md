@@ -3023,8 +3023,8 @@ visibility predicate.
   and exact-username actors, normalized literal search, inclusive date bounds,
   fixed `created_at DESC, id DESC` ordering, equal timestamps, beyond-last
   pages, and coherent filtered totals. Non-null actors are complete current User
-  references including nullable `full_name` and current `active`; system events
-  use `null`. Tests also prove the parent-scope query can use the required
+  references including nullable `full_name`, current `active`, and current
+  `bot`; system events use `null`. Tests also prove the parent-scope query can use the required
   `TicketAuditEvent.ticket_id` index and never derives current state from audit
   history.
 
@@ -3837,10 +3837,10 @@ or identity audit validation are affected, tests MUST cover:
 **Profile update and reactivation results:**
 
 - `update_user()` returns `UserUpdateResult.changed_fields` in the fixed order
-  `username`, `email`, `full_name`, `manager_id`, `synced_at`, containing only
-  fields whose requested value differs from locked-current state; a fully
-  idempotent re-invocation returns an empty sequence and creates no audit
-  event
+  `username`, `email`, `full_name`, `bot`, `manager_id`, `synced_at`,
+  containing only fields whose requested value differs from locked-current
+  state; a fully idempotent re-invocation returns an empty sequence and
+  creates no audit event
 - `synced_at` appearing in `changed_fields` creates no audit event, while each
   other reported field creates exactly its matching lifecycle event
 - `reactivate_user()` returns `ReactivationResult.reactivated = true` only for
@@ -3900,6 +3900,42 @@ or identity audit validation are affected, tests MUST cover:
   profile relationships loaded: a valid username shaped like a UUID resolves
   by username, while a user's UUID and an unknown username raise
   `UserNotFoundError`
+
+**Bot marker:**
+
+- `create_user()` stores `bot`, `false` by default; `POST /api/v1/admin/users`
+  with `bot: true` and `manage-user create --bot` create a bot account, and
+  their omission creates `bot = false`; explicit `bot: null` and a
+  non-boolean `bot` return 422 `VALIDATION_ERROR` with no user row or audit
+  event; creation creates no `bot_changed` event
+- an effective `update_user()` change of `bot` creates exactly one
+  `bot_changed` event with `old_value` and `new_value` `"true"` or `"false"`,
+  the actor of the Actor Contract, and `detail = NULL`; an unchanged value is
+  a no-op that creates no event; a system update of an external user
+  (`acting_user_id = None`, as external synchronization calls it) creates the
+  event with `detail = {"source": "external_sync"}`
+- `PATCH /api/v1/admin/users/{user}` sets and clears `bot` alone and together
+  with `email` and `full_name`; omission leaves it unchanged; explicit null
+  and a non-boolean value return 422 `VALIDATION_ERROR`; an external target
+  returns 409 `USER_EXTERNAL_FIELD_READONLY` with no mutation or event
+- `manage-user update --bot` and `--no-bot` set and clear the marker, report
+  `bot` only on an effective change, and print the no-op message otherwise;
+  they fail on an external user with the profile-mode error; their
+  combination is rejected with the documented message, exit 1, stderr, and
+  no mutating session, after the cross-mode and
+  `--full-name`/`--clear-full-name` checks
+- every user representation carries `bot` from the current User record: the
+  user reference object in each response that embeds one (including Ticket
+  assignees and access grants, Ticket, identity, setting, and fetcher audit
+  actors, and API-key owners and revokers), the directory entry, the
+  complete profile and its `manager`, and `GET /api/v1/users/me`; the
+  OpenAPI document declares `bot` as a required boolean of each of these
+  schemas
+- the marker has no authorization or business-rule effect: a bot account
+  passes and fails exactly the capability checks of its roles, and a bot
+  account holding `vulnerability_analyst` is assignable
+- `manage-user list` renders the `BOT` column and `manage-user show` the
+  `Bot:` line as `yes` or `no`
 
 **Manual role mutation service:**
 
@@ -4743,17 +4779,18 @@ and the dedicated database starts its Ticket identifiers at `SNTL-1`.
 
 - **Load**: one complete load through `load_example_dataset()` succeeds, and
   the resulting state equals every table of Dataset Content: the users with
-  their roles, activity, and password; the identity events with their actors
-  (`user_id` NULL for the events of the first administrator's creation, the
-  administrator for the others); the setting value and both setting events;
-  every fetcher disabled with its `disabled` event; the Products with their
-  lifecycle phases and thresholds; the CVEs with their source data; the
-  Tickets with their identifiers, status, assignee, confidentiality, access
-  grant, coordinated release date, severity, and priority override; the
-  packages, tracks, Products, eligibility, release, and maintainers; the IBS
-  requests, actions, correlations, and delivery statuses; the references; the
-  maintainer workbench of `dbrown`; at least one `confidentiality_changed`
-  event; and at least one event in every audit trail of the Audit Trail Index.
+  their roles, activity, bot marker, and password; the identity events with
+  their actors (`user_id` NULL for the events of the first administrator's
+  creation, the administrator for the others); the setting value and both
+  setting events; every fetcher disabled with its `disabled` event; the
+  Products with their lifecycle phases and thresholds; the CVEs with their
+  source data; the Tickets with their identifiers, status, assignee,
+  confidentiality, access grant, coordinated release date, severity, and
+  priority override; the packages, tracks, Products, eligibility, release,
+  and maintainers; the IBS requests, actions, correlations, and delivery
+  statuses; the references; the maintainer workbench of `dbrown`; at least
+  one `confidentiality_changed` event; and at least one event in every audit
+  trail of the Audit Trail Index.
 - **Isolation**: during the load, no Celery task is published, no Redis
   command is issued, no outbound HTTP request is made, and no transaction
   commits with a registered post-commit effect.
@@ -4774,13 +4811,14 @@ and the dedicated database starts its Ticket identifiers at `SNTL-1`.
   list (`api_key`, `fetcher_run`, `session`, and `track_release_checkpoint`).
   Every member of `Role`, `TicketStatus`, `PackageStatus`, `DeliveryStatus`,
   `WorkflowType`, `Severity`, and `LifecyclePhase` occurs in the dataset, as
-  do a user without roles, an unresolved Ticket severity, and an unavailable
-  lifecycle phase, except the members of the test's per-enumeration exception
-  lists, which are empty. Each exception list is checked in both directions:
-  a covered item that an exception list names fails the test, as does an
-  exception that names no current table or member. The tables and members
-  come from the code, so a new table or member fails the test until the
-  dataset covers it or the exception list names it with its reason.
+  do a user without roles, a bot account, an unresolved Ticket severity, and
+  an unavailable lifecycle phase, except the members of the test's
+  per-enumeration exception lists, which are empty. Each exception list is
+  checked in both directions: a covered item that an exception list names
+  fails the test, as does an exception that names no current table or
+  member. The tables and members come from the code, so a new table or
+  member fails the test until the dataset covers it or the exception list
+  names it with its reason.
 
 The command itself is verified by the CLI Commands scenarios above.
 

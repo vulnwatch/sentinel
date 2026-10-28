@@ -386,6 +386,7 @@ class TestNoOpRequests:
             "email",
             "full_name",
             "active",
+            "bot",
             "source",
             "external_id",
             "manager",

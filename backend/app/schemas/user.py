@@ -80,6 +80,7 @@ class UserDirectoryData(BaseModel):
     email: str
     full_name: str | None
     active: bool
+    bot: bool
     roles: list[str]
 
 
@@ -105,6 +106,7 @@ class UserManagerData(BaseModel):
     username: str
     full_name: str | None
     active: bool
+    bot: bool
     email: str
 
 
@@ -131,6 +133,7 @@ class UserData(BaseModel):
     email: str
     full_name: str | None
     active: bool
+    bot: bool
     source: str
     external_id: UUID | None
     manager: UserManagerData | None
@@ -241,6 +244,7 @@ class AdminUserCreateRequest(BaseModel):
     full_name: str | None = Field(default=None, max_length=255)
     password: str = Field(repr=False)
     roles: list[str] = Field(default_factory=list)
+    bot: bool = Field(default=False, strict=True)
 
     @field_validator("username", mode="before")
     @classmethod
@@ -262,18 +266,20 @@ class AdminUserUpdateRequest(BaseModel):
     """Request body for `PATCH /api/v1/admin/users/{user}`
     (`user-management.md`, Update User (Admin)).
 
-    Both fields are optional but at least one must be provided
-    (`docs/api-spec.md`, Partial Update Semantics). `email` rejects
-    explicit `null` (non-nullable field); `full_name` accepts explicit
-    `null` to clear the stored display name. The route distinguishes
-    "omitted" from "explicitly provided" via `model_fields_set` — see
-    `docs/features/identity/user-service.md` (`update_user()`, the
-    `_MISSING` sentinel pattern) for how the route threads this into the
-    service call.
+    Every field is optional but at least one must be provided
+    (`docs/api-spec.md`, Partial Update Semantics). `email` and `bot`
+    reject explicit `null` (non-nullable fields); `full_name` accepts
+    explicit `null` to clear the stored display name. `bot` accepts only a
+    JSON boolean (`docs/api-spec.md`, JSON Request Body Scalar Types). The
+    route distinguishes "omitted" from "explicitly provided" via
+    `model_fields_set` — see `docs/features/identity/user-service.md`
+    (`update_user()`, the `_MISSING` sentinel pattern) for how the route
+    threads this into the service call.
     """
 
     email: str | None = None
     full_name: str | None = Field(default=None, max_length=255)
+    bot: bool | None = Field(default=None, strict=True)
 
     @field_validator("email", mode="before")
     @classmethod
@@ -281,6 +287,13 @@ class AdminUserUpdateRequest(BaseModel):
         if value is None:
             raise ValueError("email cannot be null.")
         return _normalize_email_field(value)
+
+    @field_validator("bot", mode="before")
+    @classmethod
+    def _reject_null_bot(cls, value: Any) -> Any:
+        if value is None:
+            raise ValueError("bot cannot be null.")
+        return value
 
     @model_validator(mode="after")
     def _require_at_least_one_field(self) -> AdminUserUpdateRequest:

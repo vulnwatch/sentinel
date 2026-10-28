@@ -208,6 +208,7 @@ def _make_user_reference_kwargs(**overrides: object) -> dict[str, object]:
         "username": "jdoe",
         "full_name": "John Doe",
         "active": True,
+        "bot": False,
     }
     defaults.update(overrides)
     return defaults

@@ -1258,7 +1258,11 @@ class TestListingVisibilityRaces:
 
         def profile(person: User) -> TicketUserProjection:
             return TicketUserProjection(
-                id=person.id, username=person.username, full_name=None, active=True
+                id=person.id,
+                username=person.username,
+                full_name=None,
+                active=True,
+                bot=False,
             )
 
         assert listed == [
