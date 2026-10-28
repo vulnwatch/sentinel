@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.13.0](https://github.com/vulnwatch/sentinel/compare/v0.12.0...v0.13.0) (2026-10-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* the actor of GET /api/v1/users/me/audit-log is no longer the string system, self, or admin; fetcher reads no longer return null actors to callers without manage_fetchers; roles[].assigned_by is no longer a bare UUID.
+* separate the user directory from the admin user profile ([#1137](https://github.com/vulnwatch/sentinel/issues/1137))
+* apply CVE accessibility to the global CVE source listing ([#1133](https://github.com/vulnwatch/sentinel/issues/1133))
+* require authentication for every application read ([#1131](https://github.com/vulnwatch/sentinel/issues/1131))
+
+### Features
+
+* identify acting users to every reader of an action ([#1143](https://github.com/vulnwatch/sentinel/issues/1143)) ([8c9b34e](https://github.com/vulnwatch/sentinel/commit/8c9b34e1433db3e7a8e21ec8bba037081879059d))
+* mark bot accounts in user representations ([#1141](https://github.com/vulnwatch/sentinel/issues/1141)) ([8d50e7d](https://github.com/vulnwatch/sentinel/commit/8d50e7d63ce4ecb5573087f0f8dc37131287816f)), closes [#1138](https://github.com/vulnwatch/sentinel/issues/1138)
+* require authentication for every application read ([#1131](https://github.com/vulnwatch/sentinel/issues/1131)) ([3393c05](https://github.com/vulnwatch/sentinel/commit/3393c05ea33ab7da388f122c31d9ca0b9b40e23a)), closes [#1129](https://github.com/vulnwatch/sentinel/issues/1129)
+* separate the user directory from the admin user profile ([#1137](https://github.com/vulnwatch/sentinel/issues/1137)) ([cfce2f7](https://github.com/vulnwatch/sentinel/commit/cfce2f7acf2c3afc9ca255941b103d1f0a8cf514))
+
+
+### Bug Fixes
+
+* apply CVE accessibility to the global CVE source listing ([#1133](https://github.com/vulnwatch/sentinel/issues/1133)) ([8a6ccb1](https://github.com/vulnwatch/sentinel/commit/8a6ccb1c0956ceeb01130d4ea2945480f8657a8d)), closes [#1128](https://github.com/vulnwatch/sentinel/issues/1128)
+* publish omittable request members without null ([#1142](https://github.com/vulnwatch/sentinel/issues/1142)) ([cde9aca](https://github.com/vulnwatch/sentinel/commit/cde9aca5cc626d35c49584f4d7d3b594a2b7e99a))
+
 ## [0.12.0](https://github.com/vulnwatch/sentinel/compare/v0.11.0...v0.12.0) (2026-10-26)
 
 
