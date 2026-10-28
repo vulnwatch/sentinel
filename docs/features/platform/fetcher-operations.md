@@ -1016,7 +1016,8 @@ still appears in its correct chronological position.
 **Notes**:
 - `error_detail` and `error_traceback` are NOT included in list responses
 - `triggered_by_user`: User Reference Object
-  (`{"id": "uuid", "username": "...", "full_name": "...", "active": bool}`)
+  (`{"id": "uuid", "username": "...", "full_name": "...", "active": bool,
+  "bot": bool}`)
   when `triggered_by` is `manual` AND the caller has `manage_fetchers`.
   Otherwise `null`
 - For a run with `status = queued`: `started_at = null`,

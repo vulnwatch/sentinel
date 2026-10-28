@@ -84,7 +84,7 @@ these fields. The only legitimate consumer of `update_user()` for external
 users is the sync process itself (`acting_user_id = None`).
 
 For local users (`external_id IS NULL`), administrators set `bot` at creation
-and change it through `update_user()`. The marker is presentation only and no
+and change it through `update_user()`. The marker is descriptive only and no
 operation in this service decides anything on it (see
 `docs/features/identity/user-management.md`, Bot Accounts).
 
@@ -611,7 +611,7 @@ acting dataset user of the example dataset load
 (`docs/features/identity/identity-audit-log.md`, Actor Contract), or NULL
 for CLI/external synchronization,
 `target_user_id` = created user, `new_value` = username. Additionally,
-   one `role_added` event per initial role assigned (see step 8). All events
+one `role_added` event per initial role assigned (see step 9). All events
 created via `IdentityAuditLog.log_event()` in the same transaction.
 
 ### `update_user()`
@@ -672,7 +672,7 @@ operations with their own business rules.
    - Any other value: field is updated to the new value
 
     `email` and `bot` are non-nullable and therefore do not permit this
-    state; like `email`, `bot` excludes `None` from its type. This is
+    state; the type of `bot` (`bool | _Missing`) excludes `None`. This is
     necessary because nullable fields (`full_name`,
     `manager_id`) may need to be explicitly cleared — e.g.,
    when external sync discovers that a provider attribute has been removed. The

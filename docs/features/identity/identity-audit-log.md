@@ -392,11 +392,11 @@ Session invalidation during deactivation does NOT produce audit events
 
 **Field-change events**: the `user_service.update_user()` function
 produces one audit event per changed lifecycle field, the bot marker
-included (`bot_changed`); `synced_at` is an
-operational metadata exclusion and never produces an event (see Operational
-metadata exclusions above). If a single `update_user()` call modifies both
-`email` and `full_name`, two events are created (`email_changed` +
-`full_name_changed`) in the same transaction.
+included (`bot_changed`); `synced_at` is an operational metadata exclusion
+and never produces an event (see Operational metadata exclusions above). If
+a single `update_user()` call modifies both `email` and `full_name`, two
+events are created (`email_changed` + `full_name_changed`) in the same
+transaction.
 
 **Manual role mutation events**: `user_service.update_roles()` creates one
 `role_added` event per effective `_manual` `UserRole` insertion and one

@@ -54,9 +54,9 @@ Ownership in `docs/features/identity/user-service.md`):
   `manage-user update --bot` or `--no-bot`).
 - **External user**: the external identity provider owns it through external
   provisioning, like the other provider-managed fields; administrators cannot
-  change it. How the provider designates a bot account is an open question of
-  `docs/features/identity/identity-provisioning.md`: until it is answered,
-  provisioning creates external users with `bot = false`.
+  change it. How the provider designates a bot account, and the value that
+  provisioning sets until then, is an open question of
+  `docs/features/identity/identity-provisioning.md`.
 
 Every effective change of the marker creates one `bot_changed` identity audit
 event (`docs/features/identity/identity-audit-log.md`). Every user
@@ -311,7 +311,9 @@ conflict.
 1. If the user is an external user (`external_id IS NOT NULL`), exit with
    error: `"Error: User '{username}' is managed by an external identity
    provider. Identity fields cannot be modified manually."` (exit code 1).
-   No other mode is affected by this guard
+   The guard covers `--bot` and `--no-bot` too, because the external identity
+   provider manages the bot marker as well. No other mode is affected by
+   this guard
 2. If `--email` is provided, trim and lowercase it, validate the normalized
    value's format, and pass the normalized value to the service. If the
    format is invalid, exit with error:
@@ -953,7 +955,7 @@ Field notes:
   a display fallback (e.g., a UI showing `full_name ?? username`) apply
   it at presentation time
 - `bot`: `true` for a bot account, `false` otherwise (see Bot Accounts).
-  Presentation only; it has no effect on authorization or business rules
+  Descriptive only; it has no effect on authorization or business rules
 - `roles`: the distinct role values that the user currently holds from any
   origin, manual or external; a role held from several origins appears once,
   and a user without roles has an empty array. Values use the wire format and
@@ -1673,11 +1675,8 @@ handling is required.
    set at creation time. There is no passwordless local user state.
    This invariant is enforced at the database level by a CHECK
    constraint (see `docs/data-model.md`, `chk_user_auth_exclusive`)
-6. **The bot marker is presentation only**: `bot` grants or withholds
-   nothing and no operation decides anything on it (see Bot Accounts). A bot
-   account with a role holds exactly the capabilities and scope of that role
-   (`docs/features/identity/rbac.md`), is assignable under the same
-   eligibility rules, and authenticates like any other account of its origin
+6. **The bot marker is descriptive only**: it has no effect on authorization
+   or business rules (see Bot Accounts)
 
 ## Security Considerations
 
@@ -1707,11 +1706,11 @@ handling is required.
   is the accepted risk stated below (Per-username lockout DoS vector). The
   bot marker is accepted as well: it reveals which accounts an automation
   operates, which their usernames often reveal already, and it grants
-  nothing; the automation of such an account authenticates with API keys
-  (`docs/features/identity/rbac.md`, Business Rule 14), which neither the
-  directory nor the per-username lockout affects. The fields that
-  serve only user administration are never part of the directory (see Access
-  Level Requirements)
+  nothing; the ongoing requests of such an account use API keys
+  (`docs/features/identity/rbac.md`, Business Rule 14), which the
+  per-username lockout does not affect. The fields that serve only user
+  administration are never part of the directory (see Access Level
+  Requirements)
 - **Password policy**: minimum 16 characters, no complexity rules.
   Length is the primary defense (see
   `docs/features/identity/local-authentication.md`)

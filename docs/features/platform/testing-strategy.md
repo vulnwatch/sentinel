@@ -3023,8 +3023,8 @@ visibility predicate.
   and exact-username actors, normalized literal search, inclusive date bounds,
   fixed `created_at DESC, id DESC` ordering, equal timestamps, beyond-last
   pages, and coherent filtered totals. Non-null actors are complete current User
-  references including nullable `full_name` and current `active`; system events
-  use `null`. Tests also prove the parent-scope query can use the required
+  references including nullable `full_name`, current `active`, and current
+  `bot`; system events use `null`. Tests also prove the parent-scope query can use the required
   `TicketAuditEvent.ticket_id` index and never derives current state from audit
   history.
 
@@ -4782,15 +4782,15 @@ and the dedicated database starts its Ticket identifiers at `SNTL-1`.
   their roles, activity, bot marker, and password; the identity events with
   their actors (`user_id` NULL for the events of the first administrator's
   creation, the administrator for the others); the setting value and both
-  setting events;
-  every fetcher disabled with its `disabled` event; the Products with their
-  lifecycle phases and thresholds; the CVEs with their source data; the
-  Tickets with their identifiers, status, assignee, confidentiality, access
-  grant, coordinated release date, severity, and priority override; the
-  packages, tracks, Products, eligibility, release, and maintainers; the IBS
-  requests, actions, correlations, and delivery statuses; the references; the
-  maintainer workbench of `dbrown`; at least one `confidentiality_changed`
-  event; and at least one event in every audit trail of the Audit Trail Index.
+  setting events; every fetcher disabled with its `disabled` event; the
+  Products with their lifecycle phases and thresholds; the CVEs with their
+  source data; the Tickets with their identifiers, status, assignee,
+  confidentiality, access grant, coordinated release date, severity, and
+  priority override; the packages, tracks, Products, eligibility, release,
+  and maintainers; the IBS requests, actions, correlations, and delivery
+  statuses; the references; the maintainer workbench of `dbrown`; at least
+  one `confidentiality_changed` event; and at least one event in every audit
+  trail of the Audit Trail Index.
 - **Isolation**: during the load, no Celery task is published, no Redis
   command is issued, no outbound HTTP request is made, and no transaction
   commits with a registered post-commit effect.
@@ -4816,9 +4816,9 @@ and the dedicated database starts its Ticket identifiers at `SNTL-1`.
   per-enumeration exception lists, which are empty. Each exception list is
   checked in both directions: a covered item that an exception list names
   fails the test, as does an exception that names no current table or
-  member. The tables and members
-  come from the code, so a new table or member fails the test until the
-  dataset covers it or the exception list names it with its reason.
+  member. The tables and members come from the code, so a new table or
+  member fails the test until the dataset covers it or the exception list
+  names it with its reason.
 
 The command itself is verified by the CLI Commands scenarios above.
 

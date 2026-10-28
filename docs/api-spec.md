@@ -1258,20 +1258,19 @@ the owning entity (e.g., `old_value` / `new_value` in audit events).
 The `id` (UUID) is the stable, immutable identifier; `username`,
 `full_name`, `active`, and `bot` are display conveniences that may change
 over time (e.g., via external sync, deactivation, or an administrator's
-update). The `full_name` field
-is nullable — it is returned as `null` when the user has no display
-name set, with no substitution of `username` or any other fallback
-value. The `bot` field is `true` for a bot account, an account that an
-automation operates instead of a person, and lets a client present its
-actions differently; it has no effect on authorization or business rules
-(`docs/features/identity/user-management.md`, Bot Accounts).
+update). The `full_name` field is nullable — it is returned as `null` when
+the user has no display name set, with no substitution of `username` or any
+other fallback value. The `bot` field is `true` for a bot account, an
+account that an automation operates instead of a person, and lets a client
+present its actions differently; it has no effect on authorization or
+business rules (`docs/features/identity/user-management.md`, Bot Accounts).
 
 Users are never physically deleted from the database — all foreign keys
 referencing the User table use `ON DELETE RESTRICT`. Deactivated users
 (`active=false`) are resolved normally, with all fields (`id`, `username`,
-`full_name`, `active`, `bot`) populated from current data. Consequently, a user
-reference object is never null or partial when `user_id` is non-null — if
-a `user_id` foreign key is present, the referenced user record is
+`full_name`, `active`, `bot`) populated from current data. Consequently, a
+user reference object is never null or partial when `user_id` is non-null —
+if a `user_id` foreign key is present, the referenced user record is
 guaranteed to exist and the serialized object will always be complete
 (`full_name` may itself be `null`, but the object's presence and its
 other fields are always populated).

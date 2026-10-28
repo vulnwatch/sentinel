@@ -364,7 +364,7 @@ Operations of the `Users` step, in this order:
 `dbrown` holds no role: a user without roles who maintains packages
 (Packages, Tracks, and Maintainers). `security-scanner` is a bot account
 (`docs/features/identity/user-management.md`, Bot Accounts) whose Ticket work
-lets a client show an automated action beside the actions of people.
+lets a client show an automated action in a Ticket audit log.
 
 ### System Settings
 
