@@ -1756,6 +1756,8 @@ handling is required.
   My Identity Audit Events), so they can report an unexpected reset. They
   read it once their access is restored, or at once through an API key they
   already hold, because a reset invalidates Sessions but revokes no API key
+  (`docs/features/identity/local-authentication.md`, Password reset does not
+  revoke API keys)
 - **Per-username lockout DoS vector (accepted risk)**: the per-username
   lockout mechanism (5 failed attempts → account locked for 10 minutes)
   allows anyone who knows a valid username to lock out that account by
