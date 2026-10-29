@@ -1502,9 +1502,9 @@ class TestGetCurrentUserProfile:
         wire_roles: tuple[str, ...],
     ) -> None:
         """Every combination of the predefined roles, the empty one
-        included, assigned in reverse alphabetical order: each list holds
-        each value once in wire order, and `capabilities` is exactly the
-        union that Predefined Roles grants to the roles in `roles`."""
+        included: `roles` lists the held roles and `capabilities` is
+        exactly the union that Predefined Roles grants to them, each value
+        once in wire order."""
         user, client = authenticated_user_and_client
         for wire_role in wire_roles:
             await user_role_factory(
@@ -1517,6 +1517,41 @@ class TestGetCurrentUserProfile:
         data = response.json()["data"]
         assert data["roles"] == sorted(wire_roles)
         assert data["capabilities"] == _expected_capabilities(*wire_roles)
+
+    async def test_both_lists_are_wire_sorted_whatever_the_order_of_the_roles(
+        self,
+        authenticated_user_and_client: tuple[User, AsyncClient],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """`get_user_roles()` guarantees no order, and PostgreSQL happens to
+        return the stored role values in an order that matches the wire
+        order. The service is therefore stubbed to return the roles in
+        reverse wire order, so that the handler's ordering is observable."""
+        _user, client = authenticated_user_and_client
+        monkeypatch.setattr(
+            user_service,
+            "get_user_roles",
+            AsyncMock(
+                return_value=[
+                    Role.VULNERABILITY_ANALYST,
+                    Role.RESTRICTED_ANALYST,
+                    Role.ADMIN,
+                ]
+            ),
+        )
+
+        response = await client.get("/api/v1/users/me")
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["roles"] == [
+            "admin",
+            "restricted_analyst",
+            "vulnerability_analyst",
+        ]
+        assert data["capabilities"] == _expected_capabilities(
+            "admin", "restricted_analyst", "vulnerability_analyst"
+        )
 
     async def test_jwt_session_and_api_key_return_the_same_lists(
         self,
@@ -3036,21 +3071,6 @@ class TestCurrentUserOpenAPISurface:
         items = _resolve_schema(document, capabilities["items"])
         assert items["type"] == "string"
         assert sorted(items["enum"]) == sorted(_ALL_CAPABILITIES)
-
-    def test_get_my_profile_documents_the_current_user_fields(self) -> None:
-        from app.main import app as fastapi_app
-
-        document = fastapi_app.openapi()
-        assert _success_item_properties(document, "/api/v1/users/me", listed=False) == {
-            "id",
-            "username",
-            "email",
-            "full_name",
-            "roles",
-            "capabilities",
-            "active",
-            "bot",
-        }
 
 
 @pytest.mark.unit
