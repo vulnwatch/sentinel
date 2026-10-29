@@ -157,7 +157,9 @@ timeouts:
 
 - **No authentication**: orchestrator probes must call these without
   tokens. The response bodies do not expose sensitive information (no
-  versions, hostnames, connection strings, or internal topology).
+  versions, hostnames, connection strings, or internal topology). An
+  authenticated client reads the platform version through
+  `GET /api/v1/version` (`docs/features/platform/platform-version.md`).
 
 - **Redis included in readiness**: the Celery broker is required for task
   publication. Application Redis supports caches, CVE fetch deduplication, and
@@ -221,6 +223,8 @@ timeouts:
   operational configuration)
 - `docs/features/platform/networking.md` — TLS Trust Store Configuration
   (SUSE CA handling; the CA is not a readiness check)
+- `docs/features/platform/platform-version.md` — the authenticated read of
+  the platform version, which the probes do not expose
 - `docs/api-spec.md` — Response Format (lists these probe responses among the
   exceptions to the error envelope) and Routing Responses (another method or
   an unknown path below these endpoints)

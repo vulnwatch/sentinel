@@ -214,6 +214,7 @@ Confidential Ticket Visibility). Authenticated access covers:
 - View fetcher dashboard (list, detail, charts, run history, error messages,
   and the users who triggered runs or disabled and enabled a fetcher)
 - View IBS consumer status
+- View the platform version (`/api/v1/version`)
 
 ## Actor Identities
 
@@ -317,6 +318,7 @@ no response to a caller that the operation does not already admit.
 | View submission/release requests | Authenticated |
 | View fetcher dashboard | Authenticated |
 | View IBS consumer status | Authenticated |
+| View platform version | Authenticated |
 
 ### Public Operations
 
@@ -693,6 +695,12 @@ here with the required authorization level and a link to the owning spec.
 | POST | `/api/v1/admin/role-mappings` | `manage_role_mappings` | [identity-provisioning](identity-provisioning.md#create-role-mapping) (deferred) |
 | POST | `/api/v1/admin/role-mappings/preview` | `manage_role_mappings` | [identity-provisioning](identity-provisioning.md#preview-role-mapping) (deferred) |
 | DELETE | `/api/v1/admin/role-mappings/{id}` | `manage_role_mappings` | [identity-provisioning](identity-provisioning.md#delete-role-mapping) (deferred) |
+
+### Platform
+
+| Method | Endpoint | Authorization | Owning Spec |
+|--------|----------|---------------|-------------|
+| GET | `/api/v1/version` | Authenticated | [platform-version](../platform/platform-version.md#get-platform-version) |
 
 ### Infrastructure
 

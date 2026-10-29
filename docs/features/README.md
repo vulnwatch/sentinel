@@ -59,6 +59,7 @@ Index of all feature specification domains.
 - [system-settings.md](platform/system-settings.md) — System-setting persistence, bootstrap, read/update API, and audit
 - [default-cvss-version-operations.md](platform/default-cvss-version-operations.md) — Default-CVSS impact preview, all-CVE recalculation, observability, and recovery
 - [health-endpoints.md](platform/health-endpoints.md) — Liveness (/health) and readiness (/ready) probes
+- [platform-version.md](platform/platform-version.md) — Authenticated read of the running platform version (`GET /api/v1/version`)
 - [logging.md](platform/logging.md) — Operational/diagnostic logging model, correlation IDs
 - [cve-record-parser.md](platform/cve-record-parser.md) — Shared CVE Record Format 5.x parser for CVE fetchers
 - [cve-source-failure-retry.md](platform/cve-source-failure-retry.md) — Scheduled retry of per-source CVE fetch failures (`evaluate_failed_cve_sources`)
