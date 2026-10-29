@@ -67,17 +67,19 @@ that lists every capability defined above, so they form a response enum
 Predefined Roles grants it to the Admin role although the operations that it
 covers belong to a deferred specification.
 
-**Changes** follow `docs/api-spec.md` (Versioning; Response Enums):
+**Changes** follow `docs/api-spec.md` (Versioning):
 
-- a new capability that covers only operations that no existing capability
-  covers is a new value of the response enum and therefore additive.
-  Protecting a new operation with an existing capability changes no value
-  and is additive as well;
-- removing or renaming a capability, splitting one into several, merging
-  several into one, or moving an operation from one capability to another is
-  a breaking change, also when one of the resulting capabilities keeps an
-  earlier name: a value would then no longer mean what the contract of an
-  earlier release states.
+- a new capability that covers only operations that earlier releases do not
+  have is a new value of the response enum and therefore additive.
+  Protecting such a new operation with an existing capability changes no
+  value and is additive as well;
+- every other change to the operations that a capability covers is a
+  breaking change, also when the capability keeps its name: removing or
+  renaming a capability, splitting one into several, merging several into
+  one, moving an operation from one capability to another, or making an
+  existing operation require or accept another capability. After any of
+  these, a value no longer means what the contract of an earlier release
+  states.
 
 No earlier value is kept as an alias of the capabilities that replace it.
 

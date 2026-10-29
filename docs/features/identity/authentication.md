@@ -1084,14 +1084,15 @@ formatting and not a database operation.
 offers to what the user may do without copying the role-to-capability
 mapping. It grants, changes, and replaces no authorization: every operation
 still checks its own authorization when it is requested (`rbac.md`, Endpoint
-Authorization). Holding a listed capability therefore does not guarantee that
-an operation succeeds:
+Authorization). Neither holding nor lacking a listed capability therefore
+decides by itself whether an operation succeeds:
 
 - an operation can accept alternative capabilities, require an additional
   capability for a request field, require a JWT session, or reject the
   request because of the visibility or state of a resource (`rbac.md`,
-  Permission Matrix; `docs/api-spec.md`, Authorization Chain Evaluation
-  Order);
+  Permission Matrix; `docs/api-spec.md`, Conditional authorization and
+  Authorization Chain Evaluation Order; Session-Only Authentication
+  Dependency);
 - the list reflects the roles that the user held when the request that
   returned it was processed. A role change takes effect on the user's next
   request (`rbac.md`, Permission Checking), so an operation can return

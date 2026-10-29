@@ -295,7 +295,7 @@ set of `Role` values held by the user across all origins (direct + group
 mappings). Unknown or role-less `user_id` yields an empty list (does not
 raise `UserNotFoundError`). Ordering is not guaranteed by the service —
 response formatters apply the deterministic ordering rule from `rbac.md`
-(Deterministic ordering).
+(Role Wire Format, Deterministic ordering).
 
 #### `get_deactivation_impact(session, user_id, acting_user_id)`
 

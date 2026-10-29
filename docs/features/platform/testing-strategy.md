@@ -3796,10 +3796,10 @@ scenarios are required:
 
 **Current user (`GET /api/v1/users/me`):**
 
-- For every combination of the predefined roles, none included, `roles`
-  lists each held role once and `capabilities` lists exactly the union of
-  their capabilities in `docs/features/identity/rbac.md` (Predefined Roles),
-  each once; a user with no roles receives two empty lists
+- For every combination of the predefined roles, the empty one included,
+  `roles` lists each held role once and `capabilities` lists exactly the
+  union of their capabilities in `docs/features/identity/rbac.md` (Predefined
+  Roles), each once; a user with no roles receives two empty lists
 - A role held from several origins appears once in `roles` and repeats no
   capability
 - Both lists are ordered alphabetically by wire value, whatever the
