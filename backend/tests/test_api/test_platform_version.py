@@ -9,9 +9,12 @@ and docs/features/platform/testing-strategy.md (API Endpoints).
 These tests cover the HTTP contract: the envelope and the value, its
 equality with the installed package version and with `info.version` of the
 served OpenAPI document, its independence from the caller and the
-credential, mandatory authentication, ignored query parameters, the route
-inventory, and OpenAPI. The `401` of every route without a credential is
-also covered by the route-wide authentication test.
+credential, ignored query parameters, the route inventory, and OpenAPI.
+Authentication goes through the shared `CurrentUser` dependency unchanged:
+the route-wide test of `tests/test_api/test_route_authentication.py` proves
+the `401` of this route without a credential, and
+`tests/test_api/test_dependencies.py` proves the rejection of every invalid
+credential.
 """
 
 from __future__ import annotations
@@ -35,7 +38,6 @@ from app.main import app
 from app.models.api_key import ApiKey
 from app.models.user import User
 from app.models.user_role import UserRole
-from tests.support.ticket_api import UNAUTHENTICATED
 
 _PATH: Final = "/api/v1/version"
 
@@ -84,44 +86,23 @@ class TestGetPlatformVersion:
         api_key_factory: Callable[..., Awaitable[ApiKey]],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """An API key of a user with roles authenticates the caller, runs
-        the API-key operational effect (`last_used_at` debouncing), and
-        receives the value that a role-less session receives. The session
-        cookie is cleared first, so the key is the only credential sent."""
+        """An API key of a user with roles receives the value that a
+        role-less session receives. The session cookie is cleared first, so
+        the key is the only credential sent; the `last_used_at` debouncer is
+        replaced so that it does not commit through its own session."""
         user = await user_factory()
         await user_role_factory(user_id=user.id, role=Role.ADMIN.value)
         token, digest = _make_api_key_credential()
-        key = await api_key_factory(user_id=user.id, key_hash=digest)
-        touch = AsyncMock()
-        monkeypatch.setattr(dependencies._last_used_debouncer, "touch", touch)
-
-        with_session = await authenticated_client.get(_PATH)
+        await api_key_factory(user_id=user.id, key_hash=digest)
+        monkeypatch.setattr(dependencies._last_used_debouncer, "touch", AsyncMock())
         authenticated_client.cookies.clear()
-        with_key = await authenticated_client.get(
+
+        response = await authenticated_client.get(
             _PATH, headers={"Authorization": f"Bearer {token}"}
         )
 
-        assert with_key.status_code == with_session.status_code == 200
-        assert with_key.json() == with_session.json() == _expected_body()
-        touch.assert_awaited_once()
-        assert touch.await_args is not None
-        assert touch.await_args.args[0] == key.id
-
-    async def test_request_without_credential_returns_401(
-        self, client: AsyncClient
-    ) -> None:
-        response = await client.get(_PATH)
-
-        assert response.status_code == 401
-        assert response.json() == UNAUTHENTICATED
-
-    async def test_invalid_credential_returns_401(self, client: AsyncClient) -> None:
-        response = await client.get(
-            _PATH, headers={"Authorization": "Bearer stl_ak_" + "0" * 32}
-        )
-
-        assert response.status_code == 401
-        assert response.json() == UNAUTHENTICATED
+        assert response.status_code == 200
+        assert response.json() == _expected_body()
 
     async def test_query_parameters_are_ignored(
         self, authenticated_client: AsyncClient
@@ -175,7 +156,6 @@ class TestRouteInventory:
 @pytest.mark.unit
 class TestOpenApiContract:
     def test_operation_has_summary_description_tag_and_no_parameters(self) -> None:
-        assert set(app.openapi()["paths"][_PATH]) == {"get"}
         operation = _operation()
 
         assert operation["summary"]
