@@ -3794,6 +3794,22 @@ scenarios are required:
 - Lockout events do NOT produce `IdentityAuditEvent` records (lockout
   is transient Redis-only state, not a persistent identity mutation)
 
+**Current user (`GET /api/v1/users/me`):**
+
+- For every combination of the predefined roles, none included, `roles`
+  lists each held role once and `capabilities` lists exactly the union of
+  their capabilities in `docs/features/identity/rbac.md` (Predefined Roles),
+  each once; a user with no roles receives two empty lists
+- A role held from several origins appears once in `roles` and repeats no
+  capability
+- Both lists are ordered alphabetically by wire value, whatever the
+  assignment order
+- A JWT session and an API key of the same user return the same lists, and a
+  committed role change is reflected on the user's next request
+- The OpenAPI document declares `capabilities` as a required array whose
+  items are an `enum` of exactly the capability values of
+  `docs/features/identity/rbac.md` (Capabilities)
+
 ### User Lifecycle and Management
 
 When user lifecycle services, administrator endpoints, bootstrap/recovery CLI,

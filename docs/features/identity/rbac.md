@@ -44,8 +44,42 @@ endpoint contract.
 > a group (e.g., "can assign but not change status"). Splitting a coarse
 > capability later is a bounded, mechanical refactor (~12 endpoint
 > decorators + tests for the two largest groups), not an architectural
-> change. The capability groupings may be refined in the future if a new
-> role requires a subset of operations within an existing group.
+> change. It is, however, a breaking API change, because the capability
+> values are part of the API (see Capability Wire Format). The capability
+> groupings may be refined in the future if a new role requires a subset of
+> operations within an existing group.
+
+#### Capability Wire Format
+
+The capability names in the tables above are also their wire format:
+lowercase with underscores, such as `create_ticket`. This applies to every
+response that returns capability values, including the `capabilities` of
+`GET /api/v1/users/me` (`docs/features/identity/authentication.md`, Get
+Current User), where the list is informational and every operation keeps its
+own authorization check.
+
+**Deterministic ordering**: a response array of capability values lists each
+value once, ordered alphabetically by the wire-format string.
+
+**Response enum**: the OpenAPI document publishes the values as an `enum`
+that lists every capability defined above, so they form a response enum
+(`docs/api-spec.md`, Response Enums). It includes `manage_role_mappings`:
+Predefined Roles grants it to the Admin role although the operations that it
+covers belong to a deferred specification.
+
+**Changes** follow `docs/api-spec.md` (Versioning; Response Enums):
+
+- a new capability that covers only operations that no existing capability
+  covers is a new value of the response enum and therefore additive.
+  Protecting a new operation with an existing capability changes no value
+  and is additive as well;
+- removing or renaming a capability, splitting one into several, merging
+  several into one, or moving an operation from one capability to another is
+  a breaking change, also when one of the resulting capabilities keeps an
+  earlier name: a value would then no longer mean what the contract of an
+  earlier release states.
+
+No earlier value is kept as an alias of the capabilities that replace it.
 
 ### Scope
 
@@ -977,8 +1011,9 @@ is responsible for ensuring the mapping is intentional.
 
 - `docs/features/tickets/tickets.md` — confidentiality rules, status transitions
 - `docs/features/tickets/ticket-mutations.md` — service-layer mutation contracts
-- `docs/features/identity/authentication.md` — authenticated principal and
-  authentication dependencies
+- `docs/features/identity/authentication.md` — authenticated principal,
+  authentication dependencies, and the capabilities of the current user (Get
+  Current User)
 - `docs/features/identity/identity-provisioning.md` — external sync, role mappings
 - `docs/features/identity/user-service.md` — centralized user lifecycle operations
 - `docs/data-model.md` — Role enum, UserRole table
