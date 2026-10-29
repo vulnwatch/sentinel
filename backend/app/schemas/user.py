@@ -69,11 +69,12 @@ class UserDirectoryData(BaseModel):
     """The user directory entry returned by `GET /api/v1/users` (list
     items) and `GET /api/v1/users/{user}` (`user-management.md`, Get
     User). It has the fields of the caller's own profile
-    (`app.schemas.auth.CurrentUserData`) and none of the fields that
-    only the complete user profile (`UserData`) returns. `roles` is the
+    (`app.schemas.auth.CurrentUserData`) except `capabilities`, which
+    only the own profile returns, and none of the fields that only the
+    complete user profile (`UserData`) returns. `roles` is the
     distinct, alphabetically wire-sorted set of current role values
-    (`rbac.md`, Deterministic ordering); `full_name` is returned `null`
-    verbatim with no fallback substitution."""
+    (`rbac.md`, Role Wire Format, Deterministic ordering); `full_name`
+    is returned `null` verbatim with no fallback substitution."""
 
     id: UUID
     username: str

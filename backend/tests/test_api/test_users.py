@@ -1353,6 +1353,57 @@ class TestGetUserAdmin:
 # GET /api/v1/users/me
 # ---------------------------------------------------------------------------
 
+# The capabilities of each predefined role, copied from the Predefined Roles
+# table of `docs/features/identity/rbac.md` rather than derived from the
+# production mapping, so that the expectations are independent of it.
+_CAPABILITIES_OF_ROLE: dict[str, frozenset[str]] = {
+    "admin": frozenset(
+        {
+            "manage_users",
+            "manage_role_mappings",
+            "manage_settings",
+            "manage_fetchers",
+            "admin_ticket_ops",
+        }
+    ),
+    "vulnerability_analyst": frozenset(
+        {
+            "create_ticket",
+            "triage_ticket",
+            "manage_packages",
+            "manage_cvss",
+            "manage_references",
+            "manage_confidentiality",
+        }
+    ),
+    "restricted_analyst": frozenset(
+        {
+            "create_ticket",
+            "triage_ticket",
+            "manage_packages",
+            "manage_cvss",
+            "manage_references",
+        }
+    ),
+}
+
+_ALL_CAPABILITIES = frozenset().union(*_CAPABILITIES_OF_ROLE.values())
+
+_ROLE_OF_WIRE_VALUE = {
+    "admin": Role.ADMIN,
+    "vulnerability_analyst": Role.VULNERABILITY_ANALYST,
+    "restricted_analyst": Role.RESTRICTED_ANALYST,
+}
+
+
+def _expected_capabilities(*wire_roles: str) -> list[str]:
+    """The union of the capabilities of `wire_roles`, each once, ordered
+    alphabetically by wire value (`rbac.md`, Capability Wire Format)."""
+    union: set[str] = set()
+    for wire_role in wire_roles:
+        union |= _CAPABILITIES_OF_ROLE[wire_role]
+    return sorted(union)
+
 
 @pytest.mark.e2e
 class TestGetCurrentUserProfile:
@@ -1387,6 +1438,7 @@ class TestGetCurrentUserProfile:
             "email",
             "full_name",
             "roles",
+            "capabilities",
             "active",
             "bot",
         }
@@ -1423,7 +1475,106 @@ class TestGetCurrentUserProfile:
 
         response = await client.get("/api/v1/users/me")
 
-        assert response.json()["data"]["roles"] == ["admin", "vulnerability_analyst"]
+        data = response.json()["data"]
+        assert data["roles"] == ["admin", "vulnerability_analyst"]
+        assert data["capabilities"] == _expected_capabilities(
+            "admin", "vulnerability_analyst"
+        )
+
+    @pytest.mark.parametrize(
+        "wire_roles",
+        [
+            (),
+            ("admin",),
+            ("vulnerability_analyst",),
+            ("restricted_analyst",),
+            ("vulnerability_analyst", "admin"),
+            ("restricted_analyst", "admin"),
+            ("vulnerability_analyst", "restricted_analyst"),
+            ("vulnerability_analyst", "restricted_analyst", "admin"),
+        ],
+        ids=lambda wire_roles: "+".join(wire_roles) or "no-roles",
+    )
+    async def test_capabilities_are_the_wire_sorted_union_of_the_roles(
+        self,
+        authenticated_user_and_client: tuple[User, AsyncClient],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+        wire_roles: tuple[str, ...],
+    ) -> None:
+        """Every combination of the predefined roles, the empty one
+        included, assigned in reverse alphabetical order: each list holds
+        each value once in wire order, and `capabilities` is exactly the
+        union that Predefined Roles grants to the roles in `roles`."""
+        user, client = authenticated_user_and_client
+        for wire_role in wire_roles:
+            await user_role_factory(
+                user_id=user.id, role=_ROLE_OF_WIRE_VALUE[wire_role].value
+            )
+
+        response = await client.get("/api/v1/users/me")
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["roles"] == sorted(wire_roles)
+        assert data["capabilities"] == _expected_capabilities(*wire_roles)
+
+    async def test_jwt_session_and_api_key_return_the_same_lists(
+        self,
+        authenticated_user_and_client: tuple[User, AsyncClient],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        user, client = authenticated_user_and_client
+        await user_role_factory(user_id=user.id, role=Role.RESTRICTED_ANALYST.value)
+        await user_role_factory(user_id=user.id, role=Role.ADMIN.value)
+        token, digest = _make_api_key_credential()
+        await api_key_factory(user_id=user.id, key_hash=digest)
+        monkeypatch.setattr(
+            api_key_service, "update_last_used_at", AsyncMock(return_value=True)
+        )
+
+        session_response = await client.get("/api/v1/users/me")
+        # A non-empty Bearer value is final and never falls back to the
+        # session cookie, so a 200 proves that the API key authenticated.
+        api_key_response = await client.get(
+            "/api/v1/users/me", headers={"Authorization": f"Bearer {token}"}
+        )
+
+        assert session_response.status_code == 200
+        assert api_key_response.status_code == 200
+        session_data = session_response.json()["data"]
+        api_key_data = api_key_response.json()["data"]
+        assert session_data["roles"] == ["admin", "restricted_analyst"]
+        assert session_data["capabilities"] == _expected_capabilities(
+            "admin", "restricted_analyst"
+        )
+        assert api_key_data["roles"] == session_data["roles"]
+        assert api_key_data["capabilities"] == session_data["capabilities"]
+
+    async def test_role_change_is_reflected_on_the_next_request(
+        self,
+        authenticated_user_and_client: tuple[User, AsyncClient],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+        db_session: AsyncSession,
+    ) -> None:
+        user, client = authenticated_user_and_client
+
+        before = (await client.get("/api/v1/users/me")).json()["data"]
+        user_role = await user_role_factory(
+            user_id=user.id, role=Role.VULNERABILITY_ANALYST.value
+        )
+        granted = (await client.get("/api/v1/users/me")).json()["data"]
+        await db_session.delete(user_role)
+        await db_session.flush()
+        removed = (await client.get("/api/v1/users/me")).json()["data"]
+
+        assert (before["roles"], before["capabilities"]) == ([], [])
+        assert granted["roles"] == ["vulnerability_analyst"]
+        assert granted["capabilities"] == _expected_capabilities(
+            "vulnerability_analyst"
+        )
+        assert (removed["roles"], removed["capabilities"]) == ([], [])
 
     async def test_api_key_authentication_is_accepted(
         self,
@@ -2866,6 +3017,40 @@ class TestUserDirectoryOpenAPISurface:
         }
         sort_by = _resolve_schema(document, parameters["sort_by"]["schema"])
         assert set(sort_by["enum"]) == {"username", "full_name", "email"}
+
+
+@pytest.mark.unit
+class TestCurrentUserOpenAPISurface:
+    def test_capabilities_is_a_required_array_of_the_capability_enum(
+        self,
+    ) -> None:
+        """`capabilities` is a response enum
+        (`docs/features/identity/rbac.md`, Capability Wire Format)."""
+        from app.main import app as fastapi_app
+
+        document = fastapi_app.openapi()
+        schema = document["components"]["schemas"]["CurrentUserData"]
+        capabilities = schema["properties"]["capabilities"]
+        assert "capabilities" in schema["required"]
+        assert capabilities["type"] == "array"
+        items = _resolve_schema(document, capabilities["items"])
+        assert items["type"] == "string"
+        assert sorted(items["enum"]) == sorted(_ALL_CAPABILITIES)
+
+    def test_get_my_profile_documents_the_current_user_fields(self) -> None:
+        from app.main import app as fastapi_app
+
+        document = fastapi_app.openapi()
+        assert _success_item_properties(document, "/api/v1/users/me", listed=False) == {
+            "id",
+            "username",
+            "email",
+            "full_name",
+            "roles",
+            "capabilities",
+            "active",
+            "bot",
+        }
 
 
 @pytest.mark.unit
