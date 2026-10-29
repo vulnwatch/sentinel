@@ -1050,6 +1050,7 @@ GET /api/v1/users/me
     "email": "string",
     "full_name": "string | null",
     "roles": ["string"],
+    "capabilities": ["string"],
     "active": true,
     "bot": false
   }
@@ -1068,6 +1069,45 @@ that wire value. The route obtains the deduplicated `Role` set from
 `docs/features/identity/user-service.md`) and performs no ORM query
 directly; converting to wire format and sorting is response formatting,
 not a database operation.
+
+`capabilities` contains the distinct capabilities that the authenticated user
+holds: the union of the capabilities that `rbac.md` (Predefined Roles) grants
+to the roles in `roles`, each capability once. A user with no roles receives
+an empty list. The values are rendered in the wire format defined in
+`rbac.md` (Capability Wire Format) and ordered alphabetically by that wire
+value. The route resolves them from the same role set that it renders as
+`roles`, so the two fields always agree; resolving capabilities through the
+static role definitions is, like the wire-format conversion, response
+formatting and not a database operation.
+
+`capabilities` is informational: it lets a client adapt the actions that it
+offers to what the user may do without copying the role-to-capability
+mapping. It grants, changes, and replaces no authorization: every operation
+still checks its own authorization when it is requested (`rbac.md`, Endpoint
+Authorization). Neither holding nor lacking a listed capability therefore
+decides by itself whether an operation succeeds:
+
+- an operation can accept alternative capabilities, require an additional
+  capability for a request field, require a JWT session, or reject the
+  request because of the visibility or state of a resource (Session-Only
+  Authentication Dependency above; `rbac.md`, Permission Matrix;
+  `docs/api-spec.md`, Conditional authorization and Authorization Chain
+  Evaluation Order);
+- the list reflects the roles that the user held when the request that
+  returned it was processed. A role change takes effect on the user's next
+  request (`rbac.md`, Permission Checking), so an operation can return
+  `403 AUTH_INSUFFICIENT_PERMISSION` for a capability that a list read
+  earlier contains, or succeed for one that it lacks; and
+- the response states neither the user's effective scope nor any permission
+  that depends on a resource, such as an access grant or package
+  maintainership (`rbac.md`, Scope; Scope and Confidential Ticket
+  Visibility).
+
+The list discloses only the capabilities of the authenticated user, which the
+user's own `roles` and the Predefined Roles of `rbac.md` already determine.
+The `403` of an operation remains generic and does not disclose which
+capability the operation requires (`rbac.md`, `require_capability()`
+Dependency).
 
 ### Logout
 

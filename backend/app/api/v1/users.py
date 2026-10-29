@@ -36,7 +36,7 @@ from app.core.enums import (
 from app.core.errors import AppError, ErrorCode
 from app.core.exceptions import UserNotFoundError
 from app.core.passwords import PasswordValidationError
-from app.core.permissions import role_from_wire, role_to_wire
+from app.core.permissions import get_capabilities, role_from_wire, role_to_wire
 from app.database import DatabaseSession, register_post_commit_callback
 from app.models.user import User
 from app.schemas.auth import CurrentUserData, CurrentUserResponse
@@ -252,8 +252,8 @@ def _serialize_directory_entry(user: User) -> UserDirectoryData:
 
     `roles` holds each role the user currently holds from any origin
     once, ordered alphabetically by wire-format value
-    (`docs/features/identity/rbac.md`, Deterministic ordering). No other
-    field of the complete profile is read.
+    (`docs/features/identity/rbac.md`, Role Wire Format, Deterministic
+    ordering). No other field of the complete profile is read.
     """
     return UserDirectoryData(
         id=user.id,
@@ -273,8 +273,8 @@ def _serialize_user(user: User) -> UserData:
     `source` is derived (never stored) from `external_id`. `roles` is
     ordered alphabetically by wire-format role value, then `group_name`,
     then `id` — deterministic regardless of assignment order or
-    database physical order (`docs/features/identity/rbac.md`,
-    Deterministic ordering).
+    database physical order (`docs/features/identity/rbac.md`, Role
+    Wire Format, Deterministic ordering).
     """
     manager = None
     if user.manager is not None:
@@ -389,15 +389,22 @@ async def list_users(
     summary="Get my profile",
     description=(
         "Returns the concise profile of the currently authenticated user, "
-        "including current role values. Requires authentication (JWT "
-        "session or API key)."
+        "including current role values and the capabilities that those roles "
+        "grant. The capabilities are informational: every operation still "
+        "checks its own authorization. Requires authentication (JWT session "
+        "or API key)."
     ),
 )
 async def get_current_user_profile(
     principal: CurrentUser, db: DatabaseSession
 ) -> CurrentUserResponse:
     """Get current user — see
-    `docs/features/identity/authentication.md` (Get Current User)."""
+    `docs/features/identity/authentication.md` (Get Current User).
+
+    `roles` and `capabilities` are both rendered from the one role set
+    that the service returns, so the two fields always agree; resolving
+    capabilities through the static role definitions is response
+    formatting, not a database operation."""
     roles = await user_service.get_user_roles(db, principal.user.id)
     return CurrentUserResponse(
         data=CurrentUserData(
@@ -406,6 +413,7 @@ async def get_current_user_profile(
             email=principal.user.email,
             full_name=principal.user.full_name,
             roles=sorted(role_to_wire(role) for role in roles),
+            capabilities=sorted(get_capabilities(roles)),
             active=principal.user.active,
             bot=principal.user.bot,
         )

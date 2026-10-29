@@ -18,6 +18,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.core.enums import Capability
+
 
 class LoginRequest(BaseModel):
     """Request body for `POST /api/v1/auth/login`."""
@@ -47,13 +49,18 @@ class CurrentUserData(BaseModel):
     `external_id`, `manager`, or role assignment metadata — only the
     fields needed to render the authenticated user's own identity.
     `roles` is the distinct, alphabetically wire-sorted set of current
-    role values (see `rbac.md`, Deterministic ordering)."""
+    role values (see `rbac.md`, Role Wire Format, Deterministic
+    ordering). `capabilities` is the distinct, alphabetically
+    wire-sorted union of the capabilities of those roles (see `rbac.md`,
+    Capability Wire Format); typed as `Capability`, it is published as
+    an OpenAPI `enum`. It is informational and grants nothing."""
 
     id: UUID
     username: str
     email: str
     full_name: str | None
     roles: list[str]
+    capabilities: list[Capability]
     active: bool
     bot: bool
 

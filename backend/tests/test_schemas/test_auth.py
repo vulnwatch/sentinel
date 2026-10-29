@@ -18,6 +18,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.core.enums import Capability
 from app.schemas.auth import (
     CurrentUserData,
     CurrentUserResponse,
@@ -92,6 +93,7 @@ class TestCurrentUserData:
             "email": "jdoe@example.com",
             "full_name": "John Doe",
             "roles": ["admin"],
+            "capabilities": [Capability.MANAGE_USERS],
             "active": True,
             "bot": False,
         }
@@ -122,6 +124,7 @@ class TestCurrentUserData:
             "email",
             "full_name",
             "roles",
+            "capabilities",
             "active",
             "bot",
         }
@@ -136,6 +139,7 @@ class TestCurrentUserResponse:
             email="jdoe@example.com",
             full_name="John Doe",
             roles=["admin"],
+            capabilities=[Capability.MANAGE_USERS],
             active=True,
             bot=False,
         )

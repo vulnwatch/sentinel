@@ -963,7 +963,8 @@ Field notes:
   origin of each role is part of the complete user profile only
 
 The directory entry has the same fields as the authenticated caller's own
-profile (`docs/features/identity/authentication.md`, Get Current User).
+profile (`docs/features/identity/authentication.md`, Get Current User),
+except `capabilities`, which only the own profile returns.
 
 **Error responses**:
 
