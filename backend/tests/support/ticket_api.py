@@ -83,6 +83,8 @@ TICKET_DETAIL_FIELDS = {
     "um_due_at",
     "qa_due_at",
     "release_due_at",
+    "current_phase",
+    "current_phase_milestone",
     "packages",
     "created_at",
     "updated_at",

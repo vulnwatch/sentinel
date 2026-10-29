@@ -378,6 +378,47 @@ class TestManualZoneExit:
         )
         assert await _eligible(fresh, occurrence_id) is True
 
+    @pytest.mark.parametrize("exit_", EXITS)
+    async def test_entry_and_exit_project_the_post_mutation_current_phase(
+        self, committed_app: tuple[CommittedApp, AsyncClient, _Catalog], exit_: _Exit
+    ) -> None:
+        """ticket-deadlines.md (Testing Requirement 15): the `TicketDetail`
+        returned by a mutation projects the post-mutation current phase:
+        `null` in the manual zone, and `triage` after an exit that returns
+        a Ticket without packages to `analysis`, overdue because its
+        triage due date (`created_at` + 3 days) is past."""
+        world, committed_client, _ = committed_app
+        _, headers = await world.va_headers()
+        ticket = await world.ticket(severity_manual="High")
+        if exit_ is REOPEN:
+            entered = await committed_client.post(
+                f"/api/v1/tickets/{locator(ticket)}/ignore", headers=headers
+            )
+        else:
+            target = await world.ticket(status=TicketStatus.ANALYSIS.value)
+            entered = await committed_client.post(
+                f"/api/v1/tickets/{locator(ticket)}/duplicate",
+                json={"duplicate_of_ticket_id": locator(target)},
+                headers=headers,
+            )
+
+        response = await committed_client.post(exit_.url(ticket), headers=headers)
+
+        assert entered.status_code == 200
+        manual = entered.json()["data"]
+        assert (
+            manual["status"],
+            manual["current_phase"],
+            manual["current_phase_milestone"],
+        ) == (exit_.source.value.lower(), None, None)
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert (
+            data["status"],
+            data["current_phase"],
+            data["current_phase_milestone"],
+        ) == ("analysis", "triage", "overdue")
+
 
 # ---------------------------------------------------------------------------
 # Authentication and capability (flow 3, step 1)

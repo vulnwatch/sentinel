@@ -12,7 +12,8 @@ Owning specifications:
   Severity Resolution; Response Schemas > TicketSummary; List Tickets).
 - docs/features/tickets/ticket-priority.md (Testing Requirement 9).
 - docs/features/tickets/ticket-deadlines.md (Evaluation Instant,
-  Ticket-Level Overdue Filter, Sorting; Testing Requirements 7-9, 11).
+  Ticket-Level Overdue Filter, Ticket Current Phase, Sorting; Testing
+  Requirements 7-9, 11, 13-15).
 - docs/api-spec.md (Semantic Sort Fields, Nullable Sort Field Ordering,
   Deterministic Pagination Ordering, User Identifier Resolution).
 - docs/features/platform/testing-strategy.md (Ticket Accessibility >
@@ -39,8 +40,10 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import (
+    CurrentPhase,
     DeliveryStatus,
     MilestonePhase,
+    MilestoneStatus,
     PackageStatus,
     Role,
     Scope,
@@ -63,12 +66,13 @@ from app.models.ticket_package_track import TicketPackageTrack
 from app.models.user import User
 from app.models.user_role import UserRole
 from app.services import ticket_service
-from app.services.ticket_deadlines import DueDates
+from app.services.ticket_deadlines import DueDates, TicketCurrentPhase
 from app.services.ticket_service import (
     CVESummaryProjection,
     TicketPage,
     TicketSummaryProjection,
     TicketUserProjection,
+    get_ticket_detail,
     list_tickets,
 )
 from app.services.ticket_visibility import TicketCaller
@@ -80,9 +84,12 @@ from tests.support.deadline_matrix import (
     BEFORE_ANY_DUE,
     CREATED_AT,
     DEADLINE_CASES,
+    TICKET_PHASE_CASES,
     DeadlineCase,
     O,
     ProductEvidence,
+    TicketPhaseCase,
+    TrackEvidence,
 )
 from tests.support.deadline_persistence import DeadlineWorld
 
@@ -230,6 +237,7 @@ class TestSummaryProjection:
                 is_confidential=True,
                 coordinated_release_at=CRD,
                 due_dates=None,
+                current_phase=TicketCurrentPhase(phase=None, milestone=None),
                 package_names=("curl", "openssl-3"),
                 created_at=CREATED_AT,
                 updated_at=UPDATED_AT,
@@ -261,6 +269,10 @@ class TestSummaryProjection:
             um=CREATED_AT + timedelta(days=63),
             qa=CREATED_AT + timedelta(days=90),
             release=CREATED_AT + timedelta(days=90),
+        )
+        # A `New` Ticket without packages is in Ticket-level triage.
+        assert item.current_phase == TicketCurrentPhase(
+            phase=CurrentPhase.TRIAGE, milestone=MilestoneStatus.PENDING
         )
 
     @pytest.mark.parametrize(
@@ -1008,6 +1020,166 @@ class TestOverdueFilter:
 
 
 # ---------------------------------------------------------------------------
+# Current phase (ticket-deadlines.md, Ticket Current Phase)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestCurrentPhaseMatrix:
+    @pytest.mark.parametrize("case", TICKET_PHASE_CASES, ids=lambda case: case.id)
+    async def test_list_and_detail_match_the_shared_matrix(
+        self,
+        db_session: AsyncSession,
+        clock: Clock,
+        deadline_world: DeadlineWorld,
+        case: TicketPhaseCase,
+    ) -> None:
+        """Requirements 14-15 for every Ticket current phase case: the list
+        projects the expected value, its `current_phase` filter selects the
+        Ticket exactly for that value, `current_phase_milestone` is
+        `overdue` exactly when the Ticket matches the `overdue` value of its
+        current phase, a Ticket matching any `overdue` value has its current
+        phase overdue (the partition under one SLA), and the detail (pure
+        function over the package tree) agrees at the same instant."""
+        ticket = await deadline_world.build_ticket(case)
+        clock.instant = case.evaluation_instant
+        sntl = _sntl(ticket)
+        expected = TicketCurrentPhase(
+            phase=case.expected_phase, milestone=case.expected_milestone
+        )
+
+        # Other Tickets may exist (a duplicate target, the parent of an
+        # uncorrelated request's track); the case's Ticket is asserted by
+        # membership.
+        (item,) = [
+            item
+            for item in (await _list(db_session, per_page=100)).items
+            if item.ticket_id == sntl
+        ]
+        assert item.current_phase == expected
+
+        for value in CurrentPhase:
+            selected = await _ids(db_session, current_phase=[value])
+            assert (sntl in selected) is (case.expected_phase is value), value
+        overdue_matches = {
+            phase
+            for phase in MilestonePhase
+            if sntl in await _ids(db_session, overdue=[phase])
+        }
+        matches_own_phase = case.expected_phase is not None and any(
+            phase.value == case.expected_phase.value for phase in overdue_matches
+        )
+        assert (case.expected_milestone is O) is matches_own_phase
+        if overdue_matches:
+            assert case.expected_milestone is O
+
+        detail = await get_ticket_detail(db_session, ticket_id=sntl, caller=ALL_SCOPE)
+        assert detail.current_phase == expected
+
+
+def _phase_case(name: str, **changes: Any) -> TicketPhaseCase:
+    """A Ticket current phase case whose expectations are not asserted."""
+    return TicketPhaseCase(
+        id=name, expected_phase=None, expected_milestone=None, **changes
+    )
+
+
+@pytest.mark.integration
+class TestCurrentPhaseFilter:
+    async def test_values_combine_with_or_and_other_filters_with_and(
+        self,
+        db_session: AsyncSession,
+        clock: Clock,
+        deadline_world: DeadlineWorld,
+    ) -> None:
+        clock.instant = AFTER_ALL_DUE
+        triage = await deadline_world.build_ticket(
+            _phase_case("triage", ticket_status=TicketStatus.ANALYSIS)
+        )
+        submission = await deadline_world.build_ticket(
+            _phase_case("submission", tracks=(TrackEvidence(),))
+        )
+        done = await deadline_world.build_ticket(
+            _phase_case(
+                "done",
+                ticket_status=TicketStatus.RESOLVED,
+                tracks=(TrackEvidence(products=(ProductEvidence(released=True),)),),
+            )
+        )
+
+        both = [CurrentPhase.TRIAGE, CurrentPhase.SUBMISSION]
+        assert set(await _ids(db_session, current_phase=both)) == _set(
+            [triage, submission]
+        )
+        assert await _ids(db_session, current_phase=[CurrentPhase.DONE]) == [
+            _sntl(done)
+        ]
+        assert await _ids(
+            db_session,
+            current_phase=both,
+            overdue=[MilestonePhase.SUBMISSION],
+            status=[TicketStatus.ANALYZED],
+        ) == [_sntl(submission)]
+        assert (
+            await _ids(
+                db_session,
+                current_phase=[CurrentPhase.SUBMISSION],
+                status=[TicketStatus.ANALYSIS],
+            )
+            == []
+        )
+        # Every supplied value was invalid: an empty page, not "no filter".
+        assert await _ids(db_session, current_phase=[]) == []
+
+    async def test_null_current_phase_matches_no_value(
+        self,
+        db_session: AsyncSession,
+        clock: Clock,
+        deadline_world: DeadlineWorld,
+        ticket_factory: Factory,
+    ) -> None:
+        clock.instant = AFTER_ALL_DUE
+        await deadline_world.build_ticket(
+            _phase_case("cve-less", ticket_has_cve=False, tracks=(TrackEvidence(),))
+        )
+        await ticket_factory(status=TicketStatus.IGNORED.value, created_at=CREATED_AT)
+        await ticket_factory(severity_manual=Severity.NONE.value, created_at=CREATED_AT)
+
+        page = await _list(db_session, per_page=100)
+
+        assert {item.current_phase for item in page.items} == {
+            TicketCurrentPhase(phase=None, milestone=None)
+        }
+        assert await _ids(db_session, current_phase=list(CurrentPhase)) == []
+
+    async def test_several_tracks_count_the_ticket_once(
+        self,
+        db_session: AsyncSession,
+        clock: Clock,
+        deadline_world: DeadlineWorld,
+    ) -> None:
+        clock.instant = AFTER_ALL_DUE
+        ticket = await deadline_world.build_ticket(
+            _phase_case(
+                "fan-out",
+                tracks=(
+                    TrackEvidence(products=(ProductEvidence(), ProductEvidence())),
+                    TrackEvidence(),
+                    TrackEvidence(delivery_status=DeliveryStatus.IN_PROGRESS),
+                ),
+            )
+        )
+
+        page = await _list(db_session, current_phase=[CurrentPhase.SUBMISSION])
+
+        assert [item.ticket_id for item in page.items] == [_sntl(ticket)]
+        assert page.total == 1
+        assert page.items[0].current_phase == TicketCurrentPhase(
+            phase=CurrentPhase.SUBMISSION, milestone=MilestoneStatus.OVERDUE
+        )
+
+
+# ---------------------------------------------------------------------------
 # Sorting and pagination
 # ---------------------------------------------------------------------------
 
@@ -1405,6 +1577,7 @@ class TestVisibility:
             {"search": "secret"},
             {"severity": [Severity.CRITICAL]},
             {"overdue": [MilestonePhase.TRIAGE]},
+            {"current_phase": [CurrentPhase.TRIAGE]},
             {"sort_by": TicketSortField.SEVERITY},
         ):
             page = await _list(db_session, ROLELESS_CALLER, **filters)
@@ -1463,6 +1636,7 @@ class TestBoundedRead:
         await _list(
             db_session,
             overdue=list(MilestonePhase),
+            current_phase=list(CurrentPhase),
             sort_by=TicketSortField.TRIAGE_DUE_AT,
         )
 
@@ -1474,8 +1648,9 @@ class TestBoundedRead:
         clock: Clock,
         deadline_world: DeadlineWorld,
     ) -> None:
-        """Requirement 11: listing, filtering, and sorting by deadlines
-        only read; nothing is persisted and no audit event is created."""
+        """Requirement 11: listing, filtering, and sorting by deadlines and
+        the current phase only read; nothing is persisted and no audit
+        event is created."""
         clock.instant = AFTER_ALL_DUE
         persisted = await deadline_world.build(_overdue_track_case("side-effects"))
         snapshot = select(
@@ -1487,9 +1662,10 @@ class TestBoundedRead:
         before = (await db_session.execute(snapshot)).one()
 
         with _StatementRecorder(db_session) as recorder:
-            await _list(
+            page = await _list(
                 db_session,
                 overdue=list(MilestonePhase),
+                current_phase=list(CurrentPhase),
                 sort_by=TicketSortField.SUBMISSION_DUE_AT,
             )
 
@@ -1497,6 +1673,7 @@ class TestBoundedRead:
         events = await db_session.scalar(
             select(func.count()).select_from(TicketAuditEvent)
         )
+        assert [item.ticket_id for item in page.items] == [_sntl(persisted.ticket)]
         assert after == before
         assert events == 0
         assert not db_session.new

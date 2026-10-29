@@ -39,6 +39,7 @@ from sqlalchemy.exc import NoResultFound, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import (
+    CurrentPhase,
     CveState,
     DeliveryStatus,
     LifecyclePhase,
@@ -75,7 +76,7 @@ from app.services.cve_projection import (
     CVESSVCProjection,
     CVEWeaknessProjection,
 )
-from app.services.ticket_deadlines import DueDates
+from app.services.ticket_deadlines import DueDates, TicketCurrentPhase
 from app.services.ticket_service import (
     ResolvedTicket,
     TicketDetailProjection,
@@ -329,6 +330,10 @@ class TestDetailProjection:
             is_confidential=False,
             coordinated_release_at=CRD,
             due_dates=_due_dates(TIER_90_OFFSETS_DAYS),
+            # A `New` Ticket without packages is in Ticket-level triage.
+            current_phase=TicketCurrentPhase(
+                phase=CurrentPhase.TRIAGE, milestone=MilestoneStatus.PENDING
+            ),
             packages=(),
             created_at=CREATED_AT,
             updated_at=UPDATED_AT,

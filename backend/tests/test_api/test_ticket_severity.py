@@ -663,6 +663,9 @@ class TestSetSeverity:
             "is_confidential": False,
             "coordinated_release_at": None,
             **_due_dates(_CREATED_AT, 30),
+            # `Analysis` is Ticket-level triage, past its 3-day due date.
+            "current_phase": "triage",
+            "current_phase_milestone": "overdue",
             "packages": [],
             "created_at": _iso(_CREATED_AT),
         }

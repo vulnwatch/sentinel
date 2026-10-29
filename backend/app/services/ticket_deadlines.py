@@ -1,9 +1,10 @@
-"""Pure remediation SLA due dates and per-track milestones.
+"""Pure remediation SLA due dates, per-track milestones, and the Ticket
+current phase.
 
 Single database-free formula owner for Ticket deadlines. See
 `docs/features/tickets/ticket-deadlines.md` (SLA Tier, Phase Shares, Due
-Dates, Evaluation Instant, Track Milestones, Pure Resolution Functions)
-for the complete contract.
+Dates, Evaluation Instant, Track Milestones, Ticket Current Phase, Pure
+Resolution Functions) for the complete contract.
 
 Every function is Category B: no database access, write, audit, lock, or
 external call. Deadlines are informational only and are never persisted.
@@ -22,7 +23,7 @@ time) and makes every due date a UTC value.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
@@ -87,7 +88,14 @@ ACTIVE_RELEASE_REQUEST_STATES: Final = frozenset(
 """`IBSRequest.state` values whose correlated `maintenance_release` action
 is `um` completion evidence (Completion Evidence)."""
 
+TRIAGE_OPEN_TICKET_STATUSES: Final = frozenset(
+    {TicketStatus.NEW, TicketStatus.ANALYSIS}
+)
+"""Ticket statuses with the Ticket-level `triage` phase open (Ticket-Level
+Overdue Filter; Ticket Current Phase, Open Phases)."""
+
 _PHASES: Final = tuple(MilestonePhase)
+_OPEN_STATUSES: Final = frozenset({MilestoneStatus.PENDING, MilestoneStatus.OVERDUE})
 
 
 def _require_aware(value: datetime, name: str) -> None:
@@ -138,6 +146,19 @@ class TrackMilestones:
         """Status of one milestone phase."""
         status: MilestoneStatus | None = getattr(self, phase.value)
         return status
+
+
+@dataclass(frozen=True, slots=True)
+class TicketCurrentPhase:
+    """Current phase of one Ticket and the milestone status of that phase.
+
+    Service-internal typed value. Python `None` represents the `null`
+    current phase. `milestone` is `PENDING` or `OVERDUE`, or `None` when
+    `phase` is `DONE` or `None`.
+    """
+
+    phase: CurrentPhase | None
+    milestone: MilestoneStatus | None
 
 
 def resolve_sla_days(severity: Severity | None) -> int | None:
@@ -301,3 +322,71 @@ def _current_phase(
         if status in (MilestoneStatus.PENDING, MilestoneStatus.OVERDUE):
             return CurrentPhase(phase.value)
     return CurrentPhase.DONE
+
+
+def resolve_ticket_current_phase(
+    *,
+    due_dates: DueDates | None,
+    ticket_status: TicketStatus,
+    track_milestones: Collection[TrackMilestones],
+    evaluation_instant: datetime,
+) -> TicketCurrentPhase:
+    """Resolve the current phase of a Ticket and its milestone status.
+
+    `due_dates` is the Ticket's `compute_due_dates()` result and
+    `track_milestones` the `resolve_track_milestones()` result of every
+    track of the Ticket, computed from the same `due_dates` and
+    `evaluation_instant` (empty without tracks). The caller supplies
+    consistent inputs; they are not cross-checked.
+
+    Rules, first match wins: (1) `due_dates is None` (no SLA) → `None`;
+    (2) the first open phase: `triage` when `ticket_status` is `New` or
+    `Analysis`, otherwise `submission`, `um`, or `qa` when at least one
+    track has that member `pending` or `overdue`; (3) `done` when the
+    Ticket is `Resolved` or no track has a `None` member; (4) otherwise
+    `None`.
+
+    The milestone of an open phase is `overdue` when the Ticket matches
+    the `overdue` filter value of that phase (`triage`: its due date is
+    strictly before `evaluation_instant`; a later phase: at least one
+    track has it `overdue`), otherwise `pending`; it is `None` when the
+    phase is `done` or `None`.
+
+    Raises:
+        ValueError: `evaluation_instant` is naive (validated for every
+            input).
+    """
+    _require_aware(evaluation_instant, "evaluation_instant")
+
+    if due_dates is None:
+        return TicketCurrentPhase(phase=None, milestone=None)
+
+    if ticket_status in TRIAGE_OPEN_TICKET_STATUSES:
+        triage_overdue = due_dates.triage < evaluation_instant
+        return TicketCurrentPhase(
+            phase=CurrentPhase.TRIAGE,
+            milestone=(
+                MilestoneStatus.OVERDUE if triage_overdue else MilestoneStatus.PENDING
+            ),
+        )
+
+    for phase in _PHASES[1:]:
+        statuses = {milestones.status_of(phase) for milestones in track_milestones}
+        if statuses & _OPEN_STATUSES:
+            return TicketCurrentPhase(
+                phase=CurrentPhase(phase.value),
+                milestone=(
+                    MilestoneStatus.OVERDUE
+                    if MilestoneStatus.OVERDUE in statuses
+                    else MilestoneStatus.PENDING
+                ),
+            )
+
+    has_null_member = any(
+        milestones.status_of(phase) is None
+        for milestones in track_milestones
+        for phase in _PHASES
+    )
+    if ticket_status is TicketStatus.RESOLVED or not has_null_member:
+        return TicketCurrentPhase(phase=CurrentPhase.DONE, milestone=None)
+    return TicketCurrentPhase(phase=None, milestone=None)
