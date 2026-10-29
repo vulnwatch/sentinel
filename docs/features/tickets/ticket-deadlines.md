@@ -281,8 +281,8 @@ lacking `released_at`.
 statuses are `null`. `Resolved` Tickets never match by construction: every
 actionable track is resolution-complete, so each applicable `FIXED` track has
 every actionable eligible Product released, the other observable tracks
-(`AFFECTED` without an actionable eligible Product, `NOT_AFFECTED`, and
-`WONT_FIX`) have their later phases `not_applicable`, and Git tracks and
+(`AFFECTED` or `FIXED` without an actionable eligible Product, `NOT_AFFECTED`,
+and `WONT_FIX`) have their later phases `not_applicable`, and Git tracks and
 CVE-less Tickets have `null` later phases.
 
 VAs sort the triage queue by priority when severity is still unresolved; no
@@ -345,8 +345,8 @@ waits to become `FIXED`. It is `null` when a track has a `null` member, because
 the milestones do not show whether that track still has work in a later phase.
 Observability precedes applicability, so this holds even for a track whose
 later phases would not apply, such as an actionable `NOT_AFFECTED` Git track.
-In particular, an `Analyzed` Ticket without a CVE always has a `null` current
-phase.
+In particular, an `Analyzed` Ticket without a CVE has a `null` current phase
+while it has an actionable track.
 
 `current_phase_milestone` is the status of the current phase at the Ticket
 level: `overdue` when the Ticket matches the `overdue` filter value of its
@@ -357,11 +357,12 @@ for a later phase exactly when at least one track has that member `overdue`.
 Like every milestone status, it uses the response's single
 [Evaluation Instant](#evaluation-instant).
 
-The OpenAPI descriptions of both fields MUST state that the value is the
-earliest open phase among the phases that Sentinel observes, that
-unobservable phases (Git tracks and Tickets without a CVE) do not hold it back,
-the causes of `null`, that it differs from the track `current_phase`, and that
-the milestone `pending` is unrelated to `delivery_status = pending`.
+The OpenAPI description of `current_phase` MUST state that the value is the
+earliest open phase among the phases that Sentinel observes, that unobservable
+phases (Git tracks and Tickets without a CVE) do not hold it back, the causes
+of `null`, and that it differs from the track `current_phase`. The description
+of `current_phase_milestone` MUST state when it is `null` and that its
+`pending` is unrelated to `delivery_status = pending`.
 
 ### Relation to the Overdue Filter
 
