@@ -104,9 +104,8 @@ All SSO settings are **optional**. If any of the required SSO settings
 (`SSO_ISSUER_URL`, `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET`,
 `SSO_REDIRECT_URI`) is empty or unset, the application starts with **SSO
 disabled**: authentication-provider discovery (`GET /api/v1/auth/providers`)
-reports `sso` as `false`, and the SSO endpoints
-(`/api/v1/auth/sso/authorize`, `/api/v1/auth/sso/callback`) return
-HTTP 404.
+reports `sso` as `false`, and the SSO endpoints (`/api/v1/auth/sso/authorize`,
+`/api/v1/auth/sso/callback`) return HTTP 404.
 
 At startup, the application logs an INFO message indicating SSO status:
 

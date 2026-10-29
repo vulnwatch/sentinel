@@ -373,9 +373,10 @@ repository (`docs/architecture.md`, System Boundary), on the facts in
    callback route `/auth/callback` (see Configuration), with the result in
    the URL parameters
 5. If the URL parameters contain `error` (the IdP denied consent or
-   encountered an error), the flow ends unsuccessfully; `error_description`,
-   when present, describes the failure. The client does NOT call the SSO
-   callback endpoint
+   encountered an error), the flow ends unsuccessfully, and the client does
+   NOT call the SSO callback endpoint. The URL parameters, `error` and
+   `error_description` included, are untrusted input: anyone can craft such a
+   URL and lead a user to it
 6. Otherwise, the client extracts `code` and `state` from the URL
    parameters and calls `POST /api/v1/auth/sso/callback` with them (SSO
    Callback)

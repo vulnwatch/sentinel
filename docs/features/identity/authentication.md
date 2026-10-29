@@ -654,13 +654,15 @@ clients rely on these facts of this contract, which both providers share:
   browser holds one. A browser client learns the state of its session only
   from the API's responses, for example from Get Current User.
 - A request to an endpoint that uses `get_current_user` receives the generic
-  HTTP 401 `AUTH_NOT_AUTHENTICATED` when it carries no valid session: when the
-  session cookie is absent, when its token has expired at `exp` or reached
-  `session_deadline`, when its session has been invalidated by logout,
-  deactivation, or password reset, or when its user is inactive. The response
-  is identical in every case and does not disclose the cause (see Shared
-  Credential Resolution), so a client cannot tell from it whether the browser
-  had a session before.
+  HTTP 401 `AUTH_NOT_AUTHENTICATED` whenever it carries no valid session,
+  whatever the cause: for example, the session cookie is absent; its token has
+  expired at `exp`, has reached `session_deadline`, or no longer validates
+  after a `JWT_SECRET_KEY` rotation; its session has been invalidated by
+  logout, deactivation, or password reset (within the delay that Session
+  liveness check bounds); or its user is inactive. The response is identical
+  in every case and does not disclose the cause (see Shared Credential
+  Resolution), so a client cannot tell from it whether the browser had a
+  session before.
 - Public endpoints ignore the session (see `get_current_user`). Logout does
   not use `get_current_user`: it succeeds for an expired or invalidated
   session, and its HTTP 401 has its own conditions (see Logout).
