@@ -543,9 +543,8 @@ forms (see `docs/features/platform/testing-strategy.md`, Structural Tests).
   query parameter of the generated document. An endpoint therefore does not
   hide it itself, either through `SkipJsonSchema`, which also changes the
   validation errors of the parameter, or through a hand-written parameter
-  schema. A structural test in
-  `backend/tests/test_api_conventions.py` enforces that no path or query
-  parameter is published as nullable
+  schema. A structural test in `backend/tests/test_api_conventions.py`
+  enforces that no path or query parameter is published as nullable
 - **User identifier resolution**: parameters that identify a user follow
   `docs/api-spec.md` (User Identifier Resolution), including its distinction
   between target resources and optional list filters. API dependencies may
