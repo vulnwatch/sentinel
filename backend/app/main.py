@@ -28,6 +28,7 @@ from app.api.v1 import (
     ibs_consumer,
     identity_audit,
     maintainer,
+    platform,
     products,
     ticket_audit,
     ticket_ibs_requests,
@@ -304,6 +305,7 @@ for _router in (
     cves.router,
     products.router,
     maintainer.router,
+    platform.router,
 ):
     app.include_router(
         _router, dependencies=_API_V1_DEPENDENCIES, responses=API_V1_RESPONSES

@@ -15,6 +15,7 @@ cli-infrastructure.md           Shared CLI mechanism: entry point, session manag
 system-settings.md              System-setting persistence, bootstrap, API, audit
 default-cvss-version-operations.md  Default-CVSS preview and recalculation operations
 health-endpoints.md             Liveness (/health) and readiness (/ready) probes
+platform-version.md             Authenticated read of the running platform version
 logging.md                       Operational/diagnostic logging model, correlation IDs
 cve-record-parser.md            Shared CVE Record Format 5.x parser for CVE fetchers
 cve-source-failure-retry.md     Retry policy for per-source CVE fetch failures
@@ -55,6 +56,9 @@ testing-strategy.md             Testing methodology, fixtures, coverage policy
   `cli-infrastructure.md`, and its fictional dataset. The dataset is loaded
   through the service operations of the identity, ticket, and package domains,
   and `testing-strategy.md` defines the tests that keep it aligned with them.
+- `platform-version.md` returns the platform version to authenticated
+  clients, while `health-endpoints.md` keeps versions out of the
+  unauthenticated probes.
 - `logging.md` defines the operational logging model (structured logs,
   correlation IDs) consumed implicitly by every other spec that
   prescribes log statements; it is distinct from

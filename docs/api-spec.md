@@ -160,6 +160,12 @@ authentication:
 Neither is an operation of the document, both ignore request credentials, and
 no other documentation viewer, such as ReDoc, is served.
 
+The document's `info.version` is the platform version of the serving process
+(`docs/deployment.md`, Platform Version and Source of Truth). An authenticated
+client reads the same value through `GET /api/v1/version`
+(`docs/features/platform/platform-version.md`, Get Platform Version) instead
+of the document.
+
 The page runs in the API's origin, where the session cookie is valid and
 Cross-Origin Request Protection accepts requests as same-origin, so every
 script it loads acts with the access of the user who opens it. It therefore
