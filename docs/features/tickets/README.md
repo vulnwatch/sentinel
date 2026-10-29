@@ -51,7 +51,9 @@ ticket-references.md    External links on tickets (auto-classified by type, manu
 - `ticket-priority.md` derives the informational Ticket priority from resolved
   severity and the KEV, SSVC, and EPSS evidence ingested by the CVE fetchers.
 - `ticket-deadlines.md` derives informational remediation due dates from
-  resolved severity and `created_at`, and per-track milestone statuses from
-  package affectedness, delivery, eligibility, and actionability.
+  resolved severity and `created_at`, per-track milestone statuses from
+  package affectedness, delivery, eligibility, and actionability, and the
+  Ticket current phase and its filter from those statuses and the Ticket
+  status.
 - `ticket-audit-log.md` defines the event-or-explicit-no-event contract that all
   Ticket-related mutations must satisfy.
