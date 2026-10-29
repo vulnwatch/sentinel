@@ -14,8 +14,8 @@ keys managed under `docs/features/identity/api-key-management.md`.
 
 This specification defines the shared infrastructure consumed by both
 providers: token format, session management, the session cookie, credential
-validation, cross-origin request protection, middleware behavior, and session
-UI surfaces.
+validation, cross-origin request protection, middleware behavior, and the
+current-user and logout endpoints.
 
 ## Architecture
 
@@ -127,8 +127,9 @@ failure; callers do not receive the failed condition.
   continued use of endpoints that process authentication prevents expiration
   at the shorter JWT `exp` boundary, but never extends the immutable
   `session_deadline`. Bearer-only behavior is defined under Token refresh.
-- An inactive user whose token expires without renewal (no requests for
-  longer than `JWT_EXPIRY_HOURS`) is redirected to the login page.
+- A token that is not renewed (no requests for longer than
+  `JWT_EXPIRY_HOURS`) expires: normal validation rejects it, and the user
+  must log in again.
 - After `SESSION_MAX_LIFETIME_DAYS` from login (`session_deadline`), the
   session expires unconditionally — the user must re-authenticate
   regardless of activity. This provides a hard cap on session lifetime.
@@ -637,35 +638,32 @@ population remains outside that transaction.
 
 ### Frontend session behavior
 
-This section defines the frontend behavior shared by both login providers
-(SSO and local). Provider-specific frontend flows are documented in their
-respective specs.
+The session behavior of the web UI, such as where it leads a browser without
+a session, where it leads after a login, and the messages that it shows, is
+specified in the separate `sentinel-aura` repository (`docs/architecture.md`,
+System Boundary). The operations of each login provider are defined in its
+own specification, the browser flow of SSO included
+(`docs/features/identity/sso-authentication.md`, Frontend flow). Browser
+clients rely on these facts of this contract, which both providers share:
 
-#### Post-login redirect
-
-After a successful login (regardless of provider):
-
-1. The backend sets the session cookie (`__Host-sentinel_session`,
-   HttpOnly — see Session cookie) — the frontend does not handle the token
-   directly
-2. The frontend checks `sessionStorage` for `sentinel_return_url`:
-   - If present: redirect to that URL and remove the key
-   - If absent: redirect to the dashboard
-3. Each provider is responsible for saving `sentinel_return_url` to
-   `sessionStorage` before initiating the login flow (to preserve the
-   user's intended destination across redirects)
-
-#### Session expiration handling
-
-When any API call returns HTTP 401 and the user previously had an active
-session (the browser was sending the `__Host-sentinel_session` cookie):
-
-1. Redirect to the login page
-2. Display an informational message: "Your session has expired. Please
-   log in again."
-
-This applies regardless of the expiration cause (token expired, session
-deadline reached, session invalidated by admin).
+- A successful login, local or SSO, sets the session cookie, the sliding
+  refresh renews it, and a successful logout clears it (see Session cookie,
+  Token refresh, and Logout). A browser client does not handle the token: the
+  browser attaches the cookie to the client's requests.
+- The cookie is `HttpOnly`, so no script can read it or tell whether the
+  browser holds one. A browser client learns the state of its session only
+  from the API's responses, for example from Get Current User.
+- A request to an endpoint that uses `get_current_user` receives the generic
+  HTTP 401 `AUTH_NOT_AUTHENTICATED` when it carries no valid session: when the
+  session cookie is absent, when its token has expired at `exp` or reached
+  `session_deadline`, when its session has been invalidated by logout,
+  deactivation, or password reset, or when its user is inactive. The response
+  is identical in every case and does not disclose the cause (see Shared
+  Credential Resolution), so a client cannot tell from it whether the browser
+  had a session before.
+- Public endpoints ignore the session (see `get_current_user`). Logout does
+  not use `get_current_user`: it succeeds for an expired or invalidated
+  session, and its HTTP 401 has its own conditions (see Logout).
 
 ## Authenticated Principal
 

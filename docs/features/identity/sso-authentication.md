@@ -81,10 +81,10 @@ missing required setting).
 
 The SSO state parameter is signed with `JWT_SECRET_KEY`. Rotating this
 key immediately invalidates all in-flight SSO flows (users who have been
-redirected to the IdP but have not yet completed the callback). Affected
-users see "Invalid or expired SSO state" and must restart the login.
-Maximum disruption window: 10 minutes (the state TTL). Recommendation:
-rotate the key during low-traffic periods.
+redirected to the IdP but have not yet completed the callback). Their
+callback fails with HTTP 400 `AUTH_SSO_STATE_INVALID`, and they must restart
+the login. Maximum disruption window: 10 minutes (the state TTL).
+Recommendation: rotate the key during low-traffic periods.
 
 ### Discovery
 
@@ -143,8 +143,7 @@ without the additional code interception protection.
 
 ### Step 1: Login initiation
 
-When the user clicks "Login with SUSE SSO" on the login page, the
-frontend calls:
+A client starts an SSO login by calling:
 
 #### SSO Authorize
 
@@ -174,7 +173,7 @@ frontend calls:
      code_challenge={code_challenge}&
      code_challenge_method=S256
    ```
-8. Return the URL to the frontend
+8. Return the URL to the client
 
 No server-side storage (Redis or database) is required. The state is
 self-contained and its authenticity is verified by the HMAC signature.
@@ -199,7 +198,7 @@ see `docs/deployment.md`, Clock Synchronization.
 | 404 | `AUTH_SSO_DISABLED` | SSO is not configured (all SSO endpoints return this when SSO settings are empty or unset) |
 | 503 | `SSO_UNAVAILABLE` | OIDC discovery document unreachable and no cached version available |
 
-The frontend then redirects the browser to this URL.
+The client then navigates the browser to this URL (see Frontend flow).
 
 ### Step 2: IdP authentication
 
@@ -307,7 +306,8 @@ callback URL with an authorization `code` and `state` parameter.
    HTTP 401 `AUTH_SSO_USER_INACTIVE` response as step 8. Otherwise commit the
    new session and `user.last_login_at` once or roll both back on failure
 10. Return the JWT and its `token_expires_at` from the service result as
-    `access_token` and `expires_at`
+    `access_token` and `expires_at`, and set the session cookie to the JWT
+    (see `docs/features/identity/authentication.md`, Session cookie)
 
 Steps 1-8 (state validation, token exchange, ID token verification, and user
 resolution) execute before and outside the locked database phase; every
@@ -353,46 +353,43 @@ Unlike the local login endpoint, SSO error messages can be specific
 
 ### Frontend flow
 
-0. **Session guard**: if the user already has a valid session (JWT
-   cookie present and not expired), navigating to the login page
-   redirects automatically to the dashboard — the login form is not
-   rendered. If the user bypasses this frontend guard (e.g., direct API
-   call) and completes a full SSO flow while already authenticated, a
-   new session is created without invalidating existing ones — see
-   `docs/features/identity/authentication.md`, Concurrent Sessions.
-1. User clicks "Login with SUSE SSO"
-2. Frontend saves the current URL to `sessionStorage` (key:
-   `sentinel_return_url`) to preserve the user's intended destination
-   across the SSO redirect
-3. Frontend calls `GET /api/v1/auth/sso/authorize`
-   - On HTTP 404 (`AUTH_SSO_DISABLED`): SSO is not available. This
-     should not normally happen since availability is checked via
-     `/auth/providers`, but handles race conditions (e.g., SSO disabled
-     between page load and click)
-   - On HTTP 503 (`SSO_UNAVAILABLE`): display an inline error
-     message on the login page: "SSO is temporarily unavailable, please
-     try later." Do not redirect the browser away
-   - On success: proceed to step 4
-4. Frontend redirects browser to the returned `authorization_url`
-5. User authenticates at id.suse.com
-6. Browser is redirected back to Sentinel at the canonical callback
-   route: `/auth/callback`
-7. Frontend checks URL parameters for `error`:
-   - If `error` parameter is present (IdP denied consent or encountered
-     an error): display an appropriate error message on the login page
-     using `error_description` if available (e.g., "Authentication was
-     denied or failed at the identity provider: {error_description}").
-     Do NOT call the backend callback endpoint
-   - If `error` parameter is absent: proceed to step 8
-8. Frontend extracts `code` and `state` from URL parameters
-9. Frontend calls `POST /api/v1/auth/sso/callback` with code and state
-10. On success: the backend sets the session cookie
-    (`__Host-sentinel_session`, HttpOnly — see
-    `docs/features/identity/authentication.md`, Session cookie). The
-    frontend then applies the post-login redirect logic
-    (see `docs/features/identity/authentication.md` § Frontend session
-    behavior)
-11. On error: display error message on login page
+A browser client completes an SSO login with the steps below. What the client
+shows and where it leads the user before, during, and after the flow belong to
+the client: for the web UI, they are specified in the separate `sentinel-aura`
+repository (`docs/architecture.md`, System Boundary), on the facts in
+`docs/features/identity/authentication.md` (Frontend session behavior).
+
+1. The client calls `GET /api/v1/auth/sso/authorize` (SSO Authorize):
+   - On HTTP 200: proceed to step 2
+   - On HTTP 404 (`AUTH_SSO_DISABLED`): SSO is not available, and the flow
+     ends. List Auth Providers normally reports this before the flow
+     starts; this outcome covers SSO being disabled between that check and
+     this call
+   - On HTTP 503 (`SSO_UNAVAILABLE`): SSO is temporarily unavailable, and
+     the flow ends; a later attempt can succeed
+2. The client navigates the browser to the returned `authorization_url`
+3. The user authenticates at id.suse.com (Step 2: IdP authentication)
+4. The IdP returns the browser to `SSO_REDIRECT_URI`, the canonical
+   callback route `/auth/callback` (see Configuration), with the result in
+   the URL parameters
+5. If the URL parameters contain `error` (the IdP denied consent or
+   encountered an error), the flow ends unsuccessfully; `error_description`,
+   when present, describes the failure. The client does NOT call the SSO
+   callback endpoint
+6. Otherwise, the client extracts `code` and `state` from the URL
+   parameters and calls `POST /api/v1/auth/sso/callback` with them (SSO
+   Callback)
+7. On HTTP 200: the backend has set the session cookie
+   (`__Host-sentinel_session`, HttpOnly — see
+   `docs/features/identity/authentication.md`, Session cookie), and the
+   browser has a session. The client does not handle the token that the
+   response also returns
+8. On an error response (see SSO Callback, Error responses): the login
+   failed, and no session was created
+
+Completing the flow while the browser already has a session creates a new
+session without invalidating the existing one (see
+`docs/features/identity/authentication.md`, Concurrent sessions).
 
 ## Identity Mapping
 
@@ -479,8 +476,8 @@ This is a deliberate design decision:
 
 **`Access: Public`**
 
-**Purpose**: allows the frontend to discover which authentication methods
-are available before rendering the login page.
+**Purpose**: allows a client to discover which authentication methods are
+available before it offers a way to log in.
 
 **Response** (HTTP 200):
 
@@ -497,8 +494,8 @@ are available before rendering the login page.
 - `sso` is `true` when all required SSO settings are configured, `false`
   otherwise
 
-The frontend calls this endpoint once when loading the login page and
-uses the response to decide whether to render the SSO button.
+A client can use the response to decide whether to offer SSO login: when
+`sso` is `false`, the SSO endpoints return HTTP 404 (`AUTH_SSO_DISABLED`).
 
 No application-level error responses. This endpoint reads internal
 configuration only and has no failure modes beyond standard server

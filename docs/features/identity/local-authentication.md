@@ -103,10 +103,11 @@ session, and returns a JWT.
     After commit, delete the failed-attempt counter as a best-effort
     post-commit effect; Redis failure does not fail the completed login.
     Return the JWT and its `token_expires_at` from the service result as
-    `access_token` and `expires_at` (see
-    `docs/features/identity/authentication.md`, Session creation). A failed
-    counter delete may leave a residual counter that locks the account until
-    TTL expiry; admin unlock and natural TTL expiry are the recovery paths.
+    `access_token` and `expires_at`, and set the session cookie to the JWT
+    (see `docs/features/identity/authentication.md`, Session creation and
+    Session cookie). A failed counter delete may leave a residual counter
+    that locks the account until TTL expiry; admin unlock and natural TTL
+    expiry are the recovery paths.
 
 Steps 1-10 (input normalization, Redis lockout handling, user lookup, and
 bcrypt or dummy-bcrypt verification) execute before and outside the locked
@@ -463,9 +464,11 @@ simply returns an authentication error if the credentials are invalid.
 
 ### Frontend behavior
 
-Post-login redirect and session expiration handling follow the shared
-behavior defined in `docs/features/identity/authentication.md` § Frontend
-session behavior.
+The login page of the web UI, including where it leads after a login and the
+texts that it shows, is specified in the separate `sentinel-aura` repository
+(`docs/architecture.md`, System Boundary), on the facts of the session
+contract in `docs/features/identity/authentication.md` (Frontend session
+behavior).
 
 ## Security Considerations
 
@@ -500,9 +503,9 @@ session behavior.
   `docs/features/identity/authentication.md`, Session creation). All sessions
   are invalidated, including the caller's own session — no exception for
   admin self-password-reset. The admin receives the success response,
-  then the next API call returns 401. The frontend handles this via its
-  standard session expiration behavior (see
-  `docs/features/identity/authentication.md` § Frontend session behavior).
+  then the next API call returns the same generic 401 as every other request
+  without a valid session (see `docs/features/identity/authentication.md`,
+  Frontend session behavior).
 - **Password reset does not revoke API keys**: API keys are independent
   credentials and remain valid until revoked or expired. Response to suspected
   credential compromise therefore requires both a password reset and
