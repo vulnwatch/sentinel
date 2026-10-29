@@ -459,10 +459,10 @@ Semantics defines which members of a PATCH body accept `null`.
 
 ### Parameter Nullability
 
-Path and query parameters travel as text, so no request can send `null` for
-one: the text `null` is an ordinary value, which a string parameter receives
-as those four characters and a parameter of another type validates like any
-other text. The OpenAPI document therefore publishes no path or query
+Path and query parameters are strings by transport, so no request can send
+`null` for one: the text `null` is an ordinary value, which a string parameter
+receives as those four characters and a parameter of another type validates
+like any other text. The OpenAPI document therefore publishes no path or query
 parameter as nullable, whatever its type. A client omits an optional query
 parameter instead, and the omission has the outcome that its endpoint states,
 for example that no filter applies.
