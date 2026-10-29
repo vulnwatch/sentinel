@@ -2705,9 +2705,10 @@ above for `PATCH /api/v1/tickets/{ticket_id}/priority` and the
 
 ### Ticket Deadlines
 
-When the remediation SLA, due-date computation, track milestones,
-`current_phase`, the `overdue` filter, or due-date sorting is implemented or
-changed, tests MUST cover the complete matrix in
+When the remediation SLA, due-date computation, track milestones, the track or
+Ticket `current_phase`, `current_phase_milestone`, the `overdue` or
+`current_phase` filter, or due-date sorting is implemented or changed, tests
+MUST cover the complete matrix in
 `docs/features/tickets/ticket-deadlines.md` (Testing Requirements), including
 the SQL/pure-function equivalence and the proof that deadlines create no audit
 event and never affect gates, eligibility, or assignment.

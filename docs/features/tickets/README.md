@@ -20,7 +20,7 @@ cve-sync-kev.md         CISA KEV fetcher specification
 cve-sync-epss.md        EPSS fetcher specification
 cvss-scoring.md         Multi-provider CVSS assessments, severity resolution
 ticket-priority.md      Ticket priority (P1–P4) from severity and exploitation evidence, manual override
-ticket-deadlines.md     Remediation SLA due dates, per-track actor milestones, overdue filter
+ticket-deadlines.md     Remediation SLA due dates, per-track actor milestones, Ticket current phase, overdue and current-phase filters
 ticket-audit-log.md     TicketAuditEvent audit trail, event type contract
 ticket-references.md    External links on tickets (auto-classified by type, manual with manage_references capability)
 ```

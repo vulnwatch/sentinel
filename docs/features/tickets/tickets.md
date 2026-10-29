@@ -241,9 +241,11 @@ Every Ticket exposes read-time due dates derived from its resolved severity and
 immutable `created_at`: one per actor phase (`triage_due_at`,
 `submission_due_at`, `um_due_at`, `qa_due_at`) and the final `release_due_at`.
 Each track additionally exposes per-phase milestone statuses and its
-`current_phase`. Deadlines are informational only: they are not gate inputs,
-are never persisted, and never affect status, Product eligibility, or
-assignment. The complete contract is in
+`current_phase`. Each Ticket exposes its own `current_phase`, the earliest phase
+of its remediation that is not completed, and `current_phase_milestone`, which
+states whether that phase is past due. Deadlines and phases are informational
+only: they are not gate inputs, are never persisted, and never affect status,
+Product eligibility, or assignment. The complete contract is in
 [ticket-deadlines.md](ticket-deadlines.md).
 
 ## Ticket Lifecycle
@@ -1259,8 +1261,9 @@ for the canonical predicates and reason precedence.
 Ticket detail, package detail, and every mutation endpoint that returns
 package-tree data or `TicketDetail` follow the canonical evaluation-date
 capture and reuse contract in `docs/features/packages/package-model.md`
-(Derived Actionability). Responses that project milestone statuses or apply the
-`overdue` filter also capture one evaluation instant under
+(Derived Actionability). Responses that project milestone statuses (including
+`current_phase_milestone`) or apply the `overdue` filter also capture one
+evaluation instant under
 [ticket-deadlines.md](ticket-deadlines.md#evaluation-instant).
 
 #### Shared Sub-Schemas
@@ -1442,6 +1445,8 @@ views without the full package tree.
 | `um_due_at` | datetime \| null | Due date of the UM (maintenance update team) release-request milestone |
 | `qa_due_at` | datetime \| null | Due date of the QA milestone; currently equal to `release_due_at` |
 | `release_due_at` | datetime \| null | Final deadline by which the update must be released; currently equal to `qa_due_at` |
+| `current_phase` | string \| null | Earliest phase of the Ticket that is not completed: `triage` (Ticket `new` or `analysis`), `submission`, `um`, or `qa` (at least one track has that milestone `pending` or `overdue`); `done` when no phase is open and the Ticket is `resolved` or no track has an unobservable (`null`) milestone; `null` when no SLA applies, or when no phase is open, the Ticket is not `resolved`, and a track has an unobservable milestone. See [ticket-deadlines.md](ticket-deadlines.md#ticket-current-phase) |
+| `current_phase_milestone` | string \| null | Milestone status of `current_phase`: `overdue` when the Ticket matches the `overdue` filter value of its current phase, otherwise `pending`; `null` when `current_phase` is `done` or `null`. Unrelated to `delivery_status = pending` |
 | `package_names` | string[] | Exact-deduplicated package names whose `TicketPackage.deleted_at IS NULL`, ordered by ascending Unicode code point (e.g., `["curl", "openssl-3"]`). Product lifecycle actionability does not remove an included package name |
 | `created_at` | datetime | Creation timestamp (UTC) |
 | `updated_at` | datetime | Last modification timestamp (UTC) |
@@ -1470,6 +1475,8 @@ projection with the full package tree, and uses expanded CVE data.
 | `um_due_at` | datetime \| null | Due date of the UM (maintenance update team) release-request milestone |
 | `qa_due_at` | datetime \| null | Due date of the QA milestone; currently equal to `release_due_at` |
 | `release_due_at` | datetime \| null | Final deadline by which the update must be released; currently equal to `qa_due_at` |
+| `current_phase` | string \| null | Earliest phase of the Ticket that is not completed, as in `TicketSummary`. See [ticket-deadlines.md](ticket-deadlines.md#ticket-current-phase) |
+| `current_phase_milestone` | string \| null | Milestone status of `current_phase`, as in `TicketSummary` |
 | `packages` | PackageDetail[] | Full package/track/product tree; maintainer identities are not exposed |
 | `created_at` | datetime | Creation timestamp (UTC) |
 | `updated_at` | datetime | Last modification timestamp (UTC) |
@@ -1555,6 +1562,14 @@ Query parameters:
   Validation in `docs/api-spec.md`. See
   [ticket-deadlines.md](ticket-deadlines.md#ticket-level-overdue-filter) for
   the exact match rules.
+- `current_phase` (string, repeatable, optional): filter by the Ticket's
+  `current_phase`. Accepts one or more values from: `triage`, `submission`,
+  `um`, `qa`, `done`. A Ticket whose `current_phase` is `null` matches no
+  value. Multiple values use OR semantics; invalid values follow Enum Filter
+  Validation in `docs/api-spec.md`. Combined with `overdue` (for example
+  `current_phase=um&overdue=um`), it lists the Tickets whose current phase is
+  past due. See
+  [ticket-deadlines.md](ticket-deadlines.md#current-phase-filter).
 - `maintainer` (string, optional): User UUID or exact username per User
   Identifier Resolution. Matches Tickets with at least one included
   `TicketPackage` associated to that User through
@@ -2318,7 +2333,8 @@ table:
 - `docs/features/tickets/ticket-priority.md` — Ticket priority, exploitation
   classification, automatic refresh, and manual override
 - `docs/features/tickets/ticket-deadlines.md` — remediation SLA, per-track
-  milestones, overdue filter, and due-date sorting
+  milestones, Ticket current phase, overdue and current-phase filters, and
+  due-date sorting
 - `docs/features/packages/package-maintainership.md` — package-wide maintainer
   acquisition and dynamic visibility
 - `docs/features/packages/maintainer.md` — authoritative maintainer workbench

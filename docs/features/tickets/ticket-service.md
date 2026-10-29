@@ -309,6 +309,7 @@ Conceptual semantic inputs are:
 | `severity` | supplied-state plus collection of valid resolved-severity filters | omitted | Repeatable OR filter including `none` and `unresolved`, preserving omitted versus supplied-but-empty after validation |
 | `priority` | supplied-state plus collection of valid effective-priority filters | omitted | Repeatable OR filter over `p1`–`p4` and `unresolved`, preserving omitted versus supplied-but-empty after validation |
 | `overdue` | supplied-state plus collection of valid milestone phases | omitted | Repeatable OR filter over `triage`, `submission`, `um`, and `qa`, preserving omitted versus supplied-but-empty after validation |
+| `current_phase` | supplied-state plus collection of valid current-phase values | omitted | Repeatable OR filter over `triage`, `submission`, `um`, `qa`, and `done`, preserving omitted versus supplied-but-empty after validation |
 | `maintainer` | `str \| None` | `None` | User UUID or exact username |
 | `sort_by` | `created_at`, `updated_at`, `severity`, `priority`, `status`, `ticket_id`, `triage_due_at`, `submission_due_at`, `um_due_at`, `qa_due_at`, or `release_due_at` | `created_at` | Primary sort |
 | `sort_order` | `asc` or `desc` | `desc` | Sort direction |
@@ -328,8 +329,8 @@ The result contains a collection of Ticket summary projections plus `total`,
    rules in `tickets.md` only to directly included package occurrences and
    current CVE/external-identifier state.
 3. Apply simultaneously supplied client filters with AND semantics. Values
-   inside one repeatable status, severity, priority, or overdue filter use OR
-   semantics.
+   inside one repeatable status, severity, priority, overdue, or current-phase
+   filter use OR semantics.
    The API
    passes whether the filter was supplied together with its valid members in an
    implementation-chosen typed form, so an all-invalid supplied filter yields
@@ -349,7 +350,12 @@ The result contains a collection of Ticket summary projections plus `total`,
    [ticket-deadlines.md](ticket-deadlines.md#read-ownership-and-query-integration);
    due-date sorting and projection use those values, and the `overdue` filter
    applies the Ticket-level rules there with the one evaluation instant, using
-   existence semantics over tracks and Products.
+   existence semantics over tracks and Products. Derive the Ticket
+   `current_phase` and `current_phase_milestone` once per Ticket through the
+   service-owned SQL expressions of the same section, under
+   [ticket-deadlines.md](ticket-deadlines.md#ticket-current-phase) with the same
+   due dates and instant; `current_phase` filtering and projection use those
+   values.
 5. Collapse all one-to-many joins to one logical Ticket. Package, maintainer,
    and external-identifier fan-out must not duplicate rows or inflate `total`.
 6. Project `package_names` from directly included package occurrences only,
@@ -408,6 +414,11 @@ The result is the semantic projection represented by `TicketDetail` in
    dates, `milestones`, and `current_phase`. Package names, track references, and Product CPEs use
    ascending Unicode code-point order with the corresponding occurrence UUID
    as final tie-breaker. Maintainer identities are not loaded or projected.
+6. Projects the Ticket `current_phase` and `current_phase_milestone` through
+   `resolve_ticket_current_phase()`
+   ([ticket-deadlines.md](ticket-deadlines.md#resolve_ticket_current_phase)) from
+   the Ticket-level due dates, the status, the `milestones` of every track of
+   the composed tree, and the same evaluation instant.
 
 The root accessibility decision and every PostgreSQL-backed component use one
 coherent observation point. A concurrent mutation may yield an entirely
@@ -2039,6 +2050,6 @@ behavior of `ticket_service` operations:
 - `docs/conventions.md` — Transaction and Locking pattern
 - `docs/features/tickets/ticket-priority.md` — priority override and automatic
   refresh contracts
-- `docs/features/tickets/ticket-deadlines.md` — due dates, milestones, overdue
-  filter, and evaluation instant
+- `docs/features/tickets/ticket-deadlines.md` — due dates, milestones, Ticket
+  current phase, overdue and current-phase filters, and evaluation instant
 - `docs/api-spec.md` — general API conventions, error code categories

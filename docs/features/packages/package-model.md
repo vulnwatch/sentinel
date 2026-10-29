@@ -37,8 +37,9 @@ the following exhaustive boundaries:
   `docs/features/tickets/ticket-deadlines.md` may combine affectedness,
   delivery (track `delivery_status`, correlated release-request state, and
   Product `released_at`), persisted Product eligibility, and actionability to
-  report per-track milestone statuses and the `overdue` list filter, without
-  writing or suppressing any dimension; and
+  report per-track milestone statuses, the Ticket current phase, and the
+  `overdue` and `current_phase` list filters, without writing or suppressing
+  any dimension; and
 - post-mutation Ticket reconciliation may observe the gate-relevant
   values after an owning mutation has completed.
 
