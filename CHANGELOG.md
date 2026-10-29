@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/vulnwatch/sentinel/compare/v0.13.0...v0.13.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* publish query parameters without null ([#1146](https://github.com/vulnwatch/sentinel/issues/1146)) ([8086696](https://github.com/vulnwatch/sentinel/commit/80866963f6bc1f0b4bd2f2f7114ca691fe16d6a6))
+
 ## [0.13.0](https://github.com/vulnwatch/sentinel/compare/v0.12.0...v0.13.0) (2026-10-28)
 
 
