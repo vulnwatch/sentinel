@@ -32,7 +32,7 @@ condition is appended to its description.
 alternative (`docs/api-spec.md`, Parameter Nullability;
 `publish_parameters_without_null`). FastAPI publishes the `None` default of an
 optional parameter as `null`, which no request can send, because a parameter
-travels as text.
+is a string by transport.
 """
 
 from __future__ import annotations
@@ -117,8 +117,8 @@ _CROSS_ORIGIN: Final = DerivedResponse(
 )
 
 _NULL_SCHEMA: Final = {"type": "null"}
-# docs/api-spec.md (Parameter Nullability): the parameters that travel as text.
-_TEXT_PARAMETER_LOCATIONS: Final = frozenset({"path", "query"})
+# docs/api-spec.md (Parameter Nullability): the parameter locations it covers.
+_NON_NULLABLE_PARAMETER_LOCATIONS: Final = frozenset({"path", "query"})
 
 
 def _dependants(dependant: Dependant) -> Iterator[Dependant]:
@@ -207,7 +207,8 @@ def document_derived_responses(
 def _without_null(schema: dict[str, Any]) -> dict[str, Any]:
     """`schema` without its `null` alternative, or `schema` itself when it
     has none. A single remaining alternative replaces the `anyOf`, so the
-    result equals the schema generated for the type without `None`."""
+    result equals the schema generated for the type without `None`, unless
+    it shares a keyword with the schema around it; the `anyOf` then stays."""
     alternatives: list[dict[str, Any]] = schema.get("anyOf", [])
     remaining = [option for option in alternatives if option != _NULL_SCHEMA]
     if not remaining or len(remaining) == len(alternatives):
@@ -220,17 +221,13 @@ def _without_null(schema: dict[str, Any]) -> dict[str, Any]:
 
 def publish_parameters_without_null(openapi_schema: dict[str, Any]) -> None:
     """Remove from `openapi_schema`, in place, the `null` alternative of every
-    path and query parameter (`docs/api-spec.md`, Parameter Nullability).
-
-    Each schema is replaced, not edited, because the operations of a shared
-    query builder can share one schema object.
-    """
+    path and query parameter (`docs/api-spec.md`, Parameter Nullability)."""
     for item in openapi_schema.get("paths", {}).values():
         for operation in item.values():
             if not isinstance(operation, dict):
                 continue
             for parameter in operation.get("parameters", ()):
-                if parameter.get("in") in _TEXT_PARAMETER_LOCATIONS and (
+                if parameter.get("in") in _NON_NULLABLE_PARAMETER_LOCATIONS and (
                     "schema" in parameter
                 ):
                     parameter["schema"] = _without_null(parameter["schema"])

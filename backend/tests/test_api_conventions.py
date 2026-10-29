@@ -1029,11 +1029,11 @@ class TestRequestBodyNullability:
         ]
 
 
-# docs/api-spec.md (Parameter Nullability): the parameters that travel as text.
-_TEXT_PARAMETER_LOCATIONS: Final = frozenset({"path", "query"})
+# docs/api-spec.md (Parameter Nullability): the parameter locations it covers.
+_NON_NULLABLE_PARAMETER_LOCATIONS: Final = frozenset({"path", "query"})
 
 
-def _text_parameters(
+def _path_and_query_parameters(
     document: dict[str, Any],
 ) -> Iterable[tuple[str, dict[str, Any]]]:
     """Every path and query parameter of `document`, with its operation."""
@@ -1042,7 +1042,7 @@ def _text_parameters(
             if not isinstance(operation, dict):
                 continue
             for parameter in operation.get("parameters", ()):
-                if parameter.get("in") in _TEXT_PARAMETER_LOCATIONS:
+                if parameter.get("in") in _NON_NULLABLE_PARAMETER_LOCATIONS:
                     yield f"{method.upper()} {path}", parameter
 
 
@@ -1050,7 +1050,7 @@ def _nullable_parameters(document: dict[str, Any]) -> list[str]:
     """Every path and query parameter of `document` whose schema admits
     `null` or whose default is `null`."""
     violations: list[str] = []
-    for operation, parameter in _text_parameters(document):
+    for operation, parameter in _path_and_query_parameters(document):
         schema: dict[str, Any] = parameter.get("schema", {})
         if _admits_null(schema, document) or (
             "default" in schema and schema["default"] is None
@@ -1066,18 +1066,19 @@ class TestParameterNullability:
     """No path or query parameter is published as nullable.
 
     See `docs/api-spec.md` (Parameter Nullability) and `docs/conventions.md`
-    (FastAPI Conventions, Optional parameters). A parameter travels as text,
-    so no request can send `null` for it, but FastAPI publishes the `None`
-    default of an optional parameter as `null`; a client generated from that
-    document accepts a `null` that only fails, or matches the text `null`, at
-    runtime. The check reads the generated document, so it covers every
-    parameter, whichever dependency declares it.
+    (FastAPI Conventions, Optional parameters). A parameter is a string by
+    transport, so no request can send `null` for it, but FastAPI publishes the
+    `None` default of an optional parameter as `null`; a client generated from
+    that document accepts a `null` that only fails, or matches the text
+    `null`, at runtime. The check reads the generated document, so it covers
+    every parameter, whichever dependency declares it.
     """
 
     def test_no_parameter_is_published_as_nullable(self) -> None:
         document = app.openapi()
         assert any(
-            parameter["in"] == "query" for _, parameter in _text_parameters(document)
+            parameter["in"] == "query"
+            for _, parameter in _path_and_query_parameters(document)
         ), "no query parameter found"
 
         violations = _nullable_parameters(document)

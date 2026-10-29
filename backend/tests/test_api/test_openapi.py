@@ -2,11 +2,13 @@
 and of parameters without `null` (`app/api/openapi.py`).
 
 See `docs/api-spec.md` (Global Responses, Response Applicability
-Derivation, Parameter Nullability). Every case builds a standalone
+Derivation, Parameter Nullability). Most cases build a standalone
 `SentinelAPI` whose routes use the real authentication and capability
 dependencies and the methods that derive the cross-origin rejection, or
-optional parameters with a `None` default; only the generated
-document is inspected, so no request runs. The registered application is
+optional parameters with a `None` default; a vacuity guard builds a plain
+`FastAPI` instead, and the cases that FastAPI does not generate use a
+hand-written document. Only the generated or hand-written document is
+inspected, so no request runs. The registered application is
 covered by the structural tests in `tests/test_api_conventions.py`, by the
 required-authentication `401` check in
 `tests/test_api/test_route_authentication.py`, and by the OpenAPI response
@@ -322,8 +324,8 @@ class _Note(BaseModel):
 def _search(
     search: Annotated[str | None, Query(min_length=2, description="Text.")] = None,
 ) -> None:
-    """An optional parameter of a query builder that two operations share,
-    as the list endpoints do."""
+    """An optional parameter declared by a query builder, as the list
+    endpoints declare theirs."""
 
 
 def _build_parameter_app(app_class: type[FastAPI] = SentinelAPI) -> FastAPI:
@@ -340,10 +342,6 @@ def _build_parameter_app(app_class: type[FastAPI] = SentinelAPI) -> FastAPI:
     ) -> None:
         """Optional parameters of several types, and two without `None`."""
 
-    @router.get("/other", dependencies=[Depends(_search)])
-    async def other() -> None:
-        """Shares the query builder."""
-
     @router.post("/notes")
     async def notes(note: _Note) -> None:
         """A request body with a nullable member."""
@@ -359,6 +357,25 @@ def _parameters(test_app: FastAPI, path: str) -> dict[str, Any]:
     return {
         parameter["name"]: parameter["schema"] for parameter in operation["parameters"]
     }
+
+
+def _publish(*parameters: dict[str, Any]) -> list[dict[str, Any]]:
+    """`parameters`, as one `GET` operation of a hand-written document, after
+    `publish_parameters_without_null`. Its path item also holds a member that
+    is not an operation."""
+    document: dict[str, Any] = {
+        "paths": {
+            "/edge": {
+                "summary": "A path item member that is not an operation.",
+                "get": {"parameters": list(parameters)},
+            }
+        }
+    }
+
+    publish_parameters_without_null(document)
+
+    published: list[dict[str, Any]] = document["paths"]["/edge"]["get"]["parameters"]
+    return published
 
 
 @pytest.mark.unit
@@ -394,6 +411,12 @@ class TestParametersWithoutNull:
             "anyOf": [{"type": "integer"}, {"type": "string"}],
             "title": "Mixed",
         }
+        assert parameters["search"] == {
+            "type": "string",
+            "minLength": 2,
+            "description": "Text.",
+            "title": "Search",
+        }
 
     def test_parameters_without_none_are_unchanged(self) -> None:
         parameters = _parameters(_build_parameter_app(), "/items/{item_id}")
@@ -406,20 +429,6 @@ class TestParametersWithoutNull:
             "title": "Page",
         }
 
-    def test_shared_builder_parameter_is_published_without_null_everywhere(
-        self,
-    ) -> None:
-        test_app = _build_parameter_app()
-        expected = {
-            "type": "string",
-            "minLength": 2,
-            "description": "Text.",
-            "title": "Search",
-        }
-
-        assert _parameters(test_app, "/items/{item_id}")["search"] == expected
-        assert _parameters(test_app, "/other")["search"] == expected
-
     def test_nullable_request_body_member_keeps_its_null(self) -> None:
         schemas = _build_parameter_app().openapi()["components"]["schemas"]
 
@@ -428,49 +437,44 @@ class TestParametersWithoutNull:
             {"type": "null"},
         ]
 
-    def test_other_parameters_and_schemas_are_left_as_they_are(self) -> None:
+    def test_other_parameters_are_left_as_they_are(self) -> None:
         """Cases that FastAPI does not generate for Sentinel's routes: a
-        header parameter, a parameter described by `content`, one whose
-        only alternative is `null`, and a remaining alternative that shares
-        a keyword with the schema around it, which stays an `anyOf`."""
+        header parameter, a parameter described by `content`, and one whose
+        only alternative is `null`."""
         null = {"type": "null"}
-        document: dict[str, Any] = {
-            "paths": {
-                "/edge": {
-                    "summary": "A path item member that is not an operation.",
-                    "get": {
-                        "parameters": [
-                            {
-                                "name": "trace",
-                                "in": "header",
-                                "schema": {"anyOf": [{"type": "string"}, null]},
-                            },
-                            {"name": "described", "in": "query", "content": {}},
-                            {
-                                "name": "only_null",
-                                "in": "query",
-                                "schema": {"anyOf": [null]},
-                            },
-                            {
-                                "name": "clash",
-                                "in": "query",
-                                "schema": {
-                                    "anyOf": [{"type": "string", "title": "In"}, null],
-                                    "title": "Out",
-                                },
-                            },
-                        ]
-                    },
-                }
-            }
-        }
+        parameters = _publish(
+            {
+                "name": "trace",
+                "in": "header",
+                "schema": {"anyOf": [{"type": "string"}, null]},
+            },
+            {"name": "described", "in": "query", "content": {}},
+            {"name": "only_null", "in": "query", "schema": {"anyOf": [null]}},
+        )
 
-        publish_parameters_without_null(document)
-
-        parameters = document["paths"]["/edge"]["get"]["parameters"]
         assert [parameter.get("schema") for parameter in parameters] == [
             {"anyOf": [{"type": "string"}, null]},
             None,
             {"anyOf": [null]},
-            {"anyOf": [{"type": "string", "title": "In"}], "title": "Out"},
         ]
+
+    def test_remaining_alternative_sharing_a_keyword_stays_in_any_of(
+        self,
+    ) -> None:
+        """Merging the alternative into the schema around it would overwrite
+        one of their values, so only the `null` alternative is removed."""
+        (parameter,) = _publish(
+            {
+                "name": "clash",
+                "in": "query",
+                "schema": {
+                    "anyOf": [{"type": "string", "title": "In"}, {"type": "null"}],
+                    "title": "Out",
+                },
+            }
+        )
+
+        assert parameter["schema"] == {
+            "anyOf": [{"type": "string", "title": "In"}],
+            "title": "Out",
+        }
