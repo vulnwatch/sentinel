@@ -59,16 +59,16 @@ of the path (`docs/api-spec.md`, Versioning).
   of the process.
 - Each process returns its own version. While a host is upgraded, processes of
   two versions can serve it, so two requests can return different values.
-- An image built from a commit that no release contains, such as an image
-  under the `master` tag (`docs/deployment.md`, Image Tag Semantics), returns
-  the version of the latest release before that commit, although it can
-  contain later changes. Only a release image is identified by the value.
-- The operation has no effect, reads no application data, and uses no
-  dependency beyond authentication.
+- An image built from a commit that no release contains returns the version
+  of the latest release before that commit (`docs/deployment.md`, Platform
+  Version and Source of Truth). Only a release image is identified by the
+  value.
+- Beyond authentication, whose effects and dependencies are its own
+  (`docs/features/identity/authentication.md`, Authentication Dependencies),
+  the operation has no effect, reads no application data, and uses no
+  dependency.
 
-**Error responses**: none specific to this endpoint; the global responses of
-`Access: Authenticated` apply (`docs/api-spec.md`, Response Applicability
-Derivation).
+**Error responses**: none specific to this endpoint.
 
 Implementation note: the version is process metadata, not application data.
 The route reads it from the FastAPI application, which `backend/app/main.py`
@@ -94,14 +94,22 @@ Architecture).
   version before sign-in, and automation reads it with an API key, which the
   account of the read-only profile can hold. The access level is chosen by
   that criterion, not to keep the version secret: the OpenAPI document,
-  served without authentication, carries it in `info.version`. That exposure
-  is accepted, because the contract of every version is published with its
-  release, and is not changed by this operation.
+  served without authentication, carries it in `info.version`, and so
+  discloses to any client that reaches the API which release the host runs.
+  That exposure is accepted and is not changed by this operation: even
+  without `info.version`, the served document identifies the contract of the
+  release, and with it the release or the patch releases that share that
+  contract, against the documents published with each release, so withholding
+  the version would require authenticating the document.
 - **What the resource contains.** The resource is the identity of the build
   that the process runs. A field belongs to it only when it describes that
   build, is the same for every caller, does not change during the life of the
-  process, and is read without a dependency beyond authentication. A new
-  field that meets this criterion is an additive change (`docs/api-spec.md`,
+  process, and is read without a dependency beyond authentication. The
+  version of a component of the build, such as the Python runtime, a library,
+  or an operating-system package, does not belong to it: it serves only to
+  fingerprint the host, and the SBOM of each release lists the components
+  (`docs/deployment.md`, Release Supply-Chain Artifacts). A new field that
+  meets this criterion is an additive change (`docs/api-spec.md`,
   Versioning). Live state and information that a client needs before sign-in
   belong to other resources, whose dependencies, failures, and access level
   differ: the probes report the readiness of a process
@@ -109,8 +117,9 @@ Architecture).
   reports ingestion (`docs/features/platform/fetcher-operations.md`, List
   Fetchers), the IBS consumer has its status endpoint
   (`docs/features/integrations/ibs-rabbitmq-integration.md`, Get IBS Consumer
-  Status), and authentication-provider discovery is Public
-  (`docs/features/identity/sso-authentication.md`, List Auth Providers).
+  Status), and authentication-provider discovery, which is deferred, is
+  Public (`docs/features/identity/sso-authentication.md`, List Auth
+  Providers).
 
 ## Security Considerations
 
@@ -133,7 +142,7 @@ Architecture).
 ## Cross-references
 
 - `docs/api-spec.md` — Versioning; OpenAPI Document and Interactive
-  Documentation; Request Tracing; Response Applicability Derivation
+  Documentation; Request Tracing
 - `docs/features/identity/rbac.md` — Access Levels; Endpoint Permission Map
 - `docs/deployment.md` — Platform Version and Source of Truth; Consumer
   Compatibility; Version Locations; API Documentation Publication

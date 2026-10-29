@@ -1072,7 +1072,10 @@ application code. `backend/app/main.py` reads it dynamically through
 the matching `backend/uv.lock` entry, and its current-version record in
 `.release-please-manifest.json` atomically in a Release PR. It creates
 `v<major>.<minor>.<patch>` tags after that PR is merged; downstream image and
-API-documentation workflows consume those tags.
+API-documentation workflows consume those tags. Only a Release PR changes the
+version, so code built from a commit that no release contains, such as an
+image under the `master` tag (Image Tag Semantics), carries the version of the
+latest release before that commit, although it can contain later changes.
 
 The release-please package remains scoped to `backend/`. A commit is considered
 for a platform release only when it changes a path under `backend/`. Expanding
