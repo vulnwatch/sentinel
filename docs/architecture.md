@@ -88,9 +88,10 @@ behavior: a capability that the UI needs and the API lacks is specified and
 implemented in this repository first.
 
 Client-side behavior that specifications in this repository already describe,
-such as `docs/features/identity/authentication.md` (Frontend session
-behavior), remains authoritative here until a change moves it to the UI
-repository. New client-side behavior is specified only in the UI repository.
+such as the administration panel's password reset action in
+`docs/features/identity/local-authentication.md` (Admin UI: password reset),
+remains authoritative here until a change moves it to the UI repository. New
+client-side behavior is specified only in the UI repository.
 
 ---
 
