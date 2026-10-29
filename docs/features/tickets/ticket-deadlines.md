@@ -282,8 +282,8 @@ statuses are `null`. `Resolved` Tickets never match by construction: every
 actionable track is resolution-complete, so each applicable `FIXED` track has
 every actionable eligible Product released, the other observable tracks
 (`AFFECTED` or `FIXED` without an actionable eligible Product, `NOT_AFFECTED`,
-and `WONT_FIX`) have their later phases `not_applicable`, and Git tracks and
-CVE-less Tickets have `null` later phases.
+and `WONT_FIX`) have their later phases `not_applicable`, and the tracks whose
+later phases Sentinel cannot observe have them `null`.
 
 VAs sort the triage queue by priority when severity is still unresolved; no
 further triage mechanism exists.
@@ -343,8 +343,6 @@ without an open phase is `done` when no track has a `null` member, for example
 while an `AFFECTED` track whose actionable eligible Products are all released
 waits to become `FIXED`. It is `null` when a track has a `null` member, because
 the milestones do not show whether that track still has work in a later phase.
-Observability precedes applicability, so this holds even for a track whose
-later phases would not apply, such as an actionable `NOT_AFFECTED` Git track.
 In particular, an `Analyzed` Ticket without a CVE has a `null` current phase
 while it has an actionable track.
 
@@ -358,9 +356,9 @@ Like every milestone status, it uses the response's single
 [Evaluation Instant](#evaluation-instant).
 
 The OpenAPI description of `current_phase` MUST state that the value is the
-earliest open phase among the phases that Sentinel observes, that unobservable
-phases (Git tracks and Tickets without a CVE) do not hold it back, the causes
-of `null`, and that it differs from the track `current_phase`. The description
+earliest open phase among the phases that Sentinel observes, that a phase a
+track reports as `null` (not observable) does not hold it back, the causes of
+`null`, and that it differs from the track `current_phase`. The description
 of `current_phase_milestone` MUST state when it is `null` and that its
 `pending` is unrelated to `delivery_status = pending`.
 
@@ -387,10 +385,10 @@ phase: the due-date sort fields order Tickets by urgency.
 ### Observable Bottleneck Only
 
 The Ticket current phase reports the bottleneck among the observable phases
-only, an accepted limitation. A Ticket whose IBS track waits for QA while its
-Git track may still wait for its submission has `current_phase = qa`; the
-package tree shows the phase of each track. Like the track milestones, it never
-reports a phase completed late.
+only, an accepted limitation: a track whose later phases Sentinel cannot
+observe may still wait in a phase earlier than the Ticket's current phase. The
+package tree shows the phase of each track. Like the track milestones, the
+Ticket current phase never reports a phase completed late.
 
 ## Sorting
 
@@ -587,15 +585,14 @@ Tests MUST cover:
     without an SLA (manual zone and the `None` severity label) versus `triage`
     for SQL `NULL` severity on the 30-day tier; `triage` for `New` and
     `Analysis` with and without packages, including while a track has a later
-    phase open; each later phase as the earliest open phase across tracks; an
-    unobservable Git track or a CVE-less Ticket not holding back an observable
-    phase; `done` for `Resolved`, including with unobservable tracks; `done`
-    for an `Analyzed` Ticket without an open phase and without a `null` track
-    member; `null` for an `Analyzed` Ticket without an open phase and with an
-    unobservable track, including an actionable `NOT_AFFECTED` Git track, and
-    for an `Analyzed` CVE-less Ticket; and non-actionable tracks, including
-    excluded tracks and non-actionable Git tracks, opening no phase and having
-    no `null` member.
+    phase open; each later phase as the earliest open phase across tracks; a
+    track with `null` members not holding back an open phase of another track;
+    `done` for `Resolved`, including with tracks that have `null` members;
+    `done` for an `Analyzed` Ticket without an open phase and without a `null`
+    track member; `null` for an `Analyzed` Ticket without an open phase and
+    with a `null` track member, including an `Analyzed` CVE-less Ticket; and
+    non-actionable tracks, including excluded tracks, opening no phase and
+    having no `null` member.
 14. `current_phase_milestone`: `pending` and `overdue` for every phase across the
     `due_at < evaluation_instant` boundary, `null` for `done` and `null`
     phases, equality with matching `overdue=<current_phase>` for every outcome,
@@ -609,9 +606,8 @@ Tests MUST cover:
     `current_phase_milestone` in the list and the detail of one Ticket at one
     evaluation instant; the post-mutation value in a `TicketDetail` returned by
     a mutation (for example `null` after Ignore, and `triage` after a Reopen
-    that returns the Ticket to `Analysis`); and
-    SQL/pure-function equivalence for the Ticket current phase over a shared
-    multi-track input matrix.
+    that returns the Ticket to `Analysis`); and SQL/pure-function equivalence
+    for the Ticket current phase over a shared multi-track input matrix.
 
 ## Cross-references
 
