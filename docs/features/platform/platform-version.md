@@ -60,9 +60,9 @@ of the path (`docs/api-spec.md`, Versioning).
 - Each process returns its own version. While a host is upgraded, processes of
   two versions can serve it, so two requests can return different values.
 - An image built from a commit that no release contains returns the version
-  of the latest release before that commit (`docs/deployment.md`, Platform
-  Version and Source of Truth). Only a release image is identified by the
-  value.
+  set by the latest Release PR merged before that commit (`docs/deployment.md`,
+  Platform Version and Source of Truth). Only a release image is identified by
+  the value.
 - Beyond authentication, whose effects and dependencies are its own
   (`docs/features/identity/authentication.md`, Authentication Dependencies),
   the operation has no effect, reads no application data, and uses no
