@@ -1089,10 +1089,10 @@ decides by itself whether an operation succeeds:
 
 - an operation can accept alternative capabilities, require an additional
   capability for a request field, require a JWT session, or reject the
-  request because of the visibility or state of a resource (`rbac.md`,
-  Permission Matrix; `docs/api-spec.md`, Conditional authorization and
-  Authorization Chain Evaluation Order; Session-Only Authentication
-  Dependency);
+  request because of the visibility or state of a resource (Session-Only
+  Authentication Dependency above; `rbac.md`, Permission Matrix;
+  `docs/api-spec.md`, Conditional authorization and Authorization Chain
+  Evaluation Order);
 - the list reflects the roles that the user held when the request that
   returned it was processed. A role change takes effect on the user's next
   request (`rbac.md`, Permission Checking), so an operation can return

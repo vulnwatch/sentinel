@@ -69,16 +69,17 @@ covers belong to a deferred specification.
 
 **Changes** follow `docs/api-spec.md` (Versioning):
 
-- a new capability that covers only operations that earlier releases do not
-  have is a new value of the response enum and therefore additive.
-  Protecting such a new operation with an existing capability changes no
-  value and is additive as well;
-- every other change to the operations that a capability covers is a
-  breaking change, also when the capability keeps its name: removing or
-  renaming a capability, splitting one into several, merging several into
-  one, moving an operation from one capability to another, or making an
-  existing operation require or accept another capability. After any of
-  these, a value no longer means what the contract of an earlier release
+- a new capability that covers only operations, or request body members of
+  an operation, that earlier releases do not have is a new value of the
+  response enum and therefore additive. Protecting such a new operation or
+  member with an existing capability changes no value and is additive as
+  well;
+- every other change to what a capability covers is a breaking change, also
+  when the capability keeps its name: removing or renaming a capability,
+  splitting one into several, merging several into one, moving an operation
+  from one capability to another, or making a request that the contract of
+  an earlier release defines require or accept another capability. After any
+  of these, a value no longer means what the contract of an earlier release
   states.
 
 No earlier value is kept as an alias of the capabilities that replace it.
