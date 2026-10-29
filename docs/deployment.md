@@ -350,8 +350,8 @@ database that holds data, including a partially loaded dataset.
    these paths belong to the UI:
    - `GET /health` — liveness (API process is running)
    - `GET /ready` — readiness (PostgreSQL + Redis reachable)
-7. **Verify SSO**: navigate to the login page, confirm "Login with SUSE
-   SSO" button appears, complete a test login
+7. **Verify SSO**: confirm that `GET /api/v1/auth/providers` through the
+   host reports `sso` as `true`, then complete a test SSO login in the UI
 
 #### Staging-Specific Notes
 
