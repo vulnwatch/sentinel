@@ -903,6 +903,14 @@ TICKET_PHASE_CASES: tuple[TicketPhaseCase, ...] = (
         expected_milestone=P,
     ),
     TicketPhaseCase(
+        id="triage_new_with_open_later_phase",
+        ticket_status=TicketStatus.NEW,
+        tracks=(_OPEN_SUBMISSION,),
+        evaluation_instant=AFTER_SUBMISSION_DUE,
+        expected_phase=CurrentPhase.TRIAGE,
+        expected_milestone=O,
+    ),
+    TicketPhaseCase(
         id="triage_precedes_open_later_phases",
         ticket_status=TicketStatus.ANALYSIS,
         tracks=(_OPEN_TRIAGE, _OPEN_SUBMISSION),
@@ -945,6 +953,13 @@ TICKET_PHASE_CASES: tuple[TicketPhaseCase, ...] = (
         expected_milestone=P,
     ),
     TicketPhaseCase(
+        id="um_due_equal_to_instant_is_pending",
+        tracks=(_OPEN_UM,),
+        evaluation_instant=CREATED_AT + timedelta(days=21),
+        expected_phase=CurrentPhase.UM,
+        expected_milestone=P,
+    ),
+    TicketPhaseCase(
         id="um_overdue",
         tracks=(_OPEN_UM,),
         evaluation_instant=AFTER_UM_DUE,
@@ -954,6 +969,13 @@ TICKET_PHASE_CASES: tuple[TicketPhaseCase, ...] = (
     TicketPhaseCase(
         id="qa_pending",
         tracks=(_OPEN_QA,),
+        expected_phase=CurrentPhase.QA,
+        expected_milestone=P,
+    ),
+    TicketPhaseCase(
+        id="qa_due_equal_to_instant_is_pending",
+        tracks=(_OPEN_QA,),
+        evaluation_instant=CREATED_AT + timedelta(days=30),
         expected_phase=CurrentPhase.QA,
         expected_milestone=P,
     ),

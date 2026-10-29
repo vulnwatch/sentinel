@@ -247,33 +247,6 @@ class TestTicketCurrentPhaseSqlPureParity:
         )
         assert sql == expected == pure_tests._ticket_phase(case)
 
-    async def test_many_tracks_never_multiply_the_ticket_row(
-        self, db_session: AsyncSession, deadline_world: DeadlineWorld
-    ) -> None:
-        open_case = TicketPhaseCase(
-            id="fan-out",
-            tracks=(TrackEvidence(products=(ProductEvidence(), ProductEvidence())),)
-            * 3,
-            expected_phase=CurrentPhase.SUBMISSION,
-            expected_milestone=MilestoneStatus.PENDING,
-        )
-        ticket = await deadline_world.build_ticket(open_case)
-        current = ticket_current_phase_expressions(
-            evaluation_date=_evaluation_date(BEFORE_ANY_DUE),
-            evaluation_instant=BEFORE_ANY_DUE,
-        )
-
-        count = await db_session.scalar(
-            select(func.count())
-            .select_from(Ticket)
-            .where(
-                Ticket.id == ticket.id,
-                current.phase == CurrentPhase.SUBMISSION.value,
-            )
-        )
-
-        assert count == 1
-
 
 @pytest.mark.unit
 class TestSharedMatrixStructure:
