@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.14.0](https://github.com/vulnwatch/sentinel/compare/v0.13.1...v0.14.0) (2026-10-29)
+
+
+### Features
+
+* expose the current phase of each Ticket ([#1154](https://github.com/vulnwatch/sentinel/issues/1154)) ([df6b615](https://github.com/vulnwatch/sentinel/commit/df6b615e2f5ee1f3d39029070de51823904ca956))
+* return the running Sentinel version ([#1157](https://github.com/vulnwatch/sentinel/issues/1157)) ([f570dd9](https://github.com/vulnwatch/sentinel/commit/f570dd98d6e41ea02a6594bb81972955b3d578b6))
+* return the signed-in user's capabilities ([#1150](https://github.com/vulnwatch/sentinel/issues/1150)) ([7e4fd54](https://github.com/vulnwatch/sentinel/commit/7e4fd5421f039101b9cfc8cdc16bd868c7cd30c8))
+
 ## [0.13.1](https://github.com/vulnwatch/sentinel/compare/v0.13.0...v0.13.1) (2026-10-29)
 
 
