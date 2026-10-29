@@ -10,10 +10,10 @@ later actors with little time.
 
 This specification is the authoritative source for the SLA tiers, the phase
 shares, the due-date formula, the per-track milestone completion,
-applicability, and status rules, `current_phase`, the `overdue` list filter,
-the due-date sort fields, and the pure functions and read-query ownership that
-implement them. The Coordinated Release Date of a confidential Ticket is a
-separate concept owned by
+applicability, and status rules, the track and Ticket `current_phase`, the
+`overdue` and `current_phase` list filters, the due-date sort fields, and the
+pure functions and read-query ownership that implement them. The Coordinated
+Release Date of a confidential Ticket is a separate concept owned by
 [tickets.md](tickets.md#coordinated-release-date); it is not an SLA input.
 
 ## Actors and Phases
@@ -34,10 +34,11 @@ its own phase.
 
 ## Informational Only
 
-Deadlines and milestones are **informational only**. They are never an input to
-a Ticket status gate, `reconcile_ticket_status()`, Product eligibility, package
-affectedness or delivery, assignment, auto-assignment eligibility, Ticket
-accessibility, priority, or any fetcher scope. They are computed at read time,
+Deadlines, milestones, and the current phase of tracks and Tickets are
+**informational only**. They are never an input to a Ticket status gate,
+`reconcile_ticket_status()`, Product eligibility, package affectedness or
+delivery, assignment, auto-assignment eligibility, Ticket accessibility,
+priority, or any fetcher scope. They are computed at read time,
 are never persisted, create no audit event, and have no refresh point. No
 existing behavior changes because a deadline passes.
 
@@ -134,10 +135,11 @@ Ticket, including for non-actionable tracks.
 ## Evaluation Instant
 
 A milestone status compares a due date with one UTC **evaluation instant**. Each
-response that projects milestone statuses or applies the `overdue` filter
-captures exactly one instant when its read or final projection begins (in
-`list_tickets()` or `get_ticket_detail()`, or in the endpoint that supplies it
-to `get_ticket_packages()` or a maintainer workbench query), and uses it for
+response that projects milestone statuses (including a Ticket's
+`current_phase_milestone`) or applies the `overdue` filter captures exactly one
+instant when its read or final projection begins (in `list_tickets()` or
+`get_ticket_detail()`, or in the endpoint that supplies it to
+`get_ticket_packages()` or a maintainer workbench query), and uses it for
 every comparison in that response. A composed projection receives the instant from its caller and does
 not capture another; serializers never recapture it.
 
@@ -278,12 +280,115 @@ lacking `released_at`.
 `Ignored` and `Duplicated` Tickets never match because their dates and
 statuses are `null`. `Resolved` Tickets never match by construction: every
 actionable track is resolution-complete, so each applicable `FIXED` track has
-every actionable eligible Product released, `AFFECTED` tracks without an
-actionable eligible Product and `NOT_AFFECTED`/`WONT_FIX` tracks have their
-later phases `not_applicable`, and CVE-less Tickets have `null` later phases.
+every actionable eligible Product released, the other observable tracks
+(`AFFECTED` or `FIXED` without an actionable eligible Product, `NOT_AFFECTED`,
+and `WONT_FIX`) have their later phases `not_applicable`, and the tracks whose
+later phases Sentinel cannot observe have them `null`.
 
 VAs sort the triage queue by priority when severity is still unresolved; no
 further triage mechanism exists.
+
+## Ticket Current Phase
+
+`TicketSummary` and `TicketDetail` expose `current_phase` and
+`current_phase_milestone`: the earliest open phase of the Ticket among the
+phases that Sentinel observes, and whether it is past due. They let a reader
+see where each Ticket stands without reading its package tree. The Ticket
+`current_phase` is distinct from the track `current_phase` in
+[Current Phase](#current-phase): it uses the Ticket-level `triage` rule,
+unobservable phases do not hold it back, and its `null` has different causes.
+
+### Open Phases
+
+For a Ticket with an SLA, a phase is **open** when:
+
+| Phase | Open when |
+|---|---|
+| `triage` | The Ticket status is `New` or `Analysis` |
+| `submission`, `um`, `qa` | At least one track of the Ticket has that `milestones` member equal to `pending` or `overdue` |
+
+These are the conditions of the
+[Ticket-Level Overdue Filter](#ticket-level-overdue-filter) without its
+past-due condition: a Ticket without packages has `triage` open while it is
+`New` or `Analysis`, and `Analyzed` and `Resolved` count as triage completed.
+Every track of the Ticket counts; a non-actionable track has every member
+`not_applicable` and therefore opens no phase.
+
+### Rules
+
+`current_phase` is produced by the first matching rule:
+
+1. **No SLA**: `null` when the Ticket is `Ignored` or `Duplicated`, or its
+   resolved severity is the `None` label (as rule 1 of
+   [Track Milestones](#track-milestones)).
+2. **Open phase**: the first open phase in the order `triage`, `submission`,
+   `um`, `qa`.
+3. **Completed**: `done` when the Ticket status is `Resolved`, or when no track
+   of the Ticket has a `null` milestone member.
+4. **Unobservable**: otherwise `null`.
+
+The values are therefore `triage`, `submission`, `um`, `qa`, `done`, or `null`.
+Rules 3 and 4 apply only to `Analyzed` and `Resolved` Tickets, because `New` and
+`Analysis` Tickets have `triage` open.
+
+On a Ticket with an SLA, a `null` milestone member is a later phase that
+Sentinel cannot observe
+([Observability of Later Phases](#observability-of-later-phases)). It never
+holds back the Ticket's current phase, which is the earliest open phase among
+the phases that Sentinel observes. A `Resolved` Ticket is `done` even with
+unobservable tracks, because the Resolved gate establishes that every
+actionable track is resolution-complete
+([tickets.md](tickets.md#gate-analyzed--resolved)). An `Analyzed` Ticket
+without an open phase is `done` when no track has a `null` member, for example
+while an `AFFECTED` track whose actionable eligible Products are all released
+waits to become `FIXED`. It is `null` when a track has a `null` member, because
+the milestones do not show whether that track still has work in a later phase.
+In particular, an `Analyzed` Ticket without a CVE has a `null` current phase
+while it has an actionable track.
+
+`current_phase_milestone` is the status of the current phase at the Ticket
+level: `overdue` when the Ticket matches the `overdue` filter value of its
+current phase, otherwise `pending`. It is `null` when `current_phase` is `done`
+or `null`, so its response enum is exactly `pending` and `overdue`. For
+`triage` it is therefore `overdue` exactly when `triage_due_at` is past, and
+for a later phase exactly when at least one track has that member `overdue`.
+Like every milestone status, it uses the response's single
+[Evaluation Instant](#evaluation-instant).
+
+The OpenAPI description of `current_phase` MUST state that the value is the
+earliest open phase among the phases that Sentinel observes, that a phase a
+track reports as `null` (not observable) does not hold it back, the causes of
+`null`, and that it differs from the track `current_phase`. The description
+of `current_phase_milestone` MUST state when it is `null` and that its
+`pending` is unrelated to `delivery_status = pending`.
+
+### Relation to the Overdue Filter
+
+Because `current_phase_milestone` is `overdue` exactly when the Ticket matches
+the `overdue` value of its current phase, `current_phase=X&overdue=X` lists the
+Tickets whose current phase is `X` and past due. With one SLA for every Product,
+each phase of a Ticket is due after the earlier phases, so a Ticket that
+matches any `overdue` value has its current phase overdue. The four lists
+`current_phase=X&overdue=X` therefore partition the Tickets that match at least
+one `overdue` value.
+
+### Current Phase Filter
+
+`GET /api/v1/tickets` accepts the repeatable `current_phase` filter with the
+values `triage`, `submission`, `um`, `qa`, and `done` (OR semantics; invalid
+values follow Enum Filter Validation in `docs/api-spec.md`). A Ticket matches a
+value when its `current_phase` equals that value; a Ticket whose
+`current_phase` is `null` matches no value. The filter combines with `overdue`
+and every other filter by AND semantics. The list offers no sort by current
+phase: the due-date sort fields order Tickets by urgency.
+
+### Observable Bottleneck Only
+
+The Ticket current phase reports the bottleneck among the observable phases
+only, an accepted limitation: a track whose later phases Sentinel cannot
+observe may still wait in a phase earlier than the Ticket's current phase. The
+package tree shows the phase of each track. Like the track milestones, the
+Ticket current phase never reports a phase completed late.
 
 ## Sorting
 
@@ -300,7 +405,9 @@ A milestone status combines affectedness, delivery (track `delivery_status`,
 correlated RR state, and Product `released_at`), persisted Product eligibility,
 and actionability. It is the read-only SLA milestone projection listed among the
 permitted observation boundaries in
-[package-model.md](../packages/package-model.md#design-rationale). It never
+[package-model.md](../packages/package-model.md#design-rationale). The Ticket
+current phase and the `current_phase` filter observe these statuses together
+with the Ticket status and belong to the same projection. The projection never
 writes, derives, or suppresses any dimension.
 
 ## Pure Resolution Functions
@@ -366,22 +473,49 @@ exists. Returns the four member statuses and `current_phase` under
 timezone-aware; a naive value raises `ValueError`. `TrackMilestones` is a
 service-internal typed value.
 
+### `resolve_ticket_current_phase()`
+
+```python
+def resolve_ticket_current_phase(
+    *,
+    due_dates: DueDates | None,
+    ticket_status: TicketStatus,
+    track_milestones: Collection[TrackMilestones],
+    evaluation_instant: datetime,
+) -> TicketCurrentPhase:
+```
+
+`due_dates` is the result of `compute_due_dates()` for the Ticket (`None`
+selects rule 1). `track_milestones` holds the result of
+`resolve_track_milestones()` for every track of the Ticket, computed with the
+same `due_dates` and `evaluation_instant`; it is empty for a Ticket without
+tracks. Returns the Ticket `current_phase` and `current_phase_milestone` under
+[Ticket Current Phase](#ticket-current-phase); `evaluation_instant` decides
+whether an open `triage` is past due. Rule 1 is selected by
+`due_dates is None` alone: the caller supplies consistent inputs, and the
+function does not cross-check them against `ticket_status`.
+`evaluation_instant` must be timezone-aware; a naive value raises
+`ValueError`. `TicketCurrentPhase` is a service-internal typed value.
+
 ## Read Ownership and Query Integration
 
 | Surface | Owner |
 |---|---|
-| Ticket-level due dates in `TicketSummary` and `TicketDetail`, the `overdue` filter, and due-date sorting | `ticket_service.list_tickets()` and `get_ticket_detail()` ([ticket-service.md](ticket-service.md#ticket-query-operations)) |
+| Ticket-level due dates, `current_phase`, and `current_phase_milestone` in `TicketSummary` and `TicketDetail`, the `overdue` and `current_phase` filters, and due-date sorting | `ticket_service.list_tickets()` and `get_ticket_detail()` ([ticket-service.md](ticket-service.md#ticket-query-operations)) |
 | `TrackDetail` due dates, `milestones`, and `current_phase` | The package-owned tree projection `package_service.get_ticket_packages()` ([package-service.md](../packages/package-service.md#get_ticket_packages)) |
 | Workbench `submission_due_at`, `submission_milestone`, and sorting | `package_service` maintainer workbench queries ([package-service.md](../packages/package-service.md#maintainer-workbench-queries)) |
 
 The service layer MUST expose reusable SQL/SQLAlchemy expressions for the
-Ticket-level due dates and the per-track milestone statuses used by filtering,
-sorting, and counting. For the same inputs and evaluation instant, the SQL
-expressions and the pure functions MUST produce identical results; a test
-asserts this. Filtering, sorting, and totals are evaluated in PostgreSQL before
-pagination; no Python post-filter may remove rows from a page. Track and
-Product existence checks use existence semantics, so they cannot duplicate a
-Ticket or inflate `total`.
+Ticket-level due dates, the per-track milestone statuses, and the Ticket
+`current_phase` and `current_phase_milestone` used by filtering, sorting,
+counting, and the list projection. For the same inputs and evaluation instant,
+the SQL expressions and the pure functions MUST produce identical results; a
+test asserts this. The list projects the Ticket current phase through the SQL
+expressions; the detail derives it with `resolve_ticket_current_phase()` from
+the milestones of its composed package tree. Filtering, sorting, and totals are
+evaluated in PostgreSQL before pagination; no Python post-filter may remove
+rows from a page. Track and Product existence checks use existence semantics,
+so they cannot duplicate a Ticket or inflate `total`.
 
 The overdue comparison depends on the current instant and therefore cannot be
 served by an index even if due dates were persisted. Persisting due dates would
@@ -392,8 +526,9 @@ be a transparent optimization that does not change this API contract.
 | Surface | Contract | Owner |
 |---|---|---|
 | `TicketSummary`, `TicketDetail`: `triage_due_at`, `submission_due_at`, `um_due_at`, `qa_due_at`, `release_due_at` | Ticket-level due dates | [tickets.md](tickets.md#response-schemas) |
+| `TicketSummary`, `TicketDetail`: `current_phase`, `current_phase_milestone` | Ticket current phase | [tickets.md](tickets.md#response-schemas) |
 | `TrackDetail`: the five due dates, `milestones`, `current_phase` | Per-track milestones | [tickets.md](tickets.md#shared-sub-schemas) |
-| `GET /api/v1/tickets` `overdue` filter and five due-date `sort_by` values | Ticket-level overdue work and deadline ordering | [tickets.md](tickets.md#list-tickets) |
+| `GET /api/v1/tickets` `overdue` and `current_phase` filters and five due-date `sort_by` values | Ticket-level overdue work, current phase, and deadline ordering | [tickets.md](tickets.md#list-tickets) |
 | Maintainer workbench `submission_due_at`, `submission_milestone`, `sort_by=submission_due_at` | Submission deadline of the maintainer's tracks | [maintainer.md](../packages/maintainer.md#workbench-row-and-privacy-contract) |
 
 No endpoint mutates a deadline.
@@ -411,8 +546,8 @@ Tests MUST cover:
    time of day, and immutability of the start across severity change, reopen,
    revert, CVE association, confidentiality change, and a set Coordinated
    Release Date.
-4. `null` dates, milestones, and `current_phase` for `Ignored` and
-   `Duplicated`, and their reappearance after manual-zone exit.
+4. `null` dates, milestones, and track and Ticket `current_phase` for
+   `Ignored` and `Duplicated`, and their reappearance after manual-zone exit.
 5. Every milestone rule: non-actionable tracks (excluded and all-EOL) with
    every member `not_applicable`; `null` later phases for Git tracks and
    CVE-less Tickets; applicability for `ANALYSIS`, `AFFECTED`, and `FIXED` with
@@ -438,12 +573,41 @@ Tests MUST cover:
 10. SQL/pure-function equivalence for due dates and milestone statuses over a
     parametrized matrix of the inputs above. Both implementations are driven
     from one shared input matrix so that a new evidence case exercises both.
-11. Proof that deadlines never alter status, gates, eligibility, affectedness,
-    delivery, assignment, priority, or accessibility, and that no deadline
+11. Proof that deadlines, milestones, and the track and Ticket current phase
+    never alter status, `reconcile_ticket_status()`, gates, eligibility,
+    affectedness, delivery, assignment, auto-assignment eligibility, priority,
+    accessibility, or any fetcher scope, and that no deadline or phase
     computation writes a row or creates an audit event.
 12. `TrackDetail` fields in `TicketDetail` and
     `GET /api/v1/tickets/{ticket_id}/packages`, and the workbench fields and
     sort in `docs/features/packages/maintainer.md`.
+13. Every Ticket `current_phase` rule over Tickets with several tracks: `null`
+    without an SLA (manual zone and the `None` severity label) versus `triage`
+    for SQL `NULL` severity on the 30-day tier; `triage` for `New` and
+    `Analysis` with and without packages, including while a track has a later
+    phase open; each later phase as the earliest open phase across tracks; a
+    track with `null` members not holding back an open phase of another track;
+    `done` for `Resolved`, including with tracks that have `null` members;
+    `done` for an `Analyzed` Ticket without an open phase and without a `null`
+    track member; `null` for an `Analyzed` Ticket without an open phase and
+    with a `null` track member, including an `Analyzed` CVE-less Ticket; and
+    non-actionable tracks, including excluded tracks, opening no phase and
+    having no `null` member.
+14. `current_phase_milestone`: `pending` and `overdue` for every phase across the
+    `due_at < evaluation_instant` boundary, `null` for `done` and `null`
+    phases, equality with matching `overdue=<current_phase>` for every outcome,
+    and, under one SLA, the partition of the Tickets that match `overdue` by
+    `current_phase=X&overdue=X`.
+15. The `current_phase` filter for each value, OR combinations, AND composition
+    with `overdue` and other filters, invalid values ignored, a supplied filter
+    whose values are all invalid (including the literal `null`) returning an
+    empty page, a `null` current phase matching no value, no row duplication,
+    and correct `total`; the same `current_phase` and
+    `current_phase_milestone` in the list and the detail of one Ticket at one
+    evaluation instant; the post-mutation value in a `TicketDetail` returned by
+    a mutation (for example `null` after Ignore, and `triage` after a Reopen
+    that returns the Ticket to `Analysis`); and SQL/pure-function equivalence
+    for the Ticket current phase over a shared multi-track input matrix.
 
 ## Cross-references
 

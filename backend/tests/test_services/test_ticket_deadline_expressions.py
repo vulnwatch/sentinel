@@ -14,7 +14,9 @@ Requirement 10 (SQL/pure equivalence) is driven by the shared matrix
 Ticket, CVE, package, track, Product, and IBS request evidence rows
 (`tests/support/deadline_persistence.py`), evaluated by the SQL
 expressions in PostgreSQL, and compared with both the independently
-transcribed expectation and the pure functions.
+transcribed expectation and the pure functions. The Ticket current phase
+(Ticket Current Phase; Requirement 15) is proven the same way over the
+shared multi-track matrix `TICKET_PHASE_CASES`.
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ import tests.test_services.test_package_service as tree_tests
 import tests.test_services.test_ticket_deadlines as pure_tests
 import tests.test_services.test_ticket_list as list_tests
 from app.core.enums import (
+    CurrentPhase,
     DeliveryStatus,
     IBSRequestActionType,
     IBSRequestState,
@@ -52,11 +55,13 @@ from app.services.ticket_deadline_expressions import (
     TicketDueDateExpressions,
     active_release_request_exists,
     sla_days_expression,
+    ticket_current_phase_expressions,
     ticket_due_date_expressions,
     track_milestone_status_expression,
 )
 from app.services.ticket_deadlines import (
     ACTIVE_RELEASE_REQUEST_STATES,
+    TicketCurrentPhase,
     compute_due_dates,
     resolve_track_milestones,
 )
@@ -72,9 +77,13 @@ from tests.support.deadline_matrix import (
     EXPECTATION_FIELDS,
     INCIDENT,
     RELEASE,
+    TICKET_PHASE_CASES,
+    TICKET_PHASE_EXPECTATION_FIELDS,
     DeadlineCase,
     ProductEvidence,
     RequestEvidence,
+    TicketPhaseCase,
+    TrackEvidence,
 )
 from tests.support.deadline_persistence import (
     PERSISTED_INPUT_FIELDS,
@@ -172,6 +181,24 @@ def _parametrized_cases(function: Any) -> Sequence[Any]:
     return cases
 
 
+async def _sql_ticket_phase(
+    db: AsyncSession, ticket: Ticket, instant: datetime
+) -> TicketCurrentPhase:
+    """The SQL Ticket current phase and milestone, in one statement."""
+    current = ticket_current_phase_expressions(
+        evaluation_date=_evaluation_date(instant), evaluation_instant=instant
+    )
+    row = (
+        await db.execute(
+            select(current.phase, current.milestone).where(Ticket.id == ticket.id)
+        )
+    ).one()
+    return TicketCurrentPhase(
+        phase=None if row[0] is None else CurrentPhase(row[0]),
+        milestone=None if row[1] is None else MilestoneStatus(row[1]),
+    )
+
+
 # ---------------------------------------------------------------------------
 # SQL/pure parity over the shared matrix (Requirement 10)
 # ---------------------------------------------------------------------------
@@ -199,6 +226,28 @@ class TestSqlPureParity:
         assert sql_statuses == case.expected_statuses[1:] == pure_statuses
 
 
+@pytest.mark.integration
+class TestTicketCurrentPhaseSqlPureParity:
+    @pytest.mark.parametrize("case", TICKET_PHASE_CASES, ids=lambda case: case.id)
+    async def test_sql_equals_expectation_and_pure_function(
+        self,
+        db_session: AsyncSession,
+        deadline_world: DeadlineWorld,
+        case: TicketPhaseCase,
+    ) -> None:
+        """Requirement 15: one Ticket with every track of the case, read
+        through one correlated expression, equals the transcribed
+        expectation and `resolve_ticket_current_phase()`."""
+        ticket = await deadline_world.build_ticket(case)
+
+        sql = await _sql_ticket_phase(db_session, ticket, case.evaluation_instant)
+
+        expected = TicketCurrentPhase(
+            phase=case.expected_phase, milestone=case.expected_milestone
+        )
+        assert sql == expected == pure_tests._ticket_phase(case)
+
+
 @pytest.mark.unit
 class TestSharedMatrixStructure:
     def test_every_matrix_consumer_iterates_the_same_case_tuple(self) -> None:
@@ -215,6 +264,33 @@ class TestSharedMatrixStructure:
 
         for consumer in consumers:
             assert _parametrized_cases(consumer) is DEADLINE_CASES
+
+    def test_every_ticket_phase_consumer_iterates_the_same_case_tuple(self) -> None:
+        """A case added to the Ticket current phase matrix is exercised by
+        the pure function, the SQL expressions, and the Ticket list and
+        detail."""
+        consumers = (
+            pure_tests.TestResolveTicketCurrentPhaseMatrix.test_matrix_ticket_current_phase,
+            TestTicketCurrentPhaseSqlPureParity.test_sql_equals_expectation_and_pure_function,
+            list_tests.TestCurrentPhaseMatrix.test_list_and_detail_match_the_shared_matrix,
+        )
+
+        for consumer in consumers:
+            assert _parametrized_cases(consumer) is TICKET_PHASE_CASES
+
+    def test_ticket_phase_case_fields_cover_every_deadline_input(self) -> None:
+        """`TicketPhaseCase` Ticket inputs plus `TrackEvidence` are exactly
+        the inputs of `DeadlineCase`, so `track_cases()` maps every field."""
+        ticket_inputs = {
+            f.name for f in dataclasses.fields(TicketPhaseCase)
+        } - TICKET_PHASE_EXPECTATION_FIELDS
+        track_inputs = {f.name for f in dataclasses.fields(TrackEvidence)}
+        deadline_inputs = {
+            f.name for f in dataclasses.fields(DeadlineCase)
+        } - EXPECTATION_FIELDS
+
+        assert ticket_inputs | track_inputs == deadline_inputs
+        assert not ticket_inputs & track_inputs
 
     def test_persisted_field_declaration_covers_every_input_field(self) -> None:
         """Adding an input field to `DeadlineCase` forces a decision in the
@@ -557,6 +633,7 @@ class TestMilestoneFilteringAndCounting:
 
         with _Recorder(db_session) as recorder:
             await _sql_values(db_session, persisted, AFTER_ALL_DUE)
+            await _sql_ticket_phase(db_session, persisted.ticket, AFTER_ALL_DUE)
 
         after = (await db_session.execute(snapshot)).one()
         events = await db_session.scalar(
@@ -566,7 +643,7 @@ class TestMilestoneFilteringAndCounting:
         assert events == 0
         assert not db_session.new
         assert not db_session.dirty
-        assert [s.lstrip()[:6].upper() for s in recorder.statements] == ["SELECT"]
+        assert [s.lstrip()[:6].upper() for s in recorder.statements] == ["SELECT"] * 2
 
 
 @pytest.mark.unit
@@ -579,6 +656,13 @@ class TestMilestoneExpressionGuards:
                     evaluation_date=BEFORE_ANY_DUE.date(),
                     evaluation_instant=BEFORE_ANY_DUE.replace(tzinfo=None),
                 )
+
+    def test_naive_instant_is_rejected_for_the_ticket_current_phase(self) -> None:
+        with pytest.raises(ValueError, match="evaluation_instant"):
+            ticket_current_phase_expressions(
+                evaluation_date=BEFORE_ANY_DUE.date(),
+                evaluation_instant=BEFORE_ANY_DUE.replace(tzinfo=None),
+            )
 
     def test_triage_has_no_track_expression(self) -> None:
         with pytest.raises(ValueError, match="submission, um, and qa"):
@@ -634,6 +718,7 @@ class TestModuleBoundary:
             ticket_due_date_expressions,
             track_milestone_status_expression,
             active_release_request_exists,
+            ticket_current_phase_expressions,
         ):
             assert not inspect.iscoroutinefunction(function)
         assert not any(

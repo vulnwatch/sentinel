@@ -44,9 +44,10 @@ visible and filtered Tickets, their total, the requested page, then the
 page's one-to-one assignee, CVE, and duplicate target plus the included
 package names), so rows, total, resolved users, severity, sorting, and
 pagination derive from one PostgreSQL observation. Due dates, milestone
-statuses, and resolved severity come from the shared SQL expressions of
-`ticket_deadline_expressions` and `ticket_severity`; User filters use the
-user-domain matching condition of `user_service`.
+statuses, the Ticket current phase, and resolved severity come from the
+shared SQL expressions of `ticket_deadline_expressions` and
+`ticket_severity`; User filters use the user-domain matching condition of
+`user_service`.
 """
 
 from __future__ import annotations
@@ -85,6 +86,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased, joinedload, selectinload
 
 from app.core.enums import (
+    CurrentPhase,
     CVESourceType,
     MilestonePhase,
     MilestoneStatus,
@@ -133,11 +135,19 @@ from app.services.ticket_convergence_publication import (
     publish_ticket_convergence,
 )
 from app.services.ticket_deadline_expressions import (
+    TicketCurrentPhaseExpressions,
     TicketDueDateExpressions,
+    ticket_current_phase_expressions,
     ticket_due_date_expressions,
     track_milestone_status_expression,
 )
-from app.services.ticket_deadlines import DueDates, compute_due_dates
+from app.services.ticket_deadlines import (
+    TRIAGE_OPEN_TICKET_STATUSES,
+    DueDates,
+    TicketCurrentPhase,
+    compute_due_dates,
+    resolve_ticket_current_phase,
+)
 from app.services.ticket_mutations import (
     CVSSChainMode,
     auto_assign_actor,
@@ -204,9 +214,11 @@ class TicketDetailProjection:
     (tickets.md, Severity Resolution). `priority` is the effective
     priority `COALESCE(priority_override, priority_automatic)`.
     `due_dates` is `None` when no SLA applies (every Ticket-level due
-    date is then `null`). `duplicate_of_ticket_id` is the direct target's
-    `SNTL-{n}` identity only. `packages` is the package-owned complete
-    tree for the same evaluation date and instant.
+    date is then `null`). `current_phase` is the Ticket current phase and
+    its milestone status, derived from the tree's track milestones.
+    `duplicate_of_ticket_id` is the direct target's `SNTL-{n}` identity
+    only. `packages` is the package-owned complete tree for the same
+    evaluation date and instant.
     """
 
     ticket_id: str
@@ -221,6 +233,7 @@ class TicketDetailProjection:
     is_confidential: bool
     coordinated_release_at: datetime | None
     due_dates: DueDates | None
+    current_phase: TicketCurrentPhase
     packages: tuple[PackageProjection, ...]
     created_at: datetime
     updated_at: datetime
@@ -248,8 +261,9 @@ class TicketSummaryProjection:
     UUID is deliberately absent. `severity` is the resolved severity and
     `priority` the effective priority, the same values the list filtered
     and sorted by. `due_dates` is `None` when no SLA applies.
-    `package_names` are the directly included package names in ascending
-    Unicode code-point order.
+    `current_phase` is the Ticket current phase and its milestone status,
+    the values the list filtered by. `package_names` are the directly
+    included package names in ascending Unicode code-point order.
     """
 
     ticket_id: str
@@ -262,6 +276,7 @@ class TicketSummaryProjection:
     is_confidential: bool
     coordinated_release_at: datetime | None
     due_dates: DueDates | None
+    current_phase: TicketCurrentPhase
     package_names: tuple[str, ...]
     created_at: datetime
     updated_at: datetime
@@ -349,9 +364,19 @@ def _project(
 
     The Ticket-level due dates and the per-track dates share the same
     Ticket context (resolved severity, status, `created_at`) selected in
-    the row. Pure.
+    the row; the Ticket current phase is resolved from the milestones of
+    every track of the assembled tree with the same instant
+    (ticket-service.md, `get_ticket_detail()` step 6). Pure.
     """
     context = package_service.ticket_tree_context_from_row(row)
+    due_dates = compute_due_dates(
+        created_at=context.created_at,
+        severity=context.severity,
+        ticket_status=context.status,
+    )
+    packages = package_service.assemble_ticket_packages(
+        row.packages, ticket=context, evaluation_instant=evaluation_instant
+    )
     assignee = (
         TicketUserProjection(
             id=row.assignee_id,
@@ -380,14 +405,16 @@ def _project(
         ),
         is_confidential=row.is_confidential,
         coordinated_release_at=row.coordinated_release_at,
-        due_dates=compute_due_dates(
-            created_at=context.created_at,
-            severity=context.severity,
+        due_dates=due_dates,
+        current_phase=resolve_ticket_current_phase(
+            due_dates=due_dates,
             ticket_status=context.status,
+            track_milestones=[
+                track.milestones for package in packages for track in package.tracks
+            ],
+            evaluation_instant=evaluation_instant,
         ),
-        packages=package_service.assemble_ticket_packages(
-            row.packages, ticket=context, evaluation_instant=evaluation_instant
-        ),
+        packages=packages,
         created_at=context.created_at,
         updated_at=row.updated_at,
     )
@@ -467,9 +494,10 @@ async def get_ticket_detail(
     (no chain following, no target content, no second protected lookup),
     and the package-owned complete tree for that date. Ticket-level due
     dates come from `compute_due_dates()`; per-track milestones compare
-    against the same instant. Maintainer identities are neither loaded
-    nor projected. Creates no event, acquires no lock, and never commits
-    or rolls back.
+    against the same instant, and the Ticket current phase comes from
+    `resolve_ticket_current_phase()` over them. Maintainer identities are
+    neither loaded nor projected. Creates no event, acquires no lock, and
+    never commits or rolls back.
 
     Q4: returns the `TicketDetailProjection`.
 
@@ -546,7 +574,9 @@ _CVE_PREFIX: Final = "CVE-"
 _DIGITS: Final = re.compile(r"[0-9]+")
 _YEAR_NUMBER: Final = re.compile(r"[0-9]{4}-[0-9]+")
 
-_TRIAGE_OPEN_STATUSES: Final = (TicketStatus.NEW.value, TicketStatus.ANALYSIS.value)
+_TRIAGE_OPEN_STATUSES: Final = tuple(
+    sorted(status.value for status in TRIAGE_OPEN_TICKET_STATUSES)
+)
 
 # Semantic ranks (docs/api-spec.md, Semantic Sort Fields). SQL `NULL` is
 # not ranked, so it sorts last under Nullable Sort Field Ordering.
@@ -692,6 +722,16 @@ def _overdue_condition(
     return or_(*branches) if branches else false()
 
 
+def _current_phase_condition(
+    phases: Collection[CurrentPhase], *, current: TicketCurrentPhaseExpressions
+) -> ColumnElement[bool]:
+    """The `current_phase` filter (ticket-deadlines.md, Current Phase
+    Filter), OR over `phases`; a `null` current phase matches no value and
+    a supplied but empty collection matches nothing."""
+    values = sorted({phase.value for phase in phases})
+    return current.phase.in_(values) if values else false()
+
+
 def _user_filter_ids(identifier: str) -> Select[UUID]:
     """The `User.id` matching a UUID-or-username filter value (at most
     one), resolved inside the list statement through the user-domain
@@ -780,6 +820,18 @@ def _summary(row: Row[*tuple[Any, ...]]) -> TicketSummaryProjection:
         is_confidential=row.is_confidential,
         coordinated_release_at=row.coordinated_release_at,
         due_dates=_due_dates(row),
+        current_phase=TicketCurrentPhase(
+            phase=(
+                CurrentPhase(row.current_phase)
+                if row.current_phase is not None
+                else None
+            ),
+            milestone=(
+                MilestoneStatus(row.current_phase_milestone)
+                if row.current_phase_milestone is not None
+                else None
+            ),
+        ),
         package_names=tuple(row.package_names or ()),
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -810,6 +862,7 @@ async def list_tickets(
     severity: Collection[Severity | None] | None = None,
     priority: Collection[TicketPriority | None] | None = None,
     overdue: Collection[MilestonePhase] | None = None,
+    current_phase: Collection[CurrentPhase] | None = None,
     maintainer: str | None = None,
     sort_by: TicketSortField = TicketSortField.CREATED_AT,
     sort_order: SortOrder = SortOrder.DESC,
@@ -823,9 +876,10 @@ async def list_tickets(
 
     Q1: `caller` is the request-resolved caller information. `search` is
     the raw multi-field search. For each repeatable filter (`status`,
-    `severity`, `priority`, `overdue`), `None` means omitted (no filter)
-    and a collection holds the valid supplied members, so an empty
-    collection (every supplied value was invalid) matches nothing. A
+    `severity`, `priority`, `overdue`, `current_phase`), `None` means
+    omitted (no filter) and a collection holds the valid supplied members,
+    so an empty collection (every supplied value was invalid) matches
+    nothing. A
     `None` member of `severity` or `priority` is the `unresolved` value
     (SQL `NULL`). `assignee` is a User UUID, exact username, or the
     literal `none`; `maintainer` a User UUID or exact username. `page`
@@ -850,6 +904,10 @@ async def list_tickets(
        `ticket_due_date_expressions()`; filters, the sort key, and the
        projection use these same expressions; `overdue` applies the
        Ticket-level rules at the one instant with existence semantics;
+       the Ticket current phase and its milestone come from
+       `ticket_current_phase_expressions()` with the same due dates and
+       instant, evaluated in the filter only when `current_phase` is
+       supplied and in the projection for the page rows only;
     5. never multiplies a Ticket row: every one-to-many relation is an
        existence check or a correlated aggregate;
     6. projects `package_names` from directly included packages in
@@ -880,6 +938,11 @@ async def list_tickets(
         Ticket.priority_override, Ticket.priority_auto
     )
     due = ticket_due_date_expressions(severity=resolved_severity)
+    current = ticket_current_phase_expressions(
+        evaluation_date=evaluation_date,
+        evaluation_instant=evaluation_instant,
+        due_dates=due,
+    )
 
     conditions: list[ColumnElement[bool]] = [ticket_visibility_condition(caller)]
     normalized_search = search.strip() if search is not None else ""
@@ -901,6 +964,8 @@ async def list_tickets(
                 evaluation_instant=evaluation_instant,
             )
         )
+    if current_phase is not None:
+        conditions.append(_current_phase_condition(current_phase, current=current))
     if assignee is not None:
         conditions.append(
             Ticket.assignee_id.is_(None)
@@ -924,8 +989,9 @@ async def list_tickets(
         )
 
     # Only the identity and sort key are materialized for every candidate;
-    # the display projections (resolved severity, priority, due dates) are
-    # evaluated for the page rows alone, in the same statement.
+    # the display projections (resolved severity, priority, due dates, the
+    # current phase) are evaluated for the page rows alone, in the same
+    # statement.
     filtered = (
         select(
             Ticket.id.label("id"),
@@ -979,6 +1045,8 @@ async def list_tickets(
             due.um.label("um_due_at"),
             due.qa.label("qa_due_at"),
             due.release.label("release_due_at"),
+            current.phase.label("current_phase"),
+            current.milestone.label("current_phase_milestone"),
             _LIST_ASSIGNEE.id.label("assignee_id"),
             _LIST_ASSIGNEE.username.label("assignee_username"),
             _LIST_ASSIGNEE.full_name.label("assignee_full_name"),

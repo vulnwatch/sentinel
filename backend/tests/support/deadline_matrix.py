@@ -28,10 +28,20 @@ the modules under test.
 Expected results are transcribed independently from the specification.
 `DeadlineCase.expected_due_dates()` gives the expected absolute UTC due
 dates.
+
+`TicketPhaseCase` is the second shared matrix, for the Ticket current
+phase (ticket-deadlines.md, Ticket Current Phase; Testing Requirements
+13-15): one Ticket with any number of tracks (`TrackEvidence`) and its
+transcribed `current_phase` and `current_phase_milestone`. Each track is
+also a `DeadlineCase` (`TicketPhaseCase.track_cases()`), so the same
+oracle and persistence builder serve both matrices. Its consumers are the
+pure-function tests, the SQL/pure parity test, and the Ticket list and
+detail tests (`tests/test_services/test_ticket_list.py`).
 """
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final
@@ -748,3 +758,287 @@ DEADLINE_CASES: tuple[DeadlineCase, ...] = (
     ),
 )
 """Every matrix row. Case ids are unique."""
+
+
+# ---------------------------------------------------------------------------
+# Ticket current phase matrix
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class TrackEvidence:
+    """One track of a `TicketPhaseCase`: the track-level inputs of a
+    `DeadlineCase`, with the same defaults (an `AFFECTED` IBS track with
+    one unreleased eligible Product and no submission evidence)."""
+
+    workflow_type: WorkflowType = WorkflowType.IBS
+    track_status: PackageStatus = PackageStatus.AFFECTED
+    delivery_status: DeliveryStatus = DeliveryStatus.PENDING
+    package_excluded: bool = False
+    track_excluded: bool = False
+    products: tuple[ProductEvidence, ...] = (ProductEvidence(),)
+    requests: tuple[RequestEvidence, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class TicketPhaseCase:
+    """One Ticket with its tracks and the expected Ticket current phase.
+
+    `expected_phase` and `expected_milestone` are the transcribed
+    `current_phase` and `current_phase_milestone`.
+    """
+
+    id: str
+    expected_phase: CurrentPhase | None
+    expected_milestone: MilestoneStatus | None
+    tracks: tuple[TrackEvidence, ...] = ()
+    severity: Severity | None = Severity.HIGH
+    ticket_status: TicketStatus = TicketStatus.ANALYZED
+    ticket_has_cve: bool = True
+    evaluation_instant: datetime = BEFORE_ANY_DUE
+    created_at: datetime = field(default=CREATED_AT)
+
+    def ticket_case(self) -> DeadlineCase:
+        """This Ticket's inputs as a `DeadlineCase` (track fields unused)."""
+        return DeadlineCase(
+            id=self.id,
+            expected_offsets_days=None,
+            expected_statuses=(N, N, N, N),
+            expected_current_phase=None,
+            severity=self.severity,
+            ticket_status=self.ticket_status,
+            ticket_has_cve=self.ticket_has_cve,
+            evaluation_instant=self.evaluation_instant,
+            created_at=self.created_at,
+        )
+
+    def track_cases(self) -> tuple[DeadlineCase, ...]:
+        """Each track as a `DeadlineCase` carrying this Ticket's inputs; its
+        expectation fields are unused."""
+        base = self.ticket_case()
+        return tuple(
+            dataclasses.replace(
+                base,
+                id=f"{self.id}#{index}",
+                workflow_type=track.workflow_type,
+                track_status=track.track_status,
+                delivery_status=track.delivery_status,
+                package_excluded=track.package_excluded,
+                track_excluded=track.track_excluded,
+                products=track.products,
+                requests=track.requests,
+            )
+            for index, track in enumerate(self.tracks)
+        )
+
+
+TICKET_PHASE_EXPECTATION_FIELDS: Final = frozenset(
+    {"id", "expected_phase", "expected_milestone", "tracks"}
+)
+"""`TicketPhaseCase` fields that are not Ticket-level inputs."""
+
+_OPEN_SUBMISSION = TrackEvidence()
+_OPEN_UM = TrackEvidence(delivery_status=DeliveryStatus.IN_PROGRESS)
+_OPEN_QA = TrackEvidence(requests=(_ACTIVE_RR,))
+_ALL_DONE = TrackEvidence(
+    track_status=PackageStatus.FIXED,
+    delivery_status=DeliveryStatus.RELEASED,
+    products=(_RELEASED,),
+)
+_ALL_DONE_AFFECTED = TrackEvidence(products=(_RELEASED,))
+_OPEN_TRIAGE = TrackEvidence(track_status=PackageStatus.ANALYSIS)
+_NOT_AFFECTED = TrackEvidence(track_status=PackageStatus.NOT_AFFECTED)
+_UNOBSERVABLE = TrackEvidence(workflow_type=WorkflowType.GIT)
+_EXCLUDED_OPEN = TrackEvidence(track_excluded=True)
+_NON_ACTIONABLE_UNOBSERVABLE = TrackEvidence(
+    workflow_type=WorkflowType.GIT, products=(_EOL,)
+)
+_AT_SUBMISSION_DUE = CREATED_AT + timedelta(days=18)
+
+TICKET_PHASE_CASES: tuple[TicketPhaseCase, ...] = (
+    # --- Rule 1: no SLA ----------------------------------------------------
+    TicketPhaseCase(
+        id="no_sla_ignored",
+        ticket_status=TicketStatus.IGNORED,
+        tracks=(_OPEN_SUBMISSION,),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_phase=None,
+        expected_milestone=None,
+    ),
+    TicketPhaseCase(
+        id="no_sla_duplicated",
+        ticket_status=TicketStatus.DUPLICATED,
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_phase=None,
+        expected_milestone=None,
+    ),
+    TicketPhaseCase(
+        id="no_sla_severity_none_label",
+        severity=Severity.NONE,
+        tracks=(_OPEN_SUBMISSION,),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_phase=None,
+        expected_milestone=None,
+    ),
+    # --- Rule 2: triage (Ticket-level) ---------------------------------------
+    TicketPhaseCase(
+        id="triage_new_without_packages_pending",
+        ticket_status=TicketStatus.NEW,
+        expected_phase=CurrentPhase.TRIAGE,
+        expected_milestone=P,
+    ),
+    TicketPhaseCase(
+        id="triage_unresolved_severity_uses_30_days_and_is_overdue",
+        severity=None,
+        ticket_status=TicketStatus.NEW,
+        evaluation_instant=AFTER_TRIAGE_DUE,
+        expected_phase=CurrentPhase.TRIAGE,
+        expected_milestone=O,
+    ),
+    TicketPhaseCase(
+        id="triage_due_equal_to_instant_is_pending",
+        ticket_status=TicketStatus.ANALYSIS,
+        evaluation_instant=AT_TRIAGE_DUE,
+        expected_phase=CurrentPhase.TRIAGE,
+        expected_milestone=P,
+    ),
+    TicketPhaseCase(
+        id="triage_new_with_open_later_phase",
+        ticket_status=TicketStatus.NEW,
+        tracks=(_OPEN_SUBMISSION,),
+        evaluation_instant=AFTER_SUBMISSION_DUE,
+        expected_phase=CurrentPhase.TRIAGE,
+        expected_milestone=O,
+    ),
+    TicketPhaseCase(
+        id="triage_precedes_open_later_phases",
+        ticket_status=TicketStatus.ANALYSIS,
+        tracks=(_OPEN_TRIAGE, _OPEN_SUBMISSION),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_phase=CurrentPhase.TRIAGE,
+        expected_milestone=O,
+    ),
+    TicketPhaseCase(
+        id="triage_from_ticket_status_with_decided_tracks",
+        ticket_status=TicketStatus.ANALYSIS,
+        tracks=(_ALL_DONE,),
+        expected_phase=CurrentPhase.TRIAGE,
+        expected_milestone=P,
+    ),
+    # --- Rule 2: later phases across tracks ----------------------------------
+    TicketPhaseCase(
+        id="submission_pending",
+        tracks=(_OPEN_SUBMISSION,),
+        expected_phase=CurrentPhase.SUBMISSION,
+        expected_milestone=P,
+    ),
+    TicketPhaseCase(
+        id="submission_due_equal_to_instant_is_pending",
+        tracks=(_OPEN_SUBMISSION,),
+        evaluation_instant=_AT_SUBMISSION_DUE,
+        expected_phase=CurrentPhase.SUBMISSION,
+        expected_milestone=P,
+    ),
+    TicketPhaseCase(
+        id="submission_earliest_across_tracks_is_overdue",
+        tracks=(_OPEN_QA, _OPEN_UM, _OPEN_SUBMISSION),
+        evaluation_instant=AFTER_SUBMISSION_DUE,
+        expected_phase=CurrentPhase.SUBMISSION,
+        expected_milestone=O,
+    ),
+    TicketPhaseCase(
+        id="um_earliest_across_tracks_is_pending",
+        tracks=(_OPEN_QA, _OPEN_UM, _ALL_DONE),
+        expected_phase=CurrentPhase.UM,
+        expected_milestone=P,
+    ),
+    TicketPhaseCase(
+        id="um_due_equal_to_instant_is_pending",
+        tracks=(_OPEN_UM,),
+        evaluation_instant=CREATED_AT + timedelta(days=21),
+        expected_phase=CurrentPhase.UM,
+        expected_milestone=P,
+    ),
+    TicketPhaseCase(
+        id="um_overdue",
+        tracks=(_OPEN_UM,),
+        evaluation_instant=AFTER_UM_DUE,
+        expected_phase=CurrentPhase.UM,
+        expected_milestone=O,
+    ),
+    TicketPhaseCase(
+        id="qa_pending",
+        tracks=(_OPEN_QA,),
+        expected_phase=CurrentPhase.QA,
+        expected_milestone=P,
+    ),
+    TicketPhaseCase(
+        id="qa_due_equal_to_instant_is_pending",
+        tracks=(_OPEN_QA,),
+        evaluation_instant=CREATED_AT + timedelta(days=30),
+        expected_phase=CurrentPhase.QA,
+        expected_milestone=P,
+    ),
+    TicketPhaseCase(
+        id="qa_overdue",
+        tracks=(_OPEN_QA, _ALL_DONE),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_phase=CurrentPhase.QA,
+        expected_milestone=O,
+    ),
+    TicketPhaseCase(
+        id="null_member_does_not_hold_back_an_open_phase",
+        tracks=(_UNOBSERVABLE, _OPEN_QA),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_phase=CurrentPhase.QA,
+        expected_milestone=O,
+    ),
+    # --- Rules 3 and 4: no open phase ----------------------------------------
+    TicketPhaseCase(
+        id="analyzed_null_member_without_open_phase",
+        tracks=(_ALL_DONE, _UNOBSERVABLE),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_phase=None,
+        expected_milestone=None,
+    ),
+    TicketPhaseCase(
+        id="analyzed_cve_less",
+        ticket_has_cve=False,
+        tracks=(_OPEN_SUBMISSION,),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_phase=None,
+        expected_milestone=None,
+    ),
+    TicketPhaseCase(
+        id="resolved_cve_less_is_done_with_null_members",
+        ticket_status=TicketStatus.RESOLVED,
+        ticket_has_cve=False,
+        tracks=(TrackEvidence(track_status=PackageStatus.FIXED),),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_phase=CurrentPhase.DONE,
+        expected_milestone=None,
+    ),
+    TicketPhaseCase(
+        id="resolved_observable_is_done",
+        ticket_status=TicketStatus.RESOLVED,
+        tracks=(_ALL_DONE, _NOT_AFFECTED),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_phase=CurrentPhase.DONE,
+        expected_milestone=None,
+    ),
+    TicketPhaseCase(
+        id="analyzed_every_phase_completed_is_done",
+        tracks=(_ALL_DONE_AFFECTED,),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_phase=CurrentPhase.DONE,
+        expected_milestone=None,
+    ),
+    TicketPhaseCase(
+        id="non_actionable_tracks_open_no_phase_and_have_no_null_member",
+        tracks=(_EXCLUDED_OPEN, _NON_ACTIONABLE_UNOBSERVABLE, _ALL_DONE_AFFECTED),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_phase=CurrentPhase.DONE,
+        expected_milestone=None,
+    ),
+)
+"""Every Ticket current phase matrix row. Case ids are unique."""

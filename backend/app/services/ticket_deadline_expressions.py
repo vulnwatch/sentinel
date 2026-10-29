@@ -1,14 +1,16 @@
-"""Ticket due dates and track milestone statuses as reusable SQL expressions.
+"""Ticket due dates, track milestone statuses, and the Ticket current phase
+as reusable SQL expressions.
 
 SQL twin of the pure functions in `app.services.ticket_deadlines`. See
 `docs/features/tickets/ticket-deadlines.md` (SLA Tier, Phase Shares, Due
-Dates, Evaluation Instant, Track Milestones, Read Ownership and Query
-Integration) for the complete contract. Filtering, sorting, and counting
-by due dates and milestone statuses are evaluated in PostgreSQL through
-these expressions, before pagination; for the same inputs and evaluation
-instant they produce exactly the values of `compute_due_dates()` and
-`resolve_track_milestones()` (proven by the SQL/pure parity test over the
-shared matrix `tests/support/deadline_matrix.py`).
+Dates, Evaluation Instant, Track Milestones, Ticket Current Phase, Read
+Ownership and Query Integration) for the complete contract. Filtering,
+sorting, and counting by due dates, milestone statuses, and the Ticket
+current phase are evaluated in PostgreSQL through these expressions,
+before pagination; for the same inputs and evaluation instant they produce
+exactly the values of `compute_due_dates()`, `resolve_track_milestones()`,
+and `resolve_ticket_current_phase()` (proven by the SQL/pure parity tests
+over the shared matrices of `tests/support/deadline_matrix.py`).
 
 The expressions are built from the same specification constants as the
 pure functions (tiers, shares, manual zone, applicable statuses, and
@@ -37,7 +39,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Final, cast
+from typing import Any, Final, cast
 
 from sqlalchemy import (
     ColumnElement,
@@ -47,6 +49,7 @@ from sqlalchemy import (
     and_,
     case,
     exists,
+    func,
     literal,
     literal_column,
     null,
@@ -58,11 +61,13 @@ from sqlalchemy.orm.util import AliasedClass
 
 from app.core.enums import (
     MANUAL_ZONE_TICKET_STATUSES,
+    CurrentPhase,
     DeliveryStatus,
     IBSRequestActionType,
     MilestonePhase,
     MilestoneStatus,
     Severity,
+    TicketStatus,
     WorkflowType,
 )
 from app.models.ibs_request import IBSRequest
@@ -84,6 +89,7 @@ from app.services.ticket_deadlines import (
     SECONDS_PER_DAY_PERCENT,
     SLA_TIER_DAYS,
     SUBMITTED_DELIVERY_STATUSES,
+    TRIAGE_OPEN_TICKET_STATUSES,
     UNRESOLVED_SLA_DAYS,
 )
 from app.services.ticket_severity import resolved_severity_expression
@@ -351,3 +357,148 @@ def track_milestone_status_expression(
         else_=literal(MilestoneStatus.PENDING.value),
     )
     return status
+
+
+# ---------------------------------------------------------------------------
+# Ticket current phase
+# ---------------------------------------------------------------------------
+
+# Per-track code of the earliest open later phase: `(overdue, pending)` per
+# phase, ascending in phase order with `overdue` first, so the minimum over
+# the tracks of a Ticket is its earliest open later phase and, for that
+# phase, `overdue` when any track has it overdue. Then the marker of a track
+# with a `null` member, then a track without an open later phase.
+_OPEN_PHASE_CODES: Final[dict[MilestonePhase, tuple[int, int]]] = {
+    phase: (2 * index, 2 * index + 1)
+    for index, phase in enumerate(_LATER_PHASES, start=1)
+}
+_NULL_MEMBER_CODE: Final = 2 * len(_LATER_PHASES) + 2
+_NO_OPEN_PHASE_CODE: Final = _NULL_MEMBER_CODE + 1
+_NULL_STATUS: Final = ""
+"""Stand-in for a `null` milestone status in a simple `CASE` (no status value)."""
+
+
+@dataclass(frozen=True, slots=True)
+class TicketCurrentPhaseExpressions:
+    """The Ticket `current_phase` and `current_phase_milestone` expressions
+    of one Ticket entity.
+
+    `phase` yields a `CurrentPhase` value or NULL; `milestone` yields
+    `pending`, `overdue`, or NULL. Usable in `SELECT` and `WHERE`.
+    """
+
+    phase: ColumnElement[str | None]
+    milestone: ColumnElement[str | None]
+
+
+def _track_phase_code(
+    statuses: dict[MilestonePhase, ColumnElement[str | None]],
+) -> ColumnElement[int]:
+    """The per-track code of the earliest open later phase.
+
+    Renders each milestone expression once. On a Ticket with an SLA a
+    track's later members are either all observable or all `null`
+    (Observability of Later Phases), so a `null` `submission` member marks
+    the track's `null` members; the Ticket-level rule handles "no SLA"
+    before the code is used.
+    """
+    code: ColumnElement[int] = literal(_NO_OPEN_PHASE_CODE, Integer)
+    for phase in reversed(_LATER_PHASES):
+        overdue_code, pending_code = _OPEN_PHASE_CODES[phase]
+        whens: dict[str, int] = {
+            MilestoneStatus.OVERDUE.value: overdue_code,
+            MilestoneStatus.PENDING.value: pending_code,
+        }
+        value = statuses[phase]
+        if phase is MilestonePhase.SUBMISSION:
+            whens[_NULL_STATUS] = _NULL_MEMBER_CODE
+            value = func.coalesce(value, _NULL_STATUS)
+        code = case(whens, value=value, else_=code)
+    return code
+
+
+def ticket_current_phase_expressions(
+    *,
+    evaluation_date: date,
+    evaluation_instant: datetime,
+    ticket: TicketEntity = Ticket,
+    due_dates: TicketDueDateExpressions | None = None,
+) -> TicketCurrentPhaseExpressions:
+    """Build the Ticket `current_phase` and `current_phase_milestone`.
+
+    `ticket` is the `Ticket` entity or an alias of it in the enclosing
+    statement; the expressions correlate to it. `evaluation_date` and
+    `evaluation_instant` are the one UTC date and timezone-aware instant
+    of the response, as in `track_milestone_status_expression()`.
+    `due_dates` are the Ticket's due-date expressions
+    (`ticket_due_date_expressions(ticket=ticket)` when omitted).
+
+    Yields, identically to `resolve_ticket_current_phase()`
+    (ticket-deadlines.md, Ticket Current Phase): NULL when no SLA applies;
+    `triage` for a `New` or `Analysis` Ticket, `overdue` when
+    `triage_due_at` is strictly before `evaluation_instant`; otherwise the
+    earliest later phase that at least one track of the Ticket has
+    `pending` or `overdue`, `overdue` when any track has it `overdue`;
+    otherwise `done` when the Ticket is `Resolved` or no track has a
+    `null` member, else NULL. The milestone is NULL for `done` and NULL.
+    The tracks are read through one correlated scalar subquery that
+    aggregates over them, so the expressions never multiply rows.
+
+    Raises:
+        ValueError: `evaluation_instant` is naive.
+    """
+    if evaluation_instant.utcoffset() is None:
+        raise ValueError("evaluation_instant must be a timezone-aware datetime.")
+    due = ticket_due_date_expressions(ticket=ticket) if due_dates is None else due_dates
+    instant = literal(evaluation_instant, DateTime(timezone=True))
+
+    package = aliased(TicketPackage)
+    track = aliased(TicketPackageTrack)
+    statuses = {
+        phase: track_milestone_status_expression(
+            phase,
+            evaluation_date=evaluation_date,
+            evaluation_instant=evaluation_instant,
+            ticket=ticket,
+            package=package,
+            track=track,
+            due_dates=due,
+        )
+        for phase in _LATER_PHASES
+    }
+    earliest: ColumnElement[int | None] = (
+        select(func.min(_track_phase_code(statuses)))
+        .select_from(track)
+        .join(package, package.id == track.ticket_package_id)
+        .where(package.ticket_id == ticket.id)
+        .correlate(ticket)
+        .scalar_subquery()
+    )
+
+    no_sla = due.triage.is_(None)
+    triage_open = ticket.status.in_(_sorted_values(TRIAGE_OPEN_TICKET_STATUSES))
+    done = literal(CurrentPhase.DONE.value)
+    overdue = literal(MilestoneStatus.OVERDUE.value)
+    pending = literal(MilestoneStatus.PENDING.value)
+
+    phase_by_code: dict[int, Any] = {}
+    milestone_by_code: dict[int, Any] = {}
+    for phase, (overdue_code, pending_code) in _OPEN_PHASE_CODES.items():
+        phase_by_code[overdue_code] = phase_by_code[pending_code] = phase.value
+        milestone_by_code[overdue_code] = overdue
+        milestone_by_code[pending_code] = pending
+    phase_by_code[_NULL_MEMBER_CODE] = case(
+        (ticket.status == TicketStatus.RESOLVED.value, done), else_=null()
+    )
+
+    current_phase: ColumnElement[str | None] = case(
+        (no_sla, null()),
+        (triage_open, literal(CurrentPhase.TRIAGE.value)),
+        else_=case(phase_by_code, value=earliest, else_=done),
+    )
+    milestone: ColumnElement[str | None] = case(
+        (no_sla, null()),
+        (triage_open, case((due.triage < instant, overdue), else_=pending)),
+        else_=case(milestone_by_code, value=earliest, else_=null()),
+    )
+    return TicketCurrentPhaseExpressions(phase=current_phase, milestone=milestone)

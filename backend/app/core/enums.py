@@ -991,12 +991,12 @@ class MilestoneStatus(StrEnum):
 
 
 class CurrentPhase(StrEnum):
-    """First not-yet-completed phase of a track, or `done`.
+    """Current phase of a track or a Ticket, or `done`.
 
     Category B — classification (Python Enum only; never stored in the
     database). The additional `null` value is represented by Python
     `None`. See `docs/features/tickets/ticket-deadlines.md` (Current
-    Phase).
+    Phase; Ticket Current Phase).
     """
 
     TRIAGE = "triage"

@@ -1,12 +1,13 @@
-"""Unit tests for pure remediation deadlines and track milestones
-(backend/app/services/ticket_deadlines.py).
+"""Unit tests for pure remediation deadlines, track milestones, and the
+Ticket current phase (backend/app/services/ticket_deadlines.py).
 
-Covers `docs/features/tickets/ticket-deadlines.md` (Testing Requirements 1-6)
-at the pure-function level, driven by the shared matrix in
-`tests/support/deadline_matrix.py` that the SQL/pure parity test
-(`test_ticket_deadline_expressions.py`, Requirement 10) and the package-tree
-projection test also consume. The matrix describes persisted evidence; its
-oracle derives the boolean inputs of `resolve_track_milestones()`.
+Covers `docs/features/tickets/ticket-deadlines.md` (Testing Requirements
+1-6, 13, and 14) at the pure-function level, driven by the shared matrices
+in `tests/support/deadline_matrix.py` that the SQL/pure parity tests
+(`test_ticket_deadline_expressions.py`, Requirements 10 and 15), the
+package-tree projection test, and the Ticket list tests also consume. The
+matrices describe persisted evidence; their oracle derives the boolean
+inputs of `resolve_track_milestones()`.
 Workflow-level parts of Requirements 3-4 (start immutability across real
 mutations, manual-zone exit workflows) are proven by the service tests of
 those workflows, Requirements 7-9 by the Ticket list and workbench tests,
@@ -40,17 +41,22 @@ from app.services.ticket_deadlines import (
     SLA_TIER_DAYS,
     UNRESOLVED_SLA_DAYS,
     DueDates,
+    TicketCurrentPhase,
     TrackMilestones,
     compute_due_dates,
     resolve_sla_days,
+    resolve_ticket_current_phase,
     resolve_track_milestones,
 )
 from tests.support.deadline_matrix import (
     AFTER_ALL_DUE,
+    AFTER_SUBMISSION_DUE,
     BEFORE_ANY_DUE,
     CREATED_AT,
     DEADLINE_CASES,
+    TICKET_PHASE_CASES,
     DeadlineCase,
+    TicketPhaseCase,
 )
 from tests.support.module_imports import (
     APP_ROOT,
@@ -623,6 +629,265 @@ class TestMilestoneInvariantsExhaustive:
 
 
 # ---------------------------------------------------------------------------
+# Ticket current phase (Requirements 13-14)
+# ---------------------------------------------------------------------------
+
+_P = MilestoneStatus.PENDING
+_O = MilestoneStatus.OVERDUE
+_D = MilestoneStatus.DONE
+_NA = MilestoneStatus.NOT_APPLICABLE
+_LATER_PHASES = (MilestonePhase.SUBMISSION, MilestonePhase.UM, MilestonePhase.QA)
+_HIGH_DUE = compute_due_dates(
+    created_at=CREATED_AT, severity=Severity.HIGH, ticket_status=TicketStatus.ANALYZED
+)
+
+
+def _ticket_phase(case: TicketPhaseCase) -> TicketCurrentPhase:
+    """The pure Ticket current phase of a matrix case: due dates, then each
+    track's milestones from its oracle-derived inputs."""
+    due = compute_due_dates(**case.ticket_case().due_dates_kwargs())
+    return resolve_ticket_current_phase(
+        due_dates=due,
+        ticket_status=case.ticket_status,
+        track_milestones=[
+            resolve_track_milestones(due_dates=due, **track.milestone_kwargs())
+            for track in case.track_cases()
+        ],
+        evaluation_instant=case.evaluation_instant,
+    )
+
+
+def _track(
+    triage: MilestoneStatus | None = _D,
+    submission: MilestoneStatus | None = _D,
+    um: MilestoneStatus | None = _D,
+    qa: MilestoneStatus | None = _D,
+) -> TrackMilestones:
+    """Hand-built track milestones (their `current_phase` is not an input)."""
+    return TrackMilestones(
+        triage=triage, submission=submission, um=um, qa=qa, current_phase=None
+    )
+
+
+@pytest.mark.unit
+class TestResolveTicketCurrentPhaseMatrix:
+    @pytest.mark.parametrize("case", TICKET_PHASE_CASES, ids=lambda case: case.id)
+    def test_matrix_ticket_current_phase(self, case: TicketPhaseCase) -> None:
+        assert _ticket_phase(case) == TicketCurrentPhase(
+            phase=case.expected_phase, milestone=case.expected_milestone
+        )
+
+    def test_matrix_covers_every_outcome_and_input_shape(self) -> None:
+        cases = TICKET_PHASE_CASES
+        outcomes = {(c.expected_phase, c.expected_milestone) for c in cases}
+
+        assert {phase for phase, _ in outcomes} == {*CurrentPhase, None}
+        for phase in MilestonePhase:
+            milestones = {m for p, m in outcomes if p is CurrentPhase(phase.value)}
+            assert milestones == {_P, _O}, phase
+        assert {m for p, m in outcomes if p in (CurrentPhase.DONE, None)} == {None}
+        assert {c.ticket_status for c in cases} == set(TicketStatus)
+        assert {c.ticket_has_cve for c in cases} == {True, False}
+        assert {c.severity for c in cases} >= {Severity.NONE, None}
+        assert any(not c.tracks for c in cases)
+        assert any(len(c.tracks) >= 3 for c in cases)
+
+    def test_matrix_case_ids_are_unique(self) -> None:
+        ids = [case.id for case in TICKET_PHASE_CASES]
+
+        assert len(ids) == len(set(ids))
+
+
+@pytest.mark.unit
+class TestResolveTicketCurrentPhase:
+    def test_no_sla_is_selected_by_due_dates_alone(self) -> None:
+        """Rule 1 keys on `due_dates is None`; the function does not
+        cross-check the status (ticket-deadlines.md,
+        `resolve_ticket_current_phase()`)."""
+        without_sla = resolve_ticket_current_phase(
+            due_dates=None,
+            ticket_status=TicketStatus.ANALYSIS,
+            track_milestones=[_track(submission=_O)],
+            evaluation_instant=AFTER_ALL_DUE,
+        )
+        manual_zone_with_dates = resolve_ticket_current_phase(
+            due_dates=_HIGH_DUE,
+            ticket_status=TicketStatus.IGNORED,
+            track_milestones=[_track(submission=_O)],
+            evaluation_instant=AFTER_ALL_DUE,
+        )
+
+        assert without_sla == TicketCurrentPhase(phase=None, milestone=None)
+        assert manual_zone_with_dates == TicketCurrentPhase(
+            phase=CurrentPhase.SUBMISSION, milestone=_O
+        )
+
+    @pytest.mark.parametrize("status", [TicketStatus.ANALYZED, TicketStatus.RESOLVED])
+    def test_without_tracks_after_triage_is_done(self, status: TicketStatus) -> None:
+        result = resolve_ticket_current_phase(
+            due_dates=_HIGH_DUE,
+            ticket_status=status,
+            track_milestones=[],
+            evaluation_instant=AFTER_ALL_DUE,
+        )
+
+        assert result == TicketCurrentPhase(phase=CurrentPhase.DONE, milestone=None)
+
+    @pytest.mark.parametrize("status", [TicketStatus.NEW, TicketStatus.ANALYSIS])
+    def test_triage_is_taken_from_the_ticket_status(self, status: TicketStatus) -> None:
+        """A `New` or `Analysis` Ticket is in `triage` whatever its tracks
+        report, including tracks whose triage is completed."""
+        result = resolve_ticket_current_phase(
+            due_dates=_HIGH_DUE,
+            ticket_status=status,
+            track_milestones=[_track(), _track(submission=_O, um=_O, qa=_O)],
+            evaluation_instant=BEFORE_ANY_DUE,
+        )
+
+        assert result == TicketCurrentPhase(phase=CurrentPhase.TRIAGE, milestone=_P)
+
+    def test_triage_milestone_compares_an_aware_non_utc_instant(self) -> None:
+        triage_due = CREATED_AT + timedelta(days=3)
+        plus_two = timezone(timedelta(hours=2))
+
+        def milestone(instant: datetime) -> MilestoneStatus | None:
+            return resolve_ticket_current_phase(
+                due_dates=_HIGH_DUE,
+                ticket_status=TicketStatus.NEW,
+                track_milestones=[],
+                evaluation_instant=instant,
+            ).milestone
+
+        assert milestone(triage_due.astimezone(plus_two)) is _P
+        assert milestone((triage_due + timedelta(seconds=1)).astimezone(plus_two)) is _O
+
+    def test_later_milestone_is_overdue_when_any_track_has_it_overdue(self) -> None:
+        """One SLA gives every track the same dates; the rule is stated per
+        track so that differing track dates keep the `overdue` match."""
+        tracks = [_track(submission=_P), _track(submission=_O), _track(um=_O)]
+
+        result = resolve_ticket_current_phase(
+            due_dates=_HIGH_DUE,
+            ticket_status=TicketStatus.ANALYZED,
+            track_milestones=tracks,
+            evaluation_instant=AFTER_SUBMISSION_DUE,
+        )
+
+        assert result == TicketCurrentPhase(phase=CurrentPhase.SUBMISSION, milestone=_O)
+
+    def test_a_null_member_does_not_hold_back_and_blocks_done(self) -> None:
+        unobservable = _track(submission=None, um=None, qa=None)
+
+        open_elsewhere = resolve_ticket_current_phase(
+            due_dates=_HIGH_DUE,
+            ticket_status=TicketStatus.ANALYZED,
+            track_milestones=[unobservable, _track(qa=_P)],
+            evaluation_instant=BEFORE_ANY_DUE,
+        )
+        nothing_open = resolve_ticket_current_phase(
+            due_dates=_HIGH_DUE,
+            ticket_status=TicketStatus.ANALYZED,
+            track_milestones=[unobservable, _track(), _track(_NA, _NA, _NA, _NA)],
+            evaluation_instant=BEFORE_ANY_DUE,
+        )
+
+        assert open_elsewhere == TicketCurrentPhase(phase=CurrentPhase.QA, milestone=_P)
+        assert nothing_open == TicketCurrentPhase(phase=None, milestone=None)
+
+    def test_naive_instant_raises_for_every_input(self) -> None:
+        for due in (_HIGH_DUE, None):
+            with pytest.raises(ValueError, match="evaluation_instant"):
+                resolve_ticket_current_phase(
+                    due_dates=due,
+                    ticket_status=TicketStatus.ANALYZED,
+                    track_milestones=[],
+                    evaluation_instant=BEFORE_ANY_DUE.replace(tzinfo=None),
+                )
+
+    def test_result_is_frozen(self) -> None:
+        result = resolve_ticket_current_phase(
+            due_dates=None,
+            ticket_status=TicketStatus.NEW,
+            track_milestones=[],
+            evaluation_instant=BEFORE_ANY_DUE,
+        )
+
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            result.phase = CurrentPhase.DONE  # type: ignore[misc]
+
+
+@pytest.mark.unit
+class TestTicketCurrentPhaseInvariantsExhaustive:
+    """Every pair of track milestones that a decided track can produce
+    (independent of the matrix), for `Analyzed` and `Resolved` Tickets."""
+
+    @staticmethod
+    def _decided_track_milestones(instant: datetime) -> set[TrackMilestones]:
+        # `Analyzed` and `Resolved` have no actionable `ANALYSIS` track
+        # (tickets.md, Gate: Analysis -> Analyzed).
+        results = {_milestones(track_actionable=False, evaluation_instant=instant)}
+        for values in itertools.product(
+            [True, False],  # ticket_has_cve
+            list(WorkflowType),
+            [s for s in PackageStatus if s is not PackageStatus.ANALYSIS],
+            [True, False],  # has_actionable_eligible_product
+            [True, False],  # all_actionable_eligible_released
+            list(DeliveryStatus),
+            [True, False],  # has_active_release_request
+        ):
+            names = (
+                "ticket_has_cve",
+                "workflow_type",
+                "track_status",
+                "has_actionable_eligible_product",
+                "all_actionable_eligible_released",
+                "delivery_status",
+                "has_active_release_request",
+            )
+            arguments = dict(zip(names, values, strict=True))
+            results.add(_milestones(**arguments, evaluation_instant=instant))
+        return results
+
+    @pytest.mark.parametrize(
+        "instant", [BEFORE_ANY_DUE, AFTER_SUBMISSION_DUE, AFTER_ALL_DUE]
+    )
+    def test_invariants_hold_for_every_pair_of_tracks(self, instant: datetime) -> None:
+        tracks = self._decided_track_milestones(instant)
+        for pair in itertools.product(tracks, repeat=2):
+            later_track_phases = [
+                t.current_phase
+                for t in pair
+                if t.current_phase not in (CurrentPhase.DONE, None)
+            ]
+            for status in (TicketStatus.ANALYZED, TicketStatus.RESOLVED):
+                result = resolve_ticket_current_phase(
+                    due_dates=_HIGH_DUE,
+                    ticket_status=status,
+                    track_milestones=pair,
+                    evaluation_instant=instant,
+                )
+
+                if later_track_phases:
+                    # The earliest track current phase: an unobservable
+                    # (`null`) track never holds the Ticket back.
+                    order = list(CurrentPhase)
+                    earliest = min(later_track_phases, key=order.index)
+                    assert result.phase is earliest
+                    phase = MilestonePhase(earliest.value)
+                    statuses = {t.status_of(phase) for t in pair}
+                    assert result.milestone is (_O if _O in statuses else _P)
+                else:
+                    assert result.milestone is None
+                    unobservable = any(t.current_phase is None for t in pair)
+                    expected = (
+                        None
+                        if unobservable and status is TicketStatus.ANALYZED
+                        else CurrentPhase.DONE
+                    )
+                    assert result.phase is expected
+
+
+# ---------------------------------------------------------------------------
 # Module boundary
 # ---------------------------------------------------------------------------
 
@@ -649,5 +914,6 @@ class TestTicketDeadlinesModuleBoundary:
             ticket_deadlines.resolve_sla_days,
             ticket_deadlines.compute_due_dates,
             ticket_deadlines.resolve_track_milestones,
+            ticket_deadlines.resolve_ticket_current_phase,
         ):
             assert not inspect.iscoroutinefunction(function)

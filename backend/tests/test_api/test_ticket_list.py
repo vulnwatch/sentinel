@@ -4,7 +4,7 @@ See docs/features/tickets/tickets.md (List Tickets, Response Schemas >
 TicketSummary, CVESummary, UserSummary), docs/features/tickets/
 ticket-priority.md (API Surface; Testing Requirement 9),
 docs/features/tickets/ticket-deadlines.md (Ticket-Level Overdue Filter,
-Sorting, API Surface), docs/api-spec.md (Authentication and
+Ticket Current Phase, Sorting, API Surface), docs/api-spec.md (Authentication and
 Authorization, Query Parameter Length Limit, Undeclared Query
 Parameters, Pagination, Enum Filter Validation, Sort Parameter
 Validation, Response Format), and docs/features/platform/
@@ -29,7 +29,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1 import tickets as route
 from app.core.enums import (
+    CurrentPhase,
     MilestonePhase,
+    MilestoneStatus,
     Role,
     Severity,
     SortOrder,
@@ -44,7 +46,7 @@ from app.models.ticket_access_grant import TicketAccessGrant
 from app.models.user import User
 from app.models.user_role import UserRole
 from app.services import ticket_service
-from app.services.ticket_deadlines import DueDates
+from app.services.ticket_deadlines import DueDates, TicketCurrentPhase
 from app.services.ticket_service import (
     CVESummaryProjection,
     TicketPage,
@@ -80,6 +82,8 @@ _TICKET_SUMMARY_FIELDS = {
     "is_confidential",
     "coordinated_release_at",
     *_DUE_FIELDS,
+    "current_phase",
+    "current_phase_milestone",
     "package_names",
     "created_at",
     "updated_at",
@@ -187,6 +191,9 @@ class TestListEndpoint:
             "um_due_at": _iso(_CREATED_AT + timedelta(days=21)),
             "qa_due_at": _iso(_CREATED_AT + timedelta(days=30)),
             "release_due_at": _iso(_CREATED_AT + timedelta(days=30)),
+            # An `Analysis` Ticket is in Ticket-level triage, not yet due.
+            "current_phase": "triage",
+            "current_phase_milestone": "pending",
             "package_names": ["curl", "openssl-3"],
             "created_at": _iso(_CREATED_AT),
             "updated_at": _iso(_UPDATED_AT),
@@ -215,6 +222,10 @@ class TestListEndpoint:
         assert item["duplicate_of_ticket_id"] == _sntl(target)
         assert {field: item[field] for field in _DUE_FIELDS} == dict.fromkeys(
             _DUE_FIELDS
+        )
+        assert (item["current_phase"], item["current_phase_milestone"]) == (
+            None,
+            None,
         )
 
     async def test_repeatable_filters_parse_wire_values_and_ignore_invalid_ones(
@@ -256,6 +267,7 @@ class TestListEndpoint:
             {"severity": ["unknown", "CRITICAL"]},
             {"priority": "P1"},
             {"overdue": ["release", "late"]},
+            {"current_phase": ["null", "Triage", "overdue"]},
         ],
     )
     async def test_all_invalid_supplied_filter_returns_an_empty_page(
@@ -293,6 +305,27 @@ class TestListEndpoint:
         assert await _ids(authenticated_client, overdue=["triage", "bogus"]) == [
             _sntl(overdue)
         ]
+
+    async def test_current_phase_filter_parses_phases(
+        self,
+        authenticated_client: AsyncClient,
+        fixed_clock: list[datetime],
+        ticket_factory: Factory,
+    ) -> None:
+        triage = await ticket_factory(status=TicketStatus.NEW.value)
+        done = await ticket_factory(status=TicketStatus.RESOLVED.value)
+        await ticket_factory(status=TicketStatus.IGNORED.value)
+
+        assert await _ids(authenticated_client, current_phase=["triage", "bogus"]) == [
+            _sntl(triage)
+        ]
+        assert set(
+            await _ids(authenticated_client, current_phase=["done", "triage"])
+        ) == {_sntl(triage), _sntl(done)}
+        assert (
+            await _ids(authenticated_client, current_phase="triage", overdue="triage")
+            == []
+        )
 
     async def test_assignee_and_maintainer_accept_uuid_username_and_unknown(
         self,
@@ -627,6 +660,9 @@ class TestSerializer:
                 is_confidential=True,
                 coordinated_release_at=_NOW,
                 due_dates=due,
+                current_phase=TicketCurrentPhase(
+                    phase=CurrentPhase.UM, milestone=MilestoneStatus.OVERDUE
+                ),
                 package_names=("a", "b"),
                 created_at=_CREATED_AT,
                 updated_at=_UPDATED_AT,
@@ -640,6 +676,10 @@ class TestSerializer:
         )
         assert serialized.um_due_at == due.um
         assert serialized.release_due_at == due.release
+        assert (serialized.current_phase, serialized.current_phase_milestone) == (
+            "um",
+            "overdue",
+        )
         assert serialized.package_names == ["a", "b"]
         assert serialized.assignee is not None
         assert serialized.assignee.active is False
@@ -661,6 +701,14 @@ class TestSerializer:
         assert route._PRIORITY_FILTER["unresolved"] is None
         assert set(route._OVERDUE_FILTER) == {"triage", "submission", "um", "qa"}
         assert set(route._OVERDUE_FILTER.values()) == set(MilestonePhase)
+        assert set(route._CURRENT_PHASE_FILTER) == {
+            "triage",
+            "submission",
+            "um",
+            "qa",
+            "done",
+        }
+        assert set(route._CURRENT_PHASE_FILTER.values()) == set(CurrentPhase)
 
 
 @pytest.mark.unit
@@ -683,6 +731,7 @@ class TestOpenApiContract:
             "severity",
             "priority",
             "overdue",
+            "current_phase",
             "maintainer",
             "page",
             "per_page",
@@ -694,7 +743,7 @@ class TestOpenApiContract:
     def test_repeatable_filters_are_arrays(self) -> None:
         parameters = {p["name"]: p for p in self._operation()["parameters"]}
 
-        for name in ("status", "severity", "priority", "overdue"):
+        for name in ("status", "severity", "priority", "overdue", "current_phase"):
             assert parameters[name]["schema"]["type"] == "array", name
 
     def test_sort_by_enumerates_the_specified_fields(self) -> None:
@@ -737,7 +786,16 @@ class TestOpenApiContract:
         summary = schemas["TicketSummary"]["properties"]
         detail = schemas["TicketDetail"]["properties"]
 
-        for field in (*_DUE_FIELDS, "severity", "priority", "ticket_id", "status"):
+        for field in (
+            *_DUE_FIELDS,
+            "current_phase",
+            "current_phase_milestone",
+            "severity",
+            "priority",
+            "ticket_id",
+            "status",
+        ):
             assert summary[field]["description"] == detail[field]["description"]
+            assert summary[field].get("anyOf") == detail[field].get("anyOf")
         assert "VA (Vulnerability Analyst)" in summary["triage_due_at"]["description"]
         assert "qa_due_at" in summary["release_due_at"]["description"]

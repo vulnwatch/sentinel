@@ -1566,6 +1566,10 @@ class TestAssociateCve:
             "is_confidential": False,
             "coordinated_release_at": None,
             **due,
+            # The `AFFECTED` IBS track with an eligible Product has no
+            # submission evidence, past the 18-day submission due date.
+            "current_phase": "submission",
+            "current_phase_milestone": "overdue",
             "created_at": _iso(_CREATED_AT),
         }
         assert packages == [
@@ -1690,6 +1694,9 @@ class TestAssociateCve:
             "is_confidential": False,
             "coordinated_release_at": None,
             **_due_dates(_CREATED_AT, 30),
+            # `Analysis` is Ticket-level triage, past its 3-day due date.
+            "current_phase": "triage",
+            "current_phase_milestone": "overdue",
             "packages": [],
             "created_at": _iso(_CREATED_AT),
         }

@@ -4,7 +4,7 @@
 See docs/features/tickets/tickets.md (API Endpoints > Get Ticket, Response
 Schemas > CVEDetail and TicketDetail), docs/features/tickets/ticket-priority.md
 (API Surface), docs/features/tickets/ticket-deadlines.md (Actors and Phases,
-API Surface), docs/api-spec.md (Authentication and Authorization,
+Ticket Current Phase, API Surface), docs/api-spec.md (Authentication and Authorization,
 Ticket Accessibility Check, Anti-Enumeration Boundary, Ticket Identifier
 Resolution, User References in Responses, Response Format), and
 docs/features/platform/testing-strategy.md (Ticket Accessibility). Detail
@@ -29,7 +29,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1 import ticket_packages as packages_route
 from app.api.v1 import tickets as route
-from app.core.enums import CveState, Role, Severity, TicketPriority, TicketStatus
+from app.core.enums import (
+    CurrentPhase,
+    CveState,
+    MilestoneStatus,
+    Role,
+    Severity,
+    TicketPriority,
+    TicketStatus,
+)
 from app.core.identifiers import format_ticket_id
 from app.main import app
 from app.models.ticket import Ticket
@@ -38,6 +46,7 @@ from app.models.user import User
 from app.models.user_role import UserRole
 from app.schemas import common, cve, ticket
 from app.services import ticket_service
+from app.services.ticket_deadlines import TicketCurrentPhase
 from app.services.ticket_service import TicketDetailProjection
 
 Factory = Callable[..., Awaitable[Any]]
@@ -71,6 +80,8 @@ _TICKET_DETAIL_FIELDS = {
     "is_confidential",
     "coordinated_release_at",
     *_DUE_FIELDS,
+    "current_phase",
+    "current_phase_milestone",
     "packages",
     "created_at",
     "updated_at",
@@ -302,6 +313,9 @@ class TestGetTicketEndpoint:
             "um_due_at": "2026-03-31T14:37:21Z",
             "qa_due_at": "2026-04-09T14:37:21Z",
             "release_due_at": "2026-04-09T14:37:21Z",
+            # An `Analysis` Ticket is in Ticket-level triage, not yet due.
+            "current_phase": "triage",
+            "current_phase_milestone": "pending",
             "packages": packages.json()["data"],
             "created_at": "2026-03-10T14:37:21Z",
             "updated_at": "2026-03-10T16:00:00Z",
@@ -350,6 +364,10 @@ class TestGetTicketEndpoint:
         assert bodies[2]["cve"] is None
         assert (bodies[2]["priority"], bodies[2]["assignee"]) == (None, None)
         assert all(bodies[2][f] is not None for f in _DUE_FIELDS)
+        phases = [
+            (body["current_phase"], body["current_phase_milestone"]) for body in bodies
+        ]
+        assert phases == [(None, None), (None, None), ("triage", "pending")]
 
     async def test_duplicate_of_inaccessible_target_exposes_only_its_identifier(
         self,
@@ -586,6 +604,10 @@ class TestSchemaEnumerations:
             (ticket.TicketPriorityValue, {p.value.lower() for p in TicketPriority}),
             (common.SeverityValue, {s.value.lower() for s in Severity}),
             (cve.CveStateValue, {s.value.lower() for s in CveState}),
+            (
+                ticket.CurrentPhaseMilestoneValue,
+                {MilestoneStatus.PENDING.value, MilestoneStatus.OVERDUE.value},
+            ),
         ],
     )
     def test_wire_values_are_the_lowercase_domain_values(
@@ -611,6 +633,7 @@ class TestSerializer:
                 is_confidential=False,
                 coordinated_release_at=None,
                 due_dates=None,
+                current_phase=TicketCurrentPhase(phase=None, milestone=None),
                 packages=(),
                 created_at=_CREATED_AT,
                 updated_at=_UPDATED_AT,
@@ -622,6 +645,52 @@ class TestSerializer:
         assert {f: getattr(serialized, f) for f in _DUE_FIELDS} == dict.fromkeys(
             _DUE_FIELDS
         )
+        assert serialized.current_phase is None
+        assert serialized.current_phase_milestone is None
+
+    @pytest.mark.parametrize(
+        ("current_phase", "expected"),
+        [
+            (
+                TicketCurrentPhase(
+                    phase=CurrentPhase.QA, milestone=MilestoneStatus.OVERDUE
+                ),
+                ("qa", "overdue"),
+            ),
+            (
+                TicketCurrentPhase(phase=CurrentPhase.DONE, milestone=None),
+                ("done", None),
+            ),
+        ],
+    )
+    def test_current_phase_serializes_its_wire_values(
+        self, current_phase: TicketCurrentPhase, expected: tuple[str, str | None]
+    ) -> None:
+        serialized = route.serialize_ticket_detail(
+            TicketDetailProjection(
+                ticket_id="SNTL-1",
+                status=TicketStatus.ANALYZED,
+                severity=Severity.HIGH,
+                priority=None,
+                priority_automatic=None,
+                priority_override=None,
+                assignee=None,
+                cve=None,
+                duplicate_of_ticket_id=None,
+                is_confidential=False,
+                coordinated_release_at=None,
+                due_dates=None,
+                current_phase=current_phase,
+                packages=(),
+                created_at=_CREATED_AT,
+                updated_at=_UPDATED_AT,
+            )
+        )
+
+        assert (
+            serialized.current_phase,
+            serialized.current_phase_milestone,
+        ) == expected
 
 
 @pytest.mark.unit
@@ -699,3 +768,49 @@ class TestOpenApiContract:
             assert actor in properties[field]["description"], field
         assert "distinct from `null`" in properties["severity"]["description"]
         assert "404" in properties["duplicate_of_ticket_id"]["description"]
+
+    def test_current_phase_values_and_guidance_are_documented(self) -> None:
+        """ticket-deadlines.md (Ticket Current Phase): the descriptions
+        state the observed-phase meaning, that a `null` member does not
+        hold the value back, the causes of `null`, the difference from the
+        track `current_phase`, and the `pending` distinction."""
+        schemas = self._schemas()
+        properties = schemas["TicketDetail"]["properties"]
+        phase = properties["current_phase"]
+        milestone = properties["current_phase_milestone"]
+
+        assert _enum_values(phase, schemas) == {
+            "triage",
+            "submission",
+            "um",
+            "qa",
+            "done",
+        }
+        assert _enum_values(milestone, schemas) == {"pending", "overdue"}
+        for text in (
+            "phases that Sentinel observes",
+            "`null` (not observable) does not hold it back",
+            "no SLA applies",
+            "a track has a `null` milestone",
+            "track's `current_phase`",
+            "VA, Vulnerability Analyst",
+            "UM, SUSE maintenance update team",
+            "QA, quality assurance",
+        ):
+            assert text in phase["description"], text
+        for text in (
+            "`null` when `current_phase` is `done` or `null`",
+            ("unrelated to `delivery_status = pending`"),
+        ):
+            assert text in milestone["description"], text
+
+
+def _enum_values(schema: dict[str, Any], schemas: dict[str, Any]) -> set[str]:
+    """The non-null `enum` values of an optional Literal property, following
+    a component `$ref`."""
+    values: set[str] = set()
+    for alternative in schema.get("anyOf", [schema]):
+        if "$ref" in alternative:
+            alternative = schemas[alternative["$ref"].rsplit("/", 1)[1]]
+        values.update(alternative.get("enum", []))
+    return values

@@ -57,6 +57,7 @@ from app.api.v1.cves import serialize_cve_detail
 from app.api.v1.ticket_packages import serialize_package
 from app.core.enums import (
     Capability,
+    CurrentPhase,
     MilestonePhase,
     Severity,
     SortOrder,
@@ -162,6 +163,9 @@ def _utc_now() -> datetime:
 _OVERDUE_FILTER: Final[Mapping[str, MilestonePhase]] = {
     member.value: member for member in MilestonePhase
 }
+_CURRENT_PHASE_FILTER: Final[Mapping[str, CurrentPhase]] = {
+    member.value: member for member in CurrentPhase
+}
 
 
 def _parse_repeatable[T](raw: list[str], members: Mapping[str, T]) -> list[T] | None:
@@ -251,6 +255,20 @@ def _ticket_list_query(
             ),
         ),
     ],
+    current_phase: Annotated[
+        list[str],
+        Query(
+            default_factory=list,
+            description=(
+                "Filter by the Ticket's `current_phase`: `triage`, "
+                "`submission`, `um`, `qa`, `done`. A Ticket whose current "
+                "phase is `null` matches no value. Combined with the same "
+                "`overdue` value (for example `current_phase=um&overdue=um`), "
+                "it lists the Tickets whose current phase is past due. "
+                "Repeatable; OR semantics. Invalid values are ignored."
+            ),
+        ),
+    ],
     maintainer: Annotated[
         str | None,
         Query(
@@ -294,6 +312,7 @@ def _ticket_list_query(
         severity=severity,
         priority=priority,
         overdue=overdue,
+        current_phase=current_phase,
         maintainer=maintainer,
         page=page,
         per_page=per_page,
@@ -340,6 +359,8 @@ def serialize_ticket_summary(summary: TicketSummaryProjection) -> TicketSummary:
             "um_due_at": due.um if due is not None else None,
             "qa_due_at": due.qa if due is not None else None,
             "release_due_at": due.release if due is not None else None,
+            "current_phase": _lower(summary.current_phase.phase),
+            "current_phase_milestone": _lower(summary.current_phase.milestone),
             "package_names": list(summary.package_names),
             "created_at": summary.created_at,
             "updated_at": summary.updated_at,
@@ -377,6 +398,8 @@ def serialize_ticket_detail(detail: TicketDetailProjection) -> TicketDetail:
             "um_due_at": due.um if due is not None else None,
             "qa_due_at": due.qa if due is not None else None,
             "release_due_at": due.release if due is not None else None,
+            "current_phase": _lower(detail.current_phase.phase),
+            "current_phase_milestone": _lower(detail.current_phase.milestone),
             "packages": [serialize_package(p) for p in detail.packages],
             "created_at": detail.created_at,
             "updated_at": detail.updated_at,
@@ -390,9 +413,9 @@ def serialize_ticket_detail(detail: TicketDetailProjection) -> TicketDetail:
     summary="List Tickets",
     description=(
         "Returns a paginated list of the Tickets visible to the caller, with "
-        "multi-field search, repeatable status, severity, priority, and overdue "
-        "filters, assignee and maintainer filters, and sorting. Visibility is "
-        "applied before every filter, sort, count, and page. Requires "
+        "multi-field search, repeatable status, severity, priority, overdue, and "
+        "current phase filters, assignee and maintainer filters, and sorting. "
+        "Visibility is applied before every filter, sort, count, and page. Requires "
         "authentication (JWT session or API key); the caller's scope, grants, "
         "and package maintainership determine access to confidential Tickets."
     ),
@@ -417,6 +440,7 @@ async def list_tickets(
         severity=_parse_repeatable(query.severity, _SEVERITY_FILTER),
         priority=_parse_repeatable(query.priority, _PRIORITY_FILTER),
         overdue=_parse_repeatable(query.overdue, _OVERDUE_FILTER),
+        current_phase=_parse_repeatable(query.current_phase, _CURRENT_PHASE_FILTER),
         maintainer=query.maintainer,
         sort_by=query.sort_by,
         sort_order=query.sort_order,

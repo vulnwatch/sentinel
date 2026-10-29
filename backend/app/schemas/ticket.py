@@ -7,8 +7,9 @@ Coordinated Release Date, Access Grant Management and
 TicketAccessGrantResponse) for the authoritative contract,
 `docs/features/tickets/ticket-priority.md` (API Surface) for the priority
 fields, and `docs/features/tickets/ticket-deadlines.md` (Actors and
-Phases, Due Dates, API Surface) for the due-date semantics these OpenAPI
-descriptions convey to external consumers.
+Phases, Due Dates, Ticket Current Phase, API Surface) for the due-date and
+current-phase semantics these OpenAPI descriptions convey to external
+consumers.
 
 A Ticket is identified only by its canonical `SNTL-{n}` identity
 (`ticket_id`); a duplicate target only by `duplicate_of_ticket_id`. The
@@ -33,9 +34,10 @@ from app.schemas.common import (
     UserReference,
 )
 from app.schemas.cve import CVEDetail, CVESummary
-from app.schemas.package import PackageDetail
+from app.schemas.package import CurrentPhaseValue, PackageDetail
 
 type TicketPriorityValue = Literal["p1", "p2", "p3", "p4"]
+type CurrentPhaseMilestoneValue = Literal["pending", "overdue"]
 
 # Field descriptions shared by `TicketSummary` and `TicketDetail`, so the
 # two representations cannot drift (docs/features/tickets/tickets.md,
@@ -85,6 +87,28 @@ _QA_DUE_DESCRIPTION = (
 _RELEASE_DUE_DESCRIPTION = (
     "Final deadline (UTC) by which the update must be released; currently "
     "equal to `qa_due_at`."
+)
+_CURRENT_PHASE_DESCRIPTION = (
+    "Earliest open remediation phase of the Ticket among the phases that "
+    "Sentinel observes: `triage` (the VA, Vulnerability Analyst, decides "
+    "affectedness) while the Ticket is `new` or `analysis`; otherwise "
+    "`submission` (the maintainer submits the fix), `um` (the UM, SUSE "
+    "maintenance update team, creates the release request), or `qa` (QA, "
+    "quality assurance, tests the update before publication) when at least "
+    "one track has that milestone `pending` or `overdue`. A phase that a "
+    "track reports as `null` (not observable) does not hold it back. `done` "
+    "when no phase is open and the Ticket is `resolved` or no track has a "
+    "`null` milestone. `null` when no SLA applies (Ticket `ignored` or "
+    "`duplicated`, or severity `none`), or when no phase is open, the Ticket "
+    "is not `resolved`, and a track has a `null` milestone. Unlike a track's "
+    "`current_phase`, it takes `triage` from the Ticket status."
+)
+_CURRENT_PHASE_MILESTONE_DESCRIPTION = (
+    "Milestone status of `current_phase`: `overdue` when the Ticket matches "
+    "the `overdue` filter value of its current phase (the phase is not "
+    "completed and its due date is past), otherwise `pending`; `null` when "
+    "`current_phase` is `done` or `null`. A milestone `pending` is unrelated "
+    "to `delivery_status = pending`."
 )
 _CREATED_AT_DESCRIPTION = "Creation timestamp (UTC)."
 _UPDATED_AT_DESCRIPTION = "Last modification timestamp (UTC)."
@@ -160,6 +184,12 @@ class TicketSummary(BaseModel):
     um_due_at: datetime | None = Field(description=_UM_DUE_DESCRIPTION)
     qa_due_at: datetime | None = Field(description=_QA_DUE_DESCRIPTION)
     release_due_at: datetime | None = Field(description=_RELEASE_DUE_DESCRIPTION)
+    current_phase: CurrentPhaseValue | None = Field(
+        description=_CURRENT_PHASE_DESCRIPTION
+    )
+    current_phase_milestone: CurrentPhaseMilestoneValue | None = Field(
+        description=_CURRENT_PHASE_MILESTONE_DESCRIPTION
+    )
     package_names: list[str] = Field(
         description=(
             "Exact-deduplicated names of the directly included packages, "
@@ -184,7 +214,8 @@ class TicketListQuery(BaseModel):
     Tickets).
 
     The repeatable enum filters (`status`, `severity`, `priority`,
-    `overdue`) are intentionally raw `list[str]`: an invalid value is
+    `overdue`, `current_phase`) are intentionally raw `list[str]`: an
+    invalid value is
     silently dropped rather than rejected (`docs/api-spec.md`, Enum
     Filter Validation), and an empty list means the filter was omitted.
     `sort_by` and `sort_order` are typed, so an invalid value is the
@@ -198,6 +229,7 @@ class TicketListQuery(BaseModel):
     severity: list[str] = Field(default_factory=list)
     priority: list[str] = Field(default_factory=list)
     overdue: list[str] = Field(default_factory=list)
+    current_phase: list[str] = Field(default_factory=list)
     maintainer: str | None = None
     page: int = Field(default=1, ge=1, le=2_147_483_647)
     per_page: int = Field(default=20, ge=1, le=100)
@@ -247,6 +279,12 @@ class TicketDetail(BaseModel):
     um_due_at: datetime | None = Field(description=_UM_DUE_DESCRIPTION)
     qa_due_at: datetime | None = Field(description=_QA_DUE_DESCRIPTION)
     release_due_at: datetime | None = Field(description=_RELEASE_DUE_DESCRIPTION)
+    current_phase: CurrentPhaseValue | None = Field(
+        description=_CURRENT_PHASE_DESCRIPTION
+    )
+    current_phase_milestone: CurrentPhaseMilestoneValue | None = Field(
+        description=_CURRENT_PHASE_MILESTONE_DESCRIPTION
+    )
     packages: list[PackageDetail] = Field(
         description=(
             "Complete package/track/Product tree, including excluded and "

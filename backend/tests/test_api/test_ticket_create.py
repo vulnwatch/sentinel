@@ -949,6 +949,9 @@ class TestCreateTicket:
             "duplicate_of_ticket_id": None,
             "is_confidential": True,
             "coordinated_release_at": _CRD,
+            # A just-created `Analysis` Ticket is in triage, not yet due.
+            "current_phase": "triage",
+            "current_phase_milestone": "pending",
             "packages": [],
         }
         assert re.fullmatch(r"SNTL-[1-9][0-9]*", ticket_id)

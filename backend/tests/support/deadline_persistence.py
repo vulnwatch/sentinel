@@ -4,9 +4,10 @@ Builds, through the model factory fixtures, exactly the persisted evidence
 a `tests.support.deadline_matrix.DeadlineCase` describes: one Ticket (with
 a CVE carrying the case severity, or CVE-less with `severity_manual`), one
 package, one track, its Product occurrences, and its IBS request actions.
-Both persistence-backed consumers of the matrix use it: the package-tree
-projection test and the SQL/pure parity test. Expectations are never
-computed here.
+A `TicketPhaseCase` is persisted as its Ticket plus one package and track
+per `TrackEvidence`. The persistence-backed consumers of the matrices use
+it: the package-tree projection test, the SQL/pure parity tests, and the
+Ticket list tests. Expectations are never computed here.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ import pytest
 from app.models.ticket import Ticket
 from app.models.ticket_package import TicketPackage
 from app.models.ticket_package_track import TicketPackageTrack
-from tests.support.deadline_matrix import DeadlineCase
+from tests.support.deadline_matrix import DeadlineCase, TicketPhaseCase
 
 Factory = Callable[..., Awaitable[Any]]
 
@@ -100,7 +101,7 @@ class DeadlineWorld:
         Ticket-level inputs of `case` must then match the Ticket's.
         """
         if ticket is None:
-            ticket = await self._ticket(case)
+            ticket = await self.ticket(case)
         package = await self._f["ticket_package_factory"](
             ticket_id=ticket.id,
             deleted_at=EXCLUDED_AT if case.package_excluded else None,
@@ -135,7 +136,16 @@ class DeadlineWorld:
             await self._f["ibs_request_action_track_factory"](**link)
         return PersistedCase(ticket=ticket, package=package, track=track)
 
-    async def _ticket(self, case: DeadlineCase) -> Ticket:
+    async def build_ticket(self, case: TicketPhaseCase) -> Ticket:
+        """Persist the Ticket of `case` with one package and track per
+        `TrackEvidence`."""
+        ticket = await self.ticket(case.ticket_case())
+        for track_case in case.track_cases():
+            await self.build(track_case, ticket=ticket)
+        return ticket
+
+    async def ticket(self, case: DeadlineCase) -> Ticket:
+        """Persist only the Ticket (and its CVE) of `case`."""
         severity = case.severity.value if case.severity is not None else None
         common = {"status": case.ticket_status.value, "created_at": case.created_at}
         if case.ticket_has_cve:
