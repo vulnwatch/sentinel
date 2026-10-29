@@ -1108,7 +1108,8 @@ class TestOpenApiContract:
         source = parameters["source"]
         assert source["in"] == "query"
         assert source["required"] is False
-        assert {"type": "string"} in source["schema"]["anyOf"]
+        assert source["schema"]["type"] == "string"
+        assert "anyOf" not in source["schema"]
         assert source["description"]
 
     def test_responses_declare_202_and_the_error_envelopes(self) -> None:

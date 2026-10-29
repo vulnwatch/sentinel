@@ -1419,9 +1419,13 @@ class TestOpenApiContract:
 
     def test_release_incident_number_is_a_bounded_integer(self) -> None:
         schema = self._parameters(RELEASE)["incident_number"]["schema"]
-        (branch,) = [b for b in schema["anyOf"] if b != {"type": "null"}]
 
-        assert branch == {"type": "integer", "minimum": 1, "maximum": 2147483647}
+        assert "anyOf" not in schema
+        assert (schema["type"], schema["minimum"], schema["maximum"]) == (
+            "integer",
+            1,
+            2147483647,
+        )
 
     @pytest.mark.parametrize("endpoint", ENDPOINTS)
     def test_documented_responses(self, endpoint: _Endpoint) -> None:
