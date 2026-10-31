@@ -1080,8 +1080,8 @@ include 12 creates, 44 updates, and one unchanged result; together with the
 three failed units, the run selected 60 terminal units.
 
 **Failure drill-down**: for CVE fetchers (where `cve_source_type` is
-defined in the fetcher registry response), a client lists the failures of a
-run with
+defined in the fetcher registry response), a client approximates the failures
+of a run with
 `GET /api/v1/cve-sources?source={cve_source_type}&status=failure&from_date={started_at}&to_date={finished_at}`.
 This is a latest-state operational approximation, not an exact
 reconstruction of the run: it shows persisted failure rows whose current

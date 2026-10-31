@@ -299,9 +299,10 @@ validation, hashing, and session invalidation. See
 `docs/features/identity/user-service.md` for the service contract.
 
 The endpoint accepts only JWT session authentication, and the new password
-follows Password validation above. A reset applies to local users only: the complete user profile tells local and external users apart by
-`source` (`docs/features/identity/user-management.md`, Get User (Admin)), and
-a reset of an external user returns `409 USER_EXTERNAL_PASSWORD_FORBIDDEN`.
+follows Password validation above. A reset applies to local users only: the
+complete user profile tells local and external users apart by `source`
+(`docs/features/identity/user-management.md`, Get User (Admin)), and a reset
+of an external user returns `409 USER_EXTERNAL_PASSWORD_FORBIDDEN`.
 
 ## Rate Limiting / Brute-Force Protection
 

@@ -1214,8 +1214,8 @@ the invalid field.
    registered fetcher cannot create a `FetcherConfig` record with an
    out-of-range `request_delay` default.
 10. `description` MUST be a non-empty string. A fetcher without a
-    description cannot be meaningfully presented by the fetcher list of
-    the API or the CLI.
+    description cannot be meaningfully described by List Fetchers or
+    `sentinel fetcher list`.
 11. `default_schedule` MUST be a valid 5-field cron expression. Invalid
     syntax is rejected at import time (not deferred to Beat startup).
 12. The concrete class MUST define an `execute()` coroutine (checked
