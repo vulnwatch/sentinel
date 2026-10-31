@@ -111,12 +111,16 @@ following cases is breaking when one of them is. The cases are:
   `errors` array of the earlier release reports is reported with another
   `loc` or `type`, for example because a request member that a validator
   checked becomes typed with an enum. This holds also when only a new version
-  of the validation library changes the entry.
+  of the validation library changes the entry, but not when the later release
+  returns the `loc` and `type` that the contract of the earlier release states
+  (Conformance fix).
 
-An `errors` entry for an invalid input that the earlier release does not
-report, such as the input of a new condition, is not breaking, and neither is
-a change to the order of the entries, to the `msg` of an entry, or to
-`detail`, also where a specification states the text of `msg` or `detail`.
+None of the following is breaking: an `errors` entry for an invalid input
+that the earlier release does not report, such as the input of a new
+condition; which of several invalid inputs of one request the array reports,
+where the contract does not state it, like the precedence of two conditions;
+and a change to the order of the entries, to the `msg` of an entry, or to
+`detail`, also where a specification states them.
 
 A later release can accept a request that the earlier release rejected
 because of an input that it did not know, such as a request to a new endpoint
@@ -162,7 +166,9 @@ that is not breaking. A client therefore:
   or code for the operation;
 - uses the `loc` and `type` of an `errors` entry, not its `msg` or its
   position in the array, and tolerates an entry whose `loc` or `type` it does
-  not expect, for example by presenting its `msg`, instead of failing;
+  not expect, for example by presenting its `msg`, instead of failing. Where
+  the contract does not state which of several invalid inputs of a request
+  the array reports, it does not rely on which ones it reports;
 - sends only the query parameters and request body members that the contract
   of its version declares for the operation, because a later release can
   declare one of them and reject its invalid values (Error Responses); and

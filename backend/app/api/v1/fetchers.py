@@ -751,8 +751,9 @@ async def get_fetcher_config(
                 "values have the wrong JSON type, or the merged settings fail "
                 "validation. For both, `errors` locates each key at fault at "
                 '`["body", "custom_settings", <key>]`, also a stored value that '
-                "the request did not submit. `VALIDATION_ERROR`: the request "
-                "fails validation."
+                "the request did not submit, and an error of the whole settings "
+                'model at `["body", "custom_settings"]`. `VALIDATION_ERROR`: the '
+                "request fails validation."
             ),
         },
     },
