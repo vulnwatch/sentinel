@@ -20,6 +20,7 @@ from app.api.dependencies import (
     require_accessible_ticket,
     ticket_not_found_error,
 )
+from app.api.openapi import enum_filter_schema
 from app.core.dates import parse_date_range_bound, validate_date_range_order
 from app.core.enums import TicketAuditEventType
 from app.core.exceptions import TicketNotFoundError
@@ -113,6 +114,7 @@ async def list_ticket_events(
                 "Filter by event type. Repeatable; OR semantics. Invalid "
                 "values are ignored."
             ),
+            json_schema_extra=enum_filter_schema(TicketAuditEventType, repeatable=True),
         ),
     ],
     actor: Annotated[

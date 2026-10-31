@@ -44,6 +44,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1 import tickets as route
 from app.core.enums import Role, TicketStatus
+from app.core.identifiers import TICKET_ID_MAX_LENGTH, TICKET_ID_PATTERN
 from app.main import app
 from app.models.ticket import Ticket
 from app.models.user import User
@@ -707,6 +708,11 @@ class TestOpenApiContract:
         assert field["type"] == "string"
         assert "anyOf" not in field
         assert "format" not in field
+        # The grammar is published (api-spec.md, Published Input
+        # Constraints); the Core parser enforces it with the range that no
+        # pattern expresses (TestRequestValidation, `overflow`).
+        assert field["pattern"] == TICKET_ID_PATTERN.pattern
+        assert field["maxLength"] == TICKET_ID_MAX_LENGTH == len("SNTL-2147483647")
 
     def test_responses_declare_detail_and_error_envelopes(self) -> None:
         responses = self._operation()["responses"]

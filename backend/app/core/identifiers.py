@@ -41,10 +41,11 @@ TICKET_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^SNTL-[1-9][0-9]*$")
 TICKET_SEQUENCE_ID_MAX: Final = 2_147_483_647
 """Largest positive PostgreSQL `INTEGER`, the upper bound of `n`."""
 
-# "SNTL-" plus the ten digits of TICKET_SEQUENCE_ID_MAX. Longer input is
-# rejected before regex matching and integer conversion, so the cost of
-# rejecting an arbitrarily long value is constant.
-_TICKET_ID_MAX_LENGTH: Final = len(TICKET_ID_PREFIX) + len(str(TICKET_SEQUENCE_ID_MAX))
+TICKET_ID_MAX_LENGTH: Final = len(TICKET_ID_PREFIX) + len(str(TICKET_SEQUENCE_ID_MAX))
+"""Maximum canonical identifier length: `SNTL-` plus the ten digits of
+`TICKET_SEQUENCE_ID_MAX`. Longer input is rejected before regex matching and
+integer conversion, so the cost of rejecting an arbitrarily long value is
+constant."""
 
 
 def is_valid_cve_id(value: object) -> bool:
@@ -73,7 +74,7 @@ def parse_ticket_id(value: str) -> int | None:
     for a path, `422 VALIDATION_ERROR` for a request-body field). Pure:
     never raises for a string input and has no side effects.
     """
-    if len(value) > _TICKET_ID_MAX_LENGTH or TICKET_ID_PATTERN.fullmatch(value) is None:
+    if len(value) > TICKET_ID_MAX_LENGTH or TICKET_ID_PATTERN.fullmatch(value) is None:
         return None
     sequence_id = int(value[len(TICKET_ID_PREFIX) :])
     if sequence_id > TICKET_SEQUENCE_ID_MAX:

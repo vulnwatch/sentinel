@@ -12,6 +12,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.core.enums import TicketAuditEventType
 from app.schemas.common import PaginationMeta, UserReference
 
 
@@ -29,7 +30,7 @@ class TicketAuditEventData(BaseModel):
         description="Canonical Ticket identity (`SNTL-{n}`).",
         examples=["SNTL-42"],
     )
-    event_type: str
+    event_type: TicketAuditEventType
     old_value: str | None
     new_value: str | None
     comment: str | None

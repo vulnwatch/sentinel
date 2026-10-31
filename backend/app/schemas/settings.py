@@ -17,14 +17,16 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.core.enums import SettingAuditEventType
 from app.schemas.common import PaginationMeta, UserReference
+from app.schemas.cvss import DefaultCVSSVersionValue
 
 
 class SystemSettingsData(BaseModel):
     """The settings object returned by `GET` and `PATCH
     /api/v1/admin/settings`."""
 
-    default_cvss_version: str
+    default_cvss_version: DefaultCVSSVersionValue
 
 
 class SystemSettingsResponse(BaseModel):
@@ -55,8 +57,8 @@ class DefaultCVSSVersionImpactData(BaseModel):
     (Result and Count Units); no identifier or detail collection.
     """
 
-    observed_default_cvss_version: str
-    proposed_default_cvss_version: str
+    observed_default_cvss_version: DefaultCVSSVersionValue
+    proposed_default_cvss_version: DefaultCVSSVersionValue
     no_op: bool
     cves_evaluated: int
     cve_severity_changes: int
@@ -80,7 +82,7 @@ class CVSSRecalculationTriggerData(BaseModel):
     """
 
     message: Literal["Recalculation batch enqueued"]
-    default_cvss_version: str
+    default_cvss_version: DefaultCVSSVersionValue
     scope: Literal["all_cves"]
 
 
@@ -98,7 +100,8 @@ class SettingAuditQuery(BaseModel):
     ignored and produce an empty result (`docs/api-spec.md`, Enum Filter
     Validation) rather than the schema-validation `422` a typed enum
     field would raise. The route handler parses each value against
-    `SettingAuditEventType` itself.
+    `SettingAuditEventType` itself and publishes its values as the
+    parameter's `enum`.
 
     `from_date`/`to_date` are already-parsed `date`/`datetime` values by
     the time this model is constructed — the API layer's
@@ -126,7 +129,7 @@ class SettingAuditEventData(BaseModel):
     is never `null`."""
 
     id: UUID
-    event_type: str
+    event_type: SettingAuditEventType
     setting_key: str
     old_value: str | None
     new_value: str

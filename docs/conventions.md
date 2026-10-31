@@ -545,6 +545,20 @@ forms (see `docs/features/platform/testing-strategy.md`, Structural Tests).
   validation errors of the parameter, or through a hand-written parameter
   schema. A structural test in `backend/tests/test_api_conventions.py`
   enforces that no path or query parameter is published as nullable
+- **Published input constraints**: implement `docs/api-spec.md` (Published
+  Input Constraints) as follows. A constraint that the request schema
+  enforces is declared as a constraint of the field or parameter, such as
+  `max_length` or an enum or `Literal` type, which also publishes it. A
+  constraint that the operation enforces elsewhere, such as an enum filter
+  whose parser ignores invalid values or a rule with a dedicated error code,
+  is published through `json_schema_extra`, built from the constant,
+  mapping, or enum that the enforcing code reads, so that the published and
+  the enforced constraint cannot drift; an enum filter uses
+  `app.api.openapi.enum_filter_schema()`. `app/api/openapi.py` publishes the
+  shared Query Parameter Length Limit from the parameter discovery of its
+  dependency. Publishing a keyword is the only use of a hand-written
+  parameter or member schema: it never hides `null` (Optional parameters
+  above; Pydantic Conventions)
 - **User identifier resolution**: parameters that identify a user follow
   `docs/api-spec.md` (User Identifier Resolution), including its distinction
   between target resources and optional list filters. API dependencies may
@@ -597,6 +611,12 @@ forms (see `docs/features/platform/testing-strategy.md`, Structural Tests).
 ### Pydantic Conventions
 
 - Separate schemas for Create, Update, and Response
+- **Response enums**: a response field whose values form a response enum
+  (`docs/api-spec.md`, Response Enums) is typed with its `StrEnum` from
+  `app/core/enums.py` when the enum's values are the wire values, and with a
+  `Literal` alias of the wire values otherwise, such as `RoleValue`; a test
+  compares the alias with its enum. The OpenAPI document then publishes the
+  field as an `enum`
 - Use `model_config = ConfigDict(from_attributes=True)` for ORM integration
 - Validate transport shape, types, and transport-specific constraints in
   Pydantic schemas. Services enforce domain and data-integrity invariants for

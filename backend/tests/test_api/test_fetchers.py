@@ -192,7 +192,24 @@ class _StubFetcherWithSettingsStub:
     Settings = _StubSettingsModel
 
 
+class _StubTwoSettingsModel(BaseModel):
+    results_per_page: int = Field(default=100, ge=10, le=1000)
+    page_limit: int = Field(default=1, ge=1, le=10)
+
+
+class _StubFetcherWithTwoSettingsStub:
+    """Same rationale as `_StubFetcherStub`, with two settings — used to
+    show a stored value at fault that the request does not submit."""
+
+    name = "test_api_fetcher_with_two_settings"
+    description = "Stub fetcher with two custom settings for API tests"
+    default_schedule = "0 5 * * *"
+    queue: str | None = None
+    Settings = _StubTwoSettingsModel
+
+
 _StubFetcher = cast("type[BaseFetcher]", _StubFetcherStub)
+_StubFetcherWithTwoSettings = cast("type[BaseFetcher]", _StubFetcherWithTwoSettingsStub)
 _StubFetcherWithSettings = cast("type[BaseFetcher]", _StubFetcherWithSettingsStub)
 
 
@@ -1806,6 +1823,65 @@ class TestUpdateFetcherConfigEndpoint:
         assert response.status_code == 422
         assert response.json()["code"] == "FETCHER_SETTING_UNKNOWN"
 
+    async def test_unknown_custom_settings_are_located_in_errors(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        """Each unknown key has an `errors` entry at its location in the
+        body (`fetcher-operations.md`, Update Fetcher Config)."""
+        _register(_StubFetcherWithSettings)
+        config = await fetcher_config_factory(
+            fetcher_name=_StubFetcherWithSettings.name
+        )
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"custom_settings": {"first": 1, "results_per_page": 50, "last": 2}},
+        )
+        assert response.status_code == 422
+        assert response.json() == {
+            "code": "FETCHER_SETTING_UNKNOWN",
+            "detail": "Unknown custom settings: 'first', 'last'",
+            "errors": [
+                {
+                    "loc": ["body", "custom_settings", key],
+                    "msg": "Extra inputs are not permitted",
+                    "type": "extra_forbidden",
+                }
+                for key in ("first", "last")
+            ],
+        }
+
+    async def test_stored_value_at_fault_is_located_at_its_key(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        """A stored value that has become invalid blocks a PATCH of another
+        key, and its `errors` entry names the stored key, which the request
+        did not submit (`fetcher-operations.md`, Update Fetcher Config)."""
+        _register(_StubFetcherWithTwoSettings)
+        config = await fetcher_config_factory(
+            fetcher_name=_StubFetcherWithTwoSettings.name,
+            custom_settings={"results_per_page": 5000},
+        )
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"custom_settings": {"page_limit": 3}},
+        )
+        assert response.status_code == 422
+        assert response.json() == {
+            "code": "FETCHER_SETTING_INVALID",
+            "detail": ("results_per_page: Input should be less than or equal to 1000"),
+            "errors": [
+                {
+                    "loc": ["body", "custom_settings", "results_per_page"],
+                    "msg": "Input should be less than or equal to 1000",
+                    "type": "less_than_equal",
+                }
+            ],
+        }
+
     async def test_invalid_custom_setting_value_returns_422(
         self,
         admin_client: AsyncClient,
@@ -1835,6 +1911,40 @@ class TestUpdateFetcherConfigEndpoint:
         )
         assert response.status_code == 422
         assert response.json()["code"] == "VALIDATION_ERROR"
+
+    @pytest.mark.parametrize(
+        "expression",
+        [", * * * *", "*/ * * * *", "1,,2 * * * *", "-1 * * * *"],
+        ids=["empty-part", "empty-step", "empty-list-item", "negative"],
+    )
+    async def test_cron_parse_exception_returns_422_not_500(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        expression: str,
+    ) -> None:
+        """Regression: Celery raises `ParseException`, which is not a
+        `ValueError`, for these expressions; it escaped the request
+        validator as `500 INTERNAL_ERROR` instead of the documented `422
+        VALIDATION_ERROR` (`fetcher-operations.md`, Update Fetcher Config,
+        Validation rules)."""
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"schedule_override": expression},
+        )
+        assert response.status_code == 422
+        body = response.json()
+        assert body["code"] == "VALIDATION_ERROR"
+        assert [error["loc"] for error in body["errors"]] == [
+            ["body", "schedule_override"]
+        ]
+        assert body["errors"][0]["type"] == "value_error"
+        follow_up = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/config"
+        )
+        assert follow_up.json()["data"]["schedule_override"] is None
 
     async def test_run_timeout_out_of_bounds_returns_422(
         self,
@@ -2098,6 +2208,13 @@ class TestUpdateFetcherConfigEndpoint:
             "detail": (
                 "results_per_page: Input has the wrong JSON type for this setting"
             ),
+            "errors": [
+                {
+                    "loc": ["body", "custom_settings", "results_per_page"],
+                    "msg": "Input has the wrong JSON type for this setting",
+                    "type": "int_type",
+                }
+            ],
         }
         assert _error_logs(logs) == []
         follow_up = await admin_client.get(

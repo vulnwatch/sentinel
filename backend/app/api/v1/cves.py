@@ -51,6 +51,7 @@ from app.api.dependencies import (
     require_capability,
     ticket_not_mutable_error,
 )
+from app.api.openapi import enum_filter_schema
 from app.core.dates import (
     normalize_date_bound,
     parse_date_range_bound,
@@ -124,7 +125,8 @@ CVSSVersionPath = Annotated[
     str,
     Path(
         description=(
-            "CVSS version of the SUSE assessment: `2.0`, `3.0`, `3.1`, or `4.0`."
+            "CVSS version of the SUSE assessment: `2.0`, `3.0`, `3.1`, or `4.0`. "
+            "Any other value returns `404 CVSS_ASSESSMENT_NOT_FOUND`."
         ),
         examples=["3.1"],
     ),
@@ -413,7 +415,10 @@ def _cve_list_query(
             description=(
                 "Filter by CVE state: `published` or `rejected`. Any other "
                 "value yields an empty page."
-            )
+            ),
+            json_schema_extra=enum_filter_schema(
+                cve_service.CVE_STATE_FILTER, repeatable=False
+            ),
         ),
     ] = None,
     severity: Annotated[
@@ -425,6 +430,9 @@ def _cve_list_query(
                 "`low`, `none` (CVSS score 0.0), `unresolved` (no CVSS "
                 "assessment). Repeatable; OR semantics. Invalid values are "
                 "ignored; only invalid values yield an empty page."
+            ),
+            json_schema_extra=enum_filter_schema(
+                cve_service.CVE_SEVERITY_FILTER, repeatable=True
             ),
         ),
     ],
@@ -516,6 +524,9 @@ def _cve_source_list_query(
             description=(
                 "Filter by persisted fetch status: `success`, `failure`, or "
                 "`missing`. Any other value yields an empty page."
+            ),
+            json_schema_extra=enum_filter_schema(
+                cve_service.CVE_SOURCE_STATUS_FILTER, repeatable=False
             ),
         ),
     ] = None,

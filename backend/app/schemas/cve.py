@@ -22,9 +22,18 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.core.enums import CVESortField, CVESourceSortField, SortOrder
+from app.core.enums import (
+    CVESortField,
+    CVESourceSortField,
+    SortOrder,
+    SSVCAutomatable,
+    SSVCExploitation,
+    SSVCTechnicalImpact,
+)
 from app.schemas.common import PaginationMeta, SeverityValue
 
+type CVEExternalIdentifierSourceValue = Literal["ghsa", "pysec", "rustsec"]
+"""Lowercase wire values of `CVEExternalIdentifierSource`."""
 type CveStateValue = Literal["published", "rejected"]
 type CVESourceStatusValue = Literal["success", "failure", "missing"]
 type CVESourceDerivedStatusValue = Literal[
@@ -56,13 +65,13 @@ class CVEEPSSResponse(BaseModel):
 class CVESSVCResponse(BaseModel):
     """The persisted CISA SSVC decision points of a CVE."""
 
-    exploitation: str = Field(
+    exploitation: SSVCExploitation = Field(
         description="SSVC exploitation decision point: `none`, `poc`, or `active`."
     )
-    automatable: str = Field(
+    automatable: SSVCAutomatable = Field(
         description="SSVC automatable decision point: `no` or `yes`."
     )
-    technical_impact: str = Field(
+    technical_impact: SSVCTechnicalImpact = Field(
         description="SSVC technical impact decision point: `partial` or `total`."
     )
     version: str = Field(description="SSVC version (e.g. `2.0.3`).")
@@ -86,7 +95,7 @@ class CVEWeaknessResponse(BaseModel):
 class CVEExternalIdentifierResponse(BaseModel):
     """One external vulnerability identifier from another naming authority."""
 
-    source: str = Field(
+    source: CVEExternalIdentifierSourceValue = Field(
         description="Naming authority, serialized in lowercase (e.g. `ghsa`)."
     )
     identifier: str = Field(description="External identifier (e.g. a GHSA-ID).")

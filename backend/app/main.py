@@ -138,12 +138,22 @@ async def _app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     """Render `AppError` as the standard `{"code": ..., "detail": ...}`
     envelope — see `docs/api-spec.md` (Response Format). Propagates
     `exc.headers` (e.g. `Retry-After` for `AUTH_ACCOUNT_LOCKED`) onto
-    the response verbatim, and merges any contract-defined top-level
-    fields (`AppError.extra`, e.g. `existing_ticket_id`)."""
+    the response verbatim, merges any contract-defined top-level
+    fields (`AppError.extra`, e.g. `existing_ticket_id`), and adds the
+    `errors` array of a domain validation code that locates its invalid
+    inputs (`AppError.errors`)."""
+    content: dict[str, Any] = {
+        **exc.extra,
+        "code": exc.code.value,
+        "detail": exc.detail,
+    }
+    if exc.errors is not None:
+        content["errors"] = [
+            {"loc": list(error.loc), "msg": error.msg, "type": error.type}
+            for error in exc.errors
+        ]
     return JSONResponse(
-        status_code=exc.status_code,
-        content={**exc.extra, "code": exc.code.value, "detail": exc.detail},
-        headers=exc.headers,
+        status_code=exc.status_code, content=content, headers=exc.headers
     )
 
 

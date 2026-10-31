@@ -41,7 +41,7 @@ from app.core.enums import (
     Role,
     SessionCreationReason,
 )
-from app.core.identifiers import format_ticket_id
+from app.core.identifiers import CVE_ID_MAX_LENGTH, CVE_ID_PATTERN, format_ticket_id
 from app.database import get_db
 from app.main import app
 from app.models.cve import CVE
@@ -1322,13 +1322,17 @@ class TestOpenApiContract:
             "coordinated_release_at",
         }
         cve_id = properties["cve_id"]
-        assert {"type": "string"} in cve_id["anyOf"]
+        # The grammar is published on the string alternative, not enforced
+        # by the schema (api-spec.md, Published Input Constraints):
+        # over-length and malformed strings still reach `CVE_INVALID_FORMAT`
+        # rather than the global 422 (TestCVEInvalidFormat).
+        assert {
+            "type": "string",
+            "pattern": CVE_ID_PATTERN.pattern,
+            "maxLength": CVE_ID_MAX_LENGTH,
+        } in cve_id["anyOf"]
         assert {"type": "null"} in cve_id["anyOf"]
-        # No schema length/pattern limit: over-length and malformed strings
-        # reach `CVE_INVALID_FORMAT` rather than the global 422.
-        assert "maxLength" not in str(cve_id)
         assert "pattern" not in cve_id
-        assert not any("pattern" in v or "maxLength" in v for v in cve_id["anyOf"])
         severity_refs = [
             self._schema(self._ref_name(v)) if "$ref" in v else v
             for v in properties["severity"]["anyOf"]

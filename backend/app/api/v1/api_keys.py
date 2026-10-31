@@ -22,6 +22,7 @@ from app.api.dependencies import (
     require_capability,
     require_session_authentication,
 )
+from app.api.openapi import enum_filter_schema
 from app.core.enums import ApiKeySortField, ApiKeyStatus, Capability, SortOrder
 from app.core.errors import AppError, ErrorCode
 from app.core.exceptions import InactiveUserError
@@ -69,7 +70,14 @@ router = APIRouter(prefix="/api/v1", tags=["API Keys"])
 def _api_key_list_query(
     status_filter: Annotated[
         str | None,
-        Query(alias="status", description="One of 'active', 'expired', or 'revoked'."),
+        Query(
+            alias="status",
+            description=(
+                "One of 'active', 'expired', or 'revoked'. Any other value "
+                "yields an empty page."
+            ),
+            json_schema_extra=enum_filter_schema(ApiKeyStatus, repeatable=False),
+        ),
     ] = None,
     page: Annotated[
         int,

@@ -36,7 +36,7 @@ from uuid import UUID, uuid4
 import pytest
 from celery import Celery
 from celery.schedules import crontab
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from redbeat import RedBeatSchedulerEntry
 from redbeat.schedulers import get_redis
 from redis.exceptions import RedisError
@@ -52,6 +52,7 @@ from app.models.user import User
 from app.services.base_fetcher import FETCHER_REGISTRY, BaseFetcher
 from app.services.fetcher_audit_log import FetcherAuditLog
 from app.services.fetcher_operations import (
+    CustomSettingError,
     FetcherAlreadyRunningError,
     FetcherBrokerUnavailableError,
     FetcherDeregisteredError,
@@ -142,6 +143,31 @@ class _MultiSettingsFetcherStub:
 
 
 _MultiSettingsFetcher = cast("type[BaseFetcher]", _MultiSettingsFetcherStub)
+
+
+class _CrossFieldSettingsModel(BaseModel):
+    """Two fields with a model-level rule — an error that no single key
+    causes."""
+
+    low: int = 0
+    high: int = 10
+
+    @model_validator(mode="after")
+    def _low_not_above_high(self) -> _CrossFieldSettingsModel:
+        if self.low > self.high:
+            raise ValueError("low exceeds high")
+        return self
+
+
+class _CrossFieldSettingsFetcherStub:
+    name = "test_ops_cross_field_settings"
+    description = "Stub fetcher with a model-level settings rule"
+    default_schedule = "0 8 * * *"
+    queue: str | None = None
+    Settings = _CrossFieldSettingsModel
+
+
+_CrossFieldSettingsFetcher = cast("type[BaseFetcher]", _CrossFieldSettingsFetcherStub)
 
 
 class _Format(StrEnum):
@@ -2127,6 +2153,168 @@ class TestUpdateFetcherConfigGuards:
             )
 
         assert "alpha_setting" in str(exc_info.value)
+        assert exc_info.value.errors == (
+            CustomSettingError(
+                ("alpha_setting",),
+                "less_than_equal",
+                "Input should be less than or equal to 100",
+            ),
+        )
+
+    async def test_every_unknown_key_is_located_in_request_order(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        """Every unknown key is reported, not only the first
+        (`fetcher-operations.md`, `update_fetcher_config`, guard 4)."""
+        _register(_WithSettingsFetcher)
+        config = await fetcher_config_factory(fetcher_name=_WithSettingsFetcher.name)
+        admin = await user_factory()
+
+        with pytest.raises(FetcherSettingUnknownError) as exc_info:
+            await update_fetcher_config(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                user_id=admin.id,
+                payload=UpdateConfigPayload(
+                    custom_settings={"zeta": 1, "results_per_page": 50, "alpha": 2}
+                ),
+            )
+
+        assert exc_info.value.keys == ("zeta", "alpha")
+        assert exc_info.value.errors == (
+            CustomSettingError(
+                ("zeta",), "extra_forbidden", "Extra inputs are not permitted"
+            ),
+            CustomSettingError(
+                ("alpha",), "extra_forbidden", "Extra inputs are not permitted"
+            ),
+        )
+        assert str(exc_info.value) == "Unknown custom settings: 'zeta', 'alpha'"
+
+    async def test_single_unknown_key_message_is_singular(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_WithSettingsFetcher)
+        config = await fetcher_config_factory(fetcher_name=_WithSettingsFetcher.name)
+        admin = await user_factory()
+
+        with pytest.raises(FetcherSettingUnknownError) as exc_info:
+            await update_fetcher_config(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                user_id=admin.id,
+                payload=UpdateConfigPayload(custom_settings={"nonexistent": None}),
+            )
+
+        assert str(exc_info.value) == "Unknown custom setting: 'nonexistent'"
+
+    async def test_every_key_of_the_wrong_json_type_is_located(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        """The type check reports every failing submitted key, in request
+        order, before any merged-state validation (`fetcher-operations.md`,
+        `update_fetcher_config`, guard 5)."""
+        _register(_TypedSettingsFetcher)
+        config = await fetcher_config_factory(fetcher_name=_TypedSettingsFetcher.name)
+        admin = await user_factory()
+
+        with pytest.raises(FetcherSettingInvalidError) as exc_info:
+            await update_fetcher_config(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                user_id=admin.id,
+                payload=UpdateConfigPayload(
+                    custom_settings={"flag": 1, "label": "ok", "count": "5"}
+                ),
+            )
+
+        assert exc_info.value.errors == (
+            CustomSettingError(
+                ("flag",), "bool_type", "Input should be a valid boolean"
+            ),
+            CustomSettingError(
+                ("count",), "int_type", "Input should be a valid integer"
+            ),
+        )
+        assert str(exc_info.value) == (
+            "flag: Input should be a valid boolean; "
+            "count: Input should be a valid integer"
+        )
+
+    @pytest.mark.parametrize(
+        ("key", "value", "error_type"),
+        [
+            ("count", [500], "int_type"),
+            ("ratio", math.nan, "float_type"),
+            ("flag", {}, "bool_type"),
+            ("label", {"value": "custom"}, "string_type"),
+            ("output_format", [], "enum"),
+            ("level", True, "enum"),
+            ("page_size", True, "literal_error"),
+            ("toggle", 1, "literal_error"),
+        ],
+    )
+    async def test_wrong_json_type_carries_the_type_error_of_its_field(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+        key: str,
+        value: Any,
+        error_type: str,
+    ) -> None:
+        """A value that the strict check rejects without a Pydantic error of
+        its own carries the Pydantic type error of its declared type."""
+        _register(_TypedSettingsFetcher)
+        config = await fetcher_config_factory(fetcher_name=_TypedSettingsFetcher.name)
+        admin = await user_factory()
+
+        with pytest.raises(FetcherSettingInvalidError) as exc_info:
+            await update_fetcher_config(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                user_id=admin.id,
+                payload=UpdateConfigPayload(custom_settings={key: value}),
+            )
+
+        (error,) = exc_info.value.errors
+        assert error.location == (key,)
+        assert error.type == error_type
+
+    async def test_model_level_error_carries_no_key(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        """An error of the whole `Settings` model, which no single key
+        causes, is located at `custom_settings` itself."""
+        _register(_CrossFieldSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_CrossFieldSettingsFetcher.name, custom_settings={"high": 1}
+        )
+        admin = await user_factory()
+
+        with pytest.raises(FetcherSettingInvalidError) as exc_info:
+            await update_fetcher_config(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                user_id=admin.id,
+                payload=UpdateConfigPayload(custom_settings={"low": 5}),
+            )
+
+        assert exc_info.value.errors == (
+            CustomSettingError((), "value_error", "Value error, low exceeds high"),
+        )
 
     async def test_unknown_key_checked_before_invalid_value(
         self,

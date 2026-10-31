@@ -26,8 +26,10 @@ from fastapi.exceptions import RequestValidationError
 
 from app.core.route_params import declared_string_param_names
 
-# docs/api-spec.md (Query Parameter Length Limit).
-_MAX_QUERY_STRING_LENGTH = 500
+MAX_QUERY_STRING_LENGTH = 500
+"""docs/api-spec.md (Query Parameter Length Limit); also published as the
+`maxLength` of each parameter this dependency inspects
+(`app.api.openapi.publish_query_parameter_length_limit`)."""
 
 
 async def enforce_query_parameter_length_limit(request: Request) -> None:
@@ -61,13 +63,13 @@ async def enforce_query_parameter_length_limit(request: Request) -> None:
     errors: list[dict[str, Any]] = []
     for name in declared_string_param_names(dependant, "query"):
         for value in request.query_params.getlist(name):
-            if len(value) > _MAX_QUERY_STRING_LENGTH:
+            if len(value) > MAX_QUERY_STRING_LENGTH:
                 errors.append(
                     {
                         "loc": ["query", name],
                         "msg": (
                             "String should have at most "
-                            f"{_MAX_QUERY_STRING_LENGTH} characters"
+                            f"{MAX_QUERY_STRING_LENGTH} characters"
                         ),
                         "type": "string_too_long",
                     }

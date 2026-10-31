@@ -33,11 +33,18 @@ alternative (`docs/api-spec.md`, Parameter Nullability;
 `publish_parameters_without_null`). FastAPI publishes the `None` default of an
 optional parameter as `null`, which no request can send, because a parameter
 is a string by transport.
+
+Finally, it publishes constraints that the shared request handling enforces
+outside the parameter schemas (`docs/api-spec.md`, Published Input
+Constraints): the Query Parameter Length Limit as the `maxLength` of each
+parameter that its dependency inspects
+(`publish_query_parameter_length_limit`). An enum filter publishes the values
+its parser accepts through `enum_filter_schema`.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -53,6 +60,11 @@ from app.api.dependencies import (
     require_capability,
 )
 from app.core.cross_origin import SAFE_METHODS
+from app.core.query_limits import (
+    MAX_QUERY_STRING_LENGTH,
+    enforce_query_parameter_length_limit,
+)
+from app.core.route_params import declared_string_param_names
 from app.schemas.errors import ErrorResponse, ValidationErrorResponse
 
 API_V1_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
@@ -233,16 +245,81 @@ def publish_parameters_without_null(openapi_schema: dict[str, Any]) -> None:
                     parameter["schema"] = _without_null(parameter["schema"])
 
 
+def enum_filter_schema(values: Iterable[str], *, repeatable: bool) -> dict[str, Any]:
+    """The `json_schema_extra` of an enum filter parameter that publishes
+    `values`, the values its parser accepts, as the parameter's `enum`
+    (`docs/api-spec.md`, Enum Filter Validation; Published Input
+    Constraints).
+
+    The parameter keeps its string type, so a value outside `values` is
+    still ignored, not rejected; callers pass the mapping or `StrEnum` that
+    the parser itself reads, so the two cannot drift. `repeatable` selects
+    the schema of a list parameter, whose items carry the `enum`.
+    """
+    # `str()` of a `StrEnum` member is its value.
+    enum = [str(value) for value in values]
+    if repeatable:
+        return {"items": {"type": "string", "enum": enum}}
+    return {"enum": enum}
+
+
+def _string_schemas(schema: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """The schemas of the strings that a string-shaped parameter carries:
+    the items of an array, the alternatives of an `anyOf`, or the schema
+    itself, whether a string or a reference to a string enum component,
+    such as the enum of a `sort_by` parameter."""
+    if schema.get("type") == "array" and isinstance(schema.get("items"), dict):
+        yield from _string_schemas(schema["items"])
+    elif "anyOf" in schema:
+        for alternative in schema["anyOf"]:
+            yield from _string_schemas(alternative)
+    elif schema.get("type") == "string" or "$ref" in schema:
+        yield schema
+
+
+def publish_query_parameter_length_limit(
+    openapi_schema: dict[str, Any], routes: Sequence[BaseRoute]
+) -> None:
+    """Publish in `openapi_schema`, in place, the Query Parameter Length
+    Limit (`docs/api-spec.md`) as the `maxLength` of every string query
+    parameter that `enforce_query_parameter_length_limit` inspects: in
+    each operation whose dependency graph contains that dependency, the
+    parameters that `declared_string_param_names()` finds in the graph. A
+    smaller `maxLength` that an endpoint declares itself is kept."""
+    paths: dict[str, Any] = openapi_schema.get("paths", {})
+    for context in fastapi_routing.iter_route_contexts(routes):
+        if not isinstance(context.original_route, APIRoute):
+            continue
+        calls = {node.call for node in _dependants(context.dependant)}
+        if enforce_query_parameter_length_limit not in calls:
+            continue
+        names = set(declared_string_param_names(context.dependant, "query"))
+        for method in context.methods or ():
+            operation = paths.get(context.path_format or "", {}).get(method.lower())
+            if operation is None:
+                continue
+            for parameter in operation.get("parameters", ()):
+                if parameter.get("in") != "query" or parameter.get("name") not in names:
+                    continue
+                for schema in _string_schemas(parameter.get("schema", {})):
+                    schema["maxLength"] = min(
+                        schema.get("maxLength", MAX_QUERY_STRING_LENGTH),
+                        MAX_QUERY_STRING_LENGTH,
+                    )
+
+
 class SentinelAPI(FastAPI):
     """FastAPI, whose generated OpenAPI document also describes the
-    derived responses (`document_derived_responses`) and publishes every
+    derived responses (`document_derived_responses`), publishes every
     path and query parameter without `null`
-    (`publish_parameters_without_null`)."""
+    (`publish_parameters_without_null`), and publishes the query
+    parameter length limit (`publish_query_parameter_length_limit`)."""
 
     def openapi(self) -> dict[str, Any]:
         if self.openapi_schema is None:
             openapi_schema = super().openapi()
             document_derived_responses(openapi_schema, self.routes)
             publish_parameters_without_null(openapi_schema)
+            publish_query_parameter_length_limit(openapi_schema, self.routes)
             return openapi_schema
         return self.openapi_schema

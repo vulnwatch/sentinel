@@ -38,6 +38,7 @@ from app.api.dependencies import (
     ticket_not_found_error,
     ticket_not_mutable_error,
 )
+from app.api.openapi import enum_filter_schema
 from app.core.enums import (
     Capability,
     PackageSortField,
@@ -294,6 +295,9 @@ def _package_search_query(
                 "`resolved`, `ignored`, `duplicated`. Repeatable; OR semantics. "
                 "Invalid values are ignored; if all values are invalid, the "
                 "result is empty. Default: all statuses."
+            ),
+            json_schema_extra=enum_filter_schema(
+                _TICKET_STATUS_FILTER, repeatable=True
             ),
         ),
     ],

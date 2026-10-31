@@ -56,7 +56,10 @@ from starlette.routing import BaseRoute
 
 from app.api.dependencies import drain_ticket_convergence_after_commit
 from app.api.openapi import API_V1_RESPONSES
+from app.core.enums import SortOrder
 from app.core.errors import ErrorCode
+from app.core.query_limits import MAX_QUERY_STRING_LENGTH
+from app.core.route_params import declared_string_param_names
 from app.core.usernames import RESERVED_USERNAMES
 from app.database import get_db
 from app.main import app
@@ -1154,6 +1157,104 @@ class TestParameterNullability:
 
         assert _nullable_parameters(plain.openapi()) == [
             "GET /items: query parameter active"
+        ]
+
+
+def _query_string_schemas(schema: dict[str, Any]) -> list[dict[str, Any]]:
+    """The schemas of the strings a string-shaped query parameter carries:
+    the items of an array, the string or referencing alternatives of an
+    `anyOf`, or the schema itself."""
+    if schema.get("type") == "array":
+        return _query_string_schemas(schema["items"])
+    if "anyOf" in schema:
+        return [
+            alternative
+            for option in schema["anyOf"]
+            for alternative in _query_string_schemas(option)
+            if alternative.get("type") == "string" or "$ref" in alternative
+        ]
+    return [schema]
+
+
+def _query_parameters_without_length_limit(
+    document: dict[str, Any], routes: Sequence[BaseRoute]
+) -> list[str]:
+    """`METHOD path: name` of every string query parameter that the
+    query-length dependency inspects and whose published schema does not
+    bound it to `MAX_QUERY_STRING_LENGTH`."""
+    violations: list[str] = []
+    for context in fastapi_routing.iter_route_contexts(routes):
+        if not isinstance(context.original_route, APIRoute):
+            continue
+        names = set(declared_string_param_names(context.dependant, "query"))
+        for method in sorted(context.methods or ()):
+            operation = document["paths"][context.path_format][method.lower()]
+            for parameter in operation.get("parameters", ()):
+                if parameter["in"] != "query" or parameter["name"] not in names:
+                    continue
+                schemas = _query_string_schemas(parameter["schema"])
+                if not schemas or any(
+                    schema.get("maxLength", MAX_QUERY_STRING_LENGTH + 1)
+                    > MAX_QUERY_STRING_LENGTH
+                    for schema in schemas
+                ):
+                    violations.append(
+                        f"{method} {context.path_format}: {parameter['name']}"
+                    )
+    return violations
+
+
+@pytest.mark.unit
+class TestQueryParameterLengthPublication:
+    """Every string query parameter publishes the Query Parameter Length
+    Limit, or a smaller endpoint limit, as its `maxLength`.
+
+    See `docs/api-spec.md` (Query Parameter Length Limit; Published Input
+    Constraints) and `docs/conventions.md` (FastAPI Conventions, Published
+    input constraints). The parameters checked are those that
+    `enforce_query_parameter_length_limit` inspects, found by the same
+    discovery, so a parameter it enforces cannot go unpublished.
+    """
+
+    def test_every_string_query_parameter_publishes_the_limit(self) -> None:
+        document = app.openapi()
+        checked = [
+            name
+            for context in fastapi_routing.iter_route_contexts(app.routes)
+            if isinstance(context.original_route, APIRoute)
+            for name in declared_string_param_names(context.dependant, "query")
+        ]
+        assert checked, "no string query parameter found"
+
+        violations = _query_parameters_without_length_limit(document, app.routes)
+
+        assert not violations, "\n".join(violations)
+
+    def test_detection_covers_strings_lists_references_and_wider_limits(
+        self,
+    ) -> None:
+        """Guards the checker itself against passing vacuously: a plain
+        `FastAPI` application publishes no limit."""
+        plain = FastAPI()
+
+        @plain.get("/items")
+        async def items(
+            tags: Annotated[list[str], Query(default_factory=list)],
+            search: Annotated[str | None, Query()] = None,
+            order: Annotated[SortOrder, Query()] = SortOrder.ASC,
+            code: Annotated[str | None, Query(max_length=501)] = None,
+            short: Annotated[str | None, Query(max_length=20)] = None,
+            page: Annotated[int, Query()] = 1,
+        ) -> None:
+            """String, list, enum, wider, and narrower parameters."""
+
+        assert _query_parameters_without_length_limit(
+            plain.openapi(), plain.routes
+        ) == [
+            "GET /items: tags",
+            "GET /items: search",
+            "GET /items: order",
+            "GET /items: code",
         ]
 
 

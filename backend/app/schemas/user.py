@@ -15,10 +15,30 @@ from uuid import UUID
 from email_validator import EmailNotValidError, validate_email
 from pydantic import MISSING, BaseModel, Field, field_validator, model_validator
 
-from app.core.enums import SortOrder, UserDirectorySortField, UserSortField
-from app.core.permissions import role_from_wire
+from app.core.enums import SortOrder, UserDirectorySortField, UserSortField, UserType
+from app.core.passwords import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
 from app.core.usernames import RESERVED_USERNAMES, USERNAME_PATTERN
-from app.schemas.common import PaginationMeta, UserReference
+from app.schemas.common import PaginationMeta, RoleValue, UserReference
+
+_PASSWORD_DESCRIPTION = (
+    f"{MIN_PASSWORD_LENGTH}-{MAX_PASSWORD_LENGTH} characters; no complexity "
+    "rules. A password outside the policy returns `422 "
+    "USER_PASSWORD_POLICY_VIOLATION`, not `VALIDATION_ERROR`."
+)
+_PASSWORD_SCHEMA: dict[str, Any] = {
+    "minLength": MIN_PASSWORD_LENGTH,
+    "maxLength": MAX_PASSWORD_LENGTH,
+}
+"""The password policy (`docs/features/identity/local-authentication.md`,
+Password validation), published without being enforced by the schema
+(`docs/api-spec.md`, Published Input Constraints): the service enforces it
+with its dedicated code."""
+
+_EMAIL_DESCRIPTION = (
+    "Email address. Leading and trailing whitespace is trimmed and the value "
+    "is lowercased before it is validated; an invalid address returns `422 "
+    "VALIDATION_ERROR`."
+)
 
 
 class UserDirectoryListQuery(BaseModel):
@@ -30,7 +50,8 @@ class UserDirectoryListQuery(BaseModel):
     `role` is intentionally `list[str]`, not a typed enum list: an
     invalid value must be silently ignored (`docs/api-spec.md`, Enum
     Filter Validation) rather than raise the schema-validation `422` a
-    typed enum field would. The route handler parses it against `Role`.
+    typed enum field would. The route handler parses it against `Role`
+    and publishes the role values as the parameter's `enum`.
     """
 
     search: str | None = Field(default=None, min_length=2)
@@ -51,7 +72,8 @@ class UserListQuery(BaseModel):
     typed enums: an invalid value must be silently ignored and produce
     an empty result (`docs/api-spec.md`, Enum Filter Validation) rather
     than the schema-validation `422` a typed enum field would raise. The
-    route handler parses them against `UserType`/`Role` itself.
+    route handler parses them against `UserType`/`Role` itself and
+    publishes their values as the parameters' `enum`.
     """
 
     search: str | None = Field(default=None, min_length=2)
@@ -82,7 +104,7 @@ class UserDirectoryData(BaseModel):
     full_name: str | None
     active: bool
     bot: bool
-    roles: list[str]
+    roles: list[RoleValue]
 
 
 class UserDirectoryResponse(BaseModel):
@@ -117,7 +139,7 @@ class UserRoleAssignmentData(BaseModel):
     reference of the recorded assigning user, or `None` when none is
     recorded (CLI or external-group origin)."""
 
-    role: str
+    role: RoleValue
     group_name: str
     assigned_by: UserReference | None
     created_at: datetime
@@ -128,8 +150,8 @@ class UserData(BaseModel):
     (list items), `GET /api/v1/admin/users/{user}`, and the admin
     mutation endpoints (`user-management.md`, Get User (Admin)).
     `full_name` and `manager.full_name` are nullable — the API returns
-    `null` verbatim with no fallback substitution. `last_login_at` is
-    `null` until the user's first login."""
+    `null` verbatim with no fallback substitution. `source` is `local` or
+    `external`. `last_login_at` is `null` until the user's first login."""
 
     id: UUID
     username: str
@@ -137,7 +159,7 @@ class UserData(BaseModel):
     full_name: str | None
     active: bool
     bot: bool
-    source: str
+    source: UserType
     external_id: UUID | None
     manager: UserManagerData | None
     roles: list[UserRoleAssignmentData]
@@ -215,17 +237,12 @@ def _normalize_email_field(value: Any) -> Any:
     return normalized
 
 
-def _validate_role_list(value: list[str]) -> list[str]:
-    """Reject unknown wire-format role values and repeated values within
-    one list. Raises `ValueError`, which Pydantic renders as the global 422
-    `VALIDATION_ERROR` response."""
+def _validate_role_list(value: list[RoleValue]) -> list[RoleValue]:
+    """Reject repeated role values within one list; an unknown value
+    already fails the `RoleValue` type. Raises `ValueError`, which Pydantic
+    renders as the global 422 `VALIDATION_ERROR` response."""
     if len(value) != len(set(value)):
         raise ValueError("Duplicate role values are not allowed.")
-    for item in value:
-        try:
-            role_from_wire(item)
-        except ValueError as exc:
-            raise ValueError(f"Unknown role value: {item!r}") from exc
     return value
 
 
@@ -233,20 +250,37 @@ class AdminUserCreateRequest(BaseModel):
     """Request body for `POST /api/v1/admin/users`
     (`user-management.md`, Create User (Admin)).
 
-    `password` intentionally carries no length constraint at this layer:
-    the 16-128 character policy is domain validation enforced by
-    `user_service.create_user()`, which raises the domain-specific
+    `password` intentionally carries no enforced length constraint at
+    this layer: the 16-128 character policy is domain validation enforced
+    by `user_service.create_user()`, which raises the domain-specific
     `PasswordValidationError` mapped to `422
-    USER_PASSWORD_POLICY_VIOLATION` — a schema constraint here would
-    instead produce the generic `422 VALIDATION_ERROR`, losing that
-    documented code (mirrors `ApiKeyCreateRequest.name`).
+    USER_PASSWORD_POLICY_VIOLATION` — an enforced schema constraint here
+    would instead produce the generic `422 VALIDATION_ERROR`, losing that
+    documented code and its precedence (mirrors `ApiKeyCreateRequest.name`).
+    The policy is only published (`_PASSWORD_SCHEMA`). `username` and
+    `email` are normalized before they are validated, so their rules are
+    stated in their descriptions instead of as keywords, which would apply
+    to the raw value (`docs/api-spec.md`, Published Input Constraints).
     """
 
-    username: str
-    email: str
+    username: str = Field(
+        description=(
+            "Leading and trailing whitespace is trimmed and the value is "
+            "lowercased before it is validated. The result has 1-64 "
+            "characters, starts with a letter, contains only `a`-`z`, `0`-`9`, "
+            "`.`, `_`, and `-`, and is not the reserved `me`; otherwise `422 "
+            "VALIDATION_ERROR`."
+        ),
+        examples=["jdoe"],
+    )
+    email: str = Field(description=_EMAIL_DESCRIPTION)
     full_name: str | None = Field(default=None, max_length=255)
-    password: str = Field(repr=False)
-    roles: list[str] = Field(default_factory=list)
+    password: str = Field(
+        repr=False,
+        description=_PASSWORD_DESCRIPTION,
+        json_schema_extra=_PASSWORD_SCHEMA,
+    )
+    roles: list[RoleValue] = Field(default_factory=list)
     bot: bool = Field(default=False, strict=True)
 
     @field_validator("username", mode="before")
@@ -261,7 +295,7 @@ class AdminUserCreateRequest(BaseModel):
 
     @field_validator("roles")
     @classmethod
-    def _validate_roles(cls, value: list[str]) -> list[str]:
+    def _validate_roles(cls, value: list[RoleValue]) -> list[RoleValue]:
         return _validate_role_list(value)
 
 
@@ -279,7 +313,7 @@ class AdminUserUpdateRequest(BaseModel):
     Request Body Scalar Types).
     """
 
-    email: str | MISSING = MISSING
+    email: str | MISSING = Field(default=MISSING, description=_EMAIL_DESCRIPTION)
     full_name: str | MISSING | None = Field(default=MISSING, max_length=255)
     bot: bool | MISSING = Field(default=MISSING, strict=True)
 
@@ -299,13 +333,17 @@ class AdminPasswordResetRequest(BaseModel):
     """Request body for `POST /api/v1/admin/users/{user}/password`
     (`user-management.md`, Reset User Password).
 
-    `password` intentionally carries no length constraint at this layer
-    for the same reason as `AdminUserCreateRequest.password` — the
-    policy is domain validation owned by
-    `user_service.reset_password()`.
+    `password` intentionally carries no enforced length constraint at
+    this layer for the same reason as `AdminUserCreateRequest.password` —
+    the policy is domain validation owned by
+    `user_service.reset_password()` — and publishes it the same way.
     """
 
-    password: str = Field(repr=False)
+    password: str = Field(
+        repr=False,
+        description=_PASSWORD_DESCRIPTION,
+        json_schema_extra=_PASSWORD_SCHEMA,
+    )
 
 
 class UserRolesUpdateRequest(BaseModel):
@@ -319,12 +357,12 @@ class UserRolesUpdateRequest(BaseModel):
     absent body is handled by the route as `{}`.
     """
 
-    add: list[str] = Field(default_factory=list)
-    remove: list[str] = Field(default_factory=list)
+    add: list[RoleValue] = Field(default_factory=list)
+    remove: list[RoleValue] = Field(default_factory=list)
 
     @field_validator("add", "remove")
     @classmethod
-    def _validate_roles(cls, value: list[str]) -> list[str]:
+    def _validate_roles(cls, value: list[RoleValue]) -> list[RoleValue]:
         return _validate_role_list(value)
 
     @model_validator(mode="after")

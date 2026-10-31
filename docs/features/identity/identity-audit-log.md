@@ -293,7 +293,10 @@ Returns a paginated list of identity audit events where the
 authenticated user is the target (`target_user_id = current_user.id`).
 The target filter is implicit and not exposed as a query parameter.
 Events with `target_user_id IS NULL` (role mapping configuration
-events) are excluded.
+events) are excluded, so `role_mapping_created` and `role_mapping_deleted`
+are not event types of this log: neither its responses nor the values of
+its `event_type` filter include them, and the filter ignores them as invalid
+values.
 
 Sorting is fixed at `created_at` descending — client-controlled
 `sort_by` / `sort_order` parameters are not supported.

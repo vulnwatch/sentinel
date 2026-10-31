@@ -41,8 +41,16 @@ successful response:
 - the values of the discriminator of a union, such as `cvss_version` of a
   CVSS assessment; or
 - the values that a specification lists for a field whose values the OpenAPI
-  document does not enumerate, such as audit event types, fetcher names, and
-  the reasons that the `detail` of an audit event carries.
+  document does not enumerate, such as fetcher names and the reasons that the
+  `detail` of an audit event carries.
+
+The OpenAPI document publishes as an `enum` the response enum of every field
+that it describes, such as an audit event type, a role, or a run status,
+except two kinds of field: a member of a free-form object, such as the
+`detail` of an audit event, and a field that names a fetcher or a CVE source,
+whose values the fetcher registry defines and which can name one that is no
+longer registered. The document types such a field as a string, and its
+specification lists the values.
 
 Two kinds of field have no response enum. A field whose contract fixes one
 value, such as an OpenAPI `const` that does not select the variant of a union,
@@ -332,7 +340,9 @@ and no other outcome, whether or not routing would select an endpoint for it.
 
 Every string query parameter has an individual maximum length of 500
 characters, unless the endpoint specifies otherwise. Values exceeding the
-limit return `422 VALIDATION_ERROR`.
+limit return `422 VALIDATION_ERROR`. The OpenAPI document publishes the limit
+as the `maxLength` of each such parameter, or of its items when it is
+repeatable (Published Input Constraints).
 
 ### Undeclared Query Parameters
 
@@ -473,6 +483,49 @@ parameter as nullable, whatever its type. A client omits an optional query
 parameter instead, and the omission has the outcome that its endpoint states,
 for example that no filter applies.
 
+### Published Input Constraints
+
+The OpenAPI document publishes the closed value sets and the input
+constraints that the contract states for a path parameter, a query
+parameter, or a request-body member, so that a client can check its input
+before it sends it. A closed value set is published as an `enum`, a grammar
+as a `pattern`, and a length bound as a `minLength` or `maxLength`. A value
+set that the fetcher registry defines, such as the CVE sources that a
+refetch accepts, is not a closed value set of the contract, like the fetcher
+names of a response (Response Enums).
+
+A published keyword states what the contract accepts; it does not change the
+outcome of a request that violates it. That outcome is the global `422
+VALIDATION_ERROR` unless the contract states another one, such as:
+
+- a dedicated code, which keeps its precedence over the other conditions of
+  the operation, for example `422 USER_PASSWORD_POLICY_VIOLATION` for a
+  password outside the policy
+  (`docs/features/identity/local-authentication.md`, Password validation) or
+  `422 CVE_INVALID_FORMAT` for a malformed `cve_id` of a request body; or
+- the removal of a value outside the `enum` of an enum filter, which is
+  ignored, not rejected (Enum Filter Validation).
+
+Three kinds of constraint are stated in the description of the parameter or
+member instead of as a keyword, or in addition to the keywords that express
+part of it:
+
+- a constraint on the input after the operation normalizes it, for example a
+  username or an API key name, which is trimmed and lowercased before it is
+  validated: a keyword applies to the input as sent, so it would reject
+  input that the operation accepts;
+- the grammar of a path parameter that locates a resource, such as
+  `{ticket_id}` or `{cve_id}`: every value is a locator, and a malformed one
+  receives the not-found response of the resource (Ticket Identifier
+  Resolution, CVE Identifier Resolution); and
+- a constraint that no keyword expresses exactly, such as the range of `n`
+  in a request-body `SNTL-{n}` or the grammar of a cron expression.
+
+The Query Parameter Length Limit, a shared request-input constraint, is
+published on every parameter that it covers. The rejection of inadmissible
+characters (Inadmissible Characters in Request Input) applies to every string
+of every request and is not repeated on each parameter or member.
+
 ### Pagination
 
 List endpoints support pagination via query parameters:
@@ -529,6 +582,12 @@ provided values are invalid (or the resulting filter set is empty after
 removing invalid values), the endpoint returns an empty result set (not
 an error). This applies to all endpoints that accept enum-based filter
 parameters (e.g., `event_type`, `status`, `severity`).
+
+**Published values**: the OpenAPI document publishes the values that an
+enum filter accepts as the `enum` of the parameter, or of its items when it
+is repeatable, including a value that only the filter accepts, such as
+`unresolved` of a severity filter. A value outside the `enum` is still
+ignored as stated above (Published Input Constraints).
 
 #### Date Range Interpretation
 
@@ -748,9 +807,13 @@ Fields:
 - `detail` (string, required): a human-readable description of the error.
   May change without notice — do not match against this string
 - `errors` (array, optional): field-level validation errors. Present only
-  for `VALIDATION_ERROR` responses. This array uses Pydantic v2's native
-  validation error format, produced automatically by FastAPI. Each
-  element has the following schema:
+  for `VALIDATION_ERROR` responses and for the domain validation codes whose
+  owning contract lists it: `FETCHER_SETTING_UNKNOWN` and
+  `FETCHER_SETTING_INVALID`
+  ([fetcher-operations.md](features/platform/fetcher-operations.md#update-fetcher-config)).
+  This array uses Pydantic v2's native validation error format, produced
+  automatically by FastAPI for `VALIDATION_ERROR`. Each element has the
+  following schema:
   - `loc` (array of strings/integers, required): the path to the invalid
     field within the request payload, e.g. `["body", "field_name"]` or
     `["query", "per_page"]`

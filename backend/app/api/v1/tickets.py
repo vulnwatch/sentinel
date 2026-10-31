@@ -53,6 +53,7 @@ from app.api.dependencies import (
     ticket_not_mutable_error,
     user_not_found_error,
 )
+from app.api.openapi import enum_filter_schema
 from app.api.v1.cves import serialize_cve_detail
 from app.api.v1.ticket_packages import serialize_package
 from app.core.enums import (
@@ -208,6 +209,7 @@ def _ticket_list_query(
                 "`resolved`, `ignored`, `duplicated`. Repeatable; OR semantics. "
                 "Invalid values are ignored."
             ),
+            json_schema_extra=enum_filter_schema(_STATUS_FILTER, repeatable=True),
         ),
     ],
     assignee: Annotated[
@@ -228,6 +230,7 @@ def _ticket_list_query(
                 "`low`, `none` (CVSS score 0.0), `unresolved` (no severity). "
                 "Repeatable; OR semantics. Invalid values are ignored."
             ),
+            json_schema_extra=enum_filter_schema(_SEVERITY_FILTER, repeatable=True),
         ),
     ],
     priority: Annotated[
@@ -239,6 +242,7 @@ def _ticket_list_query(
                 "`unresolved` (not yet prioritizable). Repeatable; OR "
                 "semantics. Invalid values are ignored."
             ),
+            json_schema_extra=enum_filter_schema(_PRIORITY_FILTER, repeatable=True),
         ),
     ],
     overdue: Annotated[
@@ -253,6 +257,7 @@ def _ticket_list_query(
                 "one track has that milestone overdue. Repeatable; OR "
                 "semantics. Invalid values are ignored."
             ),
+            json_schema_extra=enum_filter_schema(_OVERDUE_FILTER, repeatable=True),
         ),
     ],
     current_phase: Annotated[
@@ -266,6 +271,9 @@ def _ticket_list_query(
                 "`overdue` value (for example `current_phase=um&overdue=um`), "
                 "it lists the Tickets whose current phase is past due. "
                 "Repeatable; OR semantics. Invalid values are ignored."
+            ),
+            json_schema_extra=enum_filter_schema(
+                _CURRENT_PHASE_FILTER, repeatable=True
             ),
         ),
     ],
