@@ -523,8 +523,9 @@ forms (see `docs/features/platform/testing-strategy.md`, Structural Tests).
   route's method. A route-level declaration of a status replaces the
   shared `422`, so a route-level `422` names `VALIDATION_ERROR` and admits
   `ValidationErrorResponse`, in a union with `ErrorResponse` when the status
-  also has a dedicated code whose body carries no `errors` array. A route-level declaration keeps precedence over
-  a derived response, whose condition is appended to its description. An
+  also has a dedicated code whose body carries no `errors` array. A
+  route-level declaration keeps precedence over a derived response, whose
+  condition is appended to its description. An
   endpoint that produces a global response without the shared dependency,
   such as logout's `401`, declares it itself. Structural tests in
   `backend/tests/test_api_conventions.py` check the envelope, the shared

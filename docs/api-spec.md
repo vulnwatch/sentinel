@@ -492,15 +492,16 @@ for example that no filter applies.
 The OpenAPI document publishes the closed value sets and the input
 constraints that the contract states for a path parameter, a query
 parameter, or a request-body member, so that a client can check its input
-before it sends it. An input constraint is a rule on the value as sent; a
-rule that depends on stored state, on the current time, or on the outcome of
-authentication, such as an API key expiry that must lie in the future or the
-lengths that local login answers with its generic `401`, is not one. A
-closed value set is published as an `enum`, a grammar as a `pattern`, and a
-length bound as a `minLength` or `maxLength`. A value set that the fetcher
-registry defines, such as the CVE sources that a refetch accepts, is not a
-closed value set of the contract, like the fetcher names of a response
-(Response Enums).
+before it sends it. An input constraint is a rule that depends only on the
+value that the request sends. A rule that depends on stored state or on the
+current time, such as an API key expiry that must lie in the future, is not
+one, and neither is a rule whose violation the operation reports as an
+authentication failure, such as the lengths that local login answers with
+its generic `401`. A closed value set is published as an `enum`, a grammar
+as a `pattern`, and a length bound as a `minLength` or `maxLength`. A value
+set that the fetcher registry defines, such as the CVE sources that a
+refetch accepts, is not a closed value set of the contract, like the fetcher
+names of a response (Response Enums).
 
 A published keyword states what the contract accepts; it does not change the
 outcome of a request that violates it. That outcome is the global `422
