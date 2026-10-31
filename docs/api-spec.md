@@ -112,7 +112,7 @@ following cases is breaking when one of them is. The cases are:
   `loc` or `type`, for example because a request member that a validator
   checked becomes typed with an enum. This holds also when only a new version
   of the validation library changes the entry, but not when the later release
-  returns the `loc` and `type` that the contract of the earlier release states
+  returns what the contract of the earlier release states for the entry
   (Conformance fix).
 
 None of the following is breaking: an `errors` entry for an invalid input
@@ -856,8 +856,7 @@ Fields:
     identifier, e.g. `"missing"`, `"string_type"`
 
   The `loc` and `type` of an entry stay the same for the invalid input that
-  it reports; changing them is breaking (Error Responses, Changed error
-  entry).
+  it reports, as Error Responses (Changed error entry) classifies.
 - `existing_ticket_id` (string, required; present only for `TICKET_CVE_CONFLICT`
   responses): the conflicting Ticket's `SNTL-{n}` identifier, a top-level
   field beside `code` and `detail` (see
