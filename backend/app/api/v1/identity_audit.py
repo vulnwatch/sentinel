@@ -109,14 +109,7 @@ def _self_identity_audit_query(
 
 def _admin_identity_audit_query(
     common: Annotated[IdentityAuditQuery, Depends(_identity_audit_query)],
-    event_type: Annotated[
-        list[str],
-        Query(
-            default_factory=list,
-            description=_EVENT_TYPE_DESCRIPTION,
-            json_schema_extra=enum_filter_schema(_ADMIN_EVENT_TYPES, repeatable=True),
-        ),
-    ],
+    *,
     actor: Annotated[
         str | None,
         Query(description="Actor UUID, exact username, or 'system'."),
@@ -125,7 +118,17 @@ def _admin_identity_audit_query(
         str | None,
         Query(description="Target user UUID or exact username."),
     ] = None,
+    event_type: Annotated[
+        list[str],
+        Query(
+            default_factory=list,
+            description=_EVENT_TYPE_DESCRIPTION,
+            json_schema_extra=enum_filter_schema(_ADMIN_EVENT_TYPES, repeatable=True),
+        ),
+    ],
 ) -> AdminIdentityAuditQuery:
+    """`event_type` follows `actor` and `target_user`, so the published order
+    of the parameters is the one that the shared builder gave them."""
     return AdminIdentityAuditQuery(
         **common.model_dump(exclude={"event_type"}),
         event_type=event_type,
