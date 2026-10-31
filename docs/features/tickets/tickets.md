@@ -1601,8 +1601,9 @@ Query parameters:
   with at least one `TicketPackageProduct` occurrence of that Product that is
   not effectively excluded: its package, track, and Product `deleted_at` are
   all `NULL` (`docs/features/packages/package-model.md`, Manual Exclusion
-  Markers). A Product that the latest SMELT snapshot no longer lists matches
-  like a current one. An unknown CPE returns an empty result, not 404.
+  Markers). A historical Product (`docs/features/packages/product-catalog.md`,
+  List Products) matches like a current one. An unknown CPE returns an empty
+  result, not 404.
 - `track` (string, optional): track reference, matched exactly and
   case-sensitively against `TicketPackageTrack.reference`, without trimming or
   normalization, for both workflows: an IBS codestream project name, such as
@@ -1625,9 +1626,11 @@ Query parameters:
 they apply to the same occurrence rather than as two independent conditions
 on the Ticket, as `docs/api-spec.md` (Filtering) permits: a Ticket matches
 when at least one occurrence of the Product that is not effectively excluded
-lies under a track of that reference. Other Products under the same track and
-the other packages and tracks of the Ticket neither add nor prevent a match.
-Every other filter combines with them by AND.
+lies under a track of that reference. Other Products under the same track
+neither add nor prevent a match. An occurrence of the Product under another
+track, or a track of that reference without such an occurrence, does not match
+on its own and does not prevent a match through another occurrence. Every
+other filter combines with them by AND.
 
 Only manual exclusion decides whether an occurrence qualifies. Product
 lifecycle and EOL, eligibility and its override, affectedness, delivery,
@@ -1639,8 +1642,8 @@ and change no visibility rule ([Confidentiality Filtering](#confidentiality-filt
 A package that an IBS codestream inherits through a link from an older
 codestream is tracked in its origin codestream
 (`docs/features/packages/package-model.md`, Codestream), so `track` with the
-inheriting codestream does not find its Tickets. `product` finds the Tickets
-of a Product whichever track delivers the package to it.
+inheriting codestream does not find a Ticket through that package. `product`
+finds the Tickets of a Product whichever track delivers the package to it.
 
 Response: paginated `TicketSummary` array in standard
 `{"data": [...], "meta": {...}}` envelope (200 OK).
