@@ -2736,8 +2736,7 @@ distributed locks). Specific impacts:
 - **Deduplication locks** (`fetch_pending:*`): tasks already enqueued
   may be duplicated if re-triggered before execution. This is a minor
   efficiency concern — the tasks are idempotent (upsert semantics).
-- **Login lockout counters**: brute-force rate limiting resets
-  temporarily.
+- **Login lockout counters**: the login lockout resets temporarily.
 - **`/ready` endpoint**: continues to return 200 (Redis is reachable
   after flush/restart). The flush itself is not detectable via health
   checks — detection is handled by the lock sentinel mechanism.

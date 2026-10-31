@@ -455,7 +455,7 @@ not a persistent identity mutation.
   keys. This is accepted because: (a) keys are TTL-bounded and expire
   after `LOGIN_LOCKOUT_MINUTES`, (b) each key is small (a few bytes),
   (c) the proxy's per-client request rate limit bounds the rate at which
-  they are created.
+  each client creates them.
 
 ## Login Page
 
@@ -516,13 +516,13 @@ behavior).
 - **Fail-open lockout (accepted risk)**: when Redis is unreachable, the
   login endpoint operates without the lockout to preserve availability.
   This is accepted for an internal tool on a trusted network. The proxy's
-  request rate limit still bounds brute force during the outage.
+  per-client request rate limit still bounds the brute force of each client
+  during the outage.
 - **Per-client throttling at the proxy**: Sentinel does not limit the rate
   of login requests per client; the proxy in front of the API does
   (`docs/architecture.md`, Request rate limiting at the proxy). That limit
-  covers both the fail-open scenario (Redis outage) and attempts against
-  many usernames from a single client, which the per-username lockout does
-  not see.
+  also covers attempts against many usernames from a single client, which
+  the per-username lockout does not see.
 - **No self-service password change (accepted risk)**: local users
   cannot change their own password. If a user suspects credential
   compromise, they must contact an admin who performs a password reset

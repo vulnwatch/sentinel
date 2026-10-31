@@ -140,11 +140,11 @@ these anchors is not a finding.
 The following are architectural decisions already taken for the project.
 Do NOT report findings about them:
 
-- **Rate limiting**: Sentinel does not implement application-level rate
-  limiting. Rate limiting will be enforced by frontend proxies (reverse
-  proxy / API gateway) external to the application. Do not flag the
-  absence of rate limiting on any endpoint (public or authenticated) as
-  a security finding.
+- **Rate limiting**: Sentinel does not limit the rate of incoming
+  requests; a proxy in front of the API does (`docs/architecture.md`,
+  Request rate limiting at the proxy). Do not flag the absence of rate
+  limiting on any endpoint (public or authenticated) as a security
+  finding.
 
 ## Before reviewing
 

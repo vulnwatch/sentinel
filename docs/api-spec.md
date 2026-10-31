@@ -680,14 +680,16 @@ and log record schema.
 
 ### Rate Limiting
 
-The API does not limit the rate of requests and sends no rate-limit headers:
-a proxy in front of it does (`docs/architecture.md`, Request rate limiting at
-the proxy). A response with which that proxy rejects a request, such as
-`429 Too Many Requests`, is produced before the request reaches the
-application and is therefore outside the error structure of Response Format.
-The only `429` that the API itself returns is `AUTH_ACCOUNT_LOCKED` of local
-login, a per-account lockout
-(`docs/features/identity/local-authentication.md`, Login).
+The API does not limit the rate of requests and sends no `X-RateLimit-*`
+headers; a proxy in front of it limits the rate (`docs/architecture.md`,
+Request rate limiting at the proxy). A response with which that proxy rejects
+a request, such as `429 Too Many Requests`, is produced before the request
+reaches the application and is therefore outside the error structure of
+Response Format. A `429` that the API itself returns, such as
+`AUTH_ACCOUNT_LOCKED` of local login
+(`docs/features/identity/local-authentication.md`, Login), is defined by its
+feature, is not request rate limiting, and carries that error structure, whose
+`code` distinguishes it from a rejection by the proxy.
 
 ## Response Conventions
 

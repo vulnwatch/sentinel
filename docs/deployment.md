@@ -2072,9 +2072,11 @@ and Session cookie); the
 **Request rate limiting.** A proxy in front of the API, this reverse proxy or
 a dedicated one, limits the rate of requests per client on every path under
 `/api/`, the Public endpoints included. Sentinel limits none itself
-(`docs/architecture.md`, Request rate limiting at the proxy). The limits are
-part of the environment configuration, which is maintained outside this
-repository.
+(`docs/architecture.md`, Request rate limiting at the proxy). The proxy
+identifies a client by the source address of the connection that reaches the
+host, or by a forwarded address only when a hop that it trusts sets it, so
+that clients do not share one limit. The limits are part of the environment
+configuration, which is maintained outside this repository.
 
 **Versions.** The `sentinel-aura` repository declares the Sentinel versions
 that each UI release supports, within the range of

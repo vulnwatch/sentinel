@@ -133,7 +133,7 @@ is passed explicitly to the factory.
 - Connect: 10 seconds (TCP + TLS handshake)
 - Read: 30 seconds (longest wait for the next part of the response; it does
   not bound the time taken by the whole body)
-- Write: 10 seconds (time to send request body)
+- Write: 10 seconds (longest wait to send the next part of the request)
 - Pool: 10 seconds (time waiting for a connection from the pool)
 
 Not configurable via env var or admin panel — these are engineering

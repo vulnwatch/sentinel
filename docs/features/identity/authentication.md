@@ -1179,9 +1179,9 @@ code `AUTH_LOGOUT_NOT_APPLICABLE` and message:
   logged. Whoever holds it can issue valid tokens. A symmetric algorithm
   (`HS256`) is sufficient because the API is both the only issuer and the
   only verifier of Sentinel JWTs: an asymmetric algorithm would protect no
-  verifier that must not be able to issue tokens. Every process role loads
-  the key (`docs/configuration.md`, Required Secrets) from the same image,
-  within one trust boundary.
+  verifier that must not be able to issue tokens. Every process role runs
+  the same image and loads the key from its environment
+  (`docs/configuration.md`, Required Secrets), within one trust boundary.
 - **API key hashing uses plain SHA-256**, not a slow hash like bcrypt
   and not a keyed HMAC. API keys have ~190 bits of entropy (32
   alphanumeric characters generated server-side by a CSPRNG) and are

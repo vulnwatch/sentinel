@@ -596,7 +596,8 @@ recovery.
   - `*.obs.metrics` — upstream telemetry in Influx line protocol, not JSON
 - **Access**:
   - IBS: credential-bearing AMQPS URL configured by `IBS_RABBITMQ_URL`
-    (default host `rabbit.suse.de`, port 5671). The full URL is excluded from
+    (default host `rabbit.suse.de`, port 5671). The user information of the
+    default is the shared account of the bus. The full URL is excluded from
     settings representations and is never logged
   - OBS: `amqps://opensuse:opensuse@rabbit.opensuse.org`
   - Both use the existing `pubsub` exchange. Sentinel declares it with
