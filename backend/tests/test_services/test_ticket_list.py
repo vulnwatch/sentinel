@@ -780,6 +780,10 @@ SLED_CPE = "cpe:/o:example:sled:15:sp6"
 SP6_UPDATE = "SUSE:SLE-15-SP6:Update"
 SP4_UPDATE = "SUSE:SLE-15-SP4:Update"
 SLFO_MAIN = "slfo-main"
+SINGLE_FILTERS: tuple[dict[str, Any], ...] = (
+    {"product": SLES_CPE},
+    {"track": SP6_UPDATE},
+)
 
 
 @pytest.fixture
@@ -788,23 +792,25 @@ def occurrence(
     ticket_package_track_factory: Factory,
     ticket_package_product_factory: Factory,
 ) -> Callable[..., Awaitable[TicketPackageTrack]]:
-    """Create one track of `ticket` under a new package with an occurrence
-    of each given catalog Product, every record included unless a
-    marker is given."""
+    """Create one track of `ticket` with an occurrence of each given catalog
+    Product, under `package` when given and otherwise under a new package,
+    every record included unless a marker is given."""
 
     async def _create(
         ticket: Ticket,
         reference: str,
         *products: Any,
+        package: TicketPackage | None = None,
         workflow_type: WorkflowType = WorkflowType.IBS,
         package_deleted_at: datetime | None = None,
         track_deleted_at: datetime | None = None,
         product_deleted_at: datetime | None = None,
         **track_fields: Any,
     ) -> TicketPackageTrack:
-        package = await ticket_package_factory(
-            ticket_id=ticket.id, deleted_at=package_deleted_at
-        )
+        if package is None:
+            package = await ticket_package_factory(
+                ticket_id=ticket.id, deleted_at=package_deleted_at
+            )
         track: TicketPackageTrack = await ticket_package_track_factory(
             ticket_package_id=package.id,
             reference=reference,
@@ -1003,23 +1009,32 @@ class TestProductAndTrackFilters:
             excluded_under_track, SP6_UPDATE, sles, product_deleted_at=EXCLUDED_AT
         )
         await occurrence(excluded_under_track, SP4_UPDATE, sles)
+        # One package with both tracks: the Product lies only under the
+        # other track of the same package.
+        same_package = await ticket_factory()
+        sp6 = await occurrence(same_package, SP6_UPDATE, sled)
+        package = await db_session.get(TicketPackage, sp6.ticket_package_id)
+        await occurrence(same_package, SP4_UPDATE, sles, package=package)
         # Two packages qualify: the Ticket is listed and counted once.
         twice = await ticket_factory()
         await occurrence(twice, SP6_UPDATE, sles)
         await occurrence(twice, SP6_UPDATE, sles, sled)
+        every = [shared_track, other_track, excluded_under_track, same_package, twice]
 
         page = await _list(db_session, product=SLES_CPE, track=SP6_UPDATE)
         assert {item.ticket_id for item in page.items} == _set([shared_track, twice])
         assert page.total == 2
-        assert set(await _ids(db_session, product=SLES_CPE)) == _set(
-            [shared_track, other_track, excluded_under_track, twice]
-        )
-        assert set(await _ids(db_session, track=SP6_UPDATE)) == _set(
-            [shared_track, other_track, excluded_under_track, twice]
-        )
+        assert set(await _ids(db_session, product=SLES_CPE)) == _set(every)
+        assert set(await _ids(db_session, track=SP6_UPDATE)) == _set(every)
         assert set(await _ids(db_session, product=SLES_CPE, track=SP4_UPDATE)) == (
-            _set([other_track, excluded_under_track])
+            _set([other_track, excluded_under_track, same_package])
         )
+        # A single filter counts each Ticket once despite several qualifying
+        # occurrences (`twice`).
+        for filters in SINGLE_FILTERS:
+            assert (await _list(db_session, per_page=1, **filters)).total == len(
+                every
+            ), filters
 
     async def test_filters_combine_with_the_others_by_and_without_fan_out(
         self,
@@ -1038,17 +1053,24 @@ class TestProductAndTrackFilters:
         new = await ticket_factory(status=TicketStatus.NEW.value)
         await occurrence(new, SP6_UPDATE, sles)
 
-        page = await _list(
-            db_session,
-            product=SLES_CPE,
-            track=SP6_UPDATE,
-            status=[TicketStatus.ANALYSIS],
-            per_page=1,
-        )
+        with _StatementRecorder(db_session) as recorder:
+            page = await _list(
+                db_session,
+                product=SLES_CPE,
+                track=SP6_UPDATE,
+                status=[TicketStatus.ANALYSIS],
+                per_page=1,
+            )
+        assert len(recorder.statements) == 1
         assert [item.ticket_id for item in page.items] == [_sntl(analysis)]
         assert page.total == 1
         assert await _ids(db_session, product=SLES_CPE, search="no-such-package") == []
-        assert set(await _ids(db_session, track=SP6_UPDATE)) == _set([analysis, new])
+        for filters in SINGLE_FILTERS:
+            page = await _list(db_session, per_page=1, **filters)
+            assert page.total == 2, filters
+            assert sorted(await _ids(db_session, **filters)) == sorted(
+                [_sntl(analysis), _sntl(new)]
+            ), filters
 
     async def test_filters_never_widen_visibility(
         self,

@@ -366,7 +366,7 @@ class TestListEndpoint:
             assert response.status_code == 200, params
             assert response.json()["meta"]["total"] == 0, params
 
-    async def test_product_and_track_match_exact_values_on_the_same_occurrence(
+    async def test_product_and_track_reach_the_service_on_the_same_occurrence(
         self,
         authenticated_client: AsyncClient,
         fixed_clock: list[datetime],
@@ -412,18 +412,6 @@ class TestListEndpoint:
             product="cpe:/o:example:sles:15:sp6",
             track="SUSE:SLE-15-SP6:Update",
         ) == [_sntl(through_update)]
-        for params in (
-            {"product": "CPE:/O:EXAMPLE:SLES:15:SP6"},
-            {"product": "cpe:/o:example:unknown:1"},
-            {"track": "suse:sle-15-sp6:update"},
-            {"track": "Example:Unknown:Update"},
-        ):
-            response = await authenticated_client.get(_PATH, params=params)
-            assert response.status_code == 200, params
-            assert response.json() == {
-                "data": [],
-                "meta": {"total": 0, "page": 1, "per_page": 20},
-            }, params
 
     async def test_search_and_sort_reach_the_service(
         self,
