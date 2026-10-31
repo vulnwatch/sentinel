@@ -6,8 +6,8 @@ Owning specifications:
 - `docs/features/packages/package-service.md` (Query Operations >
   `get_ticket_packages()`): SNTL-only resolution under the canonical
   visibility predicate in one coherent observation, the complete tree
-  including excluded records, canonical code-point ordering, no
-  maintainer identities, no N+1 loading.
+  including excluded records, canonical code-point ordering, the current
+  maintainers of each package, no N+1 loading.
 - `docs/features/packages/package-model.md` (Derived Actionability,
   Delivery Relevance Indicator, List Ticket Packages).
 - `docs/features/tickets/ticket-deadlines.md` (Due Dates, Evaluation
@@ -68,6 +68,7 @@ from app.models.user import User
 from app.models.user_role import UserRole
 from app.services import package_service
 from app.services.package_service import (
+    PackageMaintainerProjection,
     PackageProjection,
     ProductProjection,
     TicketTreeContext,
@@ -304,6 +305,7 @@ class TestTreeProjection:
                         ),
                     ),
                 ),
+                maintainers=(),
             ),
             PackageProjection(
                 id=excluded.id,
@@ -346,6 +348,7 @@ class TestTreeProjection:
                         ),
                     ),
                 ),
+                maintainers=(),
             ),
         )
 
@@ -447,25 +450,55 @@ class TestTreeProjection:
         assert projected_track.non_actionable_reason is R.TRACK_EXCLUDED
         assert projected_product.non_actionable_reason is R.TRACK_EXCLUDED
 
-    async def test_projection_exposes_no_maintainer_identity(
+    async def test_projects_the_current_maintainers_of_each_package(
         self,
         db_session: AsyncSession,
         ticket_factory: Factory,
+        user_factory: Factory,
         ticket_package_factory: Factory,
         ticket_package_maintainer_factory: Factory,
     ) -> None:
+        """package-service.md, `get_ticket_packages()` step 5: every
+        association in username code-point order, the excluded package's
+        too, inactive Users with `active = False`, the current profile, and
+        an empty list for a package without an association."""
         ticket: Ticket = await ticket_factory()
-        package = await ticket_package_factory(ticket_id=ticket.id)
-        await ticket_package_maintainer_factory(ticket_package_id=package.id)
+        lib = await ticket_package_factory(ticket_id=ticket.id, package_name="a-lib")
+        tool = await ticket_package_factory(
+            ticket_id=ticket.id, package_name="b-tool", deleted_at=EXCLUDED_AT
+        )
+        bare = await ticket_package_factory(ticket_id=ticket.id, package_name="c-bare")
+        # "amy-z" < "amyb" by code point ("-" < "b"); a collation that
+        # ignores punctuation would order "amyb" first.
+        amy: User = await user_factory(username="amyb", full_name="Amy Maint")
+        zed: User = await user_factory(
+            username="amy-z", full_name=None, active=False, bot=True
+        )
+        for package, user in ((lib, amy), (lib, zed), (tool, amy)):
+            await ticket_package_maintainer_factory(
+                ticket_package_id=package.id, user_id=user.id
+            )
+        await db_session.execute(
+            update(User).where(User.id == amy.id).values(full_name="Amy Renamed")
+        )
 
         with _StatementRecorder(db_session) as recorder:
-            (projected,) = await _read(db_session, ticket)
+            projected = await _read(db_session, ticket)
 
-        assert "maintainer" not in PackageProjection.__dataclass_fields__
-        assert projected.id == package.id
+        amy_now = PackageMaintainerProjection(
+            id=amy.id, username="amyb", full_name="Amy Renamed", active=True, bot=False
+        )
+        zed_now = PackageMaintainerProjection(
+            id=zed.id, username="amy-z", full_name=None, active=False, bot=True
+        )
+        assert [(p.id, p.maintainers) for p in projected] == [
+            (lib.id, (zed_now, amy_now)),
+            (tool.id, (amy_now,)),
+            (bare.id, ()),
+        ]
+        # One statement for the whole tree: no per-package maintainer query.
         (statement,) = recorder.statements
-        assert "ticket_package_maintainer" not in statement
-        assert '"user"' not in statement
+        assert "email" not in statement
 
 
 # ---------------------------------------------------------------------------

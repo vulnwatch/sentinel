@@ -413,7 +413,8 @@ The result is the semantic projection represented by `TicketDetail` in
    `evaluation_date` and the same evaluation instant, which projects the per-track due
    dates, `milestones`, and `current_phase`. Package names, track references, and Product CPEs use
    ascending Unicode code-point order with the corresponding occurrence UUID
-   as final tie-breaker. Maintainer identities are not loaded or projected.
+   as final tie-breaker. The tree names the maintainers of each package as
+   that projection defines; no source maintainership data is loaded.
 6. Projects the Ticket `current_phase` and `current_phase_milestone` through
    `resolve_ticket_current_phase()`
    ([ticket-deadlines.md](ticket-deadlines.md#resolve_ticket_current_phase)) from

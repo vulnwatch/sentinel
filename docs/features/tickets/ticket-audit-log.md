@@ -96,7 +96,9 @@ event type.
   fictional data: `package_maintainer_added` from fictional maintainer emails
   instead of package resolution, and `product_released` from a fictional
   advisory instead of `updateinfo.xml`
-  (`docs/features/platform/example-dataset.md`, Attribution).
+  (`docs/features/platform/example-dataset.md`, Attribution). The events of
+  its aged Tickets keep the times of the load, later than their backdated
+  creation time (`docs/features/platform/example-dataset.md`, Aged Tickets).
 - `old_value` and `new_value` store human-readable strings. For enum values,
   store the persisted value of the enum member, which can differ from the
   lowercase value that other API fields use for it: `New` or `Analysis` for a
@@ -287,6 +289,7 @@ an intentional no-event contract, not missing audit coverage.
 | Ticket convergence registration, dispatch, execution, retry, partial/terminal failure, or operator rerun | None for the workflow outcome; effective delegated mutations retain their normal events | N/A | Ticket convergence owner; per-domain locks |
 | CVE refetch preparation, publication, deduplication, retry, or terminal task outcome | None for dispatch workflow outcomes; effective fetched CVE/CVSS/Ticket mutations retain their existing contracts | N/A | `cve_service` preparation and `fetch_single_cve`; CVE then optional Ticket for preparation |
 | Product catalog source mutation or workflow-only dispatch/checkpoint outcome | None; later per-Ticket delegated mutations retain their normal events | N/A | Owning catalog/workflow service |
+| Aging of a Ticket by the example dataset loader (`docs/features/platform/example-dataset.md`, Aged Tickets) | None | N/A | Example dataset loader; Ticket lock |
 
 For every row, a rejected, not-found, unchanged, stale/inapplicable,
 concurrent-loser, or rolled-back outcome creates no event unless the owning

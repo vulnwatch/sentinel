@@ -478,7 +478,20 @@ class TestTicketAccessibility:
         data = response.json()["data"]
         assert data["is_confidential"] is True
         assert [p["id"] for p in data["packages"]] == [str(package.id)]
-        assert "maintainers" not in data["packages"][0]
+        expected = (
+            [
+                {
+                    "id": str(authenticated_user.id),
+                    "username": authenticated_user.username,
+                    "full_name": authenticated_user.full_name,
+                    "active": True,
+                    "bot": False,
+                }
+            ]
+            if branch == "maintainer"
+            else []
+        )
+        assert data["packages"][0]["maintainers"] == expected
 
     async def test_authenticated_caller_without_a_path_gets_404(
         self,

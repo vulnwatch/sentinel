@@ -262,6 +262,8 @@ class TestProjection:
                         ticket_id="SNTL-123",
                         status=TicketStatus.ANALYSIS,
                         severity=Severity.HIGH,
+                        is_confidential=False,
+                        cve_id=None,
                     ),
                     track_summary=TrackSummaryProjection(
                         total=5,
@@ -349,6 +351,34 @@ class TestProjection:
 
         assert item.ticket.severity is expected
 
+    async def test_ticket_reference_projects_confidentiality_and_cve_id(
+        self,
+        db_session: AsyncSession,
+        tree: Tree,
+        ticket_factory: Factory,
+        cve_factory: Factory,
+    ) -> None:
+        """package-model.md, `TicketPackageRef`: the Ticket's
+        `is_confidential` and associated CVE identifier, `None` without a
+        CVE (tickets.md, Confidential Tickets)."""
+        cve = await cve_factory(cve_id="CVE-2099-71001")
+        embargoed: Ticket = await ticket_factory(cve_id=cve.id, is_confidential=True)
+        public: Ticket = await ticket_factory()
+        await tree.package(embargoed, "example-embargoed")
+        await tree.package(public, "example-public")
+
+        page = await _search(
+            db_session, sort_by=PackageSortField.PACKAGE_NAME, sort_order=SortOrder.ASC
+        )
+
+        assert [
+            (item.package_name, item.ticket.is_confidential, item.ticket.cve_id)
+            for item in page.items
+        ] == [
+            ("example-embargoed", True, "CVE-2099-71001"),
+            ("example-public", False, None),
+        ]
+
 
 @pytest.mark.unit
 class TestProjectionShape:
@@ -357,6 +387,8 @@ class TestProjectionShape:
             "ticket_id",
             "status",
             "severity",
+            "is_confidential",
+            "cve_id",
         }
 
     def test_item_exposes_no_tree_or_maintainer_field(self) -> None:

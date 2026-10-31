@@ -98,6 +98,7 @@ from app.services import cve_service, ticket_mutations
 from app.services.cve_projection import CVEDetailProjection
 from app.services.cve_service import (
     CVEAffectedVersionsResult,
+    CVEAssociatedTicketProjection,
     CVEDetailResult,
     CVEFetchFailedError,
     CVEInvalidSourceError,
@@ -253,8 +254,12 @@ def _date_bounds(
     )
 
 
-def _ticket(ticket_id: str | None) -> CVEAssociatedTicket | None:
-    return CVEAssociatedTicket(ticket_id=ticket_id) if ticket_id is not None else None
+def _ticket(ticket: CVEAssociatedTicketProjection | None) -> CVEAssociatedTicket | None:
+    if ticket is None:
+        return None
+    return CVEAssociatedTicket(
+        ticket_id=ticket.ticket_id, is_confidential=ticket.is_confidential
+    )
 
 
 def serialize_cve_detail(cve: CVEDetailProjection) -> CVEDetail:
@@ -324,7 +329,7 @@ def serialize_cve_list_item(item: CVEListItemProjection) -> CVEListItem:
             "severity": _lower(item.severity),
             "cve_state": item.cve_state.lower(),
             "published_date": item.published_date,
-            "ticket": _ticket(item.ticket_id),
+            "ticket": _ticket(item.ticket),
             "created_at": item.created_at,
             "updated_at": item.updated_at,
         }
@@ -333,11 +338,11 @@ def serialize_cve_list_item(item: CVEListItemProjection) -> CVEListItem:
 
 def serialize_cve_resource_detail(result: CVEDetailResult) -> CVEResourceDetail:
     """Map the CVE detail result to `CVEResourceDetail`: the shared
-    `CVEDetail` fields plus the associated Ticket identity."""
+    `CVEDetail` fields plus the associated Ticket."""
     return CVEResourceDetail.model_validate(
         {
             **serialize_cve_detail(result.cve).model_dump(),
-            "ticket": _ticket(result.ticket_id),
+            "ticket": _ticket(result.ticket),
         }
     )
 

@@ -53,6 +53,7 @@ from app.models.user_role import UserRole
 from app.services import cve_service
 from app.services.cve_projection import CVEDetailProjection
 from app.services.cve_service import (
+    CVEAssociatedTicketProjection,
     CVEDetailResult,
     CVEListResult,
     CVESourceListResult,
@@ -232,7 +233,7 @@ class TestCVEList:
                 "severity": "high",
                 "cve_state": "published",
                 "published_date": "2099-03-01T12:00:00Z",
-                "ticket": {"ticket_id": _sntl(ticket)},
+                "ticket": {"ticket_id": _sntl(ticket), "is_confidential": False},
                 "created_at": "2099-01-10T08:00:00Z",
                 "updated_at": "2099-01-11T09:30:00Z",
             },
@@ -501,10 +502,10 @@ class TestCVEDetail:
                 {"cwe_id": "CWE-20", "sources": ["NVD"]},
                 {"cwe_id": "CWE-79", "sources": ["MITRE", "NVD"]},
             ],
-            "ticket": {"ticket_id": _sntl(ticket)},
+            "ticket": {"ticket_id": _sntl(ticket), "is_confidential": False},
         }
         assert set(body["data"]) == _CVE_DETAIL_FIELDS | {"ticket"}
-        assert set(body["data"]["ticket"]) == {"ticket_id"}
+        assert set(body["data"]["ticket"]) == {"ticket_id", "is_confidential"}
         for secret in (str(cve.id), str(ticket.id), "priority", "cvss", "SUSE"):
             assert secret not in response.text
 
@@ -604,7 +605,10 @@ class TestCVEDetail:
         response = await authenticated_client.get(_detail_url(cve.cve_id))
 
         assert response.status_code == 200
-        assert response.json()["data"]["ticket"] == {"ticket_id": _sntl(ticket)}
+        assert response.json()["data"]["ticket"] == {
+            "ticket_id": _sntl(ticket),
+            "is_confidential": True,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -1349,7 +1353,12 @@ class TestHandlerDelegation:
             cwes=(),
         )
         spy = AsyncMock(
-            return_value=CVEDetailResult(cve=projection, ticket_id="SNTL-7")
+            return_value=CVEDetailResult(
+                cve=projection,
+                ticket=CVEAssociatedTicketProjection(
+                    ticket_id="SNTL-7", is_confidential=True
+                ),
+            )
         )
         monkeypatch.setattr(cve_service, "get_cve_detail", spy)
 
@@ -1358,7 +1367,10 @@ class TestHandlerDelegation:
 
         assert response.status_code == 200
         data = response.json()["data"]
-        assert (data["severity"], data["ticket"]) == ("none", {"ticket_id": "SNTL-7"})
+        assert (data["severity"], data["ticket"]) == (
+            "none",
+            {"ticket_id": "SNTL-7", "is_confidential": True},
+        )
         assert recorder.handler_statements == []
         spy.assert_awaited_once_with(
             db_session,
@@ -1572,7 +1584,14 @@ class TestOpenApiContract:
             schemas["CVEDetail"]["properties"]
         ) | {"ticket"}
         assert set(schemas["CVESourceListItem"]["properties"]) == _SOURCE_ITEM_FIELDS
-        assert set(schemas["CVEAssociatedTicket"]["properties"]) == {"ticket_id"}
+        assert set(schemas["CVEAssociatedTicket"]["properties"]) == {
+            "ticket_id",
+            "is_confidential",
+        }
+        assert set(schemas["CVEAssociatedTicket"]["required"]) == {
+            "ticket_id",
+            "is_confidential",
+        }
         for name in ("CVEListItem", "CVEResourceDetail", "CVESourceListItem"):
             properties = set(schemas[name]["properties"])
             assert not {"id", "priority", "cvss", "assessments"} & properties, name

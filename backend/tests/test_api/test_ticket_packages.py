@@ -158,6 +158,8 @@ class TestListTicketPackagesEndpoint:
         ticket_package_factory: Factory,
         ticket_package_track_factory: Factory,
         ticket_package_product_factory: Factory,
+        user_factory: Factory,
+        ticket_package_maintainer_factory: Factory,
     ) -> None:
         cve = await cve_factory(severity=Severity.CRITICAL.value)
         ticket: Ticket = await ticket_factory(cve_id=cve.id, created_at=_CREATED_AT)
@@ -166,6 +168,19 @@ class TestListTicketPackagesEndpoint:
         )
         excluded = await ticket_package_factory(
             ticket_id=ticket.id, package_name="example-tool", deleted_at=_EXCLUDED_AT
+        )
+        # Inserted out of username order; one is inactive, one a bot.
+        zoe = await user_factory(
+            username="zoe.maint", full_name="Zoe Maint", active=False
+        )
+        ann = await user_factory(username="ann.maint", full_name=None)
+        bot = await user_factory(username="maint-bot", full_name="Bot", bot=True)
+        for user in (zoe, ann):
+            await ticket_package_maintainer_factory(
+                ticket_package_id=package.id, user_id=user.id
+            )
+        await ticket_package_maintainer_factory(
+            ticket_package_id=excluded.id, user_id=bot.id
         )
         track = await ticket_package_track_factory(
             ticket_package_id=package.id,
@@ -255,6 +270,22 @@ class TestListTicketPackagesEndpoint:
                         ],
                     }
                 ],
+                "maintainers": [
+                    {
+                        "id": str(ann.id),
+                        "username": "ann.maint",
+                        "full_name": None,
+                        "active": True,
+                        "bot": False,
+                    },
+                    {
+                        "id": str(zoe.id),
+                        "username": "zoe.maint",
+                        "full_name": "Zoe Maint",
+                        "active": False,
+                        "bot": False,
+                    },
+                ],
             },
             {
                 "id": str(excluded.id),
@@ -263,8 +294,19 @@ class TestListTicketPackagesEndpoint:
                 "actionable": False,
                 "non_actionable_reason": "package_excluded",
                 "tracks": [],
+                "maintainers": [
+                    {
+                        "id": str(bot.id),
+                        "username": "maint-bot",
+                        "full_name": "Bot",
+                        "active": True,
+                        "bot": True,
+                    },
+                ],
             },
         ]
+        for secret in ("example.com", "email"):
+            assert secret not in response.text
 
     async def test_null_sla_and_unobservable_phases_serialize_as_null(
         self,
@@ -683,8 +725,28 @@ class TestOpenApiContract:
                 "product_id",
                 "identifier",
                 "ticket_sequence_id",
-                "maintainers",
             } & set(properties), name
+
+    def test_package_detail_lists_maintainers_as_user_references(self) -> None:
+        """tickets.md, Shared Sub-Schemas (PackageDetail): a required array
+        of the standard user reference, with no email, group, or count."""
+        schemas_ = app.openapi()["components"]["schemas"]
+        package = schemas_["PackageDetail"]
+        maintainers = package["properties"]["maintainers"]
+
+        assert "maintainers" in package["required"]
+        assert maintainers["type"] == "array"
+        assert maintainers["items"] == {"$ref": "#/components/schemas/UserReference"}
+        assert set(schemas_["UserReference"]["properties"]) == {
+            "id",
+            "username",
+            "full_name",
+            "active",
+            "bot",
+        }
+        assert not {"maintainer_count", "maintainer_emails", "groups"} & set(
+            package["properties"]
+        )
 
     def test_required_consumer_guidance_is_documented(self) -> None:
         schemas_ = app.openapi()["components"]["schemas"]

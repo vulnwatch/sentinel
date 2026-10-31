@@ -25,7 +25,12 @@ from uuid import UUID
 from pydantic import BaseModel, Field, model_validator
 
 from app.core.enums import PackageSortField, SortOrder
-from app.schemas.common import PaginationMeta, SeverityValue, TicketStatusValue
+from app.schemas.common import (
+    PaginationMeta,
+    SeverityValue,
+    TicketStatusValue,
+    UserReference,
+)
 
 type PackageStatusValue = Literal[
     "analysis", "affected", "not_affected", "fixed", "wont_fix"
@@ -238,10 +243,8 @@ class TrackDetail(BaseModel):
 
 
 class PackageDetail(BaseModel):
-    """One source package within a Ticket, with its complete track tree.
-
-    Maintainer identities are never exposed.
-    """
+    """One source package within a Ticket, with its complete track tree
+    and its maintainers."""
 
     id: UUID = Field(description="TicketPackage identifier.")
     package_name: str = Field(description="Source package name.")
@@ -267,6 +270,17 @@ class PackageDetail(BaseModel):
         description=(
             "First applicable reason in the order `package_excluded`, "
             "`no_actionable_tracks`; `null` when actionable."
+        )
+    )
+    maintainers: list[UserReference] = Field(
+        description=(
+            "The users that Sentinel associated with this package as its "
+            "maintainers, from SMELT maintainership data, as current user "
+            "references ordered by `username` (Unicode code point); empty "
+            "when none is associated. Associations are only added, never "
+            "removed: a directly excluded package keeps them (they grant no "
+            "access to a confidential Ticket while it is excluded), and an "
+            "inactive user remains with `active` set to `false`."
         )
     )
 
@@ -642,6 +656,19 @@ class TicketPackageRef(BaseModel):
             "`medium`, `low`, or `none` (CVSS score 0.0, informational), or "
             "`null` when unresolved. `none` is distinct from `null`."
         )
+    )
+    is_confidential: bool = Field(
+        description=(
+            "Whether the Ticket is confidential. Every item belongs to a "
+            "Ticket that the caller can see."
+        )
+    )
+    cve_id: str | None = Field(
+        description=(
+            "Identifier of the CVE associated with the Ticket; `null` for a "
+            "Ticket without a CVE."
+        ),
+        examples=["CVE-2026-1234"],
     )
 
 

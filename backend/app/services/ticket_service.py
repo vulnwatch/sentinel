@@ -495,9 +495,10 @@ async def get_ticket_detail(
     and the package-owned complete tree for that date. Ticket-level due
     dates come from `compute_due_dates()`; per-track milestones compare
     against the same instant, and the Ticket current phase comes from
-    `resolve_ticket_current_phase()` over them. Maintainer identities are
-    neither loaded nor projected. Creates no event, acquires no lock, and
-    never commits or rolls back.
+    `resolve_ticket_current_phase()` over them. The tree names the
+    maintainers of each package; no source maintainership data is
+    loaded. Creates no event, acquires no lock, and never commits or
+    rolls back.
 
     Q4: returns the `TicketDetailProjection`.
 

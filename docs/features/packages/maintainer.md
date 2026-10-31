@@ -52,6 +52,7 @@ All workbench sections use this item schema:
 |---|---|---|
 | `package_name` | string | Persisted `TicketPackage.package_name` |
 | `ticket_id` | string | Canonical consumer-facing Ticket identity (`SNTL-{n}`) |
+| `is_confidential` | boolean | Whether the Ticket is confidential. Every row belongs to a Ticket that the caller can see, so the field discloses nothing (`docs/features/tickets/tickets.md`, Confidential Tickets) |
 | `cve_id` | string or null | Associated CVE identifier; null for a CVE-less Ticket |
 | `severity` | string or null | Resolved Ticket severity: `critical`, `high`, `medium`, `low`, `none`, or null when unresolved |
 | `workflow_type` | string | Persisted track workflow: `ibs` or `git` |
@@ -67,6 +68,7 @@ Example:
 {
   "package_name": "fictional-kernel",
   "ticket_id": "SNTL-42",
+  "is_confidential": false,
   "cve_id": "CVE-2026-1234",
   "severity": "high",
   "workflow_type": "ibs",
@@ -79,7 +81,9 @@ Example:
 ```
 
 The response does not expose maintainer identity, username, email, group,
-association count, source payload, or SMELT provenance. It also does not expose
+association count, source payload, or SMELT provenance; the Ticket package tree
+names every maintainer of a package (`PackageDetail.maintainers` in
+`docs/features/tickets/tickets.md`). It also does not expose
 or derive a submission chain, an effective SR, a proving RR, `analyzed_at`,
 `first_sr_created_at`, an authoritative completion timestamp, waiting duration,
 or any chronology synthesized from generic row timestamps or audit history.

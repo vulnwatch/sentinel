@@ -195,10 +195,17 @@ class CVEDetail(BaseModel):
 
 
 class CVEAssociatedTicket(BaseModel):
-    """The public identity of the Ticket associated with a CVE."""
+    """The Ticket associated with a CVE: its public identity and
+    confidentiality."""
 
     ticket_id: str = Field(
         description="Canonical Ticket identity (`SNTL-{n}`).", examples=["SNTL-42"]
+    )
+    is_confidential: bool = Field(
+        description=(
+            "Whether the Ticket is confidential. A CVE with an associated "
+            "Ticket is returned only to a caller who can see that Ticket."
+        )
     )
 
 

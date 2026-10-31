@@ -573,8 +573,8 @@ async def create_ticket(
         "Ticket-level due dates, the current assignee, expanded CVE evidence "
         "(KEV, EPSS, SSVC, CWE, external identifiers; CVSS assessments are "
         "available from their own sub-resource), the duplicate target's "
-        "identifier only, and the complete package tree. Maintainer "
-        "identities are not included. Requires authentication (JWT session "
+        "identifier only, and the complete package tree, which names the "
+        "maintainers of each package. Requires authentication (JWT session "
         "or API key); the caller's scope, grants, and package maintainership "
         "determine access to confidential Tickets."
     ),

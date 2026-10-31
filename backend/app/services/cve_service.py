@@ -656,12 +656,22 @@ CVE_SOURCE_STATUS_FILTER: Final[tuple[str, ...]] = tuple(
 
 
 @dataclass(frozen=True, slots=True)
+class CVEAssociatedTicketProjection:
+    """The associated Ticket of an accessible CVE (`CVEAssociatedTicket`):
+    its public `SNTL-{n}` identity and confidentiality. The internal
+    Ticket UUID is never part of it."""
+
+    ticket_id: str
+    is_confidential: bool
+
+
+@dataclass(frozen=True, slots=True)
 class CVEListItemProjection:
     """The semantic projection represented by `CVEListItem`.
 
     `severity` is the CVE-owned unified severity (`None` is unresolved).
-    `ticket_id` is the associated Ticket's public `SNTL-{n}` identity, or
-    `None` for a ticketless CVE; the internal UUIDs are never part of it.
+    `ticket` is the associated Ticket, or `None` for a ticketless CVE; the
+    internal UUIDs are never part of it.
     """
 
     cve_id: str
@@ -670,7 +680,7 @@ class CVEListItemProjection:
     severity: Severity | None
     cve_state: CveState
     published_date: datetime | None
-    ticket_id: str | None
+    ticket: CVEAssociatedTicketProjection | None
     created_at: datetime
     updated_at: datetime
 
@@ -689,11 +699,10 @@ class CVEListResult:
 @dataclass(frozen=True, slots=True)
 class CVEDetailResult:
     """The semantic projection represented by `CVEResourceDetail`: the
-    shared `CVEDetail` projection plus the associated Ticket's public
-    `SNTL-{n}` identity, or `None`."""
+    shared `CVEDetail` projection plus the associated Ticket, or `None`."""
 
     cve: CVEDetailProjection
-    ticket_id: str | None
+    ticket: CVEAssociatedTicketProjection | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -743,8 +752,16 @@ def _ordered(
     return sort_key.desc().nulls_last(), row_id.desc()
 
 
-def _sntl(sequence_id: int | None) -> str | None:
-    return format_ticket_id(sequence_id) if sequence_id is not None else None
+def _associated_ticket(
+    sequence_id: int | None, is_confidential: bool | None
+) -> CVEAssociatedTicketProjection | None:
+    """The associated Ticket from its outer-joined columns, or `None`."""
+    if sequence_id is None:
+        return None
+    assert is_confidential is not None, "an existing Ticket row has a flag"
+    return CVEAssociatedTicketProjection(
+        ticket_id=format_ticket_id(sequence_id), is_confidential=is_confidential
+    )
 
 
 def _cve_search_condition(term: str) -> ColumnElement[bool]:
@@ -815,7 +832,8 @@ async def list_cves(
 
     Q3: in one SQL statement, and therefore one PostgreSQL observation
     (a CTE chain: filtered CVEs, their total, the requested page, then
-    the page rows with their associated Ticket's `sequence_id`):
+    the page rows with their associated Ticket's `sequence_id` and
+    `is_confidential`):
     1. selects CVEs outer-joined to their at most one Ticket under the
        CVE accessibility projection of the canonical Ticket predicate,
        so inaccessible associated CVEs are absent from rows and total;
@@ -891,6 +909,7 @@ async def list_cves(
             CVE.created_at,
             CVE.updated_at,
             Ticket.sequence_id.label("ticket_sequence_id"),
+            Ticket.is_confidential.label("ticket_is_confidential"),
         )
         .select_from(total)
         .outerjoin(page_rows, true())
@@ -908,7 +927,9 @@ async def list_cves(
                 severity=Severity(row.severity) if row.severity is not None else None,
                 cve_state=CveState(row.cve_state),
                 published_date=row.published_date,
-                ticket_id=_sntl(row.ticket_sequence_id),
+                ticket=_associated_ticket(
+                    row.ticket_sequence_id, row.ticket_is_confidential
+                ),
                 created_at=row.created_at,
                 updated_at=row.updated_at,
             )
@@ -940,9 +961,10 @@ async def get_cve_detail(
     to its at most one Ticket and constrained by the CVE accessibility
     projection of the canonical Ticket predicate, together with the
     shared `CVEDetail` evidence (severity, ordered external identifiers,
-    KEV, EPSS, SSVC, grouped CWEs) and the Ticket's `sequence_id`.
-    (3) Projects the shared `CVEDetailProjection` and the `SNTL-{n}`
-    identity; never the internal UUIDs, protected Ticket content, a
+    KEV, EPSS, SSVC, grouped CWEs) and the Ticket's `sequence_id` and
+    `is_confidential`. (3) Projects the shared `CVEDetailProjection` and
+    the associated Ticket's `SNTL-{n}` identity and confidentiality;
+    never the internal UUIDs, other Ticket content, a
     priority, or CVSS assessments. Creates no row or event, acquires no
     lock, and never flushes, commits, or rolls back.
 
@@ -958,6 +980,7 @@ async def get_cve_detail(
         select(
             *cve_detail_columns(),
             Ticket.sequence_id.label("ticket_sequence_id"),
+            Ticket.is_confidential.label("ticket_is_confidential"),
         )
         .select_from(CVE)
         .outerjoin(Ticket, Ticket.cve_id == CVE.id)
@@ -966,7 +989,10 @@ async def get_cve_detail(
     cve = cve_detail_from_row(row) if row is not None else None
     if row is None or cve is None:
         raise CVENotFoundError()
-    return CVEDetailResult(cve=cve, ticket_id=_sntl(row.ticket_sequence_id))
+    return CVEDetailResult(
+        cve=cve,
+        ticket=_associated_ticket(row.ticket_sequence_id, row.ticket_is_confidential),
+    )
 
 
 @dataclass(frozen=True, slots=True)

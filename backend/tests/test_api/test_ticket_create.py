@@ -1256,14 +1256,21 @@ _TICKET_COUNT_FIELDS = {"tickets_count", "resolved_ticket_regressions"}
 identities (user-management.md, Get Deactivation Impact;
 default-cvss-version-operations.md, Result and Count Units)."""
 _EMBEDDED_TICKET_REFERENCE_SCHEMAS = {
-    "TicketPackageRef": {"ticket_id", "status", "severity"},
-    "CVEAssociatedTicket": {"ticket_id"},
+    "TicketPackageRef": {
+        "ticket_id",
+        "status",
+        "severity",
+        "is_confidential",
+        "cve_id",
+    },
+    "CVEAssociatedTicket": {"ticket_id", "is_confidential"},
 }
 """Allowed embedded Ticket reference schemas -> their properties. Each
 identifies the Ticket only by `ticket_id` (package-model.md, Response
 Schema: `PackageListItem` > `TicketPackageRef`; cve-tracking.md, List CVEs
 and Get CVE: the nullable `ticket` object of `CVEListItem` and
-`CVEResourceDetail`)."""
+`CVEResourceDetail`) and carries its `is_confidential` (tickets.md,
+Confidential Tickets)."""
 _TICKET_FILTER_PARAMETERS = {"ticket_status", "has_ticket"}
 """Query filters whose names contain `ticket` but which are Ticket
 attributes, not Ticket identities (package-model.md, Search Packages

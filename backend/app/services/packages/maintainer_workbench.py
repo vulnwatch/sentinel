@@ -25,7 +25,7 @@ actionability, and delivery here is the read-only workbench presentation
 gate (`docs/features/packages/package-model.md`, Three Orthogonal
 Dimensions); nothing is derived or mutated.
 
-The projection is exactly the ten workbench item fields. The submission
+The projection is exactly the eleven workbench item fields. The submission
 deadline fields reuse the SQL twins of the deadline pure functions
 (`app.services.ticket_deadline_expressions`) with the response's one
 evaluation instant. Maintainer identities, Ticket UUIDs, and SMELT data
@@ -142,6 +142,7 @@ class MaintainerWorkItem:
 
     package_name: str
     ticket_id: str
+    is_confidential: bool
     cve_id: str | None
     severity: Severity | None
     workflow_type: WorkflowType
@@ -321,6 +322,7 @@ def _ticket_columns() -> tuple[ColumnElement[Any], ...]:
     due = ticket_due_date_expressions(severity=severity)
     return (
         Ticket.sequence_id.label("sequence_id"),
+        Ticket.is_confidential.label("is_confidential"),
         _cve_identifier().label("cve_id"),
         severity.label("severity"),
         due.submission.label("submission_due_at"),
@@ -332,6 +334,7 @@ def item_from_row(row: Row[*tuple[Any, ...]]) -> MaintainerWorkItem:
     return MaintainerWorkItem(
         package_name=row.package_name,
         ticket_id=format_ticket_id(row.sequence_id),
+        is_confidential=row.is_confidential,
         cve_id=row.cve_id,
         severity=Severity(row.severity) if row.severity is not None else None,
         workflow_type=WorkflowType(row.workflow_type),

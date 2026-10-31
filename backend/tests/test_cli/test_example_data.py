@@ -202,7 +202,7 @@ def test_load_reports_every_step_and_exits_zero(
     ]
     assert captured.err == ""
     assert run_spy.call_count == 1
-    assert _read(database, _identity_counts)[0] == 7
+    assert _read(database, _identity_counts)[0] == 8
 
 
 def test_a_fresh_process_disables_every_production_fetcher(database: str) -> None:
@@ -352,8 +352,8 @@ def test_failure_after_committed_operations_warns_of_a_partial_dataset(
     else:
         assert err[0] == PARTIAL_DATASET_WARNING
         _assert_logged_then_error(err[1:], f"Error: {message}")
-    # The seven users of the `Users` step remain.
-    assert _read(database, _identity_counts)[0] == 7
+    # The eight users of the `Users` step remain.
+    assert _read(database, _identity_counts)[0] == 8
 
 
 def test_failure_of_the_first_operation_reports_no_partial_dataset(

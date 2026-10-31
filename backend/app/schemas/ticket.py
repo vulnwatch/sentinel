@@ -258,8 +258,8 @@ class TicketDetail(BaseModel):
     mutation endpoint returning a Ticket.
 
     Replaces the compact `package_names` of list views with the complete
-    package tree and uses expanded CVE data. Maintainer identities are
-    never exposed.
+    package tree and uses expanded CVE data. Each package names its
+    maintainers.
     """
 
     ticket_id: str = Field(description=_TICKET_ID_DESCRIPTION, examples=["SNTL-42"])
@@ -302,7 +302,7 @@ class TicketDetail(BaseModel):
         description=(
             "Complete package/track/Product tree, including excluded and "
             "non-actionable records, ordered by `package_name` (Unicode code "
-            "point). Maintainer identities are not exposed."
+            "point). Each package lists its maintainers."
         )
     )
     created_at: datetime = Field(description=_CREATED_AT_DESCRIPTION)

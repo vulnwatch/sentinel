@@ -50,7 +50,7 @@ from app.core.errors import AppError, ErrorCode
 from app.core.exceptions import TicketNotFoundError, TicketNotMutableError
 from app.core.permissions import get_capabilities
 from app.database import DatabaseSession
-from app.schemas.common import PaginationMeta
+from app.schemas.common import PaginationMeta, UserReference
 from app.schemas.errors import ErrorResponse, ValidationErrorResponse
 from app.schemas.package import (
     PackageAdditionRequest,
@@ -181,6 +181,10 @@ def serialize_package(package: PackageProjection) -> PackageDetail:
             "deleted_at": package.deleted_at,
             "actionable": package.actionable,
             "non_actionable_reason": _lower(package.non_actionable_reason),
+            "maintainers": [
+                UserReference.model_validate(maintainer)
+                for maintainer in package.maintainers
+            ],
         }
     )
 
@@ -194,7 +198,8 @@ def serialize_package(package: PackageProjection) -> PackageDetail:
         "track, and Product occurrence, including manually excluded and "
         "lifecycle-non-actionable records, with direct exclusion timestamps, "
         "derived actionability, per-track due dates, milestones, and current "
-        "phase. Fixed order: packages by name, tracks by reference, and "
+        "phase, and the maintainers of each package. Fixed order: packages by "
+        "name, tracks by reference, and "
         "Products by CPE, each in ascending Unicode code-point order. "
         "Unpaginated (the package count per Ticket is bounded). The Ticket is "
         "identified by its canonical SNTL-{n} identity. Requires "
@@ -362,6 +367,8 @@ def _serialize_search_item(item: PackageSearchItem) -> PackageListItem:
                     "ticket_id": ticket.ticket_id,
                     "status": ticket.status.lower(),
                     "severity": _lower(ticket.severity),
+                    "is_confidential": ticket.is_confidential,
+                    "cve_id": ticket.cve_id,
                 }
             ),
             "track_summary": TrackSummary.model_validate(
