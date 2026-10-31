@@ -80,6 +80,11 @@ _DUPLICATE_OF_DESCRIPTION = (
     "accessibility and may return `404 TICKET_NOT_FOUND`."
 )
 _IS_CONFIDENTIAL_DESCRIPTION = "Whether the Ticket is confidential."
+_COORDINATED_RELEASE_DESCRIPTION = (
+    "Coordinated Release Date (embargo publication instant, UTC), or `null` when "
+    "none is set. A retained value on a non-confidential Ticket is historical "
+    "and inert."
+)
 _TRIAGE_DUE_DESCRIPTION = (
     "Due date (UTC) of the triage milestone, in which the VA (Vulnerability "
     "Analyst) decides affectedness; `null` when no SLA applies (Ticket "
@@ -188,11 +193,7 @@ class TicketSummary(BaseModel):
     )
     is_confidential: bool = Field(description=_IS_CONFIDENTIAL_DESCRIPTION)
     coordinated_release_at: datetime | None = Field(
-        description=(
-            "Coordinated Release Date (embargo publication instant, UTC), or "
-            "`null` when none is set. A retained value on a non-confidential "
-            "Ticket is historical and inert."
-        )
+        description=_COORDINATED_RELEASE_DESCRIPTION
     )
     triage_due_at: datetime | None = Field(description=_TRIAGE_DUE_DESCRIPTION)
     submission_due_at: datetime | None = Field(description=_SUBMISSION_DUE_DESCRIPTION)
@@ -284,10 +285,7 @@ class TicketDetail(BaseModel):
     )
     is_confidential: bool = Field(description=_IS_CONFIDENTIAL_DESCRIPTION)
     coordinated_release_at: datetime | None = Field(
-        description=(
-            "Coordinated Release Date (embargo publication instant, UTC), or "
-            "`null` when none is set."
-        )
+        description=_COORDINATED_RELEASE_DESCRIPTION
     )
     triage_due_at: datetime | None = Field(description=_TRIAGE_DUE_DESCRIPTION)
     submission_due_at: datetime | None = Field(description=_SUBMISSION_DUE_DESCRIPTION)

@@ -1228,6 +1228,18 @@ class TestGetFetcherTimelineEndpoint:
         assert period["disabled_by"] == _user_reference(admin)
         assert period["enabled_by"] == _user_reference(enabler)
 
+    def test_disabled_by_is_published_as_never_null(self) -> None:
+        """`disabled_by` is always a user (`fetcher-operations.md`, Disabled
+        Period Derivation); only `enabled_by` of an open period is `null`."""
+        properties = app.openapi()["components"]["schemas"][
+            "FetcherDisabledPeriodData"
+        ]["properties"]
+
+        assert properties["disabled_by"] == {
+            "$ref": "#/components/schemas/UserReference"
+        }
+        assert {"type": "null"} in properties["enabled_by"]["anyOf"]
+
 
 # ---------------------------------------------------------------------------
 # POST /api/v1/fetchers/{fetcher_name}/trigger

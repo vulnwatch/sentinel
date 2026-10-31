@@ -414,7 +414,9 @@ def _cve_list_query(
         Query(
             description=(
                 "Filter by CVE state: `published` or `rejected`. Any other "
-                "value yields an empty page."
+                "value yields an empty page. `published` also matches a CVE "
+                "whose state is unknown and is therefore reported as "
+                "`published`."
             ),
             json_schema_extra=enum_filter_schema(
                 cve_service.CVE_STATE_FILTER, repeatable=False
@@ -737,7 +739,11 @@ async def get_cve_affected_versions(
         "is always listed; a record of a CVE with a Ticket is listed only "
         "when that Ticket is visible to the caller. Enables drill-down from "
         "fetcher runs; the result is a latest-state approximation and can "
-        "differ from a run's failure count. Requires authentication (JWT "
+        "differ from a run's failure count. For `kev` it lists only `success` "
+        "records written by the KEV fetcher: it can disagree with the KEV "
+        "status of `GET /api/v1/cves/{cve_id}/sources`, which derives it from "
+        "the CVE's KEV entry, and the KEV fetcher writes no `failure` "
+        "records. Requires authentication (JWT "
         "session or API key); the caller's scope, grants, and package "
         "maintainership determine access to the records of CVEs associated "
         "with confidential Tickets."
@@ -906,11 +912,12 @@ async def get_cve_cvss_assessments(
         "Creates or updates the internal SUSE assessment of one CVE for the "
         "version derived from the submitted CVSS Base vector. Returns 201 "
         "only when this request created the assessment, and 200 for an "
-        "update or an equivalent (unchanged) vector. The CVE severity is "
-        "re-resolved; for a CVE with a Ticket, an unassigned Ticket is "
-        "auto-assigned to an active vulnerability analyst, automatic Product "
-        "eligibility and priority are refreshed, and the Ticket status is "
-        "re-evaluated. Requires `manage_cvss`."
+        "update or an equivalent (unchanged) vector. An effective change "
+        "re-resolves the CVE severity; for a CVE with a Ticket, it "
+        "auto-assigns an unassigned Ticket to the caller when the caller is "
+        "an active vulnerability analyst, refreshes automatic Product "
+        "eligibility and priority, and re-evaluates the Ticket status. "
+        "Requires `manage_cvss`."
     ),
     responses={
         201: {
@@ -997,9 +1004,10 @@ async def upsert_suse_cvss_assessment(
     description=(
         "Deletes the internal SUSE assessment of one CVE for one CVSS version "
         "(`2.0`, `3.0`, `3.1`, or `4.0`). The CVE severity is re-resolved; for "
-        "a CVE with a Ticket, an unassigned Ticket is auto-assigned to an "
-        "active vulnerability analyst, automatic Product eligibility and "
-        "priority are refreshed, and the Ticket status is re-evaluated "
+        "a CVE with a Ticket, an unassigned Ticket is auto-assigned to the "
+        "caller when the caller is an active vulnerability analyst, automatic "
+        "Product eligibility and priority are refreshed, and the Ticket status "
+        "is re-evaluated "
         "(deleting the last SUSE assessment reopens the analysis). Requires "
         "`manage_cvss`."
     ),

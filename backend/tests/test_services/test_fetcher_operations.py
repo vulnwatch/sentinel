@@ -1593,11 +1593,9 @@ class TestDisabledPeriodDerivation:
         )
 
         closed, open_ended = timeline.disabled_periods
-        assert closed.disabled_by is not None
         assert closed.disabled_by.id == disabler.id
         assert closed.enabled_by is not None
         assert closed.enabled_by.id == enabler.id
-        assert open_ended.disabled_by is not None
         assert open_ended.disabled_by.id == disabler.id
         assert open_ended.enabled_at is None
         assert open_ended.enabled_by is None

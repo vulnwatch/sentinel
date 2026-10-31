@@ -528,7 +528,7 @@ migration. Stable value set defined by the CVE Program.
 
 | Value | Description |
 |-------|-------------|
-| `PUBLISHED` | CVE record is published and active |
+| `PUBLISHED` | CVE record is published and active. Also the column default, which a CVE keeps until a source that reports CVE state reports one; until then it means that the state is unknown (`docs/features/tickets/cve-service.md`, Placeholder Records) |
 | `REJECTED` | CVE record has been rejected by the CNA |
 
 #### CVESource

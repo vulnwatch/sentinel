@@ -284,10 +284,12 @@ class FetcherRunPage:
 class DisabledPeriod:
     """One derived disabled period. `disabled_by`/`enabled_by` are the
     actors of the delimiting `disabled`/`enabled` events, for every caller;
-    `enabled_by` is `None` while the period is open."""
+    `enabled_by` is `None` while the period is open. Every fetcher audit
+    event has an actor (`FetcherAuditLog.log_event()` rejects a `None`
+    `user_id`), so `disabled_by` is always a user."""
 
     disabled_at: datetime
-    disabled_by: User | None
+    disabled_by: User
     enabled_at: datetime | None
     enabled_by: User | None
 
@@ -734,6 +736,9 @@ async def _resolve_disabled_periods(
         )
         if not intersects:
             continue
+        # Guaranteed by `FetcherAuditLog.log_event()`, which rejects an
+        # event without an actor; narrows the nullable relationship.
+        assert disabled_event.actor is not None
         periods.append(
             DisabledPeriod(
                 disabled_at=disabled_at,

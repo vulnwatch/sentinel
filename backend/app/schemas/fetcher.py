@@ -192,10 +192,12 @@ class FetcherDisabledPeriodData(BaseModel):
     """One derived disabled period. `disabled_by`/`enabled_by` are the
     `UserReference` objects of the users who disabled and enabled the
     fetcher, for every caller (`docs/features/identity/rbac.md`, Actor
-    Identities); `enabled_by` is `null` while the period is open."""
+    Identities); `disabled_by` is never `null`, and `enabled_by` is `null`
+    while the period is open (`fetcher-operations.md`, Disabled Period
+    Derivation)."""
 
     disabled_at: datetime
-    disabled_by: UserReference | None
+    disabled_by: UserReference
     enabled_at: datetime | None
     enabled_by: UserReference | None
 
@@ -230,8 +232,26 @@ class FetcherConfigData(BaseModel):
     effective_schedule: str | None
     run_timeout: int
     request_delay: float
-    custom_settings: dict[str, Any]
-    settings_schema: dict[str, Any] | None
+    custom_settings: dict[str, Any] = Field(
+        description=(
+            "The stored custom setting values; a setting that is absent uses "
+            "its default. For a registered fetcher, a stored key that "
+            "`settings_schema` no longer declares is inert and cannot be "
+            "changed or reset: sending it to `PATCH .../config`, also with "
+            "`null`, returns `422 FETCHER_SETTING_UNKNOWN`."
+        )
+    )
+    settings_schema: dict[str, Any] | None = Field(
+        description=(
+            "JSON Schema of the custom settings: one property per setting, with "
+            "its `default` and its `type`, or a `$ref` into `$defs` for an enum "
+            "type. Where they apply, a property also carries `title`, "
+            "`description`, `minimum`/`maximum`, "
+            "`exclusiveMinimum`/`exclusiveMaximum`, `maxLength`, `pattern`, "
+            "`enum` or `const` for a choice, and `warning`. `null` when the "
+            "fetcher declares no settings or is deregistered."
+        )
+    )
     updated_at: datetime
 
 

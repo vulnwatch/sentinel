@@ -15,6 +15,14 @@ from pydantic import BaseModel, Field
 from app.core.enums import TicketAuditEventType
 from app.schemas.common import PaginationMeta, UserReference
 
+_ENUM_VALUES = (
+    "An enumerated value is recorded as stored, not converted to the lowercase "
+    "form that other fields use: for example `New` for a Ticket status, `High` "
+    "for a severity, `P1` for a priority, `AFFECTED` for a track status, and "
+    "`advisory` for a reference type."
+)
+"""`docs/features/tickets/ticket-audit-log.md` (Event Type Contract, Rules)."""
+
 
 class TicketAuditEventData(BaseModel):
     """One Ticket audit event.
@@ -31,8 +39,12 @@ class TicketAuditEventData(BaseModel):
         examples=["SNTL-42"],
     )
     event_type: TicketAuditEventType
-    old_value: str | None
-    new_value: str | None
+    old_value: str | None = Field(
+        description=f"Previous value, as its event type records it. {_ENUM_VALUES}"
+    )
+    new_value: str | None = Field(
+        description=f"New value, as its event type records it. {_ENUM_VALUES}"
+    )
     comment: str | None
     detail: dict[str, Any] | None
     created_at: datetime

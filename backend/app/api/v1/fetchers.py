@@ -199,11 +199,7 @@ def _serialize_timeline(timeline: FetcherTimeline) -> FetcherTimelineData:
         disabled_periods=[
             FetcherDisabledPeriodData(
                 disabled_at=period.disabled_at,
-                disabled_by=(
-                    UserReference.model_validate(period.disabled_by)
-                    if period.disabled_by is not None
-                    else None
-                ),
+                disabled_by=UserReference.model_validate(period.disabled_by),
                 enabled_at=period.enabled_at,
                 enabled_by=(
                     UserReference.model_validate(period.enabled_by)
