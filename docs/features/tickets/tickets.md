@@ -1302,7 +1302,7 @@ or remove grant provenance.
 | `description` | string \| null | Vulnerability description |
 | `published_date` | datetime \| null | Date published (UTC) |
 | `modified_date` | datetime \| null | Date last modified (UTC) |
-| `cve_state` | string | CVE record state (`"published"` or `"rejected"`) |
+| `cve_state` | string | CVE record state (`"published"` or `"rejected"`). A CVE for which none of the sources that report CVE state (the MITRE, NVD, and kernel CVE sources, see [cve-tracking.md](cve-tracking.md#cve-rejection-handling)) has reported a state yet, such as a placeholder created for a Ticket or a CVE known only from GitHub advisories, reports `"published"`, which then means that its state is unknown (see [cve-service.md](cve-service.md#placeholder-records)) |
 | `date_rejected` | datetime \| null | When the CVE was rejected (UTC). `null` if `cve_state` is `"published"` |
 | `severity` | string \| null | Unified CVE severity (`CVE.severity`): `critical`, `high`, `medium`, `low`, `none`, or `null` when unresolved |
 | `external_identifiers` | CVEExternalIdentifierResponse[] | External identifiers from other naming authorities |
@@ -1325,7 +1325,7 @@ are available via `GET /api/v1/cves/{cve_id}/affected-versions` — see
 | Field | Type | Description |
 |-------|------|-------------|
 | `date_added` | date | Date the CVE was added to the KEV catalog |
-| `reference_url` | string \| null | KEV catalog entry URL |
+| `reference_url` | string \| null | KEV catalog entry URL, an upstream string that is not validated: it is not guaranteed to be an `http` or `https` URL |
 
 **CVEEPSSResponse**:
 
@@ -1357,9 +1357,9 @@ ascending Unicode code point of `cwe_id`:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source` | string | Naming authority (e.g., `"ghsa"`). Serialized as lowercase |
+| `source` | string | Naming authority: `"ghsa"`, `"pysec"`, or `"rustsec"`, the lowercase values of `CVEExternalIdentifierSource` (`docs/data-model.md`) |
 | `identifier` | string | External ID (e.g., `"GHSA-xxxx-xxxx-xxxx"`) |
-| `url` | string \| null | Direct link to the advisory page |
+| `url` | string \| null | Direct link to the advisory page, an upstream string that is not validated: it is not guaranteed to be an `http` or `https` URL |
 
 **ProductDetail** — product within a track:
 
@@ -1468,7 +1468,7 @@ projection with the full package tree, and uses expanded CVE data.
 | `cve` | CVEDetail \| null | Expanded CVE data with dates, or `null` if no CVE |
 | `duplicate_of_ticket_id` | string \| null | Duplicate target Ticket identity (`SNTL-{n}`), or `null` |
 | `is_confidential` | boolean | Whether the ticket is confidential |
-| `coordinated_release_at` | datetime \| null | Coordinated Release Date (embargo publication instant, UTC), or `null` when none is set. See [Coordinated Release Date](#coordinated-release-date) |
+| `coordinated_release_at` | datetime \| null | Coordinated Release Date (embargo publication instant, UTC), or `null` when none is set. A retained value on a non-confidential Ticket is historical and inert. See [Coordinated Release Date](#coordinated-release-date) |
 | `triage_due_at` | datetime \| null | Due date of the VA triage milestone; `null` when no SLA applies (manual zone or severity `none`). See [ticket-deadlines.md](ticket-deadlines.md#due-dates) |
 | `submission_due_at` | datetime \| null | Due date of the maintainer submission milestone |
 | `um_due_at` | datetime \| null | Due date of the UM (maintenance update team) release-request milestone |

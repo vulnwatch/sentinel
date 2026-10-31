@@ -26,10 +26,23 @@ class ApiKeyCreateRequest(BaseModel):
     raises the domain-specific `ApiKeyNameValidationError` — a schema
     constraint here would instead produce the generic
     `422 VALIDATION_ERROR`, losing the documented
-    `AUTH_API_KEY_NAME_INVALID` code.
+    `AUTH_API_KEY_NAME_INVALID` code. The rule applies to the normalized
+    value, so it is stated in the description rather than as keywords,
+    which would apply to the raw value (`docs/api-spec.md`, Published
+    Input Constraints).
     """
 
-    name: str
+    name: str = Field(
+        description=(
+            "Leading and trailing whitespace is trimmed and the value is "
+            "lowercased before it is validated; the normalized name is stored "
+            "and returned. It has 1-128 characters and contains only `a`-`z`, "
+            "`0`-`9`, `.`, `_`, and `-`; otherwise `422 "
+            "AUTH_API_KEY_NAME_INVALID`. Unique per owner among non-revoked "
+            "keys."
+        ),
+        examples=["ci.production"],
+    )
     expires_at: datetime | None = None
 
     @field_validator("expires_at", mode="before")
@@ -84,7 +97,8 @@ class ApiKeyListQuery(BaseModel):
     an invalid value must be silently ignored and produce an empty
     result (`docs/api-spec.md`, Enum Filter Validation) rather than the
     schema-validation `422` a typed enum field would raise. The route
-    handler parses it against `ApiKeyStatus` itself.
+    handler parses it against `ApiKeyStatus` itself and publishes its
+    values as the parameter's `enum`.
 
     `page` is bounded at PostgreSQL's `integer` maximum
     (2,147,483,647): a value beyond that would overflow the computed

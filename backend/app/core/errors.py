@@ -2,9 +2,9 @@
 
 See `docs/api-spec.md` (Response Format, Error Code Categories) for the
 authoritative error response contract this module implements: every
-error response body is `{"code": "...", "detail": "..."}` (plus an
-optional `errors` array for `VALIDATION_ERROR`, and the top-level
-`existing_ticket_id` of `TICKET_CVE_CONFLICT`). `ErrorCode` is the
+error response body is `{"code": "...", "detail": "..."}` (plus the
+`errors` array of `VALIDATION_ERROR` and of the fetcher setting codes, and
+the top-level `existing_ticket_id` of `TICKET_CVE_CONFLICT`). `ErrorCode` is the
 "Python enum in the backend (`app/core/errors.py`)" the spec refers to:
 it holds every registered code except the reserved codes of deferred
 specifications, which are added when their specification becomes
@@ -23,7 +23,8 @@ responses.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final
 
@@ -105,6 +106,17 @@ class ErrorCode(StrEnum):
 _RESERVED_BODY_FIELDS: Final = frozenset({"code", "detail", "errors"})
 
 
+@dataclass(frozen=True, slots=True)
+class InputError:
+    """One element of the `errors` array of an error body: the location
+    of the invalid input, a human-readable message, and the Pydantic error
+    type (`docs/api-spec.md`, Response Format)."""
+
+    loc: tuple[str | int, ...]
+    msg: str
+    type: str
+
+
 class AppError(Exception):
     """Carries the standard `{"code": ..., "detail": ...}` error envelope.
 
@@ -119,7 +131,10 @@ class AppError(Exception):
     owning error contract defines beside `code` and `detail` — only
     `existing_ticket_id` of `TICKET_CVE_CONFLICT` (`docs/api-spec.md`,
     Response Format). The envelope keys `code`, `detail`, and `errors`
-    cannot be overridden.
+    cannot be overridden through it. `errors`, when given, is the
+    `errors` array of a domain validation code whose contract locates
+    its invalid inputs — only `FETCHER_SETTING_UNKNOWN` and
+    `FETCHER_SETTING_INVALID` (`docs/api-spec.md`, Response Format).
     """
 
     def __init__(
@@ -129,12 +144,18 @@ class AppError(Exception):
         detail: str,
         headers: dict[str, str] | None = None,
         extra: Mapping[str, str] | None = None,
+        errors: Sequence[InputError] | None = None,
     ) -> None:
         if extra is not None and not _RESERVED_BODY_FIELDS.isdisjoint(extra):
             raise ValueError("extra must not override the error envelope keys.")
+        if errors is not None and not errors:
+            raise ValueError("errors must locate at least one invalid input.")
         self.status_code = status_code
         self.code = code
         self.detail = detail
         self.headers = headers
         self.extra: Mapping[str, str] = dict(extra) if extra is not None else {}
+        self.errors: tuple[InputError, ...] | None = (
+            tuple(errors) if errors is not None else None
+        )
         super().__init__(detail)

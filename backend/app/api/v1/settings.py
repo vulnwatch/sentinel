@@ -20,6 +20,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Query
 
 from app.api.dependencies import AuthenticatedPrincipal, require_capability
+from app.api.openapi import enum_filter_schema
 from app.core.dates import parse_date_range_bound, validate_date_range_order
 from app.core.enums import Capability, SettingAuditEventType
 from app.core.errors import AppError, ErrorCode
@@ -64,7 +65,13 @@ def _settings_audit_query(
         list[str],
         Query(
             default_factory=list,
-            description="Filter by event type. Repeatable; OR semantics.",
+            description=(
+                "Filter by event type. Repeatable; OR semantics. Invalid values "
+                "are ignored; only invalid values yield an empty page."
+            ),
+            json_schema_extra=enum_filter_schema(
+                SettingAuditEventType, repeatable=True
+            ),
         ),
     ],
     setting_key: Annotated[

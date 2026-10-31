@@ -25,6 +25,7 @@ from app.api.dependencies import (
     require_session_authentication,
     user_not_found_error,
 )
+from app.api.openapi import enum_filter_schema
 from app.core.enums import (
     Capability,
     Role,
@@ -76,6 +77,16 @@ from app.services.user_service import (
 
 router = APIRouter(prefix="/api/v1", tags=["Users"])
 
+_ROLE_FILTER_DESCRIPTION = (
+    "One or more of 'admin', 'vulnerability_analyst', 'restricted_analyst'. "
+    "Repeatable; OR semantics. Invalid values are ignored; only invalid values "
+    "yield an empty page."
+)
+# The values that `_parse_role_filters` accepts (`role_from_wire`).
+_ROLE_FILTER_SCHEMA = enum_filter_schema(
+    (role_to_wire(role) for role in Role), repeatable=True
+)
+
 
 # ---------------------------------------------------------------------------
 # Query parameter builders
@@ -107,10 +118,8 @@ def _user_directory_query(
         list[str],
         Query(
             default_factory=list,
-            description=(
-                "One or more of 'admin', 'vulnerability_analyst', "
-                "'restricted_analyst'. Repeatable; OR semantics."
-            ),
+            description=_ROLE_FILTER_DESCRIPTION,
+            json_schema_extra=_ROLE_FILTER_SCHEMA,
         ),
     ],
     has_role: Annotated[
@@ -154,7 +163,13 @@ def _user_list_query(
     ] = None,
     type_filter: Annotated[
         str | None,
-        Query(alias="type", description="One of 'local' or 'external'."),
+        Query(
+            alias="type",
+            description=(
+                "One of 'local' or 'external'. Any other value yields an empty page."
+            ),
+            json_schema_extra=enum_filter_schema(UserType, repeatable=False),
+        ),
     ] = None,
     active: Annotated[
         bool | None, Query(description="Filter by active status.")
@@ -163,10 +178,8 @@ def _user_list_query(
         list[str],
         Query(
             default_factory=list,
-            description=(
-                "One or more of 'admin', 'vulnerability_analyst', "
-                "'restricted_analyst'. Repeatable; OR semantics."
-            ),
+            description=_ROLE_FILTER_DESCRIPTION,
+            json_schema_extra=_ROLE_FILTER_SCHEMA,
         ),
     ],
     has_role: Annotated[
@@ -316,7 +329,7 @@ def _serialize_user(user: User) -> UserData:
         full_name=user.full_name,
         active=user.active,
         bot=user.bot,
-        source="external" if user.external_id is not None else "local",
+        source=UserType.EXTERNAL if user.external_id is not None else UserType.LOCAL,
         external_id=user.external_id,
         manager=manager,
         roles=roles,

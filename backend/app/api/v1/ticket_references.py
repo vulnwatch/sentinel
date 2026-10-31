@@ -30,6 +30,7 @@ from app.api.dependencies import (
     resource_not_found_error,
     ticket_not_found_error,
 )
+from app.api.openapi import enum_filter_schema
 from app.core.enums import Capability, ReferenceType
 from app.core.errors import AppError, ErrorCode
 from app.core.exceptions import TicketNotFoundError
@@ -166,6 +167,7 @@ async def list_references(
                 "One of `advisory`, `patch`, `issue`, or `article`. Any other value "
                 "matches no reference."
             ),
+            json_schema_extra=enum_filter_schema(_TYPE_FILTER, repeatable=False),
         ),
     ] = None,
 ) -> TicketReferenceListResponse:

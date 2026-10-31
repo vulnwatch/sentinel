@@ -1,16 +1,19 @@
 """Tests for the OpenAPI documentation of the global and shared responses,
-and of parameters without `null` (`app/api/openapi.py`).
+of parameters without `null`, and of the published input constraints and
+value sets (`app/api/openapi.py`).
 
 See `docs/api-spec.md` (Global Responses, Response Applicability
-Derivation, Parameter Nullability). Most cases build a standalone
-`SentinelAPI` whose routes use the real authentication and capability
-dependencies and the methods that derive the cross-origin rejection, or
-optional parameters with a `None` default; a vacuity guard builds a plain
-`FastAPI` instead, and the cases that FastAPI does not generate use a
-hand-written document. Only the generated or hand-written document is
-inspected, so no request runs. The registered application is
-covered by the structural tests in `tests/test_api_conventions.py`, by the
-required-authentication `401` check in
+Derivation, Parameter Nullability, Published Input Constraints, Response
+Enums). Most cases build a standalone `SentinelAPI` whose routes use the
+real authentication, capability, and query-length dependencies and the
+methods that derive the cross-origin rejection, or optional parameters with
+a `None` default; a vacuity guard builds a plain `FastAPI` instead, and the
+cases that FastAPI does not generate use a hand-written document. Only the
+generated or hand-written document is inspected, so no request runs. The
+value sets that the registered application publishes are checked against
+the domain enums in `TestPublishedValueSets`; the registered application is
+otherwise covered by the structural tests in `tests/test_api_conventions.py`,
+by the required-authentication `401` check in
 `tests/test_api/test_route_authentication.py`, and by the OpenAPI response
 contract check over every test request (`tests/support/openapi_contract.py`).
 """
@@ -33,9 +36,42 @@ from app.api.dependencies import (
 from app.api.openapi import (
     API_V1_RESPONSES,
     SentinelAPI,
+    enum_filter_schema,
     publish_parameters_without_null,
 )
-from app.core.enums import Capability
+from app.core.enums import (
+    ApiKeyStatus,
+    Capability,
+    CatalogPresence,
+    CurrentPhase,
+    CVEExternalIdentifierSource,
+    CVESourceFetchStatus,
+    CveState,
+    FetcherAuditEventType,
+    FetcherRunStatus,
+    FetcherRunTriggeredBy,
+    IBSRequestState,
+    IdentityAuditEventType,
+    LifecyclePhaseFilter,
+    MilestonePhase,
+    ReferenceType,
+    Role,
+    SettingAuditEventType,
+    Severity,
+    SSVCAutomatable,
+    SSVCExploitation,
+    SSVCTechnicalImpact,
+    TicketAuditEventType,
+    TicketPriority,
+    TicketStatus,
+    UserType,
+)
+from app.core.permissions import role_to_wire
+from app.core.query_limits import (
+    MAX_QUERY_STRING_LENGTH,
+    enforce_query_parameter_length_limit,
+)
+from app.main import app as registered_app
 from app.schemas.errors import ErrorResponse
 
 _ERROR_REF = {"$ref": "#/components/schemas/ErrorResponse"}
@@ -478,3 +514,322 @@ class TestParametersWithoutNull:
             "anyOf": [{"type": "string", "title": "In"}],
             "title": "Out",
         }
+
+
+def _length_limited_app() -> SentinelAPI:
+    """A standalone app that registers the real query-length dependency, as
+    `app.main` does for every route."""
+    router = APIRouter(prefix="/api/v1")
+
+    @router.get("/search", dependencies=[Depends(_search)])
+    async def search(
+        tags: Annotated[list[str], Query(default_factory=list)],
+        name: Annotated[str | None, Query()] = None,
+        code: Annotated[str | None, Query(max_length=20)] = None,
+        order: Annotated[_Order, Query()] = _Order.ASC,
+        mixed: Annotated[int | str | None, Query()] = None,
+        number: Annotated[int | None, Query()] = None,
+        flag: Annotated[bool | None, Query()] = None,
+    ) -> None:
+        """String, list, enum, union, and non-string parameters."""
+
+    @router.get("/items/{item_id}")
+    async def item(item_id: str) -> None:
+        """A path parameter, which the limit does not cover."""
+
+    test_app = SentinelAPI(dependencies=[Depends(enforce_query_parameter_length_limit)])
+    test_app.include_router(router)
+    return test_app
+
+
+@pytest.mark.unit
+class TestQueryParameterLengthLimit:
+    """`SentinelAPI` publishes the Query Parameter Length Limit as the
+    `maxLength` of every parameter that its dependency inspects
+    (`docs/api-spec.md`, Query Parameter Length Limit; Published Input
+    Constraints)."""
+
+    def test_string_parameters_publish_the_limit(self) -> None:
+        parameters = _parameters(_length_limited_app(), "/search")
+
+        assert parameters["name"]["maxLength"] == MAX_QUERY_STRING_LENGTH == 500
+        assert parameters["search"]["maxLength"] == 500
+        assert parameters["search"]["minLength"] == 2
+        assert parameters["tags"]["items"]["maxLength"] == 500
+        assert parameters["order"] == {
+            "$ref": "#/components/schemas/_Order",
+            "default": "asc",
+            "maxLength": 500,
+        }
+        assert parameters["mixed"]["anyOf"] == [
+            {"type": "integer"},
+            {"type": "string", "maxLength": 500},
+        ]
+
+    def test_a_smaller_endpoint_limit_is_kept(self) -> None:
+        parameters = _parameters(_length_limited_app(), "/search")
+
+        assert parameters["code"]["maxLength"] == 20
+
+    def test_other_parameters_are_unchanged(self) -> None:
+        parameters = _parameters(_length_limited_app(), "/search")
+
+        path_parameters = _parameters(_length_limited_app(), "/items/{item_id}")
+
+        assert "maxLength" not in parameters["number"]
+        assert "maxLength" not in parameters["flag"]
+        assert "maxLength" not in path_parameters["item_id"]
+
+    def test_operation_without_the_dependency_is_unchanged(self) -> None:
+        """The limit is published only where its dependency enforces it."""
+        parameters = _parameters(_build_parameter_app(), "/items/{item_id}")
+
+        assert "maxLength" not in parameters["search"]
+
+
+@pytest.mark.unit
+class TestEnumFilterSchema:
+    def test_single_value_filter_publishes_an_enum(self) -> None:
+        assert enum_filter_schema(_Order, repeatable=False) == {"enum": ["asc", "desc"]}
+
+    def test_repeatable_filter_publishes_the_enum_of_its_items(self) -> None:
+        assert enum_filter_schema({"b": 1, "a": 2}, repeatable=True) == {
+            "items": {"type": "string", "enum": ["b", "a"]}
+        }
+
+    def test_the_parameter_keeps_its_string_type(self) -> None:
+        """Published, not enforced: the parameter accepts every string, so its
+        parser can ignore a value outside the enum (`docs/api-spec.md`, Enum
+        Filter Validation)."""
+        router = APIRouter(prefix="/api/v1")
+
+        @router.get("/filtered")
+        async def filtered(
+            kind: Annotated[
+                str | None,
+                Query(json_schema_extra=enum_filter_schema(_Order, repeatable=False)),
+            ] = None,
+        ) -> None:
+            """A single-value enum filter."""
+
+        test_app = SentinelAPI()
+        test_app.include_router(router)
+
+        assert _parameters(test_app, "/filtered")["kind"] == {
+            "type": "string",
+            "enum": ["asc", "desc"],
+            "title": "Kind",
+        }
+
+
+def _lowercase_values(enum: type[StrEnum]) -> list[str]:
+    return [member.value.lower() for member in enum]
+
+
+def _values(enum: type[StrEnum]) -> list[str]:
+    return [member.value for member in enum]
+
+
+_TICKET_STATUSES = _lowercase_values(TicketStatus)
+_SEVERITY_FILTER = [*_lowercase_values(Severity), "unresolved"]
+
+_PUBLISHED_FILTERS = [
+    ("/api/v1/users", "role", True, [role_to_wire(role) for role in Role]),
+    ("/api/v1/admin/users", "role", True, [role_to_wire(role) for role in Role]),
+    ("/api/v1/admin/users", "type", False, _values(UserType)),
+    ("/api/v1/api-keys", "status", False, _values(ApiKeyStatus)),
+    ("/api/v1/admin/api-keys", "status", False, _values(ApiKeyStatus)),
+    (
+        "/api/v1/admin/settings/audit-log",
+        "event_type",
+        True,
+        _values(SettingAuditEventType),
+    ),
+    (
+        "/api/v1/fetchers/{fetcher_name}/runs",
+        "status",
+        False,
+        _values(FetcherRunStatus),
+    ),
+    (
+        "/api/v1/fetchers/{fetcher_name}/audit-log",
+        "event_type",
+        True,
+        _values(FetcherAuditEventType),
+    ),
+    (
+        "/api/v1/tickets/{ticket_id}/audit-log",
+        "event_type",
+        True,
+        _values(TicketAuditEventType),
+    ),
+    ("/api/v1/tickets", "status", True, _TICKET_STATUSES),
+    ("/api/v1/tickets", "severity", True, _SEVERITY_FILTER),
+    (
+        "/api/v1/tickets",
+        "priority",
+        True,
+        [*_lowercase_values(TicketPriority), "unresolved"],
+    ),
+    ("/api/v1/tickets", "overdue", True, _values(MilestonePhase)),
+    ("/api/v1/tickets", "current_phase", True, _values(CurrentPhase)),
+    ("/api/v1/cves", "cve_state", False, _lowercase_values(CveState)),
+    ("/api/v1/cves", "severity", True, _SEVERITY_FILTER),
+    ("/api/v1/cve-sources", "status", False, _values(CVESourceFetchStatus)),
+    ("/api/v1/packages", "ticket_status", True, _TICKET_STATUSES),
+    (
+        "/api/v1/tickets/{ticket_id}/references",
+        "type",
+        False,
+        _values(ReferenceType),
+    ),
+    (
+        "/api/v1/tickets/{ticket_id}/submission-requests",
+        "state",
+        False,
+        _values(IBSRequestState),
+    ),
+    (
+        "/api/v1/tickets/{ticket_id}/release-requests",
+        "state",
+        False,
+        _values(IBSRequestState),
+    ),
+    ("/api/v1/products", "catalog_presence", True, _values(CatalogPresence)),
+    ("/api/v1/products", "lifecycle_phase", True, _values(LifecyclePhaseFilter)),
+]
+"""Every enum filter of the registered application, except the identity
+audit logs (`tests/test_api/test_identity_audit.py`), with the values its
+specification lists, filter-only values (`unresolved`, `unavailable`)
+included."""
+
+_RESPONSE_ENUMS = [
+    ("CurrentUserData", "roles", "RoleValue"),
+    ("UserDirectoryData", "roles", "RoleValue"),
+    ("UserRoleAssignmentData", "role", "RoleValue"),
+    ("UserData", "source", "UserType"),
+    ("AdminIdentityAuditEventData", "event_type", "IdentityAuditEventType"),
+    (
+        "SelfIdentityAuditEventData",
+        "event_type",
+        "SelfIdentityAuditEventTypeValue",
+    ),
+    ("SettingAuditEventData", "event_type", "SettingAuditEventType"),
+    ("FetcherLastRunData", "status", "FetcherRunStatus"),
+    ("FetcherLastRunData", "triggered_by", "FetcherRunTriggeredBy"),
+    ("FetcherRunListItemData", "status", "FetcherRunStatus"),
+    ("FetcherRunListItemData", "triggered_by", "FetcherRunTriggeredBy"),
+    ("FetcherRunDetailData", "status", "FetcherRunStatus"),
+    ("FetcherRunDetailData", "triggered_by", "FetcherRunTriggeredBy"),
+    ("FetcherTimelinePointData", "status", "FetcherRunStatus"),
+    ("FetcherAuditEventData", "event_type", "FetcherAuditEventType"),
+    ("TicketAuditEventData", "event_type", "TicketAuditEventType"),
+    ("CVESSVCResponse", "exploitation", "SSVCExploitation"),
+    ("CVESSVCResponse", "automatable", "SSVCAutomatable"),
+    ("CVESSVCResponse", "technical_impact", "SSVCTechnicalImpact"),
+    (
+        "CVEExternalIdentifierResponse",
+        "source",
+        "CVEExternalIdentifierSourceValue",
+    ),
+    ("SystemSettingsData", "default_cvss_version", "DefaultCVSSVersionValue"),
+    (
+        "CVSSRecalculationTriggerData",
+        "default_cvss_version",
+        "DefaultCVSSVersionValue",
+    ),
+    (
+        "DefaultCVSSVersionImpactData",
+        "observed_default_cvss_version",
+        "DefaultCVSSVersionValue",
+    ),
+    (
+        "DefaultCVSSVersionImpactData",
+        "proposed_default_cvss_version",
+        "DefaultCVSSVersionValue",
+    ),
+]
+
+_COMPONENT_VALUES: dict[str, list[str]] = {
+    "RoleValue": [role_to_wire(role) for role in Role],
+    "UserType": _values(UserType),
+    "IdentityAuditEventType": _values(IdentityAuditEventType),
+    "SettingAuditEventType": _values(SettingAuditEventType),
+    "FetcherRunStatus": _values(FetcherRunStatus),
+    "FetcherRunTriggeredBy": _values(FetcherRunTriggeredBy),
+    "FetcherAuditEventType": _values(FetcherAuditEventType),
+    "TicketAuditEventType": _values(TicketAuditEventType),
+    "SSVCExploitation": _values(SSVCExploitation),
+    "SSVCAutomatable": _values(SSVCAutomatable),
+    "SSVCTechnicalImpact": _values(SSVCTechnicalImpact),
+    "CVEExternalIdentifierSourceValue": _lowercase_values(CVEExternalIdentifierSource),
+    "DefaultCVSSVersionValue": ["3.1", "4.0"],
+}
+"""The values of each response enum component, computed from the domain
+enums (`SelfIdentityAuditEventTypeValue` is checked in
+`tests/test_api/test_identity_audit.py`)."""
+
+
+def _registered_parameter(path: str, name: str) -> dict[str, Any]:
+    operation = registered_app.openapi()["paths"][path]["get"]
+    (parameter,) = [p for p in operation["parameters"] if p["name"] == name]
+    schema: dict[str, Any] = parameter["schema"]
+    return schema
+
+
+@pytest.mark.unit
+class TestPublishedValueSets:
+    """The registered application publishes the closed value sets of its
+    filters and response fields (`docs/api-spec.md`, Response Enums; Enum
+    Filter Validation; Published Input Constraints)."""
+
+    @pytest.mark.parametrize(
+        ("path", "name", "repeatable", "values"),
+        [
+            pytest.param(path, name, repeatable, values, id=f"{path}:{name}")
+            for path, name, repeatable, values in _PUBLISHED_FILTERS
+        ],
+    )
+    def test_enum_filter_publishes_its_values_on_a_string_parameter(
+        self, path: str, name: str, repeatable: bool, values: list[str]
+    ) -> None:
+        """Published, not enforced: the parameter stays a string, so an
+        invalid value is still ignored (each endpoint's own tests)."""
+        schema = _registered_parameter(path, name)
+
+        if repeatable:
+            assert schema["type"] == "array"
+            schema = schema["items"]
+        assert schema["type"] == "string"
+        assert schema["enum"] == values
+
+    @pytest.mark.parametrize(
+        ("component", "field", "enum"),
+        [
+            pytest.param(component, field, enum, id=f"{component}.{field}")
+            for component, field, enum in _RESPONSE_ENUMS
+        ],
+    )
+    def test_response_field_references_its_enum(
+        self, component: str, field: str, enum: str
+    ) -> None:
+        schemas = registered_app.openapi()["components"]["schemas"]
+        schema = schemas[component]["properties"][field]
+
+        if schema.get("type") == "array":
+            schema = schema["items"]
+        assert schema["$ref"] == f"#/components/schemas/{enum}"
+
+    @pytest.mark.parametrize(
+        ("component", "values"),
+        [
+            pytest.param(name, values, id=name)
+            for name, values in _COMPONENT_VALUES.items()
+        ],
+    )
+    def test_enum_component_lists_the_domain_values(
+        self, component: str, values: list[str]
+    ) -> None:
+        schemas = registered_app.openapi()["components"]["schemas"]
+
+        assert schemas[component]["enum"] == values

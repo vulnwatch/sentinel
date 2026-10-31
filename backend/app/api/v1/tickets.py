@@ -53,6 +53,7 @@ from app.api.dependencies import (
     ticket_not_mutable_error,
     user_not_found_error,
 )
+from app.api.openapi import enum_filter_schema
 from app.api.v1.cves import serialize_cve_detail
 from app.api.v1.ticket_packages import serialize_package
 from app.core.enums import (
@@ -208,6 +209,7 @@ def _ticket_list_query(
                 "`resolved`, `ignored`, `duplicated`. Repeatable; OR semantics. "
                 "Invalid values are ignored."
             ),
+            json_schema_extra=enum_filter_schema(_STATUS_FILTER, repeatable=True),
         ),
     ],
     assignee: Annotated[
@@ -228,6 +230,7 @@ def _ticket_list_query(
                 "`low`, `none` (CVSS score 0.0), `unresolved` (no severity). "
                 "Repeatable; OR semantics. Invalid values are ignored."
             ),
+            json_schema_extra=enum_filter_schema(_SEVERITY_FILTER, repeatable=True),
         ),
     ],
     priority: Annotated[
@@ -239,6 +242,7 @@ def _ticket_list_query(
                 "`unresolved` (not yet prioritizable). Repeatable; OR "
                 "semantics. Invalid values are ignored."
             ),
+            json_schema_extra=enum_filter_schema(_PRIORITY_FILTER, repeatable=True),
         ),
     ],
     overdue: Annotated[
@@ -253,6 +257,7 @@ def _ticket_list_query(
                 "one track has that milestone overdue. Repeatable; OR "
                 "semantics. Invalid values are ignored."
             ),
+            json_schema_extra=enum_filter_schema(_OVERDUE_FILTER, repeatable=True),
         ),
     ],
     current_phase: Annotated[
@@ -266,6 +271,9 @@ def _ticket_list_query(
                 "`overdue` value (for example `current_phase=um&overdue=um`), "
                 "it lists the Tickets whose current phase is past due. "
                 "Repeatable; OR semantics. Invalid values are ignored."
+            ),
+            json_schema_extra=enum_filter_schema(
+                _CURRENT_PHASE_FILTER, repeatable=True
             ),
         ),
     ],
@@ -608,9 +616,11 @@ async def get_ticket(
     description=(
         "Sets or clears the manual severity of a Ticket without a CVE. A "
         "lowercase label (`critical`, `high`, `medium`, `low`, `none`) sets "
-        "it; JSON `null` clears it (unresolved). An unassigned Ticket is "
-        "auto-assigned to an active vulnerability analyst, the automatic "
-        "priority is refreshed, and the Ticket status is re-evaluated. "
+        "it; JSON `null` clears it (unresolved). An effective change "
+        "auto-assigns an unassigned Ticket to the caller when the caller is an "
+        "active vulnerability analyst, refreshes the automatic priority, and "
+        "re-evaluates the Ticket status; an unchanged severity returns the "
+        "current Ticket with no side effect. "
         "Returns the post-mutation Ticket detail. Requires `triage_ticket`."
     ),
     responses={
@@ -687,8 +697,9 @@ async def set_ticket_severity(
         "the CVE's CVSS-derived severity replaces; recalculates the automatic "
         "Product eligibility and the automatic priority from the CVE's "
         "current assessments and evidence; and re-evaluates the Ticket status, "
-        "which may regress. An unassigned Ticket is auto-assigned to an "
-        "active vulnerability analyst caller. Returns the post-mutation "
+        "which may regress. An unassigned Ticket is auto-assigned to the "
+        "caller when the caller is an active vulnerability analyst. Returns "
+        "the post-mutation "
         "Ticket detail. Requires `triage_ticket`."
     ),
     responses={
@@ -803,8 +814,9 @@ def _assignee_inactive_error() -> AppError:
         "to its automatic priority (`priority_automatic`). The override is "
         "sticky: automatic refresh never changes it. An unchanged request is an "
         "idempotent success. An effective change auto-assigns an unassigned "
-        "Ticket to an active vulnerability analyst caller and re-evaluates the "
-        "Ticket status. Returns the post-mutation Ticket detail. Requires "
+        "Ticket to the caller when the caller is an active vulnerability "
+        "analyst, and re-evaluates the Ticket status. Returns the "
+        "post-mutation Ticket detail. Requires "
         "`triage_ticket`."
     ),
     responses={
@@ -992,9 +1004,10 @@ def _duplicate_concurrent_modification_error() -> AppError:
     summary="Ignore Ticket",
     description=(
         "Moves a `new` or `analysis` Ticket to `ignored` (manual zone). No "
-        "request body. An unassigned Ticket is first auto-assigned to an "
-        "active vulnerability analyst caller, which records `new` -> "
-        "`analysis` before the transition. Returns the post-mutation Ticket "
+        "request body. An unassigned Ticket is first auto-assigned to the "
+        "caller when the caller is an active vulnerability analyst, which "
+        "records `new` -> `analysis` before the transition. Returns the "
+        "post-mutation Ticket "
         "detail. Requires `triage_ticket`."
     ),
     responses={
@@ -1064,8 +1077,9 @@ async def ignore_ticket(
         "`duplicate_of_ticket_id` (`SNTL-{n}`), which must not itself be "
         "Duplicated. Tickets currently marked as duplicates of this Ticket are "
         "atomically repointed to the new target. An unassigned Ticket is first "
-        "auto-assigned to an active vulnerability analyst caller. Returns the "
-        "post-mutation Ticket detail. Requires `triage_ticket`."
+        "auto-assigned to the caller when the caller is an active "
+        "vulnerability analyst. Returns the post-mutation Ticket detail. "
+        "Requires `triage_ticket`."
     ),
     responses={
         400: {

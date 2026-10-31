@@ -20,8 +20,8 @@ class ErrorResponse(BaseModel):
 
 
 class ValidationErrorItem(BaseModel):
-    """One element of the `errors` array of a `422 VALIDATION_ERROR`
-    body (`docs/api-spec.md`, Response Format)."""
+    """One element of the `errors` array of a `422` body that locates its
+    invalid inputs (`docs/api-spec.md`, Response Format)."""
 
     loc: list[str | int] = Field(
         description='Path to the invalid input, e.g. `["body", "field_name"]`.'
@@ -31,8 +31,11 @@ class ValidationErrorItem(BaseModel):
 
 
 class ValidationErrorResponse(ErrorResponse):
-    """The `422 VALIDATION_ERROR` body: the standard envelope plus the
-    field-level `errors` array (`docs/api-spec.md`, Response Format)."""
+    """A `422` body that locates its invalid inputs: the standard envelope
+    plus the field-level `errors` array. It is the body of
+    `VALIDATION_ERROR` and of the domain validation codes whose contract
+    lists `errors`, `FETCHER_SETTING_UNKNOWN` and `FETCHER_SETTING_INVALID`
+    (`docs/api-spec.md`, Response Format)."""
 
     errors: list[ValidationErrorItem]
 

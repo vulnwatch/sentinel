@@ -11,18 +11,25 @@ authentication/authorization, and actor representation).
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
+from typing import get_args
 from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
 
-from app.api.v1.identity_audit import _parse_event_types
+from app.api.v1.identity_audit import (
+    _ADMIN_EVENT_TYPES,
+    _SELF_EVENT_TYPES,
+    _parse_event_types,
+)
 from app.core.enums import IdentityAuditEventType, Role
+from app.main import app
 from app.models.identity_audit_event import IdentityAuditEvent
 from app.models.user import User
 from app.models.user_role import UserRole
+from app.schemas.identity_audit import SelfIdentityAuditEventTypeValue
 
 
 @pytest.fixture
@@ -48,10 +55,12 @@ def authenticated_user(
 @pytest.mark.unit
 class TestParseEventTypes:
     def test_absent_is_valid_with_no_filter(self) -> None:
-        assert _parse_event_types([]) == (True, [])
+        assert _parse_event_types([], _ADMIN_EVENT_TYPES) == (True, [])
 
     def test_all_valid_values_are_kept(self) -> None:
-        is_valid, event_types = _parse_event_types(["role_added", "role_removed"])
+        is_valid, event_types = _parse_event_types(
+            ["role_added", "role_removed"], _ADMIN_EVENT_TYPES
+        )
         assert is_valid is True
         assert set(event_types) == {
             IdentityAuditEventType.ROLE_ADDED,
@@ -59,12 +68,88 @@ class TestParseEventTypes:
         }
 
     def test_mixed_valid_and_invalid_keeps_only_valid(self) -> None:
-        is_valid, event_types = _parse_event_types(["role_added", "not-a-real-type"])
+        is_valid, event_types = _parse_event_types(
+            ["role_added", "not-a-real-type"], _ADMIN_EVENT_TYPES
+        )
         assert is_valid is True
         assert event_types == [IdentityAuditEventType.ROLE_ADDED]
 
     def test_all_invalid_is_rejected(self) -> None:
-        assert _parse_event_types(["not-a-real-type"]) == (False, [])
+        assert _parse_event_types(["not-a-real-type"], _ADMIN_EVENT_TYPES) == (
+            False,
+            [],
+        )
+
+    def test_role_mapping_event_type_is_invalid_for_the_self_log(self) -> None:
+        """The self log never contains role mapping events
+        (`identity-audit-log.md`, List My Identity Audit Events), so its
+        filter ignores their values; the admin log accepts them."""
+        values = ["role_mapping_created", "role_mapping_deleted"]
+
+        assert _parse_event_types(values, _SELF_EVENT_TYPES) == (False, [])
+        assert _parse_event_types(values, _ADMIN_EVENT_TYPES) == (
+            True,
+            [
+                IdentityAuditEventType.ROLE_MAPPING_CREATED,
+                IdentityAuditEventType.ROLE_MAPPING_DELETED,
+            ],
+        )
+
+
+@pytest.mark.unit
+class TestEventTypeValueSets:
+    """The event types each log returns and its filter accepts and publishes
+    (`docs/api-spec.md`, Response Enums; Published Input Constraints)."""
+
+    def test_admin_log_accepts_every_identity_event_type(self) -> None:
+        assert list(_ADMIN_EVENT_TYPES) == [
+            member.value for member in IdentityAuditEventType
+        ]
+
+    def test_self_log_accepts_every_type_except_role_mapping_events(self) -> None:
+        expected = [
+            member.value
+            for member in IdentityAuditEventType
+            if member
+            not in {
+                IdentityAuditEventType.ROLE_MAPPING_CREATED,
+                IdentityAuditEventType.ROLE_MAPPING_DELETED,
+            }
+        ]
+
+        assert list(get_args(SelfIdentityAuditEventTypeValue.__value__)) == expected
+        assert list(_SELF_EVENT_TYPES) == expected
+
+    @pytest.mark.parametrize(
+        ("path", "component", "values"),
+        [
+            pytest.param(
+                "/api/v1/admin/identity/audit-log",
+                "IdentityAuditEventType",
+                _ADMIN_EVENT_TYPES,
+                id="admin",
+            ),
+            pytest.param(
+                "/api/v1/users/me/audit-log",
+                "SelfIdentityAuditEventTypeValue",
+                _SELF_EVENT_TYPES,
+                id="self",
+            ),
+        ],
+    )
+    def test_response_and_filter_publish_the_event_types_of_the_log(
+        self, path: str, component: str, values: Mapping[str, object]
+    ) -> None:
+        document = app.openapi()
+        (parameter,) = [
+            parameter
+            for parameter in document["paths"][path]["get"]["parameters"]
+            if parameter["name"] == "event_type"
+        ]
+
+        assert parameter["schema"]["type"] == "array"
+        assert parameter["schema"]["items"]["enum"] == list(values)
+        assert document["components"]["schemas"][component]["enum"] == list(values)
 
 
 # ---------------------------------------------------------------------------

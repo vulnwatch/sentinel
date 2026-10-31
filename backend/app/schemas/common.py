@@ -27,6 +27,12 @@ exposes a Ticket status (`docs/features/tickets/tickets.md`, Response
 Schemas: enum serialization).
 """
 
+type RoleValue = Literal["admin", "vulnerability_analyst", "restricted_analyst"]
+"""Wire values of `Role` (`app.core.permissions.role_to_wire`), shared by
+every schema that accepts or returns a role value
+(`docs/features/identity/rbac.md`, Role Wire Format).
+"""
+
 
 class PaginationMeta(BaseModel):
     """The `meta` object of a paginated list response.

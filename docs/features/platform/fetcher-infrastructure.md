@@ -1138,21 +1138,20 @@ constraints express all validation rules declaratively:
 |------|----------------------|
 | `int` | `ge`, `le`, `gt`, `lt` |
 | `float` | `ge`, `le`, `gt`, `lt` |
-| `str` | `max_length`, `pattern`, `json_schema_extra={"choices": [...]}` |
+| `str` | `max_length`, `pattern` |
 | `bool` | (no additional constraints) |
 
 Nested objects, lists, and complex structures are not supported — only
 scalar fields are allowed in the `Settings` model. This is enforced at
 import time (see below).
 
-To declare allowed choices for string or integer fields, use
-`json_schema_extra`:
+To declare allowed choices for string or integer fields, use a `Literal`
+type or a `StrEnum`/`IntEnum` (see Choice enforcement in Design decisions):
 
 ```python
 class Settings(BaseModel):
-    output_format: str = Field(
+    output_format: Literal["json", "xml", "csv"] = Field(
         default="json",
-        json_schema_extra={"choices": ["json", "xml", "csv"]},
         description="Response format preference.",
     )
 ```
@@ -1327,9 +1326,32 @@ This registry is used by:
 - The `sentinel fetcher config` CLI command (settings display)
 
 Because Pydantic produces standard JSON Schema, a client can build and check
-the input of every setting without custom serialization logic — field types,
-constraints, defaults, descriptions, choices, and warnings are all
-present in the schema output.
+the input of every setting without custom serialization logic.
+
+**Schema keywords**: `settings_schema` is an object schema whose
+`properties` hold one schema per setting. Because every setting is a scalar
+with a default (Import-time validation), a client can rely on these
+keywords of a property:
+
+- `type`: `integer`, `number`, `string`, or `boolean`, on every property
+  except a `$ref` and a choice whose values do not share one type (below). A
+  setting never accepts `null`, so no property is an `anyOf`;
+- `default`, always present, and `title` and `description` when present;
+- `minimum` and `maximum` for `ge` and `le`, `exclusiveMinimum` and
+  `exclusiveMaximum` for `gt` and `lt`, and `maxLength` and `pattern` for a
+  string;
+- the choices of a `Literal` field as an `enum` of its values in the
+  property itself, with a `type` when all values share one, or as a `const`
+  when the `Literal` has one value; the choices of a `StrEnum` or `IntEnum`
+  field as a `$ref` to a definition under the top-level `$defs` of
+  `settings_schema`, which holds their `enum` and `type`; and
+- `warning` and `choices`, copied from `json_schema_extra` when the field
+  declares them: `warning` is a human-readable caution, and `choices` is
+  informational only (Choice enforcement).
+
+The schema does not declare `additionalProperties`, but the PATCH endpoint
+rejects a key outside `properties` with `FETCHER_SETTING_UNKNOWN`
+(`docs/features/platform/fetcher-operations.md`, Update Fetcher Config).
 
 ### Design decisions
 
@@ -1362,7 +1384,7 @@ present in the schema output.
   would pass definition but fail at runtime when no stored override
   exists. `extra="ignore"` ensures orphaned keys are inert (see above).
 - **Choice enforcement**: to declare allowed choices for string or
-  integer fields, use `Literal` types or Python `Enum` types — not
+  integer fields, use `Literal` types or `StrEnum`/`IntEnum` types — not
   `json_schema_extra={"choices": [...]}` alone. `json_schema_extra`
   is metadata only; Pydantic does not enforce choices declared via
   `json_schema_extra`. `Literal["json", "xml", "csv"]` or a `StrEnum`

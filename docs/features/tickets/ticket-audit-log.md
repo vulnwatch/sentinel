@@ -98,7 +98,11 @@ event type.
   advisory instead of `updateinfo.xml`
   (`docs/features/platform/example-dataset.md`, Attribution).
 - `old_value` and `new_value` store human-readable strings. For enum values,
-  store the enum name (e.g., `AFFECTED`, `NOT_AFFECTED`). For user
+  store the persisted value of the enum member, which can differ from the
+  lowercase value that other API fields use for it: `New` or `Analysis` for a
+  Ticket status, `High` or `None` for a severity, `P1` for a priority,
+  `AFFECTED` or `NOT_AFFECTED` for a track status, and `advisory` for a
+  reference type. The API returns these strings unchanged. For user
   references, store the username.
 - A canonical CVSS assessment value has the exact form
   `"{provider_name} v{cvss_version} {vector_string} ({score:.1f})"`. The

@@ -10,11 +10,13 @@ here.
 
 from __future__ import annotations
 
-from typing import Annotated
+from collections.abc import Mapping
+from typing import Annotated, Final, get_args
 
 from fastapi import APIRouter, Depends, Query
 
 from app.api.dependencies import AuthenticatedPrincipal, CurrentUser, require_capability
+from app.api.openapi import enum_filter_schema
 from app.core.dates import parse_date_range_bound, validate_date_range_order
 from app.core.enums import Capability, IdentityAuditEventType
 from app.database import DatabaseSession
@@ -27,6 +29,7 @@ from app.schemas.identity_audit import (
     AdminIdentityAuditQuery,
     IdentityAuditQuery,
     SelfIdentityAuditEventData,
+    SelfIdentityAuditEventTypeValue,
     SelfIdentityAuditListResponse,
 )
 from app.services import identity_audit_log
@@ -46,15 +49,24 @@ router = APIRouter(prefix="/api/v1", tags=["Identity Audit Log"])
 # ---------------------------------------------------------------------------
 
 
+# The event types each log can return, which its `event_type` filter
+# accepts and publishes (`identity-audit-log.md`, List Identity Audit
+# Events; List My Identity Audit Events).
+_ADMIN_EVENT_TYPES: Final[Mapping[str, IdentityAuditEventType]] = {
+    member.value: member for member in IdentityAuditEventType
+}
+_SELF_EVENT_TYPES: Final[Mapping[str, IdentityAuditEventType]] = {
+    value: IdentityAuditEventType(value)
+    for value in get_args(SelfIdentityAuditEventTypeValue.__value__)
+}
+_EVENT_TYPE_DESCRIPTION: Final = (
+    "Filter by event type. Repeatable; OR semantics. Invalid values are "
+    "ignored; only invalid values yield an empty page."
+)
+
+
 def _identity_audit_query(
     *,
-    event_type: Annotated[
-        list[str],
-        Query(
-            default_factory=list,
-            description="Filter by event type. Repeatable; OR semantics.",
-        ),
-    ],
     from_date: Annotated[
         str | None,
         Query(description="ISO 8601 date/datetime; inclusive lower bound."),
@@ -68,11 +80,12 @@ def _identity_audit_query(
         int, Query(ge=1, le=100, description="Items per page; maximum 100.")
     ] = 20,
 ) -> IdentityAuditQuery:
+    """The parameters shared by both logs. `event_type` is declared by each
+    log's own builder, because the two logs accept different event types."""
     parsed_from = parse_date_range_bound("from_date", from_date)
     parsed_to = parse_date_range_bound("to_date", to_date)
     validate_date_range_order(parsed_from, parsed_to)
     return IdentityAuditQuery(
-        event_type=event_type,
         from_date=parsed_from,
         to_date=parsed_to,
         page=page,
@@ -80,8 +93,23 @@ def _identity_audit_query(
     )
 
 
+def _self_identity_audit_query(
+    common: Annotated[IdentityAuditQuery, Depends(_identity_audit_query)],
+    event_type: Annotated[
+        list[str],
+        Query(
+            default_factory=list,
+            description=_EVENT_TYPE_DESCRIPTION,
+            json_schema_extra=enum_filter_schema(_SELF_EVENT_TYPES, repeatable=True),
+        ),
+    ],
+) -> IdentityAuditQuery:
+    return common.model_copy(update={"event_type": event_type})
+
+
 def _admin_identity_audit_query(
     common: Annotated[IdentityAuditQuery, Depends(_identity_audit_query)],
+    *,
     actor: Annotated[
         str | None,
         Query(description="Actor UUID, exact username, or 'system'."),
@@ -90,14 +118,30 @@ def _admin_identity_audit_query(
         str | None,
         Query(description="Target user UUID or exact username."),
     ] = None,
+    event_type: Annotated[
+        list[str],
+        Query(
+            default_factory=list,
+            description=_EVENT_TYPE_DESCRIPTION,
+            json_schema_extra=enum_filter_schema(_ADMIN_EVENT_TYPES, repeatable=True),
+        ),
+    ],
 ) -> AdminIdentityAuditQuery:
+    """`event_type` follows `actor` and `target_user`, so the published order
+    of the parameters is the one that the shared builder gave them."""
     return AdminIdentityAuditQuery(
-        **common.model_dump(), actor=actor, target_user=target_user
+        **common.model_dump(exclude={"event_type"}),
+        event_type=event_type,
+        actor=actor,
+        target_user=target_user,
     )
 
 
-def _parse_event_types(raw: list[str]) -> tuple[bool, list[IdentityAuditEventType]]:
-    """Resolve the raw repeatable `event_type` query values to typed filters.
+def _parse_event_types(
+    raw: list[str], accepted: Mapping[str, IdentityAuditEventType]
+) -> tuple[bool, list[IdentityAuditEventType]]:
+    """Resolve the raw repeatable `event_type` query values to typed filters,
+    against the event types `accepted` by the log.
 
     Returns `(True, [])` when `raw` is empty (no filter applied),
     `(True, [...])` with the valid subset when at least one value is
@@ -108,12 +152,7 @@ def _parse_event_types(raw: list[str]) -> tuple[bool, list[IdentityAuditEventTyp
     """
     if not raw:
         return True, []
-    valid: list[IdentityAuditEventType] = []
-    for value in raw:
-        try:
-            valid.append(IdentityAuditEventType(value))
-        except ValueError:
-            continue
+    valid = [accepted[value] for value in raw if value in accepted]
     if not valid:
         return False, []
     return True, valid
@@ -175,12 +214,12 @@ def _serialize_self_event(event: IdentityAuditEvent) -> SelfIdentityAuditEventDa
 async def list_my_identity_audit_events(
     principal: CurrentUser,
     db: DatabaseSession,
-    query: Annotated[IdentityAuditQuery, Depends(_identity_audit_query)],
+    query: Annotated[IdentityAuditQuery, Depends(_self_identity_audit_query)],
 ) -> SelfIdentityAuditListResponse:
     """List my identity audit events — see
     `docs/features/identity/identity-audit-log.md` (List My Identity
     Audit Events)."""
-    types_valid, event_types = _parse_event_types(query.event_type)
+    types_valid, event_types = _parse_event_types(query.event_type, _SELF_EVENT_TYPES)
     if not types_valid:
         return SelfIdentityAuditListResponse(
             data=[],
@@ -224,7 +263,7 @@ async def list_identity_audit_events(
     """List identity audit events — see
     `docs/features/identity/identity-audit-log.md` (List Identity Audit
     Events)."""
-    types_valid, event_types = _parse_event_types(query.event_type)
+    types_valid, event_types = _parse_event_types(query.event_type, _ADMIN_EVENT_TYPES)
     if not types_valid:
         return AdminIdentityAuditListResponse(
             data=[],

@@ -90,8 +90,11 @@ _BROKER_PUBLICATION_FAILURE_MESSAGE = (
 )
 
 # Message of a submitted `custom_settings` value whose JSON type differs
-# from its declared field's (`_strict_setting_type_error()`).
+# from its declared field's (`_strict_setting_type_errors()`).
 _WRONG_SETTING_TYPE = "Input has the wrong JSON type for this setting"
+# Message of a `custom_settings` key that the `Settings` model does not
+# declare: Pydantic's own message for its `extra_forbidden` error type.
+_UNKNOWN_SETTING = "Extra inputs are not permitted"
 
 
 # ---------------------------------------------------------------------------
@@ -156,27 +159,58 @@ class FetcherBrokerUnavailableError(FetcherOperationsServiceError):
         super().__init__(_BROKER_PUBLICATION_FAILURE_MESSAGE)
 
 
-class FetcherSettingUnknownError(FetcherOperationsServiceError):
-    """A submitted `custom_settings` key is not declared in the
-    fetcher's `Settings` model."""
+@dataclass(frozen=True, slots=True)
+class CustomSettingError:
+    """One invalid `custom_settings` entry: `location` is its path within
+    `custom_settings` (the setting key, or empty for an error of the whole
+    `Settings` model), `type` the Pydantic error type, and `message` a
+    human-readable message (`docs/features/platform/fetcher-operations.md`,
+    Update Fetcher Config)."""
 
-    def __init__(self, key: str) -> None:
-        self.key = key
-        super().__init__(f"Unknown custom setting: {key!r}")
+    location: tuple[str | int, ...]
+    type: str
+    message: str
+
+
+def _settings_errors_message(errors: tuple[CustomSettingError, ...]) -> str:
+    """The exception message: one `location: message` entry per error,
+    joined with `; `."""
+    return "; ".join(
+        f"{'.'.join(str(part) for part in error.location)}: {error.message}"
+        for error in errors
+    )
+
+
+class FetcherSettingUnknownError(FetcherOperationsServiceError):
+    """Submitted `custom_settings` keys are not declared in the fetcher's
+    `Settings` model. `errors` locates every such key, in request order."""
+
+    def __init__(self, keys: tuple[str, ...]) -> None:
+        self.keys = keys
+        self.errors = tuple(
+            CustomSettingError((key,), "extra_forbidden", _UNKNOWN_SETTING)
+            for key in keys
+        )
+        noun = "setting" if len(keys) == 1 else "settings"
+        super().__init__(
+            f"Unknown custom {noun}: {', '.join(repr(key) for key in keys)}"
+        )
 
 
 class FetcherSettingInvalidError(FetcherOperationsServiceError):
-    """A submitted, non-null `custom_settings` value has the wrong JSON
-    type for its declared `Settings` field, or the candidate merged
+    """Submitted, non-null `custom_settings` values have the wrong JSON
+    type for their declared `Settings` fields, or the candidate merged
     state (current stored `custom_settings` values plus the submitted,
     non-null changes) fails the fetcher's `Settings` model
-    type/range/choices validation. In the merged-state case the invalid
-    field is not necessarily one the caller submitted — see
+    type/range/choices validation. `errors` locates every failing entry
+    of the check that failed. In the merged-state case an invalid field
+    is not necessarily one the caller submitted — see
     `docs/features/platform/fetcher-operations.md`
     (`update_fetcher_config`, Custom settings canonicalization)."""
 
-    def __init__(self, message: str) -> None:
-        super().__init__(message)
+    def __init__(self, errors: tuple[CustomSettingError, ...]) -> None:
+        self.errors = errors
+        super().__init__(_settings_errors_message(errors))
 
 
 # ---------------------------------------------------------------------------
@@ -250,10 +284,12 @@ class FetcherRunPage:
 class DisabledPeriod:
     """One derived disabled period. `disabled_by`/`enabled_by` are the
     actors of the delimiting `disabled`/`enabled` events, for every caller;
-    `enabled_by` is `None` while the period is open."""
+    `enabled_by` is `None` while the period is open. Every fetcher audit
+    event has an actor (`FetcherAuditLog.log_event()` rejects a `None`
+    `user_id`), so `disabled_by` is always a user."""
 
     disabled_at: datetime
-    disabled_by: User | None
+    disabled_by: User
     enabled_at: datetime | None
     enabled_by: User | None
 
@@ -438,18 +474,34 @@ def _canonical_json_scalar(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
-def _first_settings_error_message(exc: ValidationError) -> str:
-    """Build a concise, user-facing message from a `Settings` model
-    validation failure — one `field: message` entry per failing field,
-    joined with `; `."""
-    parts = [
-        f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+def _settings_validation_errors(exc: ValidationError) -> tuple[CustomSettingError, ...]:
+    """Every error of a `Settings` model validation failure, located at its
+    field (empty for an error of the whole model)."""
+    return tuple(
+        CustomSettingError(tuple(error["loc"]), error["type"], error["msg"])
         for error in exc.errors()
-    ]
-    return "; ".join(parts)
+    )
 
 
-def _strict_setting_type_error(key: str, annotation: Any, value: Any) -> str | None:
+def _wrong_json_type_error(key: str, annotation: Any) -> CustomSettingError:
+    """The error of a submitted value whose JSON type `annotation` does not
+    accept. Its type is the Pydantic error type of a value of another
+    type, such as `int_type` or `literal_error`: obtained by validating
+    `None`, which no `Settings` field accepts, because every field is a
+    non-optional scalar (`docs/features/platform/fetcher-infrastructure.md`,
+    Import-time validation)."""
+    try:
+        TypeAdapter(annotation).validate_python(None)
+    except ValidationError as exc:
+        error_type = exc.errors()[0]["type"]
+    else:  # pragma: no cover - every `Settings` field rejects `null`
+        error_type = "value_error"
+    return CustomSettingError((key,), error_type, _WRONG_SETTING_TYPE)
+
+
+def _strict_setting_type_errors(
+    key: str, annotation: Any, value: Any
+) -> tuple[CustomSettingError, ...]:
     """Type-check one submitted, non-null `custom_settings` value against
     its declared `Settings` field type without coercion
     (`docs/features/platform/fetcher-operations.md`,
@@ -473,23 +525,27 @@ def _strict_setting_type_error(key: str, annotation: Any, value: Any) -> str | N
     boolean must stay a boolean (and only a boolean may become one),
     and a number written with a fraction or exponent must stay a float.
     Field constraints are left to the merged-state validation. Returns
-    a `key: message` string on failure, `None` when the type matches.
+    the errors of `key` on failure, located at `key`, and none when the
+    type matches.
     """
     if not isinstance(value, str | int | float) or (
         isinstance(value, float) and not math.isfinite(value)
     ):
-        return f"{key}: {_WRONG_SETTING_TYPE}"
+        return (_wrong_json_type_error(key, annotation),)
     try:
         validated = TypeAdapter(annotation).validate_json(
             json.dumps(value), strict=True
         )
     except ValidationError as exc:
-        return "; ".join(f"{key}: {error['msg']}" for error in exc.errors())
+        return tuple(
+            CustomSettingError((key, *error["loc"]), error["type"], error["msg"])
+            for error in exc.errors()
+        )
     if isinstance(value, bool) != isinstance(validated, bool) or (
         isinstance(value, float) and not isinstance(validated, float)
     ):
-        return f"{key}: {_WRONG_SETTING_TYPE}"
-    return None
+        return (_wrong_json_type_error(key, annotation),)
+    return ()
 
 
 def _build_run_summary(
@@ -680,6 +736,9 @@ async def _resolve_disabled_periods(
         )
         if not intersects:
             continue
+        # Guaranteed by `FetcherAuditLog.log_event()`, which rejects an
+        # event without an actor; narrows the nullable relationship.
+        assert disabled_event.actor is not None
         periods.append(
             DisabledPeriod(
                 disabled_at=disabled_at,
@@ -1041,13 +1100,15 @@ async def update_fetcher_config(
        in-place via `fetcher_execution.mark_queued_run_stale()` or
        `mark_run_stale()`, matching the row's own status, and the PATCH
        proceeds).
-    4. `FetcherSettingUnknownError` — a `payload.custom_settings` key is
-       not declared in the fetcher's `Settings` model.
-    5. `FetcherSettingInvalidError` — a submitted non-null value does
-       not have its declared field's JSON type (strict JSON-mode check,
-       no coercion; see `_strict_setting_type_error()`), or the merged
+    4. `FetcherSettingUnknownError` — `payload.custom_settings` keys are
+       not declared in the fetcher's `Settings` model; it locates every
+       such key.
+    5. `FetcherSettingInvalidError` — submitted non-null values do not
+       have their declared fields' JSON types (strict JSON-mode check,
+       no coercion; see `_strict_setting_type_errors()`), or the merged
        candidate `custom_settings` state fails `Settings` model
-       validation. The
+       validation; it locates every failing entry of the check that
+       failed. The
        **entire** merged state (current stored values overlaid with
        `payload.custom_settings`) is validated, mirroring the same
        `Settings` model instantiation `BaseFetcher.run()` performs at
@@ -1174,17 +1235,22 @@ async def update_fetcher_config(
     if custom_settings is not MISSING:
         settings_cls = fetcher_cls.Settings
         declared_fields = settings_cls.model_fields if settings_cls is not None else {}
-        for key in custom_settings:
-            if key not in declared_fields:
-                raise FetcherSettingUnknownError(key)
+        unknown_keys = tuple(
+            key for key in custom_settings if key not in declared_fields
+        )
+        if unknown_keys:
+            raise FetcherSettingUnknownError(unknown_keys)
 
-        for key, value in custom_settings.items():
-            if value is not None:
-                type_error = _strict_setting_type_error(
-                    key, declared_fields[key].annotation, value
-                )
-                if type_error is not None:
-                    raise FetcherSettingInvalidError(type_error)
+        type_errors = tuple(
+            error
+            for key, value in custom_settings.items()
+            if value is not None
+            for error in _strict_setting_type_errors(
+                key, declared_fields[key].annotation, value
+            )
+        )
+        if type_errors:
+            raise FetcherSettingInvalidError(type_errors)
 
         if settings_cls is not None and custom_settings:
             candidate = dict(config.custom_settings)
@@ -1197,7 +1263,7 @@ async def update_fetcher_config(
                 validated = settings_cls.model_validate(candidate)
             except ValidationError as exc:
                 raise FetcherSettingInvalidError(
-                    _first_settings_error_message(exc)
+                    _settings_validation_errors(exc)
                 ) from exc
             dumped = validated.model_dump(mode="json")
             for key, value in custom_settings.items():

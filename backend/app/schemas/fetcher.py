@@ -14,9 +14,14 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
-from celery.schedules import crontab
+from celery.schedules import ParseException, crontab
 from pydantic import MISSING, BaseModel, Field, field_validator, model_validator
 
+from app.core.enums import (
+    FetcherAuditEventType,
+    FetcherRunStatus,
+    FetcherRunTriggeredBy,
+)
 from app.schemas.common import PaginationMeta, UserReference
 
 # ---------------------------------------------------------------------------
@@ -32,7 +37,9 @@ class FetcherRunListQuery(BaseModel):
     produce an empty result (`docs/api-spec.md`, Enum Filter
     Validation) rather than the schema-validation `422` a typed enum
     field would raise. The service validates the value itself, after
-    the fetcher-existence check (see `fetcher_operations.list_fetcher_runs`).
+    the fetcher-existence check (see `fetcher_operations.list_fetcher_runs`);
+    the route publishes the `FetcherRunStatus` values as the parameter's
+    `enum`.
 
     `from_date`/`to_date` are already-parsed `date`/`datetime` values by
     the time this model is constructed — the API layer's
@@ -84,12 +91,12 @@ class FetcherLastRunData(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
     duration_seconds: float | None
-    status: str
+    status: FetcherRunStatus
     items_succeeded: int
     items_created: int
     items_updated: int
     items_failed: int
-    triggered_by: str
+    triggered_by: FetcherRunTriggeredBy
     triggered_by_user: UserReference | None
     error_message: str | None
     stale: bool
@@ -178,17 +185,19 @@ class FetcherTimelinePointData(BaseModel):
     items_created: int
     items_updated: int
     items_failed: int
-    status: str
+    status: FetcherRunStatus
 
 
 class FetcherDisabledPeriodData(BaseModel):
     """One derived disabled period. `disabled_by`/`enabled_by` are the
     `UserReference` objects of the users who disabled and enabled the
     fetcher, for every caller (`docs/features/identity/rbac.md`, Actor
-    Identities); `enabled_by` is `null` while the period is open."""
+    Identities); `disabled_by` is never `null`, and `enabled_by` is `null`
+    while the period is open (`fetcher-operations.md`, Disabled Period
+    Derivation)."""
 
     disabled_at: datetime
-    disabled_by: UserReference | None
+    disabled_by: UserReference
     enabled_at: datetime | None
     enabled_by: UserReference | None
 
@@ -223,8 +232,27 @@ class FetcherConfigData(BaseModel):
     effective_schedule: str | None
     run_timeout: int
     request_delay: float
-    custom_settings: dict[str, Any]
-    settings_schema: dict[str, Any] | None
+    custom_settings: dict[str, Any] = Field(
+        description=(
+            "The stored custom setting values; a setting that is absent uses "
+            "its default. For a registered fetcher, a stored key that "
+            "`settings_schema` no longer declares is inert and cannot be "
+            "changed or reset: sending it to `PATCH .../config`, also with "
+            "`null`, returns `422 FETCHER_SETTING_UNKNOWN`."
+        )
+    )
+    settings_schema: dict[str, Any] | None = Field(
+        description=(
+            "JSON Schema of the custom settings: one property per setting, with "
+            "its `default` and its `type`, or a `$ref` into `$defs` for an enum "
+            "type; a choice whose values do not share one type has no `type`. "
+            "Where they apply, a property also carries `title`, `description`, "
+            "`minimum`/`maximum`, `exclusiveMinimum`/`exclusiveMaximum`, "
+            "`maxLength`, `pattern`, `enum` or `const` for a choice, `warning`, "
+            "and the informational `choices`. `null` when the fetcher declares "
+            "no settings or is deregistered."
+        )
+    )
     updated_at: datetime
 
 
@@ -272,7 +300,16 @@ class FetcherConfigUpdateRequest(BaseModel):
     """
 
     enabled: bool | MISSING = Field(default=MISSING, strict=True)
-    schedule_override: str | MISSING | None = Field(default=MISSING, max_length=50)
+    schedule_override: str | MISSING | None = Field(
+        default=MISSING,
+        max_length=50,
+        description=(
+            "Five-field cron expression (minute, hour, day of month, month, "
+            "day of week), as Celery's `crontab` parses it; `null` reverts to "
+            "the default schedule. An expression that does not parse returns "
+            "`422 VALIDATION_ERROR`."
+        ),
+    )
     run_timeout: int | MISSING = Field(default=MISSING, strict=True, ge=60, le=604_800)
     request_delay: float | MISSING = Field(default=MISSING, strict=True, ge=0, le=300)
     custom_settings: dict[str, Any] | MISSING = MISSING
@@ -281,11 +318,17 @@ class FetcherConfigUpdateRequest(BaseModel):
     @classmethod
     def _validate_cron(cls, value: str | None) -> str | None:
         if value is not None:
-            # Raises `ValueError` on an invalid 5-field cron expression —
-            # the same parser redbeat uses at runtime (see
+            # The same parser redbeat uses at runtime (see
             # `docs/features/platform/fetcher-operations.md`, Update
-            # Fetcher Config, Validation rules).
-            crontab.from_string(value)
+            # Fetcher Config, Validation rules). It raises `ValueError` for
+            # most invalid expressions, but `ParseException`, which is not a
+            # `ValueError`, for an empty part or step (`", * * * *"`) and a
+            # negative number; Pydantic would let that escape as a `500`, so
+            # it is re-raised as the `ValueError` of a `422 VALIDATION_ERROR`.
+            try:
+                crontab.from_string(value)
+            except ParseException as exc:
+                raise ValueError(str(exc)) from exc
         return value
 
     @model_validator(mode="after")
@@ -313,7 +356,9 @@ class FetcherAuditQuery(BaseModel):
     `fetcher_operations.list_fetcher_audit_events()` itself — after the
     fetcher-existence check — not in the route handler, so that an
     entirely-invalid `event_type` set never masks a nonexistent fetcher
-    behind an empty `200` response (see that function's docstring).
+    behind an empty `200` response (see that function's docstring). The
+    route publishes the `FetcherAuditEventType` values as the parameter's
+    `enum`.
 
     `from_date`/`to_date` are already-parsed `date`/`datetime` values by
     the time this model is constructed — the API layer's
@@ -341,7 +386,7 @@ class FetcherAuditEventData(BaseModel):
 
     id: UUID
     fetcher_name: str
-    event_type: str
+    event_type: FetcherAuditEventType
     actor: UserReference
     old_value: str | None
     new_value: str | None

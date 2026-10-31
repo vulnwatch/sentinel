@@ -7,12 +7,34 @@ authoritative request/response contract these schemas implement.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.core.enums import IdentityAuditEventType
 from app.schemas.common import PaginationMeta, UserReference
+
+type SelfIdentityAuditEventTypeValue = Literal[
+    "user_created",
+    "user_deactivated",
+    "user_reactivated",
+    "password_reset",
+    "role_added",
+    "role_removed",
+    "username_changed",
+    "api_key_created",
+    "api_key_revoked",
+    "email_changed",
+    "full_name_changed",
+    "bot_changed",
+    "manager_changed",
+]
+"""The `IdentityAuditEventType` values that the self-service log can
+return: every value except the role mapping configuration events, which
+have no target user and are therefore excluded from it
+(`identity-audit-log.md`, List My Identity Audit Events).
+"""
 
 
 class IdentityAuditQuery(BaseModel):
@@ -23,8 +45,9 @@ class IdentityAuditQuery(BaseModel):
     `list[IdentityAuditEventType]`: an invalid value must be silently
     ignored and produce an empty result (`docs/api-spec.md`, Enum Filter
     Validation) rather than the schema-validation `422` a typed enum
-    field would raise. The route handler parses each value against
-    `IdentityAuditEventType` itself.
+    field would raise. The route handler parses each value against the
+    event types of its log itself and publishes them as the parameter's
+    `enum`.
 
     `from_date`/`to_date` are already-parsed `date`/`datetime` values by
     the time this model is constructed — the API layer's
@@ -58,7 +81,7 @@ class AdminIdentityAuditEventData(BaseModel):
     affected user."""
 
     id: UUID
-    event_type: str
+    event_type: IdentityAuditEventType
     old_value: str | None
     new_value: str | None
     detail: dict[str, Any] | None
@@ -72,10 +95,11 @@ class SelfIdentityAuditEventData(BaseModel):
     (`identity-audit-log.md`, List My Identity Audit Events). `actor` is the
     user reference of the recorded actor, the caller's own included, or
     `None` for an event with no recorded actor (`rbac.md`, Actor
-    Identities). The target is always the caller, so it is omitted."""
+    Identities). The target is always the caller, so it is omitted, and
+    `event_type` is never a role mapping event."""
 
     id: UUID
-    event_type: str
+    event_type: SelfIdentityAuditEventTypeValue
     old_value: str | None
     new_value: str | None
     detail: dict[str, Any] | None

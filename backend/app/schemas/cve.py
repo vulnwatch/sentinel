@@ -22,10 +22,34 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.core.enums import CVESortField, CVESourceSortField, SortOrder
+from app.core.enums import (
+    CVESortField,
+    CVESourceSortField,
+    SortOrder,
+    SSVCAutomatable,
+    SSVCExploitation,
+    SSVCTechnicalImpact,
+)
 from app.schemas.common import PaginationMeta, SeverityValue
 
+type CVEExternalIdentifierSourceValue = Literal["ghsa", "pysec", "rustsec"]
+"""Lowercase wire values of `CVEExternalIdentifierSource`."""
 type CveStateValue = Literal["published", "rejected"]
+
+_CVE_STATE_DESCRIPTION = (
+    "CVE record state: `published` or `rejected`. A CVE for which no source "
+    "that reports CVE state (MITRE, NVD, kernel) has reported one yet, such as "
+    "a placeholder created for a Ticket or a CVE known only from GitHub "
+    "advisories, reports `published`, which then means that its state is "
+    "unknown."
+)
+"""Shared by `CVEDetail` and `CVEListItem` (`docs/features/tickets/tickets.md`,
+CVEDetail; `docs/features/tickets/cve-service.md`, Placeholder Records)."""
+
+_UNVALIDATED_URL = (
+    "An upstream string that is not validated: it is not guaranteed to be an "
+    "`http` or `https` URL."
+)
 type CVESourceStatusValue = Literal["success", "failure", "missing"]
 type CVESourceDerivedStatusValue = Literal[
     "success", "failure", "missing", "pending", "not_attempted"
@@ -36,7 +60,9 @@ class CVEKEVResponse(BaseModel):
     """The CISA Known Exploited Vulnerabilities catalog entry of a CVE."""
 
     date_added: date = Field(description="Date the CVE was added to the KEV catalog.")
-    reference_url: str | None = Field(description="KEV catalog entry URL.")
+    reference_url: str | None = Field(
+        description=f"KEV catalog entry URL. {_UNVALIDATED_URL}"
+    )
 
 
 class CVEEPSSResponse(BaseModel):
@@ -56,13 +82,13 @@ class CVEEPSSResponse(BaseModel):
 class CVESSVCResponse(BaseModel):
     """The persisted CISA SSVC decision points of a CVE."""
 
-    exploitation: str = Field(
+    exploitation: SSVCExploitation = Field(
         description="SSVC exploitation decision point: `none`, `poc`, or `active`."
     )
-    automatable: str = Field(
+    automatable: SSVCAutomatable = Field(
         description="SSVC automatable decision point: `no` or `yes`."
     )
-    technical_impact: str = Field(
+    technical_impact: SSVCTechnicalImpact = Field(
         description="SSVC technical impact decision point: `partial` or `total`."
     )
     version: str = Field(description="SSVC version (e.g. `2.0.3`).")
@@ -86,11 +112,13 @@ class CVEWeaknessResponse(BaseModel):
 class CVEExternalIdentifierResponse(BaseModel):
     """One external vulnerability identifier from another naming authority."""
 
-    source: str = Field(
+    source: CVEExternalIdentifierSourceValue = Field(
         description="Naming authority, serialized in lowercase (e.g. `ghsa`)."
     )
     identifier: str = Field(description="External identifier (e.g. a GHSA-ID).")
-    url: str | None = Field(description="Direct link to the advisory page.")
+    url: str | None = Field(
+        description=f"Direct link to the advisory page. {_UNVALIDATED_URL}"
+    )
 
 
 class CVESummary(BaseModel):
@@ -125,9 +153,7 @@ class CVEDetail(BaseModel):
     description: str | None = Field(description="Vulnerability description.")
     published_date: datetime | None = Field(description="Date published (UTC).")
     modified_date: datetime | None = Field(description="Date last modified (UTC).")
-    cve_state: CveStateValue = Field(
-        description="CVE record state: `published` or `rejected`."
-    )
+    cve_state: CveStateValue = Field(description=_CVE_STATE_DESCRIPTION)
     date_rejected: datetime | None = Field(
         description=(
             "When the CVE was rejected (UTC); `null` if `cve_state` is `published`."
@@ -196,7 +222,7 @@ class CVEListItem(BaseModel):
             "when no CVSS assessment is available (unresolved)."
         )
     )
-    cve_state: CveStateValue = Field(description="`published` or `rejected`.")
+    cve_state: CveStateValue = Field(description=_CVE_STATE_DESCRIPTION)
     published_date: datetime | None = Field(description="CVE publication date (UTC).")
     ticket: CVEAssociatedTicket | None = Field(
         description="Associated Ticket, if any; `null` for a ticketless CVE."

@@ -640,15 +640,17 @@ Also bounds the retry window of `evaluate_failed_cve_sources`
 (cve-source-failure-retry.md, Algorithm)."""
 
 # Documented lowercase wire value -> stored value (cve-tracking.md, List
-# CVEs, Query Parameters). `unresolved` is the SQL `NULL` severity.
-_CVE_STATE_FILTER: Final[Mapping[str, str]] = {
+# CVEs, Query Parameters). `unresolved` is the SQL `NULL` severity. The
+# API publishes the keys as the filters' values (`docs/api-spec.md`,
+# Published Input Constraints).
+CVE_STATE_FILTER: Final[Mapping[str, str]] = {
     member.value.lower(): member.value for member in CveState
 }
-_SEVERITY_FILTER: Final[Mapping[str, str | None]] = {
+CVE_SEVERITY_FILTER: Final[Mapping[str, str | None]] = {
     **{member.value.lower(): member.value for member in Severity},
     "unresolved": None,
 }
-_SOURCE_STATUS_FILTER: Final[frozenset[str]] = frozenset(
+CVE_SOURCE_STATUS_FILTER: Final[tuple[str, ...]] = tuple(
     member.value for member in CVESourceFetchStatus
 )
 
@@ -760,7 +762,9 @@ def _cve_search_condition(term: str) -> ColumnElement[bool]:
 def _cve_severity_condition(values: Sequence[str]) -> ColumnElement[bool]:
     """OR over the valid supplied severity wire values; `unresolved`
     matches SQL `NULL`. No valid value matches nothing."""
-    valid = [_SEVERITY_FILTER[value] for value in values if value in _SEVERITY_FILTER]
+    valid = [
+        CVE_SEVERITY_FILTER[value] for value in values if value in CVE_SEVERITY_FILTER
+    ]
     stored = sorted({value for value in valid if value is not None})
     branches: list[ColumnElement[bool]] = []
     if stored:
@@ -846,7 +850,7 @@ async def list_cves(
     if normalized_search:
         conditions.append(_cve_search_condition(normalized_search))
     if cve_state is not None:
-        stored_state = _CVE_STATE_FILTER.get(cve_state)
+        stored_state = CVE_STATE_FILTER.get(cve_state)
         conditions.append(
             CVE.cve_state == stored_state if stored_state is not None else false()
         )
@@ -1199,7 +1203,9 @@ async def list_cve_sources(
         conditions.append(CVESource.source == source)
     if status is not None:
         conditions.append(
-            CVESource.status == status if status in _SOURCE_STATUS_FILTER else false()
+            CVESource.status == status
+            if status in CVE_SOURCE_STATUS_FILTER
+            else false()
         )
     if stalled is not None:
         conditions.append(_stalled_condition() if stalled else ~_stalled_condition())

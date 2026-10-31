@@ -56,7 +56,7 @@ from app.core.enums import (
     TicketStatus,
 )
 from app.core.errors import AppError
-from app.core.identifiers import format_ticket_id
+from app.core.identifiers import CVE_ID_MAX_LENGTH, CVE_ID_PATTERN, format_ticket_id
 from app.database import get_db
 from app.main import app
 from app.models.cve import CVE
@@ -2651,7 +2651,9 @@ class TestOpenApiContract:
         assert "format" not in path_param["schema"]
         assert [p for p in operation["parameters"] if p["in"] == "query"] == []
 
-    def test_request_body_requires_an_unbounded_string_cve_id(self) -> None:
+    def test_request_body_requires_a_string_cve_id_publishing_its_grammar(
+        self,
+    ) -> None:
         request_body = self._operation()["requestBody"]
         assert request_body["required"] is True
         content = request_body["content"]["application/json"]["schema"]
@@ -2663,10 +2665,13 @@ class TestOpenApiContract:
         cve_id = schema["properties"]["cve_id"]
         assert cve_id["type"] == "string"
         assert cve_id["examples"] == ["CVE-2024-1234"]
-        # No schema length/pattern limit: over-length and malformed strings
-        # reach `CVE_INVALID_FORMAT` rather than the global 422.
-        assert not {"maxLength", "minLength", "pattern", "format", "enum"} & set(cve_id)
-        assert "maxLength" not in str(schema)
+        # The grammar is published, not enforced by the schema
+        # (api-spec.md, Published Input Constraints): over-length and
+        # malformed strings still reach `CVE_INVALID_FORMAT` rather than the
+        # global 422 (TestCVEInvalidFormat).
+        assert cve_id["pattern"] == CVE_ID_PATTERN.pattern
+        assert cve_id["maxLength"] == CVE_ID_MAX_LENGTH
+        assert not {"minLength", "format", "enum"} & set(cve_id)
         assert "CVE_INVALID_FORMAT" in cve_id["description"]
 
     def test_success_response_is_the_detail_envelope(self) -> None:

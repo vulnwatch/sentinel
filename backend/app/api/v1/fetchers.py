@@ -33,14 +33,15 @@ from app.api.dependencies import (
     CurrentUser,
     require_capability,
 )
+from app.api.openapi import enum_filter_schema
 from app.celery_app import celery_app
 from app.core.dates import (
     normalize_date_bound,
     parse_date_range_bound,
     validate_date_range_order,
 )
-from app.core.enums import Capability
-from app.core.errors import AppError, ErrorCode
+from app.core.enums import Capability, FetcherAuditEventType, FetcherRunStatus
+from app.core.errors import AppError, ErrorCode, InputError
 from app.core.permissions import get_capabilities
 from app.database import (
     DatabaseSession,
@@ -75,6 +76,7 @@ from app.schemas.fetcher import (
 )
 from app.services import fetcher_operations, fetcher_schedule, user_service
 from app.services.fetcher_operations import (
+    CustomSettingError,
     FetcherAlreadyRunningError,
     FetcherBrokerUnavailableError,
     FetcherDeregisteredError,
@@ -197,11 +199,7 @@ def _serialize_timeline(timeline: FetcherTimeline) -> FetcherTimelineData:
         disabled_periods=[
             FetcherDisabledPeriodData(
                 disabled_at=period.disabled_at,
-                disabled_by=(
-                    UserReference.model_validate(period.disabled_by)
-                    if period.disabled_by is not None
-                    else None
-                ),
+                disabled_by=UserReference.model_validate(period.disabled_by),
                 enabled_at=period.enabled_at,
                 enabled_by=(
                     UserReference.model_validate(period.enabled_by)
@@ -254,11 +252,28 @@ def _broker_unavailable(exc: Exception) -> AppError:
     )
 
 
+def _setting_errors(errors: tuple[CustomSettingError, ...]) -> list[InputError]:
+    """The `errors` array of a fetcher setting error: each entry located at
+    its key under `custom_settings` of the request body, also when the
+    value at fault is a stored one that the request did not submit
+    (`docs/features/platform/fetcher-operations.md`, Update Fetcher
+    Config)."""
+    return [
+        InputError(
+            loc=("body", "custom_settings", *error.location),
+            msg=error.message,
+            type=error.type,
+        )
+        for error in errors
+    ]
+
+
 def _setting_unknown(exc: FetcherSettingUnknownError) -> AppError:
     return AppError(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         code=ErrorCode.FETCHER_SETTING_UNKNOWN,
         detail=str(exc),
+        errors=_setting_errors(exc.errors),
     )
 
 
@@ -267,6 +282,7 @@ def _setting_invalid(exc: FetcherSettingInvalidError) -> AppError:
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         code=ErrorCode.FETCHER_SETTING_INVALID,
         detail=str(exc),
+        errors=_setting_errors(exc.errors),
     )
 
 
@@ -317,8 +333,10 @@ def _fetcher_run_list_query(
         str | None,
         Query(
             description=(
-                "Filter by run status (queued, running, success, failure, partial)."
-            )
+                "Filter by run status (queued, running, success, failure, "
+                "partial). Any other value yields an empty page."
+            ),
+            json_schema_extra=enum_filter_schema(FetcherRunStatus, repeatable=False),
         ),
     ] = None,
     from_date: Annotated[
@@ -377,7 +395,13 @@ def _fetcher_audit_query(
         list[str],
         Query(
             default_factory=list,
-            description="Filter by event type. Repeatable; OR semantics.",
+            description=(
+                "Filter by event type. Repeatable; OR semantics. Invalid values "
+                "are ignored; only invalid values yield an empty page."
+            ),
+            json_schema_extra=enum_filter_schema(
+                FetcherAuditEventType, repeatable=True
+            ),
         ),
     ],
     actor: Annotated[
@@ -720,13 +744,16 @@ async def get_fetcher_config(
             ),
         },
         422: {
-            "model": ValidationErrorResponse | ErrorResponse,
+            "model": ValidationErrorResponse,
             "description": (
-                "`FETCHER_SETTING_UNKNOWN`: `custom_settings` contains an "
-                "unknown key. `FETCHER_SETTING_INVALID`: a submitted "
-                "`custom_settings` value has the wrong JSON type, or the merged "
-                "settings fail validation. `VALIDATION_ERROR`: the request fails "
-                "validation."
+                "`FETCHER_SETTING_UNKNOWN`: `custom_settings` contains unknown "
+                "keys. `FETCHER_SETTING_INVALID`: submitted `custom_settings` "
+                "values have the wrong JSON type, or the merged settings fail "
+                "validation. For both, `errors` locates each key at fault at "
+                '`["body", "custom_settings", <key>]`, also a stored value that '
+                "the request did not submit, and an error of the whole settings "
+                'model at `["body", "custom_settings"]`. `VALIDATION_ERROR`: the '
+                "request fails validation."
             ),
         },
     },

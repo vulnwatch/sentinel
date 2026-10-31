@@ -35,6 +35,12 @@ from app.core.credentials import (
 from app.core.enums import ApiKeyRejectionReason, Capability, CredentialKind, Role
 from app.core.errors import AppError, ErrorCode
 from app.core.exceptions import CVENotFoundError, TicketNotFoundError
+from app.core.identifiers import (
+    CVE_ID_MAX_LENGTH,
+    CVE_ID_PATTERN,
+    TICKET_ID_PATTERN,
+    TICKET_SEQUENCE_ID_MAX,
+)
 from app.core.jwt import InvalidTokenError, decode_and_validate, refresh_token
 from app.core.permissions import get_capabilities, get_effective_scope
 from app.database import (
@@ -726,7 +732,12 @@ AuthenticatedTicketCaller = Annotated[TicketCaller, Depends(get_ticket_caller)]
 TicketIdPath = Annotated[
     str,
     Path(
-        description="Canonical Ticket identity (`SNTL-{n}`).",
+        description=(
+            "Canonical Ticket identity (`SNTL-{n}`), matching "
+            f"`{TICKET_ID_PATTERN.pattern}` with `n` at most "
+            f"{TICKET_SEQUENCE_ID_MAX}. Any other value returns `404 "
+            "TICKET_NOT_FOUND`."
+        ),
         examples=["SNTL-42"],
     ),
 ]
@@ -735,6 +746,8 @@ TicketIdPath = Annotated[
 Deliberately an unconstrained string: a malformed value must reach the
 service and produce `404 TICKET_NOT_FOUND`, not the `422` a schema
 pattern would return (`docs/api-spec.md`, Ticket Identifier Resolution).
+Its grammar is therefore stated in its description (`docs/api-spec.md`,
+Published Input Constraints).
 The only exception is a value containing U+0000, which the app-wide
 `reject_inadmissible_request_input` dependency rejects with `422` first
 (`docs/api-spec.md`, Inadmissible Characters in Request Input).
@@ -744,7 +757,10 @@ CVEIdPath = Annotated[
     str,
     Path(
         description=(
-            "CVE-ID (`CVE-YYYY-NNNN...`). The internal CVE UUID is never accepted."
+            "CVE-ID (`CVE-YYYY-NNNN...`), matching "
+            f"`{CVE_ID_PATTERN.pattern}` with at most {CVE_ID_MAX_LENGTH} "
+            "characters. Any other value, the internal CVE UUID included, "
+            "returns `404 CVE_NOT_FOUND`."
         ),
         examples=["CVE-2024-1234"],
     ),
@@ -753,7 +769,9 @@ CVEIdPath = Annotated[
 
 Deliberately an unconstrained string: a malformed value must reach the
 service and produce `404 CVE_NOT_FOUND`, not the `422` a schema pattern
-would return (`docs/api-spec.md`, CVE Identifier Resolution). The only
+would return (`docs/api-spec.md`, CVE Identifier Resolution). Its grammar
+is therefore stated in its description (`docs/api-spec.md`, Published Input
+Constraints). The only
 exception is a value containing U+0000, which the app-wide
 `reject_inadmissible_request_input` dependency rejects with `422` first
 (`docs/api-spec.md`, Inadmissible Characters in Request Input).

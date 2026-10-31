@@ -28,6 +28,7 @@ from app.api.dependencies import (
     TicketIdPath,
     ticket_not_found_error,
 )
+from app.api.openapi import enum_filter_schema
 from app.core.enums import IBSRequestSortField, IBSRequestState, SortOrder
 from app.core.exceptions import TicketNotFoundError
 from app.database import DatabaseSession
@@ -97,7 +98,8 @@ def _request_list_query(
                 "Exact current request state: `new`, `review`, `accepted`, "
                 "`declined`, `revoked`, `superseded`, or `deleted`. Any other "
                 "value matches no action."
-            )
+            ),
+            json_schema_extra=enum_filter_schema(_STATE_FILTER, repeatable=False),
         ),
     ] = None,
     sort_by: Annotated[

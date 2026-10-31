@@ -20,6 +20,7 @@ from typing import Annotated, Final
 from fastapi import APIRouter, Depends, Query
 
 from app.api.dependencies import CurrentUser
+from app.api.openapi import enum_filter_schema
 from app.core.enums import (
     CatalogPresence,
     LifecyclePhaseFilter,
@@ -85,6 +86,9 @@ def _product_list_query(
                 "Invalid values are ignored; only invalid values yield an "
                 "empty page."
             ),
+            json_schema_extra=enum_filter_schema(
+                _CATALOG_PRESENCE_FILTER, repeatable=True
+            ),
         ),
     ],
     lifecycle_phase: Annotated[
@@ -98,6 +102,9 @@ def _product_list_query(
                 "established; never emitted in a response). Repeatable; OR "
                 "semantics. Invalid values are ignored; only invalid values "
                 "yield an empty page."
+            ),
+            json_schema_extra=enum_filter_schema(
+                _LIFECYCLE_PHASE_FILTER, repeatable=True
             ),
         ),
     ],

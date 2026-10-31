@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.errors import AppError, ErrorCode
+from app.core.errors import AppError, ErrorCode, InputError
 
 
 @pytest.mark.unit
@@ -67,6 +67,35 @@ class TestAppError:
                 code=ErrorCode.TICKET_CVE_CONFLICT,
                 detail="conflict",
                 extra={"existing_ticket_id": "SNTL-42", key: "override"},
+            )
+
+    def test_errors_default_to_none(self) -> None:
+        error = AppError(status_code=404, code=ErrorCode.TICKET_NOT_FOUND, detail="x")
+        assert error.errors is None
+
+    def test_carries_a_copy_of_the_errors(self) -> None:
+        """See docs/api-spec.md (Response Format): the fetcher setting codes
+        locate their invalid inputs in `errors`."""
+        errors = [InputError(("body", "custom_settings", "a"), "msg", "int_type")]
+        error = AppError(
+            status_code=422,
+            code=ErrorCode.FETCHER_SETTING_INVALID,
+            detail="a: msg",
+            errors=errors,
+        )
+        errors.append(InputError(("body",), "other", "missing"))
+
+        assert error.errors == (
+            InputError(("body", "custom_settings", "a"), "msg", "int_type"),
+        )
+
+    def test_errors_must_not_be_empty(self) -> None:
+        with pytest.raises(ValueError, match="at least one"):
+            AppError(
+                status_code=422,
+                code=ErrorCode.FETCHER_SETTING_INVALID,
+                detail="x",
+                errors=[],
             )
 
 

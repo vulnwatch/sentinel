@@ -21,12 +21,19 @@ lowercase.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-from typing import Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import MISSING, BaseModel, Field, field_validator, model_validator
 
 from app.core.enums import SortOrder, TicketSortField
-from app.core.identifiers import parse_ticket_id
+from app.core.identifiers import (
+    CVE_ID_MAX_LENGTH,
+    CVE_ID_PATTERN,
+    TICKET_ID_MAX_LENGTH,
+    TICKET_ID_PATTERN,
+    TICKET_SEQUENCE_ID_MAX,
+    parse_ticket_id,
+)
 from app.schemas.common import (
     PaginationMeta,
     SeverityValue,
@@ -38,6 +45,14 @@ from app.schemas.package import CurrentPhaseValue, PackageDetail
 
 type TicketPriorityValue = Literal["p1", "p2", "p3", "p4"]
 type CurrentPhaseMilestoneValue = Literal["pending", "overdue"]
+
+_CVE_ID_SCHEMA: dict[str, Any] = {
+    "pattern": CVE_ID_PATTERN.pattern,
+    "maxLength": CVE_ID_MAX_LENGTH,
+}
+"""The CVE-ID grammar of a request-body `cve_id`, published without being
+enforced by the schema (`docs/api-spec.md`, Published Input Constraints):
+the endpoint enforces it with `422 CVE_INVALID_FORMAT` and its precedence."""
 
 # Field descriptions shared by `TicketSummary` and `TicketDetail`, so the
 # two representations cannot drift (docs/features/tickets/tickets.md,
@@ -65,6 +80,11 @@ _DUPLICATE_OF_DESCRIPTION = (
     "accessibility and may return `404 TICKET_NOT_FOUND`."
 )
 _IS_CONFIDENTIAL_DESCRIPTION = "Whether the Ticket is confidential."
+_COORDINATED_RELEASE_DESCRIPTION = (
+    "Coordinated Release Date (embargo publication instant, UTC), or `null` when "
+    "none is set. A retained value on a non-confidential Ticket is historical "
+    "and inert."
+)
 _TRIAGE_DUE_DESCRIPTION = (
     "Due date (UTC) of the triage milestone, in which the VA (Vulnerability "
     "Analyst) decides affectedness; `null` when no SLA applies (Ticket "
@@ -173,11 +193,7 @@ class TicketSummary(BaseModel):
     )
     is_confidential: bool = Field(description=_IS_CONFIDENTIAL_DESCRIPTION)
     coordinated_release_at: datetime | None = Field(
-        description=(
-            "Coordinated Release Date (embargo publication instant, UTC), or "
-            "`null` when none is set. A retained value on a non-confidential "
-            "Ticket is historical and inert."
-        )
+        description=_COORDINATED_RELEASE_DESCRIPTION
     )
     triage_due_at: datetime | None = Field(description=_TRIAGE_DUE_DESCRIPTION)
     submission_due_at: datetime | None = Field(description=_SUBMISSION_DUE_DESCRIPTION)
@@ -269,10 +285,7 @@ class TicketDetail(BaseModel):
     )
     is_confidential: bool = Field(description=_IS_CONFIDENTIAL_DESCRIPTION)
     coordinated_release_at: datetime | None = Field(
-        description=(
-            "Coordinated Release Date (embargo publication instant, UTC), or "
-            "`null` when none is set."
-        )
+        description=_COORDINATED_RELEASE_DESCRIPTION
     )
     triage_due_at: datetime | None = Field(description=_TRIAGE_DUE_DESCRIPTION)
     submission_due_at: datetime | None = Field(description=_SUBMISSION_DUE_DESCRIPTION)
@@ -374,17 +387,24 @@ class TicketDuplicateRequest(BaseModel):
     value (lowercase prefix, whitespace, zero padding, overflow, a
     Ticket UUID, ...) fails with the global `422 VALIDATION_ERROR`. A
     well-formed target that is missing or inaccessible is a
-    `404 TICKET_NOT_FOUND` decided by the service, not here.
+    `404 TICKET_NOT_FOUND` decided by the service, not here. The Core
+    parser enforces the grammar, including the range that no pattern
+    expresses; the field publishes the pattern and the length bound
+    (`docs/api-spec.md`, Published Input Constraints).
     """
 
     duplicate_of_ticket_id: str = Field(
         description=(
             "Canonical identity (`SNTL-{n}`) of the target Ticket, which must "
-            "not itself be Duplicated. Malformed syntax fails validation; a "
-            "missing or inaccessible target returns `404 TICKET_NOT_FOUND`. "
-            "Required."
+            f"not itself be Duplicated; `n` is at most {TICKET_SEQUENCE_ID_MAX}. "
+            "Malformed syntax fails validation; a missing or inaccessible "
+            "target returns `404 TICKET_NOT_FOUND`. Required."
         ),
         examples=["SNTL-42"],
+        json_schema_extra={
+            "pattern": TICKET_ID_PATTERN.pattern,
+            "maxLength": TICKET_ID_MAX_LENGTH,
+        },
     )
 
     @field_validator("duplicate_of_ticket_id")
@@ -403,20 +423,22 @@ class TicketAssociateCVERequest(BaseModel):
     """Request body of `POST /api/v1/tickets/{ticket_id}/associate-cve`.
 
     See `docs/features/tickets/tickets.md` (Associate CVE). `cve_id` is
-    required and carries no schema length limit, so any string — including
-    an empty or over-length one — reaches the endpoint's
-    `422 CVE_INVALID_FORMAT` check. A missing, `null`, or non-string value
-    fails with the global `422 VALIDATION_ERROR`.
+    required and carries no enforced schema constraint, so any string —
+    including an empty or over-length one — reaches the endpoint's
+    `422 CVE_INVALID_FORMAT` check; the grammar is only published
+    (`_CVE_ID_SCHEMA`). A missing, `null`, or non-string value fails with
+    the global `422 VALIDATION_ERROR`.
     """
 
     cve_id: str = Field(
         description=(
             "CVE identifier to associate (e.g. `CVE-2024-1234`), matching "
-            "`^CVE-[0-9]{4}-[0-9]{4,}$` with at most 20 characters; otherwise "
-            "`422 CVE_INVALID_FORMAT`. An unknown CVE is created as a "
-            "placeholder record. Required."
+            f"`{CVE_ID_PATTERN.pattern}` with at most {CVE_ID_MAX_LENGTH} "
+            "characters; otherwise `422 CVE_INVALID_FORMAT`. An unknown CVE is "
+            "created as a placeholder record. Required."
         ),
         examples=["CVE-2024-1234"],
+        json_schema_extra=_CVE_ID_SCHEMA,
     )
 
 
@@ -424,9 +446,11 @@ class TicketCreateRequest(BaseModel):
     """Request body of `POST /api/v1/tickets`.
 
     See `docs/features/tickets/tickets.md` (Create Ticket). Every field is
-    optional. `cve_id` carries no schema length limit, so any string —
+    optional. `cve_id` carries no enforced schema constraint, so any string —
     including an empty or over-length one — reaches the endpoint's
-    `422 CVE_INVALID_FORMAT` check. An omitted `is_confidential` stays
+    `422 CVE_INVALID_FORMAT` check after the `manage_confidentiality`
+    check; the grammar is only published on its string alternative
+    (`_CVE_ID_SCHEMA`). An omitted `is_confidential` stays
     `MISSING` (`docs/conventions.md`, Omitted Values), distinct from an
     explicit `false`, because the field-level `manage_confidentiality`
     check is presence-based; it creates a non-confidential Ticket. The
@@ -435,14 +459,14 @@ class TicketCreateRequest(BaseModel):
     `is_confidential: true` fails with the global `422 VALIDATION_ERROR`.
     """
 
-    cve_id: str | None = Field(
+    cve_id: Annotated[str, Field(json_schema_extra=_CVE_ID_SCHEMA)] | None = Field(
         default=None,
         description=(
             "CVE identifier to associate (e.g. `CVE-2024-1234`), matching "
-            "`^CVE-[0-9]{4}-[0-9]{4,}$` with at most 20 characters; otherwise "
-            "`422 CVE_INVALID_FORMAT`. An empty string is rejected the same "
-            "way: omit the field or send `null` for no CVE. An unknown CVE is "
-            "created as a placeholder record."
+            f"`{CVE_ID_PATTERN.pattern}` with at most {CVE_ID_MAX_LENGTH} "
+            "characters; otherwise `422 CVE_INVALID_FORMAT`. An empty string is "
+            "rejected the same way: omit the field or send `null` for no CVE. An "
+            "unknown CVE is created as a placeholder record."
         ),
         examples=["CVE-2024-1234"],
     )

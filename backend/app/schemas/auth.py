@@ -19,6 +19,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.core.enums import Capability
+from app.schemas.common import RoleValue
 
 
 class LoginRequest(BaseModel):
@@ -52,14 +53,15 @@ class CurrentUserData(BaseModel):
     role values (see `rbac.md`, Role Wire Format, Deterministic
     ordering). `capabilities` is the distinct, alphabetically
     wire-sorted union of the capabilities of those roles (see `rbac.md`,
-    Capability Wire Format); typed as `Capability`, it is published as
-    an OpenAPI `enum`. It is informational and grants nothing."""
+    Capability Wire Format). Both are typed with their value sets, so
+    the OpenAPI document publishes each as an `enum`. `capabilities` is
+    informational and grants nothing."""
 
     id: UUID
     username: str
     email: str
     full_name: str | None
-    roles: list[str]
+    roles: list[RoleValue]
     capabilities: list[Capability]
     active: bool
     bot: bool

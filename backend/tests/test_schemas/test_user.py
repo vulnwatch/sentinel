@@ -11,14 +11,16 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, get_args
 from uuid import uuid4
 
 import pytest
-from pydantic import MISSING, ValidationError
+from pydantic import MISSING, BaseModel, ValidationError
 
-from app.core.enums import SortOrder, UserDirectorySortField, UserSortField
-from app.schemas.common import PaginationMeta, UserReference
+from app.core.enums import Role, SortOrder, UserDirectorySortField, UserSortField
+from app.core.passwords import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
+from app.core.permissions import role_to_wire
+from app.schemas.common import PaginationMeta, RoleValue, UserReference
 from app.schemas.user import (
     AdminPasswordResetRequest,
     AdminUserCreateRequest,
@@ -37,6 +39,16 @@ from app.schemas.user import (
     UserRoleAssignmentData,
     UserRolesUpdateRequest,
 )
+
+
+@pytest.mark.unit
+class TestRoleValue:
+    def test_lists_the_wire_value_of_every_role(self) -> None:
+        """`rbac.md` (Role Wire Format): the published enum of every role
+        field is exactly the wire values of `Role`, in its order."""
+        assert list(get_args(RoleValue.__value__)) == [
+            role_to_wire(role) for role in Role
+        ]
 
 
 @pytest.mark.unit
@@ -438,6 +450,33 @@ class TestAdminUserCreateRequest:
         `VALIDATION_ERROR` a schema constraint would produce."""
         request = AdminUserCreateRequest(**_make_create_kwargs(password="short"))
         assert request.password == "short"
+
+    @pytest.mark.parametrize(
+        "model", [AdminUserCreateRequest, AdminPasswordResetRequest]
+    )
+    def test_password_policy_is_published_without_being_enforced(
+        self, model: type[BaseModel]
+    ) -> None:
+        """`docs/api-spec.md` (Published Input Constraints): the schema
+        publishes the policy of `local-authentication.md` (Password
+        validation) as length keywords, which the test above shows it
+        does not enforce."""
+        password = model.model_json_schema()["properties"]["password"]
+
+        assert password["minLength"] == MIN_PASSWORD_LENGTH == 16
+        assert password["maxLength"] == MAX_PASSWORD_LENGTH == 128
+        assert "USER_PASSWORD_POLICY_VIOLATION" in password["description"]
+
+    def test_unknown_role_fails_the_role_value_type(self) -> None:
+        """An unknown role is a value outside the published `RoleValue`
+        enum: still the global `422 VALIDATION_ERROR`, located at the
+        item."""
+        with pytest.raises(ValidationError) as exc_info:
+            AdminUserCreateRequest(**_make_create_kwargs(roles=["admin", "superuser"]))
+
+        (error,) = exc_info.value.errors()
+        assert error["loc"] == ("roles", 1)
+        assert error["type"] == "literal_error"
 
     def test_roles_default_to_empty_list(self) -> None:
         kwargs = _make_create_kwargs()

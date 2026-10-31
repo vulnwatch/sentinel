@@ -65,7 +65,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 import app.main as main_module
 from app.config import settings
 from app.core.cross_origin import CrossOriginProtectionMiddleware
-from app.core.errors import AppError, ErrorCode
+from app.core.errors import AppError, ErrorCode, InputError
 from app.core.middleware import RequestIDMiddleware
 from app.main import (
     _app_error_handler,
@@ -281,6 +281,22 @@ def _build_app_error_app() -> FastAPI:
             extra={"existing_ticket_id": "SNTL-42"},
         )
 
+    @test_app.get("/errors")
+    async def errors() -> None:
+        raise AppError(
+            status_code=422,
+            code=ErrorCode.FETCHER_SETTING_UNKNOWN,
+            detail="Unknown custom settings: 'a', 'b'",
+            errors=[
+                InputError(
+                    ("body", "custom_settings", "a"),
+                    "Extra inputs are not permitted",
+                    "extra_forbidden",
+                ),
+                InputError(("body", "custom_settings", 0), "other", "int_type"),
+            ],
+        )
+
     @test_app.get("/tampered")
     async def tampered() -> None:
         error = AppError(
@@ -336,6 +352,32 @@ class TestAppErrorHandler:
             "existing_ticket_id": "SNTL-42",
         }
         assert response.headers["X-Example"] == "1"
+
+    async def test_renders_the_errors_array(
+        self, app_error_client: AsyncClient
+    ) -> None:
+        """A domain validation code that locates its invalid inputs carries
+        the `errors` array of `VALIDATION_ERROR` (`docs/api-spec.md`,
+        Response Format)."""
+        response = await app_error_client.get("/errors")
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "code": "FETCHER_SETTING_UNKNOWN",
+            "detail": "Unknown custom settings: 'a', 'b'",
+            "errors": [
+                {
+                    "loc": ["body", "custom_settings", "a"],
+                    "msg": "Extra inputs are not permitted",
+                    "type": "extra_forbidden",
+                },
+                {
+                    "loc": ["body", "custom_settings", 0],
+                    "msg": "other",
+                    "type": "int_type",
+                },
+            ],
+        }
 
     async def test_code_and_detail_always_come_from_the_exception(
         self, app_error_client: AsyncClient
