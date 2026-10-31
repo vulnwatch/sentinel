@@ -1594,6 +1594,22 @@ Query parameters:
   `TicketPackage` associated to that User through
   `TicketPackageMaintainer`. Unknown filter values return an empty result, not
   404. Email input is not accepted.
+- `product` (string, optional): canonical Product CPE, matched exactly and
+  case-sensitively against the catalog `Product.cpe`, without trimming or
+  normalization, like the `cpe` filter of `GET /api/v1/products`
+  (`docs/features/packages/product-catalog.md`, List Products). Matches Tickets
+  with at least one `TicketPackageProduct` occurrence of that Product that is
+  not effectively excluded: its package, track, and Product `deleted_at` are
+  all `NULL` (`docs/features/packages/package-model.md`, Manual Exclusion
+  Markers). A Product that the latest SMELT snapshot no longer lists matches
+  like a current one. An unknown CPE returns an empty result, not 404.
+- `track` (string, optional): track reference, matched exactly and
+  case-sensitively against `TicketPackageTrack.reference`, without trimming or
+  normalization, for both workflows: an IBS codestream project name, such as
+  `SUSE:SLE-15-SP6:Update`, or a Git branch name, such as `slfo-main`. Matches
+  Tickets with at least one track of that reference that is not effectively
+  excluded: its package and track `deleted_at` are both `NULL`. An unknown
+  reference returns an empty result, not 404.
 - `page` (integer, optional): page number for pagination (default: 1).
 - `per_page` (integer, optional): items per page (default: 20).
 - `sort_by` (string, optional): field to sort by (default: `created_at`).
@@ -1604,6 +1620,27 @@ Query parameters:
   `release_due_at` (Ticket-level due dates; `NULL` sorts last, see
   [ticket-deadlines.md](ticket-deadlines.md#sorting)).
 - `sort_order` (string, optional): `asc` or `desc` (default: `desc`).
+
+**Product and track filters.** When both `product` and `track` are supplied,
+they apply to the same occurrence rather than as two independent conditions
+on the Ticket, as `docs/api-spec.md` (Filtering) permits: a Ticket matches
+when at least one occurrence of the Product that is not effectively excluded
+lies under a track of that reference. Other Products under the same track and
+the other packages and tracks of the Ticket neither add nor prevent a match.
+Every other filter combines with them by AND.
+
+Only manual exclusion decides whether an occurrence qualifies. Product
+lifecycle and EOL, eligibility and its override, affectedness, delivery,
+Product release, and Ticket status have no effect, so neither filter depends on
+the evaluation instant. Both filters narrow the Tickets that the caller can see
+and change no visibility rule ([Confidentiality Filtering](#confidentiality-filtering);
+`docs/features/identity/rbac.md`, Scope and Confidential Ticket Visibility).
+
+A package that an IBS codestream inherits through a link from an older
+codestream is tracked in its origin codestream
+(`docs/features/packages/package-model.md`, Codestream), so `track` with the
+inheriting codestream does not find its Tickets. `product` finds the Tickets
+of a Product whichever track delivers the package to it.
 
 Response: paginated `TicketSummary` array in standard
 `{"data": [...], "meta": {...}}` envelope (200 OK).
@@ -2345,6 +2382,10 @@ table:
   and architectural test requirements
 - `docs/features/packages/package-service.md` — package-centric mutations,
   orchestration, and query operations (populates `TicketDetail.packages`)
+- `docs/features/packages/package-model.md` — package tree and manual
+  exclusion markers, which the `product` and `track` filters consume
+- `docs/features/packages/product-catalog.md` — Product identity by canonical
+  CPE
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)
 - `docs/features/tickets/ticket-audit-log.md` — audit event contract, detail

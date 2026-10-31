@@ -311,6 +311,8 @@ Conceptual semantic inputs are:
 | `overdue` | supplied-state plus collection of valid milestone phases | omitted | Repeatable OR filter over `triage`, `submission`, `um`, and `qa`, preserving omitted versus supplied-but-empty after validation |
 | `current_phase` | supplied-state plus collection of valid current-phase values | omitted | Repeatable OR filter over `triage`, `submission`, `um`, `qa`, and `done`, preserving omitted versus supplied-but-empty after validation |
 | `maintainer` | `str \| None` | `None` | User UUID or exact username |
+| `product` | `str \| None` | `None` | Canonical Product CPE, exact match |
+| `track` | `str \| None` | `None` | Track reference, exact match |
 | `sort_by` | `created_at`, `updated_at`, `severity`, `priority`, `status`, `ticket_id`, `triage_due_at`, `submission_due_at`, `um_due_at`, `qa_due_at`, or `release_due_at` | `created_at` | Primary sort |
 | `sort_order` | `asc` or `desc` | `desc` | Sort direction |
 | `page` | positive integer | `1` | One-indexed page |
@@ -338,7 +340,17 @@ The result contains a collection of Ticket summary projections plus `total`,
    `assignee=none` before User resolution. An unknown optional assignee or
    maintainer identifier yields an empty page rather than
    `UserNotFoundError`; maintainer matching uses an included
-   `TicketPackage.deleted_at IS NULL` occurrence.
+   `TicketPackage.deleted_at IS NULL` occurrence. `product` and `track` compare
+   the exact persisted strings, without trimming or normalization, and use only
+   occurrences that are not effectively excluded, under List Tickets in
+   `tickets.md`: `product` requires a `TicketPackageProduct` whose catalog
+   Product `cpe` equals the value and whose package, track, and Product
+   markers are all `NULL`; `track` requires a `TicketPackageTrack` whose
+   `reference` equals the value and whose package and track markers are both
+   `NULL`; when both are supplied, one such Product occurrence must lie under
+   one such track. An unknown value yields an empty page. Lifecycle,
+   eligibility, affectedness, delivery, Product release, and Ticket status are
+   not inputs of these two filters.
 4. Resolve severity exactly once per Ticket using the canonical Ticket severity
    cascade. Severity filtering, semantic sorting, and projection all use that
    same value, including the distinction between resolved `None` and SQL NULL.
@@ -356,8 +368,9 @@ The result contains a collection of Ticket summary projections plus `total`,
    [ticket-deadlines.md](ticket-deadlines.md#ticket-current-phase) with the same
    due dates and instant; `current_phase` filtering and projection use those
    values.
-5. Collapse all one-to-many joins to one logical Ticket. Package, maintainer,
-   and external-identifier fan-out must not duplicate rows or inflate `total`.
+5. Collapse all one-to-many joins to one logical Ticket. Package, track,
+   Product, maintainer, and external-identifier fan-out must not duplicate rows
+   or inflate `total`.
 6. Project `package_names` from directly included package occurrences only,
    deduplicate exact persisted strings, and sort them in ascending Unicode
    code-point order. Database or deployment collation is not the API order.
