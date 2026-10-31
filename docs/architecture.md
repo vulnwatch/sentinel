@@ -88,11 +88,11 @@ specifications of this repository. UI specifications never define backend
 behavior: a capability that the UI needs and the API lacks is specified and
 implemented in this repository first.
 
-Client-side behavior that specifications in this repository already describe,
-such as the administration panel's password reset action in
-`docs/features/identity/local-authentication.md` (Admin UI: password reset),
-remains authoritative here until a change moves it to the UI repository. New
-client-side behavior is specified only in the UI repository.
+Client-side behavior is specified only in the UI repository. A specification
+of this repository may justify a backend decision by what a client can do
+through the API, for example returning the updated resource so that a client
+needs no second read. Such a justification belongs to the rationale of the
+contract and prescribes no presentation.
 
 ---
 

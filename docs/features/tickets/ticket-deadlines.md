@@ -285,8 +285,9 @@ every actionable eligible Product released, the other observable tracks
 and `WONT_FIX`) have their later phases `not_applicable`, and the tracks whose
 later phases Sentinel cannot observe have them `null`.
 
-VAs sort the triage queue by priority when severity is still unresolved; no
-further triage mechanism exists.
+For Tickets whose severity is still unresolved, `sort_by=priority` of
+`GET /api/v1/tickets` orders triage by the informational priority
+([ticket-priority.md](ticket-priority.md)); no further triage mechanism exists.
 
 ## Ticket Current Phase
 
@@ -622,6 +623,6 @@ Tests MUST cover:
   request states
 - `docs/features/packages/maintainer.md` — maintainer workbench fields and
   sorting
-- `docs/features/tickets/ticket-priority.md` — informational priority used to
-  order the triage queue
+- `docs/features/tickets/ticket-priority.md` — informational priority, the
+  `priority` sort that orders triage
 - `docs/api-spec.md` — filtering, sorting, and nullable ordering

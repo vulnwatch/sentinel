@@ -65,8 +65,9 @@ _DELIVERY_STATUS_DESCRIPTION = (
 )
 _DELIVERY_RELEVANT_DESCRIPTION = (
     "Computed: `true` when the affectedness is `analysis` or `affected`, or "
-    "`delivery_status` is not `pending`. When `false`, consumers should not "
-    "display `delivery_status` or make decisions based on it."
+    "`delivery_status` is not `pending`. When `false`, `delivery_status` is "
+    "the system default, carries no delivery signal, and consumers should not "
+    "make decisions based on it."
 )
 
 

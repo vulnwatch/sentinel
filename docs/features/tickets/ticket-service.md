@@ -487,8 +487,7 @@ mapping location is an implementation choice.
 - If both `cve_id` and `severity_manual` are provided: the service
   raises `SeverityDerivedError`. When a CVE is associated, severity is
   derived exclusively from CVSS assessments — manual severity is not
-  applicable. UI implementations should disable the severity field when
-  a CVE is provided at creation time
+  applicable
 
 **Behavioral steps**:
 

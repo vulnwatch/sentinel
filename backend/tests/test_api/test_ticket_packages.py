@@ -692,7 +692,9 @@ class TestOpenApiContract:
         milestones = schemas_["TrackMilestones"]["properties"]
 
         assert "delivery_relevant" in track["delivery_status"]["description"]
-        assert "should not display" in track["delivery_relevant"]["description"]
+        relevant = track["delivery_relevant"]["description"]
+        assert "carries no delivery signal" in relevant
+        assert "should not make decisions" in relevant
         assert "qa_due_at" in track["release_due_at"]["description"]
         assert "release_due_at" in track["qa_due_at"]["description"]
         for phase, actor in (

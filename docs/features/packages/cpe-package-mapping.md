@@ -478,8 +478,8 @@ resolution) and is not duplicated here.
   (CPE configurations); this specification neither adds nor removes entries
   from that selection
 - **Version data is informational only**: version ranges from
-  `CVEAffectedVersion` records are stored and displayed to VAs (see
-  [Get CVE Affected Versions](../tickets/cve-tracking.md#get-cve-affected-versions)) but
+  `CVEAffectedVersion` records are stored and returned by
+  [Get CVE Affected Versions](../tickets/cve-tracking.md#get-cve-affected-versions) but
   are NOT used for package resolution or affectedness determination.
   SUSE backport practices make upstream version information unreliable
   for determining whether a specific track is affected. The VA

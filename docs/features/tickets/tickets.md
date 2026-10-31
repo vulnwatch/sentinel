@@ -20,7 +20,7 @@ Every Ticket has one public identifier and one internal database identifier:
 | Identifier | Format | Purpose |
 |------------|--------|---------|
 | `id` | UUIDv7 | Internal primary key used by foreign keys, services, tasks, locks, and internal ordering; never accepted or returned as Ticket identity by the API |
-| `sequence_id` | Auto-increment integer, exposed as `SNTL-{n}` | Unique immutable consumer-facing Ticket identity for paths, responses, UI display, search, and communication |
+| `sequence_id` | Auto-increment integer, exposed as `SNTL-{n}` | Unique immutable consumer-facing Ticket identity for paths, responses, display, search, and communication |
 
 ### SNTL-{n} Format
 
@@ -164,7 +164,7 @@ See `docs/features/tickets/cve-tracking.md` for the full ingestion flow.
 ### Manual Creation
 
 A user with the `create_ticket` capability can create a ticket manually
-via `POST /api/v1/tickets` or through the UI.
+via `POST /api/v1/tickets`.
 
 - `cve_id`: optionally, the user may specify a CVE-ID string (e.g.,
   `"CVE-2024-1234"`) at creation time. If omitted, the ticket is
@@ -196,8 +196,8 @@ feature specification and `TicketCreationSource` value (see
 
 ## Severity Resolution
 
-Ticket severity is resolved transparently — the API and UI expose a
-single `severity` field. The resolution logic is internal to the service
+Ticket severity is resolved transparently — the API exposes a single
+`severity` field. The resolution logic is internal to the service
 layer.
 
 ### Resolution Rules
@@ -216,7 +216,7 @@ layer.
 
 - `Ticket.severity_manual`: VARCHAR(20) (Critical, High, Medium, Low, None),
   nullable
-- Set manually by an authorized acting user via the API or UI
+- Set manually by an authorized acting user via the API
 - Only used when `cve_id IS NULL`
 - Mutually exclusive with `cve_id` at the database level
   (`chk_ticket_severity_manual_cve_exclusive`): at most one can be
@@ -722,8 +722,7 @@ the helper's signature and behavior.
 - **Target**: the non-Duplicated ticket referenced by
   `duplicate_of_id`. The system guarantees this ticket is never in
   Duplicated status (see Invariant below).
-- **Original ticket**: the user-facing synonym for "target." Used in
-  UI copy (e.g., "See the original ticket: SNTL-42").
+- **Original ticket**: the user-facing synonym for "target."
 
 #### Mark-as-Duplicate Operation
 
@@ -1334,7 +1333,7 @@ are available via `GET /api/v1/cves/{cve_id}/affected-versions` — see
 |-------|------|-------------|
 | `score` | number | EPSS probability (0.0–1.0) |
 | `percentile` | number | EPSS percentile rank (0.0–1.0) |
-| `assessed_at` | date | EPSS assessment date. EPSS refreshes only for active Tickets, so consumers use this date to indicate staleness (see [cve-sync-epss.md](cve-sync-epss.md)) |
+| `assessed_at` | date | EPSS assessment date of the retained score. The periodic refresh covers only CVEs with an active Ticket, so the score of any other CVE can be older than the latest EPSS publication (see [cve-sync-epss.md](cve-sync-epss.md)) |
 
 **CVESSVCResponse**:
 

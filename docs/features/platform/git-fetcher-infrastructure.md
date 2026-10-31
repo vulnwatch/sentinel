@@ -437,9 +437,8 @@ exceeds `run_timeout` never converges without operator action.
 To accelerate recovery, an admin can temporarily increase `run_timeout`
 for the specific fetcher via FetcherConfig (e.g., from 3600 to 36000
 for a one-time large delta), then reset it after the recovery completes.
-The dashboard's `error_message` field includes the number of items
-processed before timeout, allowing the admin to estimate the required
-duration.
+The run's `error_message` field includes the number of items processed
+before timeout, allowing the admin to estimate the required duration.
 
 This scenario is uncommon in normal operation:
 - First-run records HEAD without processing (no delta)
@@ -592,8 +591,8 @@ run_timeout`) guarantees each run's duration is bounded. The soft time
 limit (at 95% of `run_timeout`) provides early warning for clean
 shutdown. Step 10d ensures `SoftTimeLimitExceeded` propagates rather
 than being caught as a per-item error. Repeated failures (e.g.,
-persistent filesystem damage) produce visible `failure` records in
-the fetcher dashboard for operator intervention — but each cycle
+persistent filesystem damage) produce `failure` runs visible in the
+fetcher run history for operator intervention — but each cycle
 attempts self-healing (delete + re-clone) rather than looping on the
 same corrupt state.
 

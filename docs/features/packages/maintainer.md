@@ -4,9 +4,9 @@
 
 Provide an authenticated package maintainer with four bounded workbench views:
 pending fixes, in-progress delivery, completed delivery, and all three
-classifications for one Ticket. The workbench is package-centric and lets a
-Vulnerability Analyst share one Ticket URL without exposing work owned by
-other maintainers.
+classifications for one Ticket. The workbench is package-centric: a
+Vulnerability Analyst can direct several maintainers to the same Ticket, and
+its per-Ticket view shows each of them only the work that they own.
 
 The workbench is a current-state PostgreSQL projection. It does not reconstruct
 historical workflow chronology or make audit or external request history the

@@ -250,9 +250,9 @@ given the limited role of local passwords and the account lockout.
 
 Passwords are set in two scenarios:
 
-1. **At user creation** (CLI or admin UI): the admin provides the
+1. **At user creation** (CLI or API): the admin provides the
    initial password for the local user
-2. **Password reset** (CLI or admin UI): an admin sets a new password
+2. **Password reset** (CLI or API): an admin sets a new password
    for an existing local user
 
 There is no self-service password reset or password change (scoping
@@ -285,28 +285,23 @@ process listings and shell history). See
 `docs/features/identity/user-management.md` for full CLI behavior
 (parameters, confirmation prompt, error handling, exit codes).
 
-### Admin UI: password reset
-
-The user management page in the administration panel includes a "Reset
-password" action for local users. The admin enters the new password
-(same validation: 16–128 characters). The behavior delegates to
-`user_service.reset_password()` with `acting_user_id` set to the admin's
-user ID.
-
-For external users, the "Reset password" action is not available (greyed out
-or hidden).
-
 ### Admin Password Reset
 
-API endpoint for admin password reset (used by the admin UI). The full
-endpoint specification (request/response schema, error codes) is defined
-in `docs/features/identity/user-management.md` (Admin API endpoints).
+API endpoint for admin password reset. The full endpoint specification
+(request/response schema, error codes) is defined in
+`docs/features/identity/user-management.md` (Admin API endpoints).
 
 **`Capability: manage_users`**
 
-Delegates to `user_service.reset_password()` which handles external user
-check, password validation, hashing, and session invalidation. See
+Delegates to `user_service.reset_password()` with `acting_user_id` set to the
+admin's user ID; the service handles the external user check, password
+validation, hashing, and session invalidation. See
 `docs/features/identity/user-service.md` for the service contract.
+
+The new password follows Password validation above. A reset applies to local
+users only: the complete user profile tells local and external users apart by
+`source` (`docs/features/identity/user-management.md`, Get User (Admin)), and
+a reset of an external user returns `409 USER_EXTERNAL_PASSWORD_FORBIDDEN`.
 
 ## Rate Limiting / Brute-Force Protection
 
@@ -402,7 +397,7 @@ not a persistent identity mutation.
   `LOGIN_MAX_ATTEMPTS` invalid attempts. This is mitigated by: (a) lockout
   does not invalidate existing sessions (the legitimate user already
   logged in continues working), (b) admin unlock is available via CLI or
-  admin UI, (c) the lockout expires automatically after the TTL. The
+  API, (c) the lockout expires automatically after the TTL. The
   proxy's request rate limit does not prevent it: `LOGIN_MAX_ATTEMPTS`
   attempts per lockout period stay below any practical per-client limit.
 - The lockout does not affect API key authentication (API keys bypass
@@ -418,9 +413,10 @@ not a persistent identity mutation.
   which DO invalidate sessions because they indicate a deliberate
   administrative action or credential compromise.
 - An admin can unlock a locked account via `sentinel manage-user unlock
-  --username <name>` (CLI) or the "Unlock" action in the admin user
-  management page. Alternatively, the lockout expires automatically
-  after the TTL. See `docs/features/identity/user-management.md`.
+  --username <name>` (CLI) or Unlock User
+  (`POST /api/v1/admin/users/{user}/unlock`). Alternatively, the lockout
+  expires automatically after the TTL. See
+  `docs/features/identity/user-management.md`.
 - **Permanent lockout is not possible**: once the account is locked,
   subsequent rejected attempts (step 4) do not increment the counter or
   reset the TTL. The lockout expires naturally after
@@ -459,8 +455,9 @@ not a persistent identity mutation.
 
 ## Login Page
 
-The local login form does not check whether local users exist — it
-simply returns an authentication error if the credentials are invalid.
+Local login is available whether or not local users exist: a login with
+invalid credentials returns the generic `401 AUTH_INVALID_CREDENTIALS` (see
+Login).
 
 ### Frontend behavior
 
@@ -526,7 +523,7 @@ behavior).
 - **No self-service password change (accepted risk)**: local users
   cannot change their own password. If a user suspects credential
   compromise, they must contact an admin who performs a password reset
-  (CLI or admin UI). During the window between compromise detection and
+  (CLI or API). During the window between compromise detection and
   admin intervention, the old credential remains valid. This is accepted
   given the limited use cases (dev environments, bots, no-SSO
   deployments).

@@ -1577,6 +1577,16 @@ class TestOpenApiContract:
             properties = set(schemas[name]["properties"])
             assert not {"id", "priority", "cvss", "assessments"} & properties, name
 
+    def test_epss_assessed_at_states_the_refresh_scope_of_the_score(self) -> None:
+        """tickets.md (CVEEPSSResponse); cve-sync-epss.md (Retained scores)."""
+        description = _schemas()["CVEEPSSResponse"]["properties"]["assessed_at"][
+            "description"
+        ]
+
+        assert "retained score" in description
+        assert "only CVEs with an active Ticket" in description
+        assert "can be older than the latest EPSS publication" in description
+
     def test_ticket_detail_cve_still_references_cve_detail(self) -> None:
         schemas = _schemas()
 

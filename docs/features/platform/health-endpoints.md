@@ -182,7 +182,7 @@ timeouts:
   rotation for it would turn a fault confined to one operation into a full
   API outage. A missing CA file only logs a WARNING (see
   `docs/features/platform/networking.md`, TLS Trust Store Configuration).
-  The fetcher dashboard already surfaces certificate-related fetcher
+  The fetcher run history already reports certificate-related fetcher
   failures with adequate visibility.
 
 - **No "degraded" status**: the readiness probe is binary by design

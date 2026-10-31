@@ -712,7 +712,8 @@ globally unique within its naming system.
 - A CVE can also have multiple identifiers from the same source (rare,
   but possible when multiple advisories map to one CVE)
 - External identifiers persist regardless of ticket status or existence
-- The `url` column stores the canonical advisory URL for UI convenience
+- The `url` column stores the canonical advisory URL, so that consumers need
+  not build it from the identifier
   (e.g., `https://github.com/advisories/GHSA-xxxx-xxxx-xxxx`)
 - External-identifier ingestion is additive. Omitted, explicit-null, or empty
   input retains existing rows; supplied equal content is a no-op
@@ -767,7 +768,7 @@ informational and are read through
 | version_type | TEXT | nullable | `"semver"` / `"git"` / `"custom"` / `"original_commit_for_fix"` / `"rpm"` / ... |
 | version_end | TEXT | nullable | Range end (`lessThan` or `lessThanOrEqual`). TEXT for same reason as `version` |
 | version_end_inclusive | BOOLEAN | nullable | `true` for `lessThanOrEqual`, `false` for `lessThan` |
-| program_files | JSONB | nullable | Array of affected source files (embedded, not a separate table — used primarily for kernel CVEs, display-only). Each item is at most 1024 characters (enforced by `AffectedVersionEntry`, not by the database), and the items of one CVE JSON 5.x scope are bounded by the parser budget (`docs/features/platform/cve-record-parser.md`, `parse_affected_versions`, step 7) |
+| program_files | JSONB | nullable | Array of affected source files (embedded, not a separate table — used primarily for kernel CVEs, informational only). Each item is at most 1024 characters (enforced by `AffectedVersionEntry`, not by the database), and the items of one CVE JSON 5.x scope are bounded by the parser budget (`docs/features/platform/cve-record-parser.md`, `parse_affected_versions`, step 7) |
 | cpe | TEXT | nullable | CNA/ADP-provided CPE from `affected[]` array. A supplied replacement entry may also contribute this value to the pure post-ingest candidate handoff in `docs/features/tickets/cve-service.md`; persistence does not itself resolve a package. The later package-resolution workflow may pass the transported value to `resolve_cpe_packages()`, alongside NVD CPE candidates already selected by the NVD ingestion contract |
 | ecosystem | VARCHAR(50) | nullable | OSV/OSSF canonical ecosystem identifier. Sentinel uses the [OSSF OSV Schema](https://ossf.github.io/osv-schema/) ecosystem enumeration as its internal standard for this field (e.g., `"PyPI"`, `"npm"`, `"Go"`, `"crates.io"`, `"Maven"`, `"NuGet"`, `"RubyGems"`, `"Packagist"`). Fetchers that receive canonical OSSF values (e.g., `sync_osv_advisories`) store them as-is. Fetchers that receive non-canonical names from their upstream source (e.g., `sync_ghsa_advisories` receives GitHub's `"pip"` instead of `"PyPI"`) MUST normalize to OSSF canonical values before storage — see the owning fetcher spec for the specific mapping. NULL for fetchers whose upstream source has no ecosystem concept (NVD, MITRE, Red Hat, Kernel). See `docs/conventions.md` (Ecosystem Naming) for the cross-cutting convention |
 | status | VARCHAR(20) | nullable | Version-level vulnerability status from `versions[].status`. Known values: `"affected"`, `"unaffected"`, `"unknown"`. NULL for entries created without `versions[]` (parser step 4). Stored as-is without validation |
@@ -935,16 +936,17 @@ that boundary is accepted because priority has no gate or eligibility effect.
 Additionally, EPSS values have variable precision (e.g., 0.00043, 0.97565)
 that would require a wide DECIMAL scale.
 
-**Lifecycle**: the `sync_epss_scores` fetcher refreshes EPSS data only for
+**Lifecycle**: the periodic `sync_epss_scores` run refreshes EPSS data only for
 CVEs with **active tickets** (New, Analysis, Analyzed). When a ticket
 transitions to an inactive status, the CVEEPSSScore record is **retained**
-but no longer refreshed — consistent with the CVSS lifecycle pattern
+but no longer refreshed by that run — consistent with the CVSS lifecycle pattern
 (`docs/features/tickets/cvss-scoring.md`, External Synchronization). If the
 ticket later
 returns to an active status, the fetcher resumes refreshing the record on
 its next run.
 
-See `docs/features/tickets/cve-sync-epss.md` for display guidance.
+See `docs/features/tickets/cve-sync-epss.md` (Retained scores) for the refresh
+scope of a retained score.
 
 #### Ticket
 
@@ -1573,7 +1575,7 @@ deferred specification. It has no model or migration while that specification
 is deferred; the table below is the schema that applies once it is active.
 
 Stores the mapping rules between external identity provider groups and
-Sentinel roles. Configured by admins via the UI or API. When a mapping
+Sentinel roles. Configured by admins via the API. When a mapping
 is created or deleted, roles are applied or revoked immediately. During
 external provisioning sync, existing mappings are re-evaluated against
 current group membership. See
@@ -1633,7 +1635,7 @@ hash is stored. See
 | last_used_at  | TIMESTAMPTZ   | nullable                  | Operational authentication metadata: last use observed by a debounced update, at most once per minute per API server instance; excluded from identity lifecycle audit events |
 | expires_at    | TIMESTAMPTZ   | nullable                  | Optional expiration. NULL means never expires |
 | revoked_at    | TIMESTAMPTZ   | nullable                  | When the key was revoked. NULL means not revoked; status may still be expired. See `api-key-management.md` (Derived Status) |
-| revoked_by    | UUID        | FK(user.id), nullable     | Who revoked it. NULL for system/CLI revocations. Set to user ID for self-revoke or admin revoke via UI |
+| revoked_by    | UUID        | FK(user.id), nullable     | Who revoked it. NULL for system/CLI revocations. Set to user ID for self-revoke or admin revoke via the API |
 
 **Check constraint**: `chk_api_key_hash_is_sha256_hex` —
 `key_hash ~ '^[0-9a-f]{64}$'` — restricts `key_hash` to a 64-character
@@ -1771,8 +1773,8 @@ Beat, and API server).
 
 #### FetcherRun
 
-Records every execution of a fetcher. Primary data source for the fetcher
-dashboard charts. Records are retained indefinitely (no retention policy).
+Records every execution of a fetcher. Primary data source for the fetcher run
+history and timeline. Records are retained indefinitely (no retention policy).
 Growth rate is approximately 15,000 rows per year. See
 `docs/features/platform/fetcher-infrastructure.md` for full specification,
 including the full lifecycle state machine and the timestamp semantics

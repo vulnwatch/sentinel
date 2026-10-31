@@ -2,10 +2,9 @@
 
 ## Purpose
 
-Enable administrators to manage user accounts via the CLI and the
-administration panel in the web UI. This spec covers both local users
-(managed directly in Sentinel's database) and external users (synced from
-the external identity provider).
+Enable administrators to manage user accounts via the CLI and the API. This
+spec covers both local users (managed directly in Sentinel's database) and
+external users (synced from the external identity provider).
 
 Local users serve three primary use cases:
 
@@ -1518,8 +1517,8 @@ GET /api/v1/admin/users/{user}/deactivation-impact
 **`Capability: manage_users`**
 
 Returns a preview of the side effects that would occur if the user were
-deactivated. Used by the frontend to display a confirmation dialog before
-proceeding with deactivation.
+deactivated, so that an administrator can review them before confirming the
+deactivation.
 
 **Behavior**:
 
@@ -1681,8 +1680,8 @@ handling is required.
 3. **No duplicate usernames or emails**: enforced at creation and when
    changing the email
 4. **Role origin is `_manual`**: all roles assigned via `manage-user`
-   commands or admin UI have `group_name = '_manual'` and
-   `assigned_by = NULL` (CLI) or `assigned_by = admin_user_id` (UI)
+   commands or the API have `group_name = '_manual'` and
+   `assigned_by = NULL` (CLI) or `assigned_by = admin_user_id` (API)
 5. **Password required at creation**: local users must have a password
    set at creation time. There is no passwordless local user state.
    This invariant is enforced at the database level by a CHECK
@@ -1700,8 +1699,9 @@ handling is required.
   commands collect passwords via hidden interactive prompts. This
   prevents exposure in process listings (`ps aux`) and shell history
   files. A TTY is required — these commands cannot be scripted
-- **Admin UI is authenticated and capability-protected**: only callers with
-  `manage_users` can use administrator user-management operations
+- **Administrator endpoints are authenticated and capability-protected**:
+  only callers with `manage_users` can use administrator user-management
+  operations
 - **The user directory is readable by every authenticated user (accepted)**:
   any authenticated caller, including the account behind a role-less API key,
   can page through every user, active or not, local or external, and read
