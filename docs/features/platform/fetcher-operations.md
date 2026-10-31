@@ -1136,8 +1136,9 @@ frequency (~1–4 runs/day yields ~7,300 points for a full 5-year window).
 Aggressive schedule overrides (e.g., `*/5 * * * *`) or frequent manual
 triggers can produce larger responses; this is an admin-created
 condition and the endpoint does not enforce a point-count ceiling.
-The endpoint requires authentication, and external rate limiting (proxy
-layer) mitigates abuse.
+The endpoint requires authentication, and the request rate limit of the proxy
+in front of the API (`docs/architecture.md`, Request rate limiting at the
+proxy) mitigates abuse.
 
 **Response** (200 OK):
 

@@ -211,8 +211,8 @@ API conventions so that implementation can proceed without design ambiguity.
 ### Headers and tracing
 
 - If the spec defines custom request or response headers, verify they do
-  not conflict with standard headers (`X-Request-ID`, rate limiting
-  headers)
+  not conflict with the headers the API already uses (for example
+  `X-Request-ID` and `Retry-After`)
 - Endpoints that trigger long-running or background operations should note
   how the client tracks progress (polling endpoint, webhook, etc.)
 

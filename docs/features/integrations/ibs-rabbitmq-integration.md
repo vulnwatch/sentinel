@@ -514,6 +514,13 @@ Beat, and the consumer — even when `IBS_RABBITMQ_ENABLED=false`, so a bad
 value never stays latent until the consumer is enabled. The error names only
 the variable and never contains its value.
 
+The user information of the default is the shared account of the IBS message
+bus (`docs/data-sources.md`, IBS/OBS RabbitMQ Event Bus), not a secret of a
+Sentinel deployment, so committing it does not breach the secrets constraint
+of `docs/architecture.md` (Design Constraints). The variable is nevertheless
+handled as a credential, because a deployment can configure a dedicated
+account in its place.
+
 `DATABASE_URL`, `REDIS_URL`, and `SUSE_CA_CERT_PATH` retain their cross-cutting
 contracts. `REDIS_URL` is the only Redis URL used by the heartbeat. The
 consumer does not read `CELERY_BROKER_URL`.

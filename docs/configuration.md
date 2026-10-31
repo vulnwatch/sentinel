@@ -26,7 +26,7 @@ explicitly in staging/production.
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
 | `DATABASE_URL` | string | `postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel` | PostgreSQL async connection string | — |
-| `REDIS_URL` | string | `redis://localhost:6379/0` | Redis URL for application-owned ephemeral state, including session cache, rate limiting, locks, on-demand CVE deduplication/pending overlays, and the best-effort IBS consumer heartbeat | — |
+| `REDIS_URL` | string | `redis://localhost:6379/0` | Redis URL for application-owned ephemeral state, including session cache, login lockout, locks, on-demand CVE deduplication/pending overlays, and the best-effort IBS consumer heartbeat | — |
 | `CELERY_BROKER_URL` | string | `redis://localhost:6379/1` | Celery task broker URL | — |
 
 All application-level Redis operations (session caching, login lockout,

@@ -131,8 +131,9 @@ is passed explicitly to the factory.
 #### Timeouts
 
 - Connect: 10 seconds (TCP + TLS handshake)
-- Read: 30 seconds (time to receive response body)
-- Write: 10 seconds (time to send request body)
+- Read: 30 seconds (longest wait for the next part of the response; it does
+  not bound the time taken by the whole body)
+- Write: 10 seconds (longest wait to send the next part of the request)
 - Pool: 10 seconds (time waiting for a connection from the pool)
 
 Not configurable via env var or admin panel — these are engineering
@@ -410,7 +411,11 @@ The policy bounds decoding, not transfer. One standard-library layer expands
 the received bytes by at most about 1,032:1, the limit of the deflate format
 that both codings use, so the decoded size grows only linearly with the bytes
 received; stacked codings, which multiply that factor for every layer, are what
-the policy excludes. The number of bytes received is not limited.
+the policy excludes. The number of bytes received is not limited: every request
+goes to a host that Sentinel's configuration or code fixes, never to one taken
+from a request, and no redirect is followed unless its consumer opts in (see
+Redirect Policy). An oversized body therefore requires a compromised or faulty
+upstream, a risk that Sentinel accepts.
 
 A consumer that decodes a compressed payload itself requests
 `Accept-Encoding: identity` and rejects any declared coding before reading the

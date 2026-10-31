@@ -130,9 +130,12 @@ Authority).
 
 ### Active-Key Anomaly Warning
 
-There is no hard limit on keys per user. After successful creation, count the
-owner's keys whose derived status is `active`. When the count exceeds 20,
-emit a WARNING containing only:
+There is no hard limit on keys per user. A key can be created only through
+its owner's JWT-backed session (see Lifecycle and Retention), every key
+carries only its owner's access, and deactivation revokes all of them at
+once, so the number of keys grants no additional access. After successful
+creation, count the owner's keys whose derived status is `active`. When the
+count exceeds 20, emit a WARNING containing only:
 
 - the structured event name;
 - the owner's internal `user_id` UUID;

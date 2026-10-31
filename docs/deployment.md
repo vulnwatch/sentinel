@@ -74,7 +74,7 @@ For architectural decisions and design constraints, see
 | Docker Engine or Docker Desktop | No independent floor | Repository-managed local development and test container runtime; must support the required Compose plugin. Also runs the pinned shell lint tools of the pre-commit hook (`shellcheck`, `shfmt`, `actionlint`), so none of them is installed locally. See `docs/conventions.md` (Shell Scripting) |
 | Docker Compose CLI plugin | 2.32.2+ | Repository-managed development and test orchestration |
 | PostgreSQL | 18+ | Primary database |
-| Redis | 8+ | Session cache, Celery broker, rate limiting |
+| Redis | 8+ | Session cache, login lockout, Celery broker |
 | Git | 2.30+ | Git-based CVE fetcher operations (Git worker only; installed in the image, and on the developer host for the local Git worker) |
 | [uv](https://docs.astral.sh/uv/getting-started/installation/) | 0.13.5+ | Manages the Python 3.14 interpreter and all backend dependencies for local development (see "Quick Start" below). Development only |
 | [gh](https://cli.github.com/) | any recent release | Strongly recommended, development only — manages issues, pull requests, and GitHub Flow from the command line. See `docs/conventions.md` (Git Conventions) |
@@ -448,8 +448,8 @@ Before the first production deployment:
       server) logs the `Cookie` request header, which carries the session
       token on every path (`docs/features/identity/authentication.md`,
       Session cookie)
-- [ ] Rate limiting configured on the reverse proxy for public authentication
-      endpoints (see issue #682)
+- [ ] Request rate limiting configured on the proxy in front of the API (see
+      [Sentinel Host](#sentinel-host))
 - [ ] `CORS_ORIGINS` empty or unset, unless a browser client is served from
       an origin other than the Sentinel host (`docs/configuration.md`,
       Application)
@@ -2068,6 +2068,15 @@ headers unchanged, and no component of the host logs the `Cookie` header
 (`docs/features/identity/authentication.md`, Cross-Origin Request Protection
 and Session cookie); the
 [Pre-Production Checklist](#pre-production-checklist) verifies both.
+
+**Request rate limiting.** A proxy in front of the API, this reverse proxy or
+a dedicated one, limits the rate of requests per client on every path under
+`/api/`, the Public endpoints included. Sentinel limits none itself
+(`docs/architecture.md`, Request rate limiting at the proxy). The proxy
+identifies a client by the source address of the connection that reaches the
+host, or by a forwarded address only when a hop that it trusts sets it, so
+that clients do not share one limit. The limits are part of the environment
+configuration, which is maintained outside this repository.
 
 **Versions.** The `sentinel-aura` repository declares the Sentinel versions
 that each UI release supports, within the range of

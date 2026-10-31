@@ -1657,6 +1657,23 @@ Function Catalog has no `ls-tree` function today: the first non-template
 fetcher that needs one adds it to the catalog, under Module Invariants,
 before implementing it.
 
+## Security Considerations
+
+- **Repository content**: each fetcher fixes its repository (`repo_url`),
+  which git fetches over HTTPS verified with the container's system trust
+  store (`docs/features/platform/networking.md`, Trust Store Layering,
+  layer 1). Sentinel trusts the content as that host serves it, like the
+  response of an HTTP source, and verifies no commit or tag signature.
+- **Blob size**: `show_file()` reads a blob whole, without a size limit, on
+  the same grounds as the unlimited response body of the shared HTTP client
+  (`docs/features/platform/networking.md`, HTTP Response Compression): an
+  oversized blob requires a compromised or faulty upstream repository. The
+  Show timeout bounds how long the read takes, not how much it reads.
+- **Clone volume**: git runs the hooks and applies the configuration stored
+  in a clone, so write access to the clone volume amounts to running code in
+  the Git worker. The volume is therefore part of the Git worker's trust
+  boundary, and only that worker mounts it (see Volume Requirements and
+  `docs/deployment.md`, Git Worker Volume).
 
 ## Cross-references
 
