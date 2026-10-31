@@ -802,6 +802,9 @@ class TestDetailProjection:
             "Example:A",
             "Example:B",
         ]
+        assert {
+            tuple(m.id for m in package.maintainers) for package in detail.packages
+        } == {(maintainer.id,)}
 
 
 # ---------------------------------------------------------------------------
@@ -1066,7 +1069,13 @@ class TestMutationAssembly:
         ticket.priority_override = TicketPriority.P1.value
         ticket.assignee_id = assignee.id
         await db_session.flush()
-        db_session.add(TicketPackage(ticket_id=ticket.id, package_name="example-new"))
+        package = TicketPackage(ticket_id=ticket.id, package_name="example-new")
+        db_session.add(package)
+        await db_session.flush()
+        maintainer = await user_factory()
+        db_session.add(
+            TicketPackageMaintainer(ticket_package_id=package.id, user_id=maintainer.id)
+        )
         await db_session.flush()
 
         detail = await assemble_ticket_detail(
@@ -1077,6 +1086,7 @@ class TestMutationAssembly:
         assert detail.assignee is not None
         assert detail.assignee.id == assignee.id
         assert [p.package_name for p in detail.packages] == ["example-new"]
+        assert [m.id for m in detail.packages[0].maintainers] == [maintainer.id]
 
     async def test_missing_uuid_is_an_invariant_violation(
         self, db_session: AsyncSession, clock: Clock

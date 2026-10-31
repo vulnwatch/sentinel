@@ -1651,7 +1651,13 @@ implementation choice.
    the supplied evaluation instant (composed Ticket-detail use passes the
    instant captured by `get_ticket_detail()`). All inputs come from the same coherent observation, and evidence is
    loaded without per-track or per-Product N+1 queries
-5. Do not load or project maintainer identities.
+5. For every package, project its maintainers: the current User reference
+   (`id`, `username`, `full_name`, `active`, `bot`) of every
+   `TicketPackageMaintainer` association of the package, ordered by
+   `username` in ascending Unicode code-point order, from the same coherent
+   observation and without per-package N+1 queries. An excluded package keeps
+   its associations, and an inactive User remains with `active = false`.
+   Project no email, group, association count, or SMELT data.
 6. Return the assembled tree. Sort packages by `package_name`, tracks by
    `reference`, and Products by `product_cpe`, all in ascending Unicode
    code-point order independent of database collation. Use the corresponding
@@ -1720,9 +1726,11 @@ projections with `total`, `page`, and `per_page`, without depending on Pydantic.
    bounded independently of page size and result cardinality; per-item database
    queries and other N+1 behavior are forbidden. The contract does not require
    one SQL statement or prescribe SQL aggregation syntax.
-8. Return paginated `PackageListItem[]`. Items, `meta.total`, package
-   actionability, and every track aggregate use the one supplied
-   `evaluation_date` and the same visible candidate set.
+8. Return paginated `PackageListItem[]`. Each item's Ticket reference
+   projects the canonical `SNTL-{n}` identity, status, resolved severity,
+   `is_confidential`, and associated CVE identifier of its Ticket. Items,
+   `meta.total`, package actionability, and every track aggregate use the one
+   supplied `evaluation_date` and the same visible candidate set.
 
 **No locking needed** — this is a read-only operation.
 An accessible empty candidate set and a page beyond the last return an empty
@@ -1789,7 +1797,8 @@ Each global operation:
    same-direction internal tie-breaker;
 6. computes `total`, applies page slicing, and projects exactly one semantic
    workbench item per qualifying track from that same candidate set and
-   coherent PostgreSQL observation, including `submission_due_at` and
+   coherent PostgreSQL observation, including the Ticket's `is_confidential`,
+   `submission_due_at`, and
    `submission_milestone` computed under
    `docs/features/tickets/ticket-deadlines.md` with the supplied
    `evaluation_instant`; and

@@ -63,6 +63,7 @@ def _serialize_item(item: WorkItemProjection) -> MaintainerWorkItem:
         {
             "package_name": item.package_name,
             "ticket_id": item.ticket_id,
+            "is_confidential": item.is_confidential,
             "cve_id": item.cve_id,
             "severity": _lower(item.severity),
             "workflow_type": item.workflow_type.lower(),

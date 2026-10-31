@@ -41,6 +41,12 @@ class MaintainerWorkItem(BaseModel):
         description="Canonical Ticket identity (`SNTL-{n}`).",
         examples=["SNTL-42"],
     )
+    is_confidential: bool = Field(
+        description=(
+            "Whether the Ticket is confidential. Every item belongs to a "
+            "Ticket that the caller can see."
+        )
+    )
     cve_id: str | None = Field(
         description="Associated CVE identifier; `null` for a Ticket without a CVE."
     )

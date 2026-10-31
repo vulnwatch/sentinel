@@ -2609,7 +2609,9 @@ itself is a ticket.
   "ticket": {
     "ticket_id": "SNTL-123",
     "status": "analysis",
-    "severity": "high"
+    "severity": "high",
+    "is_confidential": false,
+    "cve_id": "CVE-2026-1234"
   },
   "track_summary": {
     "total": 5,
@@ -2631,6 +2633,8 @@ itself is a ticket.
 | `ticket_id` | string | Canonical Ticket identity (e.g., `SNTL-123`) |
 | `status` | string | Current ticket status |
 | `severity` | string \| null | Resolved Ticket severity per `docs/features/tickets/tickets.md` (Severity Resolution); same value set as `TicketSummary.severity`: `critical`, `high`, `medium`, `low`, `none`, or `null` when unresolved |
+| `is_confidential` | boolean | Whether the Ticket is confidential. Every item belongs to a Ticket that the caller can see (Confidentiality above), so the field discloses nothing (`docs/features/tickets/tickets.md`, Confidential Tickets) |
+| `cve_id` | string \| null | Identifier of the Ticket's associated CVE (e.g., `CVE-2026-1234`); `null` for a Ticket without a CVE |
 
 **`track_summary`** (`TrackSummary`) — aggregated track status counts for the
 package within this Ticket. Counts only actionable tracks, using the same UTC

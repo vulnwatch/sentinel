@@ -3015,8 +3015,13 @@ visibility predicate.
 - Ticket detail tests cover CVE-less and CVE-associated Tickets, nullable and
   complete current assignee projection, direct duplicate target sequence
   projection without target-content access or chain following, external-ID and
-  package-tree ordering, and absence of inline CVSS assessments and maintainer
-  identities.
+  package-tree ordering, absence of inline CVSS assessments, and the maintainers
+  of each package as `docs/features/packages/package-maintainership.md`
+  (Testing Requirements) lists.
+- The CVE list and detail, the package search, and the maintainer workbench
+  project the referenced Ticket's `is_confidential` for a confidential and a
+  non-confidential Ticket, and the package search its CVE identifier or `null`
+  for a CVE-less Ticket, from the same observation as the row.
 - Independent-session detail races at the protected selection boundary accept
   an entirely pre-change response, an entirely post-change response, or the
   applicable not-found outcome, but reject a mixed root/CVE/assignee/duplicate/
@@ -3385,7 +3390,7 @@ requirements without defining another visibility rule.
 **Projection, privacy, and side effects:**
 
 - Global and per-Ticket items contain exactly `package_name`, canonical
-  `ticket_id`, nullable `cve_id`, nullable resolved `severity`,
+  `ticket_id`, `is_confidential`, nullable `cve_id`, nullable resolved `severity`,
   `workflow_type`, `reference`, affectedness `status`, `delivery_status`,
   nullable `submission_due_at`, and nullable `submission_milestone`, all using
   lowercase API enum values.

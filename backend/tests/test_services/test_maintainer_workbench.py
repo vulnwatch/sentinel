@@ -181,7 +181,7 @@ async def _classify(
 
 @pytest.mark.integration
 class TestProjection:
-    async def test_item_projects_exactly_the_ten_fields(
+    async def test_item_projects_exactly_the_eleven_fields(
         self, db_session: AsyncSession, seed: WorkbenchSeed, owner: User
     ) -> None:
         ticket = await seed.ticket(severity=Severity.HIGH, created_at=RECENT)
@@ -202,6 +202,7 @@ class TestProjection:
                 MaintainerWorkItem(
                     package_name="fictional-kernel",
                     ticket_id=format_ticket_id(ticket.sequence_id),
+                    is_confidential=False,
                     cve_id=cve_identifier,
                     severity=Severity.HIGH,
                     workflow_type=WorkflowType.IBS,
@@ -216,6 +217,32 @@ class TestProjection:
             page=1,
             per_page=20,
         )
+
+    async def test_item_projects_the_confidentiality_of_its_ticket(
+        self, db_session: AsyncSession, seed: WorkbenchSeed, owner: User
+    ) -> None:
+        """maintainer.md, Workbench Row and Privacy Contract: the owner sees
+        a confidential Ticket through maintainership, and its row says so;
+        the per-Ticket view projects the same flag."""
+        embargoed = await seed.ticket(confidential=True)
+        public = await seed.ticket()
+        await seed.work(owner, ticket=embargoed, name="fictional-a")
+        await seed.work(owner, ticket=public, name="fictional-b")
+
+        page = await _list(
+            db_session,
+            "pending",
+            owner_caller(owner),
+            sort_by=MaintainerWorkSortField.PACKAGE,
+            sort_order=SortOrder.ASC,
+        )
+        work = await _ticket_work(db_session, embargoed, owner_caller(owner))
+
+        assert [(i.package_name, i.is_confidential) for i in page.items] == [
+            ("fictional-a", True),
+            ("fictional-b", False),
+        ]
+        assert [i.is_confidential for i in work.pending] == [True]
 
     async def test_cveless_ticket_projects_manual_severity_and_null_cve(
         self, db_session: AsyncSession, seed: WorkbenchSeed, owner: User

@@ -49,6 +49,7 @@ from app.services.cve_projection import (
     CVEWeaknessProjection,
 )
 from app.services.cve_service import (
+    CVEAssociatedTicketProjection,
     CVEDetailResult,
     CVEListItemProjection,
     CVEListResult,
@@ -773,11 +774,14 @@ class TestListRowIdentityAndBoundedRead:
             severity=Severity.NONE,
             cve_state=CveState.REJECTED,
             published_date=MAR,
-            ticket_id=_sntl(ticket),
+            ticket=CVEAssociatedTicketProjection(
+                ticket_id=_sntl(ticket), is_confidential=False
+            ),
             created_at=stamps[associated.id][0],
             updated_at=stamps[associated.id][1],
         )
-        assert first.ticket_id == f"SNTL-{ticket.sequence_id}"
+        assert first.ticket is not None
+        assert first.ticket.ticket_id == f"SNTL-{ticket.sequence_id}"
         assert type(first.severity) is Severity
         assert type(first.cve_state) is CveState
         assert second == CVEListItemProjection(
@@ -787,12 +791,33 @@ class TestListRowIdentityAndBoundedRead:
             severity=None,
             cve_state=CveState.PUBLISHED,
             published_date=None,
-            ticket_id=None,
+            ticket=None,
             created_at=stamps[ticketless.id][0],
             updated_at=stamps[ticketless.id][1],
         )
         for item in (first, second):
             _assert_no_uuid(item)
+
+    async def test_associated_ticket_projects_its_confidentiality(
+        self, db_session: AsyncSession, make: _Make
+    ) -> None:
+        """tickets.md, Confidential Tickets: the reference of a row that
+        reaches only callers who can see the Ticket carries its flag."""
+        public: CVE = await make.cve(cve_id="CVE-2099-80011")
+        embargoed: CVE = await make.cve(cve_id="CVE-2099-80012")
+        public_ticket = await make.ticket(cve_id=public.id)
+        embargoed_ticket = await make.ticket(cve_id=embargoed.id, is_confidential=True)
+
+        items = (await _list(db_session, ALL_SCOPE)).items
+
+        assert [item.ticket for item in items] == [
+            CVEAssociatedTicketProjection(
+                ticket_id=_sntl(public_ticket), is_confidential=False
+            ),
+            CVEAssociatedTicketProjection(
+                ticket_id=_sntl(embargoed_ticket), is_confidential=True
+            ),
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -947,7 +972,9 @@ class TestDetailProjection:
                     CVEWeaknessProjection("CWE-79", ("NVD", "Red Hat", "nvd")),
                 ),
             ),
-            ticket_id=_sntl(ticket),
+            ticket=CVEAssociatedTicketProjection(
+                ticket_id=_sntl(ticket), is_confidential=True
+            ),
         )
         assert result.cve.severity is Severity.NONE
         assert type(result.cve.cve_state) is CveState
@@ -981,7 +1008,7 @@ class TestDetailProjection:
                 ssvc=None,
                 cwes=(),
             ),
-            ticket_id=None,
+            ticket=None,
         )
 
     async def test_cve_projection_equals_the_ticket_detail_cve(
@@ -1005,7 +1032,10 @@ class TestDetailProjection:
 
         assert ticket_detail.cve is not None
         assert resource.cve == ticket_detail.cve
-        assert resource.ticket_id == ticket_detail.ticket_id
+        assert resource.ticket == CVEAssociatedTicketProjection(
+            ticket_id=ticket_detail.ticket_id,
+            is_confidential=ticket_detail.is_confidential,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1319,10 +1349,12 @@ class TestListRaces:
         after = await _list(race.reader, _restricted(user), search=race.world.token)
         assert after.total == 1
         (item,) = after.items
-        assert (item.cve_id, item.severity, item.ticket_id) == (
+        assert (item.cve_id, item.severity, item.ticket) == (
             cve.cve_id,
             Severity.CRITICAL,
-            _sntl(ticket),
+            CVEAssociatedTicketProjection(
+                ticket_id=_sntl(ticket), is_confidential=True
+            ),
         )
 
     async def test_access_acquired_after_the_first_statement(
@@ -1377,7 +1409,13 @@ class TestDetailRaces:
         assert calls == [1]
         assert result.cve.cve_id == loss.cve.cve_id
         assert result.cve.kev is None
-        assert (result.ticket_id is None) is (case == "association")
+        if case == "association":
+            assert result.ticket is None
+        else:
+            # The Ticket's flag is observed with the rest: still `false`
+            # before the confidentiality change of the first case.
+            assert result.ticket is not None
+            assert result.ticket.is_confidential is (case != "confidentiality")
         with pytest.raises(CVENotFoundError):
             await race.detail(loss.caller, loss.cve, fresh=True)
 
@@ -1392,7 +1430,9 @@ class TestDetailRaces:
 
         after = await race.detail(_restricted(user), cve)
         assert after.cve.kev == CVEKEVProjection(date(2099, 1, 15), None)
-        assert after.ticket_id == _sntl(ticket)
+        assert after.ticket == CVEAssociatedTicketProjection(
+            ticket_id=_sntl(ticket), is_confidential=True
+        )
 
     async def test_access_acquired_after_the_first_statement(
         self, race: _Race, monkeypatch: pytest.MonkeyPatch
@@ -1427,7 +1467,9 @@ class TestResolvedCaller:
         await _commit(race.writer, delete(UserRole).where(UserRole.user_id == user.id))
 
         assert await race.ids(in_flight) == ({cve.cve_id}, 1)
-        assert (await race.detail(in_flight, cve)).ticket_id == _sntl(ticket)
+        assert (await race.detail(in_flight, cve)).ticket == (
+            CVEAssociatedTicketProjection(ticket_id=_sntl(ticket), is_confidential=True)
+        )
         next_request = _restricted(user)
         assert await race.ids(next_request) == (set(), 0)
         with pytest.raises(CVENotFoundError):

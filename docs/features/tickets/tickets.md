@@ -998,6 +998,24 @@ Ticket response objects (both list and detail) MUST include the
 is no information leakage concern because a user only receives tickets
 they are authorized to see (see [Confidentiality Filtering](#confidentiality-filtering)).
 
+The same field is part of every Ticket reference in a row that a list or read
+returns only when the caller can see the referenced Ticket, so that a client
+can mark a confidential Ticket without reading it:
+
+- `CVEAssociatedTicket` of `CVEListItem` and `CVEResourceDetail`
+  ([cve-tracking.md](cve-tracking.md#list-cves));
+- `TicketPackageRef` of `PackageListItem`
+  (`docs/features/packages/package-model.md`, Search Packages Across
+  Tickets); and
+- the maintainer workbench item (`docs/features/packages/maintainer.md`,
+  Workbench Row and Privacy Contract).
+
+An identifier-only reference that does not apply the visibility of its Ticket,
+such as `duplicate_of_ticket_id` or `existing_ticket_id`
+([Identifier Disclosure Boundary](#identifier-disclosure-boundary)), never
+carries it: it would reveal that a Ticket the caller cannot see is
+confidential.
+
 See `docs/data-model.md` for the `TicketAccessGrant` entity definition
 and the `is_confidential` column on the Ticket table.
 
@@ -1422,6 +1440,7 @@ not observable for this track). A milestone `pending` is unrelated to
 | `deleted_at` | datetime \| null | Direct manual-exclusion timestamp |
 | `actionable` | boolean | Whether the package has at least one actionable track and is not manually excluded |
 | `non_actionable_reason` | string \| null | `package_excluded` or `no_actionable_tracks`; `null` when actionable |
+| `maintainers` | UserSummary[] | Current User reference of every `TicketPackageMaintainer` association of the package, ordered by `username` (Unicode code point); empty when the package has none. See `docs/features/packages/package-maintainership.md` (API Privacy and Filtering) |
 
 #### TicketSummary
 
@@ -1476,7 +1495,7 @@ projection with the full package tree, and uses expanded CVE data.
 | `release_due_at` | datetime \| null | Final deadline by which the update must be released; currently equal to `qa_due_at` |
 | `current_phase` | string \| null | Earliest open phase of the Ticket among the phases that Sentinel observes, as in `TicketSummary`. See [ticket-deadlines.md](ticket-deadlines.md#ticket-current-phase) |
 | `current_phase_milestone` | string \| null | Milestone status of `current_phase`, as in `TicketSummary` |
-| `packages` | PackageDetail[] | Full package/track/product tree; maintainer identities are not exposed |
+| `packages` | PackageDetail[] | Full package/track/product tree, with the maintainers of each package |
 | `created_at` | datetime | Creation timestamp (UTC) |
 | `updated_at` | datetime | Last modification timestamp (UTC) |
 
@@ -1600,8 +1619,9 @@ GET /api/v1/tickets/{ticket_id}
 Returns a single Ticket by canonical `SNTL-{n}` through
 `ticket_service.get_ticket_detail()`. The service owns SNTL resolution,
 visibility-constrained selection, CVE and assignee projection, duplicate-target
-identity, and composition of the package-owned full tree. Maintainer identities
-and source maintainership data are not included. The endpoint validates
+identity, and composition of the package-owned full tree, which names the
+maintainers of each package. Source maintainership data, such as SMELT
+responses, emails, and groups, is not included. The endpoint validates
 transport input, supplies caller information, maps service outcomes, and
 performs no business ORM query or response assembly.
 

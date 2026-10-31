@@ -114,6 +114,7 @@ from app.core.exceptions import (
 from app.core.external_strings import contains_inadmissible_character
 from app.core.identifiers import format_ticket_id, parse_ticket_id
 from app.database import detach_post_commit_callbacks, register_post_commit_callback
+from app.models.cve import CVE
 from app.models.cve_cvss_assessment import CVECVSSAssessment
 from app.models.product import Product
 from app.models.ticket import Ticket
@@ -240,8 +241,27 @@ class TrackProjection:
 
 
 @dataclass(frozen=True, slots=True)
+class PackageMaintainerProjection:
+    """The current profile of one User associated with a package
+    (`PackageDetail.maintainers`; api-spec.md, User References in
+    Responses): selected from the current `User` row, never a snapshot."""
+
+    id: uuid.UUID
+    username: str
+    full_name: str | None
+    active: bool
+    bot: bool
+
+
+@dataclass(frozen=True, slots=True)
 class PackageProjection:
-    """One `TicketPackage` of the tree (`PackageDetail`)."""
+    """One `TicketPackage` of the tree (`PackageDetail`).
+
+    `maintainers` holds every `TicketPackageMaintainer` association of the
+    package, excluded packages and inactive Users included, in ascending
+    code-point order of `username` (package-maintainership.md,
+    Maintainers in the Package Tree).
+    """
 
     id: uuid.UUID
     package_name: str
@@ -249,6 +269,7 @@ class PackageProjection:
     actionable: bool
     non_actionable_reason: NonActionableReason | None
     tracks: tuple[TrackProjection, ...]
+    maintainers: tuple[PackageMaintainerProjection, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -358,6 +379,35 @@ def _tracks_json(evaluation_date: date) -> ColumnElement[Any]:
     )
 
 
+def _maintainers_json() -> ColumnElement[Any]:
+    """Maintainers of the enclosing package: the current profile of every
+    associated User, ordered by username code point."""
+    maintainer = func.json_build_object(
+        _key("id"),
+        User.id,
+        _key("username"),
+        User.username,
+        _key("full_name"),
+        User.full_name,
+        _key("active"),
+        User.active,
+        _key("bot"),
+        User.bot,
+    )
+    return (
+        select(
+            _json_array(
+                maintainer, User.username.collate(_CODE_POINT_COLLATION), User.id
+            )
+        )
+        .select_from(TicketPackageMaintainer)
+        .join(User, User.id == TicketPackageMaintainer.user_id)
+        .where(TicketPackageMaintainer.ticket_package_id == TicketPackage.id)
+        .correlate_except(TicketPackageMaintainer, User)
+        .scalar_subquery()
+    )
+
+
 def ticket_package_tree_column(
     ticket_id: SQLColumnExpression[uuid.UUID], evaluation_date: date
 ) -> ColumnElement[Any]:
@@ -378,7 +428,9 @@ def ticket_package_tree_column(
     tie-breaker. Every level carries its direct `deleted_at` and the SQL
     `actionable` value for `evaluation_date`; Products carry their
     lifecycle phase on that date; tracks carry the correlated `um`
-    release-request evidence. Maintainer identities are never selected.
+    release-request evidence; packages carry the current profile of each
+    associated maintainer, ordered by username code point. No email,
+    group, or association metadata is selected.
 
     Pass the result to `assemble_ticket_packages()`. Building the column
     performs no I/O and raises no exception.
@@ -394,6 +446,8 @@ def ticket_package_tree_column(
         package_actionable_expression(evaluation_date),
         _key("tracks"),
         _tracks_json(evaluation_date),
+        _key("maintainers"),
+        _maintainers_json(),
     )
     tree = (
         select(
@@ -547,7 +601,8 @@ def assemble_ticket_packages(
     `milestones` and `current_phase` through `resolve_track_milestones()`
     from its affectedness, delivery, actionability, actionable eligible
     Products and their `released_at`, and the correlated `um` RR evidence.
-    Pure: performs no I/O and persists nothing.
+    Keeps each package's maintainers in their selected order. Pure:
+    performs no I/O and persists nothing.
 
     Raises:
         ValueError: `evaluation_instant` or `ticket.created_at` is naive.
@@ -584,6 +639,16 @@ def assemble_ticket_packages(
                     has_actionable_track=any(t.actionable for t in tracks),
                 ),
                 tracks=tracks,
+                maintainers=tuple(
+                    PackageMaintainerProjection(
+                        id=uuid.UUID(maintainer["id"]),
+                        username=maintainer["username"],
+                        full_name=maintainer["full_name"],
+                        active=maintainer["active"],
+                        bot=maintainer["bot"],
+                    )
+                    for maintainer in raw["maintainers"]
+                ),
             )
         )
     return tuple(packages)
@@ -619,9 +684,9 @@ async def get_ticket_packages(
     CVE presence, and complete tree (`ticket_package_tree_column()`),
     then assembles the projection (`assemble_ticket_packages()`). All
     packages, tracks, and Products are included, including excluded and
-    non-actionable ones. Maintainer identities are neither loaded nor
-    projected. Creates no event, acquires no lock, and never commits or
-    rolls back.
+    non-actionable ones, and every package carries the current profile of
+    its maintainers (no email or group). Creates no event, acquires no
+    lock, and never commits or rolls back.
 
     Q4: returns the packages in ascending code-point order of
     `package_name` (then UUID), each with its tracks and Products in the
@@ -671,11 +736,14 @@ class TicketPackageRefProjection:
     UUID is never part of the projection. `severity` is the resolved
     severity (tickets.md, Severity Resolution): `None` is SQL `NULL`
     (unresolved), while `Severity.NONE` is the resolved `None` label.
+    `cve_id` is the associated CVE identifier, `None` without a CVE.
     """
 
     ticket_id: str
     status: TicketStatus
     severity: Severity | None
+    is_confidential: bool
+    cve_id: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -757,6 +825,8 @@ def _search_item(row: Row[*tuple[Any, ...]]) -> PackageSearchItem:
             ticket_id=format_ticket_id(row.sequence_id),
             status=TicketStatus(row.ticket_status),
             severity=Severity(row.severity) if row.severity is not None else None,
+            is_confidential=row.ticket_is_confidential,
+            cve_id=row.cve_id,
         ),
         track_summary=TrackSummaryProjection(
             total=row.summary_total,
@@ -815,8 +885,9 @@ async def search_packages(
        the actionable tracks on the same `evaluation_date` by status
        (`track_summary`), so database work does not grow with page size
        or result cardinality;
-    7. projects the canonical Ticket identity, status, and resolved
-       severity (`resolved_severity_expression()`).
+    7. projects the canonical Ticket identity, status, resolved
+       severity (`resolved_severity_expression()`), confidentiality, and
+       associated CVE identifier.
     Creates no event, acquires no lock, and never commits or rolls back.
 
     Q4: returns the page items, the total, and the echoed `page` and
@@ -904,7 +975,9 @@ async def search_packages(
             TicketPackage.updated_at,
             Ticket.sequence_id,
             Ticket.status.label("ticket_status"),
+            Ticket.is_confidential.label("ticket_is_confidential"),
             resolved_severity_expression().label("severity"),
+            CVE.cve_id.label("cve_id"),
             func.coalesce(summary.c.total, 0).label("summary_total"),
             *(
                 func.coalesce(summary.c[field], 0).label(f"summary_{field}")
@@ -915,6 +988,7 @@ async def search_packages(
         .outerjoin(page_rows, true())
         .outerjoin(TicketPackage, TicketPackage.id == page_rows.c.id)
         .outerjoin(Ticket, Ticket.id == TicketPackage.ticket_id)
+        .outerjoin(CVE, CVE.id == Ticket.cve_id)
         .outerjoin(summary, summary.c.package_id == page_rows.c.id)
         .order_by(
             *_search_order(

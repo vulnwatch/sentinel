@@ -74,6 +74,7 @@ _ALL_LISTS = pytest.mark.parametrize("classification", list(_LISTS))
 _ITEM_FIELDS: Final = {
     "package_name",
     "ticket_id",
+    "is_confidential",
     "cve_id",
     "severity",
     "workflow_type",
@@ -203,8 +204,10 @@ class TestAuthentication:
 
         assert listed.status_code == 200
         assert listed.json()["meta"]["total"] == 1
+        assert listed.json()["data"][0]["is_confidential"] is True
         assert detail.status_code == 200
-        assert len(detail.json()["data"]["pending"]) == 1
+        (pending,) = detail.json()["data"]["pending"]
+        assert pending["is_confidential"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +244,7 @@ class TestWireShape:
                 {
                     "package_name": "fictional-kernel",
                     "ticket_id": format_ticket_id(ticket.sequence_id),
+                    "is_confidential": False,
                     "cve_id": cve_identifier,
                     "severity": "high",
                     "workflow_type": "ibs",
@@ -740,7 +744,7 @@ class TestOpenApiContract:
         for collection in work.values():
             assert self._ref(collection["items"]) == "MaintainerWorkItem"
 
-    def test_item_exposes_exactly_the_ten_fields_and_no_private_data(self) -> None:
+    def test_item_exposes_exactly_the_eleven_fields_and_no_private_data(self) -> None:
         item = self._component("MaintainerWorkItem")["properties"]
         texts = str(self._spec()["paths"]).lower()
 

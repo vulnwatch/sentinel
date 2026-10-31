@@ -6,8 +6,9 @@ Associate existing active Sentinel users with the individual
 `TicketPackage` occurrences they maintain. These durable associations provide:
 
 1. package-provenance visibility for confidential Tickets;
-2. package-wide maintainer workbench filtering; and
-3. a user-facing `maintainer` filter on the Ticket list.
+2. package-wide maintainer workbench filtering;
+3. a user-facing `maintainer` filter on the Ticket list; and
+4. the maintainers that the Ticket package tree names for each package.
 
 Sentinel uses **maintainership** as its only package-ownership concept. It does
 not preserve the IBS distinction between `bugowner` and `maintainer`. SMELT
@@ -350,9 +351,52 @@ Track or Product exclusion remains irrelevant to this package-wide branch.
 
 ## API Privacy and Filtering
 
-Normal Ticket and package detail responses do not expose maintainer identities,
-emails, groups, or association counts. `PackageDetail` contains only package
-tree fields. The maintainership source response is never proxied to clients.
+### Maintainers in the Package Tree
+
+Every `PackageDetail` of the Ticket package tree lists the maintainers of its
+package in `maintainers` (`docs/features/tickets/tickets.md`, Shared
+Sub-Schemas). The tree is returned by `GET /api/v1/tickets/{ticket_id}`,
+`GET /api/v1/tickets/{ticket_id}/packages`, and every response that returns
+`TicketDetail`, so the list reaches only callers who can see the Ticket. It
+holds:
+
+- one User reference (`docs/api-spec.md`, User References in Responses) per
+  `TicketPackageMaintainer` association of the package, projected from the
+  current User row and ordered by `username` in ascending Unicode code-point
+  order, or an empty array for a package without an association;
+- the associations of a directly excluded package as well: they remain
+  persisted and qualify again when the package is restored, but grant no
+  visibility while it is excluded (Confidential Ticket Visibility); and
+- an inactive User with `active = false`, because deactivation does not delete
+  an association (Add-only acquisition).
+
+The list is the set of maintainers that Sentinel acquired, not a mirror of
+SMELT: acquisition is add-only, so a maintainer whom SMELT no longer lists
+remains, and a new upstream maintainer appears only after a later acquisition
+(Recovery and Accepted Limitations).
+
+No response exposes a maintainer's email, a group, an association count, an
+acquisition time, or the maintainership source response, which is never
+proxied to clients. The compact `PackageListItem` of the package search and the
+maintainer workbench items carry no maintainer identity
+(`docs/features/packages/maintainer.md`, Workbench Row and Privacy Contract).
+
+> **Design note — maintainers are named**: an earlier contract withheld
+> maintainer identities while the package tree was readable without
+> authentication. Every application read now requires authentication
+> (`docs/features/identity/rbac.md`, Access Levels), and every caller who can
+> see a Ticket can already learn its maintainers: the
+> `package_maintainer_added` events of the Ticket audit log name each
+> maintainer with the package (`docs/features/tickets/ticket-audit-log.md`,
+> Event Type Contract), the user directory returns every user's name and email
+> (`docs/features/identity/user-management.md`, Directory API endpoints), and
+> the `maintainer` filter below lists each user's Tickets. Withholding them
+> would protect no one, while it would deny analysts whom to ask about a late
+> fix, as Actor Identities concludes for the actors of recorded actions
+> (`docs/features/identity/rbac.md`). Rebuilding the list from the audit log
+> instead would make audit history an input to current state.
+
+### Ticket List Filter
 
 The existing Ticket-list ownership filter is named `maintainer`:
 
@@ -367,7 +411,8 @@ Ticket matches when the resolved `User.id` has a
 `TicketPackageMaintainer` association through at least one
 `TicketPackage.deleted_at IS NULL` on that Ticket. The normal confidentiality
 filter, all other filters, pagination, and sorting apply independently. The API
-does not accept email for this filter and returns no maintainer identity field.
+does not accept email for this filter, and `TicketSummary` has no maintainer
+identity field.
 The target User's current active state does not alter filtering; activity was
 required at association creation and later deactivation does not delete the
 historical package association.
@@ -418,6 +463,8 @@ exclusion marker, and cannot substitute for that consumer restore.
 - SMELT-provided individual emails are personal data used only transiently for
   exact identity matching. They are not persisted as maintainership data,
   exposed through normal APIs, or included in logs.
+- The package tree names the associated Users only by the User reference, to
+  callers who can see the Ticket (Maintainers in the Package Tree).
 - Usernames, group names, collective group emails, and codestream provenance
   are not trusted identity keys and are not persisted by this feature.
 - Only an existing active User can be newly associated. Authentication enforces
@@ -465,7 +512,12 @@ Implementation coverage must include:
   capability-protected Ticket mutation despite having visibility;
 - Ticket `maintainer` filtering by UUID and username, unknown-filter empty
   results, included-package semantics, confidentiality composition, and no
-  email/maintainer projection in normal responses; and
+  maintainer projection in `TicketSummary`;
+- `PackageDetail.maintainers` in the package tree, Ticket detail, and mutation
+  responses: several maintainers of one package in `username` order, a package
+  without maintainers, an excluded package keeping its associations, an
+  inactive User with `active = false`, the current User profile after a change,
+  no email, group, count, or acquisition time, and no per-package N+1 query;
 - maintainer-only acquisition leaving `AddPackageResult` fields and counts
   unchanged and adding no maintainer identity or count to the public response;
 - PII-free structured warnings and absence of source emails, usernames, group

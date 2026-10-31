@@ -91,7 +91,7 @@ _ITEM_FIELDS = {
 }
 """package-model.md, Response Schema: `PackageListItem`."""
 
-_TICKET_REF_FIELDS = {"ticket_id", "status", "severity"}
+_TICKET_REF_FIELDS = {"ticket_id", "status", "severity", "is_confidential", "cve_id"}
 """package-model.md, `TicketPackageRef`."""
 
 _SUMMARY_FIELDS = {"total", "affected", "fixed", "not_affected", "wont_fix", "analysis"}
@@ -220,6 +220,36 @@ def trees(
 
 @pytest.mark.e2e
 class TestWireShape:
+    async def test_ticket_reference_carries_confidentiality_and_cve_id(
+        self,
+        authenticated_client: AsyncClient,
+        authenticated_user: User,
+        cve_factory: Factory,
+        ticket_factory: Factory,
+        ticket_access_grant_factory: Factory,
+        trees: Trees,
+    ) -> None:
+        """package-model.md, `TicketPackageRef`: a confidential Ticket that
+        the caller sees through a grant, with its CVE."""
+        cve = await cve_factory(cve_id="CVE-2099-71101")
+        ticket: Ticket = await ticket_factory(cve_id=cve.id, is_confidential=True)
+        await ticket_access_grant_factory(
+            ticket_id=ticket.id, user_id=authenticated_user.id
+        )
+        await trees.package(ticket, "example-embargoed")
+
+        response = await authenticated_client.get(_PATH)
+
+        assert response.status_code == 200
+        (item,) = response.json()["data"]
+        assert item["ticket"] == {
+            "ticket_id": format_ticket_id(ticket.sequence_id),
+            "status": "new",
+            "severity": None,
+            "is_confidential": True,
+            "cve_id": "CVE-2099-71101",
+        }
+
     async def test_returns_the_paginated_envelope_in_the_wire_format(
         self,
         authenticated_client: AsyncClient,
@@ -266,6 +296,8 @@ class TestWireShape:
                 "ticket_id": format_ticket_id(ticket.sequence_id),
                 "status": "analysis",
                 "severity": "high",
+                "is_confidential": False,
+                "cve_id": None,
             },
             "track_summary": {
                 "total": 5,
@@ -1484,9 +1516,18 @@ class TestOpenApiContract:
         assert set(self._component(severity_ref)["enum"]) == {
             s.value.lower() for s in Severity
         }
-        assert {"severity", "status", "ticket_id"} <= set(
+        assert {"severity", "status", "ticket_id", "is_confidential", "cve_id"} <= set(
             self._spec()["components"]["schemas"]["TicketPackageRef"]["required"]
         )
+
+    def test_ticket_reference_types_confidentiality_and_cve_id(self) -> None:
+        """package-model.md, `TicketPackageRef`: a required boolean and a
+        required nullable string."""
+        ref = self._spec()["components"]["schemas"]["TicketPackageRef"]["properties"]
+
+        assert ref["is_confidential"]["type"] == "boolean"
+        assert {"type": "string"} in ref["cve_id"]["anyOf"]
+        assert {"type": "null"} in ref["cve_id"]["anyOf"]
 
     def test_operation_is_documented(self) -> None:
         operation = self._operation()
