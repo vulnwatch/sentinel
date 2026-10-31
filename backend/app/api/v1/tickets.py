@@ -616,10 +616,11 @@ async def get_ticket(
     description=(
         "Sets or clears the manual severity of a Ticket without a CVE. A "
         "lowercase label (`critical`, `high`, `medium`, `low`, `none`) sets "
-        "it; JSON `null` clears it (unresolved). An unassigned Ticket is "
-        "auto-assigned to the caller when the caller is an active "
-        "vulnerability analyst; the automatic priority is refreshed, and the "
-        "Ticket status is re-evaluated. "
+        "it; JSON `null` clears it (unresolved). An effective change "
+        "auto-assigns an unassigned Ticket to the caller when the caller is an "
+        "active vulnerability analyst, refreshes the automatic priority, and "
+        "re-evaluates the Ticket status; an unchanged severity returns the "
+        "current Ticket with no side effect. "
         "Returns the post-mutation Ticket detail. Requires `triage_ticket`."
     ),
     responses={

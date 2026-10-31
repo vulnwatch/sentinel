@@ -1384,7 +1384,7 @@ rejects a key outside `properties` with `FETCHER_SETTING_UNKNOWN`
   would pass definition but fail at runtime when no stored override
   exists. `extra="ignore"` ensures orphaned keys are inert (see above).
 - **Choice enforcement**: to declare allowed choices for string or
-  integer fields, use `Literal` types or Python `Enum` types — not
+  integer fields, use `Literal` types or `StrEnum`/`IntEnum` types — not
   `json_schema_extra={"choices": [...]}` alone. `json_schema_extra`
   is metadata only; Pydantic does not enforce choices declared via
   `json_schema_extra`. `Literal["json", "xml", "csv"]` or a `StrEnum`

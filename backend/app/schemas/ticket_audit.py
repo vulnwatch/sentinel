@@ -16,10 +16,10 @@ from app.core.enums import TicketAuditEventType
 from app.schemas.common import PaginationMeta, UserReference
 
 _ENUM_VALUES = (
-    "An enumerated value is recorded as stored, not converted to the lowercase "
-    "form that other fields use: for example `New` for a Ticket status, `High` "
-    "for a severity, `P1` for a priority, `AFFECTED` for a track status, and "
-    "`advisory` for a reference type."
+    "An enumerated value is recorded as stored, which can differ from the "
+    "lowercase form that other fields use: for example `New` for a Ticket "
+    "status, `High` for a severity, `P1` for a priority, `AFFECTED` for a track "
+    "status, and `advisory` for a reference type."
 )
 """`docs/features/tickets/ticket-audit-log.md` (Event Type Contract, Rules)."""
 

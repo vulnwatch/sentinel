@@ -245,11 +245,12 @@ class FetcherConfigData(BaseModel):
         description=(
             "JSON Schema of the custom settings: one property per setting, with "
             "its `default` and its `type`, or a `$ref` into `$defs` for an enum "
-            "type. Where they apply, a property also carries `title`, "
-            "`description`, `minimum`/`maximum`, "
-            "`exclusiveMinimum`/`exclusiveMaximum`, `maxLength`, `pattern`, "
-            "`enum` or `const` for a choice, and `warning`. `null` when the "
-            "fetcher declares no settings or is deregistered."
+            "type; a choice whose values do not share one type has no `type`. "
+            "Where they apply, a property also carries `title`, `description`, "
+            "`minimum`/`maximum`, `exclusiveMinimum`/`exclusiveMaximum`, "
+            "`maxLength`, `pattern`, `enum` or `const` for a choice, `warning`, "
+            "and the informational `choices`. `null` when the fetcher declares "
+            "no settings or is deregistered."
         )
     )
     updated_at: datetime

@@ -772,6 +772,120 @@ class TestSettingsValidation:
                 async def execute(self, session: AsyncSession) -> None:
                     pass
 
+    @pytest.mark.parametrize(
+        "annotation",
+        [int | None, Literal["a", None]],
+        ids=["optional-int", "literal-with-none"],
+    )
+    def test_nullable_field_raises(self, annotation: Any) -> None:
+        """A setting never accepts `null`, so its published schema is never
+        an `anyOf` (`fetcher-infrastructure.md`, Schema keywords)."""
+
+        class Settings(BaseModel):
+            model_config = ConfigDict(extra="ignore", validate_default=True)
+            value: annotation = None
+
+        with pytest.raises(TypeError, match="scalar"):
+
+            class NullableField(BaseFetcher):
+                name = "sync_nullable_field"
+                description = "x"
+                default_schedule = "0 * * * *"
+                locals()["Settings"] = Settings
+
+                async def execute(self, session: AsyncSession) -> None:
+                    pass
+
+        assert "sync_nullable_field" not in FETCHER_REGISTRY
+
+    def test_settings_schema_uses_the_documented_keywords(self) -> None:
+        """`fetcher-infrastructure.md` (Schema registration and API
+        exposure, Schema keywords) states the keywords that a client of
+        `settings_schema` can rely on; this pins them against a change of
+        the schema library's output."""
+
+        class KeywordFetcher(BaseFetcher):
+            name = "sync_schema_keywords"
+            description = "x"
+            default_schedule = "0 * * * *"
+
+            class Settings(BaseModel):
+                model_config = ConfigDict(extra="ignore", validate_default=True)
+                count: int = Field(default=5, ge=1, le=10, description="A count.")
+                ratio: float = Field(default=0.5, gt=0, lt=1)
+                label: str = Field(default="abc", max_length=5, pattern="^[a-z]+$")
+                flag: bool = False
+                output_format: Literal["json", "xml"] = Field(
+                    default="json",
+                    json_schema_extra={
+                        "choices": ["json", "xml"],
+                        "warning": "Changes the payload.",
+                    },
+                )
+                only: Literal["fixed"] = "fixed"
+                mixed: Literal[1, "a"] = 1
+                choice: _Choice = _Choice.ONE
+                level: _Level = _Level.LOW
+
+            async def execute(self, session: AsyncSession) -> None:
+                pass
+
+        assert KeywordFetcher.Settings is not None
+        assert KeywordFetcher.Settings.model_json_schema() == {
+            "$defs": {
+                "_Choice": {
+                    "enum": ["one", "two"],
+                    "title": "_Choice",
+                    "type": "string",
+                },
+                "_Level": {"enum": [1, 2], "title": "_Level", "type": "integer"},
+            },
+            "properties": {
+                "count": {
+                    "default": 5,
+                    "description": "A count.",
+                    "maximum": 10,
+                    "minimum": 1,
+                    "title": "Count",
+                    "type": "integer",
+                },
+                "ratio": {
+                    "default": 0.5,
+                    "exclusiveMaximum": 1,
+                    "exclusiveMinimum": 0,
+                    "title": "Ratio",
+                    "type": "number",
+                },
+                "label": {
+                    "default": "abc",
+                    "maxLength": 5,
+                    "pattern": "^[a-z]+$",
+                    "title": "Label",
+                    "type": "string",
+                },
+                "flag": {"default": False, "title": "Flag", "type": "boolean"},
+                "output_format": {
+                    "choices": ["json", "xml"],
+                    "default": "json",
+                    "enum": ["json", "xml"],
+                    "title": "Output Format",
+                    "type": "string",
+                    "warning": "Changes the payload.",
+                },
+                "only": {
+                    "const": "fixed",
+                    "default": "fixed",
+                    "title": "Only",
+                    "type": "string",
+                },
+                "mixed": {"default": 1, "enum": [1, "a"], "title": "Mixed"},
+                "choice": {"$ref": "#/$defs/_Choice", "default": "one"},
+                "level": {"$ref": "#/$defs/_Level", "default": 1},
+            },
+            "title": "Settings",
+            "type": "object",
+        }
+
     def test_nested_model_field_raises(self) -> None:
         class _Nested(BaseModel):
             x: int = 1
