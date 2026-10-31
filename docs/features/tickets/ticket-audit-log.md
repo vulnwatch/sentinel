@@ -289,7 +289,7 @@ an intentional no-event contract, not missing audit coverage.
 | Ticket convergence registration, dispatch, execution, retry, partial/terminal failure, or operator rerun | None for the workflow outcome; effective delegated mutations retain their normal events | N/A | Ticket convergence owner; per-domain locks |
 | CVE refetch preparation, publication, deduplication, retry, or terminal task outcome | None for dispatch workflow outcomes; effective fetched CVE/CVSS/Ticket mutations retain their existing contracts | N/A | `cve_service` preparation and `fetch_single_cve`; CVE then optional Ticket for preparation |
 | Product catalog source mutation or workflow-only dispatch/checkpoint outcome | None; later per-Ticket delegated mutations retain their normal events | N/A | Owning catalog/workflow service |
-| Aging of a Ticket by the example dataset loader (`docs/features/platform/example-dataset.md`, Aged Tickets) | None; the backdated `created_at` stands for time before the load, and the Ticket's events keep the times of the load | N/A | Example dataset loader; Ticket lock |
+| Aging of a Ticket by the example dataset loader (`docs/features/platform/example-dataset.md`, Aged Tickets) | None | N/A | Example dataset loader; Ticket lock |
 
 For every row, a rejected, not-found, unchanged, stale/inapplicable,
 concurrent-loser, or rolled-back outcome creates no event unless the owning

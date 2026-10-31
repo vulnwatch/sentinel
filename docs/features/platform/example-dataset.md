@@ -555,9 +555,10 @@ ingested the first CVEs:
   items, each of which created its CVE;
 - in its own operation after those ingestions, `record_source_status()`
   records `failure` for the NVD source of `CVE-2099-0006`, its failed item,
-  and the load then writes the run record with that database time and with
-  the database time of the write as `finished_at`. The failure therefore lies
-  within the run, and the failure drill-down of the run
+  and the load then writes the run record with that database time and, as
+  `finished_at`, the database wall-clock time that it reads after
+  `record_source_status()`. The failure therefore lies within the run, and
+  the failure drill-down of the run
   (`docs/features/platform/fetcher-operations.md`, Get Fetcher Run Detail)
   lists it.
 
@@ -565,7 +566,8 @@ Next, one system operation of `record_source_status()` records `missing` for
 the NVD source of `CVE-2099-0008`, as a single-CVE fetch of the NVD source
 that does not find the CVE records it. `sync_nvd_cves` is then disabled
 (CVEs). Every other CVE source record is the `success` record of an
-ingestion.
+ingestion; the other ingestions stand for fetcher work that left no run
+record.
 
 ### Tickets
 
@@ -639,7 +641,7 @@ The resulting states follow the gates of `docs/features/tickets/tickets.md`:
 - `SNTL-9` is in `Analysis` without an assignee: its assignment by `eblack`
   moved it from `New`, and the deactivation of `eblack` cleared the assignee
   without changing its status (`docs/features/tickets/tickets.md`,
-  Reassignment).
+  Architectural Invariant).
 - `SNTL-11` stays in `Analysis` because its `SUSE:FLES-15-SP7:Update` track is
   in `ANALYSIS`.
 - `SNTL-12`, `SNTL-13`, and `SNTL-26` are `Analyzed`: each has an `AFFECTED`
@@ -661,7 +663,9 @@ to `T − a` days; it changes no other value of the Ticket, except `updated_at`,
 which records the write, and creates no audit event
 (`docs/features/tickets/ticket-audit-log.md`, Canonical Mutation and No-Event
 Matrix). The NVD ingestion of the CVE of an aged Ticket supplies the published
-date of the table, which precedes the Ticket's creation time.
+date of the table, which precedes the Ticket's creation time. Like the audit
+events, the CVE of an aged Ticket, its CVE source records, and the run that
+ingested it keep the times of the load.
 
 | Ticket | Age `a` | Published date of its CVE | Current phase after the load | Past due date of that phase |
 |---|---|---|---|---|

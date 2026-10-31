@@ -1651,13 +1651,10 @@ implementation choice.
    the supplied evaluation instant (composed Ticket-detail use passes the
    instant captured by `get_ticket_detail()`). All inputs come from the same coherent observation, and evidence is
    loaded without per-track or per-Product N+1 queries
-5. For every package, project its maintainers: the current User reference
-   (`id`, `username`, `full_name`, `active`, `bot`) of every
-   `TicketPackageMaintainer` association of the package, ordered by
-   `username` in ascending Unicode code-point order, from the same coherent
-   observation and without per-package N+1 queries. An excluded package keeps
-   its associations, and an inactive User remains with `active = false`.
-   Project no email, group, association count, or SMELT data.
+5. For every package, project its maintainers as
+   `docs/features/packages/package-maintainership.md` (Maintainers in the
+   Package Tree) defines them, from the same coherent observation and
+   without per-package N+1 queries.
 6. Return the assembled tree. Sort packages by `package_name`, tracks by
    `reference`, and Products by `product_cpe`, all in ascending Unicode
    code-point order independent of database collation. Use the corresponding
