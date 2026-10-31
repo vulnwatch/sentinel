@@ -298,8 +298,8 @@ admin's user ID; the service handles the external user check, password
 validation, hashing, and session invalidation. See
 `docs/features/identity/user-service.md` for the service contract.
 
-The new password follows Password validation above. A reset applies to local
-users only: the complete user profile tells local and external users apart by
+The endpoint accepts only JWT session authentication, and the new password
+follows Password validation above. A reset applies to local users only: the complete user profile tells local and external users apart by
 `source` (`docs/features/identity/user-management.md`, Get User (Admin)), and
 a reset of an external user returns `409 USER_EXTERNAL_PASSWORD_FORBIDDEN`.
 
@@ -455,9 +455,8 @@ not a persistent identity mutation.
 
 ## Login Page
 
-Local login is available whether or not local users exist: a login with
-invalid credentials returns the generic `401 AUTH_INVALID_CREDENTIALS` (see
-Login).
+Local login is available whether or not local users exist, and a rejected
+login does not reveal whether its username exists (see Login).
 
 ### Frontend behavior
 

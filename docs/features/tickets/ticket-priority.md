@@ -59,9 +59,10 @@ evidence attached to the Ticket's associated CVE. The first matching row wins:
 | `unknown` | Every other case, including SSVC `exploitation = none`, absent SSVC/EPSS/KEV rows, and a Ticket without a CVE |
 
 Classification uses the persisted evidence as is. Evidence freshness follows
-each source's own refresh scope; for example, EPSS is refreshed only while the
-Ticket is active ([cve-sync-epss.md](cve-sync-epss.md)), so an inactive
-Ticket's priority may reflect its last persisted percentile.
+each source's own refresh scope; for example, the periodic EPSS run refreshes
+only CVEs with an active Ticket ([cve-sync-epss.md](cve-sync-epss.md),
+Retained scores), so an inactive Ticket's priority may reflect its last
+persisted percentile.
 
 The EPSS threshold `0.95` is a specification constant, not a setting. It
 compares the persisted percentile, never the EPSS probability score. SSVC

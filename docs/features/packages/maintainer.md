@@ -281,7 +281,7 @@ one classification because its persisted delivery status has one value.
 Arrays use fixed ascending Unicode code-point order by `package_name`, then
 `reference`, with `TicketPackageTrack.id ASC` as the final internal tie-breaker.
 Client-controlled sorting is not supported because one Ticket has a bounded
-track set and the endpoint provides one canonical sharing order.
+track set and the endpoint provides one canonical order.
 
 The endpoint is unpaginated and therefore has no `meta`: a Ticket's persisted
 track set is bounded by its package tree. It delegates to

@@ -1517,8 +1517,8 @@ GET /api/v1/admin/users/{user}/deactivation-impact
 **`Capability: manage_users`**
 
 Returns a preview of the side effects that would occur if the user were
-deactivated, so that an administrator can review them before confirming the
-deactivation.
+deactivated, so that an administrator can review them before deactivating the
+user.
 
 **Behavior**:
 
@@ -1680,8 +1680,9 @@ handling is required.
 3. **No duplicate usernames or emails**: enforced at creation and when
    changing the email
 4. **Role origin is `_manual`**: all roles assigned via `manage-user`
-   commands or the API have `group_name = '_manual'` and
-   `assigned_by = NULL` (CLI) or `assigned_by = admin_user_id` (API)
+   commands or the user-management API (Create User (Admin), Set User Roles)
+   have `group_name = '_manual'` and `assigned_by = NULL` (CLI) or
+   `assigned_by = admin_user_id` (API)
 5. **Password required at creation**: local users must have a password
    set at creation time. There is no passwordless local user state.
    This invariant is enforced at the database level by a CHECK
