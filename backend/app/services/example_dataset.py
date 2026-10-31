@@ -11,7 +11,10 @@ transactions (product-catalog.md, Catalog Publication Boundaries).
 Every operation is an existing service operation, called as the actor of
 Dataset Content reaches it in real use: a user-attributed operation passes
 the dataset user with that user's consumer caller context (its identity and
-effective scope), and a system operation passes no acting user. Before
+effective scope), and a system operation passes no acting user. The only
+writes of the load itself are the run records of Fetcher Runs and CVE Source
+Records and the creation times of Aged Tickets, which no service operation
+writes; they create no audit event. Before
 committing an operation whose transaction it owns, the load verifies that
 the transaction registered no post-commit effect and no Ticket convergence
 effect; a registered effect rolls the operation back and raises
@@ -33,14 +36,17 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Final, Literal, Protocol
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.enums import (
     CVEExternalIdentifierSource,
+    CVESourceFetchStatus,
     CVESourceType,
     CveState,
     DeliveryStatus,
+    FetcherRunStatus,
+    FetcherRunTriggeredBy,
     IBSRequestActionType,
     IBSRequestState,
     PackageStatus,
@@ -58,6 +64,7 @@ from app.core.identifiers import format_ticket_id
 from app.core.permissions import get_effective_scope
 from app.database import detach_post_commit_callbacks
 from app.models.cve import CVE
+from app.models.fetcher_run import FetcherRun
 from app.models.product import Product
 from app.models.ticket import Ticket
 from app.models.ticket_package import TicketPackage
@@ -249,12 +256,14 @@ _USERS: Final = (
         (Role.RESTRICTED_ANALYST,),
         bot=True,
     ),
+    _User("ghill", "Grace Hill", "grace.hill@example.com", ()),
 )
+_EMAILS: Final = {user.username: user.email for user in _USERS}
 _INACTIVE: Final = "eblack"
+"""Takes `SNTL-9`, then is deactivated by the Ticket work (Tickets)."""
 _BOT: Final = "security-scanner"
 """The bot account (Users), which adds the manual reference of `SNTL-10`."""
 _DEACTIVATION_REASON: Final = "example dataset"
-_MAINTAINER_EMAIL: Final = "dave.brown@example.com"
 
 _CVSS_VERSION_CHANGES: Final[tuple[Literal["3.1", "4.0"], ...]] = ("4.0", "3.1")
 """`update_default_cvss_version()` targets: from `3.1` to `4.0` and back."""
@@ -400,11 +409,12 @@ _CVES: Final = (
     _CVE("CVE-2099-0021", _NVD, "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:L/I:N/A:N"),
     _CVE("CVE-2099-0022", _NVD, "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"),
     _CVE("CVE-2099-0023", _NVD, "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N"),
+    _CVE("CVE-2099-0024", _NVD, "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N"),
 )
 _CVE_DATA: Final = {cve.cve_id: cve for cve in _CVES}
 
 _FIRST_BEFORE_MANUAL: Final = tuple(f"CVE-2099-{n:04d}" for n in range(1, 18))
-_FIRST_AFTER_MANUAL: Final = tuple(f"CVE-2099-{n:04d}" for n in range(21, 24))
+_FIRST_AFTER_MANUAL: Final = tuple(f"CVE-2099-{n:04d}" for n in range(21, 25))
 _NVD_AFTER_MANUAL: Final = ("CVE-2099-0018", "CVE-2099-0019", "CVE-2099-0020")
 _MITRE_FURTHER: Final = ("CVE-2099-0009", "CVE-2099-0010")
 _KEV_ADDED: Final = {"CVE-2099-0001": -2}
@@ -419,7 +429,43 @@ _EPSS: Final = {
 _GHSA: Final = {"CVE-2099-0010": "GHSA-2c4f-7h9j-mqrv"}
 
 _NVD_FETCHER: Final = "sync_nvd_cves"
-"""The fetcher of the source that the automatic references represent."""
+"""The fetcher of the source that the automatic references represent, and
+the fetcher that stays enabled until its last run (Fetchers)."""
+_GHSA_FETCHER: Final = "sync_ghsa_advisories"
+
+
+@dataclass(frozen=True, slots=True)
+class _EarlierRun:
+    """A run before the load: started `hours` before `T`, finished
+    `seconds` later (Fetcher Runs and CVE Source Records)."""
+
+    fetcher: str
+    hours: int
+    seconds: int
+    status: FetcherRunStatus
+
+
+_EARLIER_RUNS: Final = (
+    _EarlierRun(_NVD_FETCHER, 48, 30, FetcherRunStatus.SUCCESS),
+    _EarlierRun(_NVD_FETCHER, 24, 12, FetcherRunStatus.FAILURE),
+    _EarlierRun(_GHSA_FETCHER, 6, 20, FetcherRunStatus.SUCCESS),
+)
+_HARD_TIME_LIMIT_SECONDS: Final = 3600
+_RUN_ERROR_MESSAGE: Final = "External service returned server error"
+_RUN_ERROR_DETAIL: Final = (
+    "Server error '503 Service Unavailable' for url "
+    "'https://nvd.example.com/rest/json/cves/2.0'"
+)
+_RUN_ERROR_TRACEBACK: Final = (
+    "Traceback (most recent call last):\n"
+    '  File "fictional_nvd_fetcher.py", line 1, in execute\n'
+    f"httpx.HTTPStatusError: {_RUN_ERROR_DETAIL}\n"
+)
+_LAST_RUN_SUCCEEDED: Final = 15
+"""The NVD ingestions of `CVE-2099-0001` to `CVE-2099-0017`, each creating
+its CVE: the successful items of the last NVD run."""
+_NVD_FAILED_CVE: Final = "CVE-2099-0006"
+_NVD_MISSING_CVE: Final = "CVE-2099-0008"
 _AUTOMATIC_REFERENCES: Final = {
     "CVE-2099-0001": (
         ("https://www.example.com/advisories/CVE-2099-0001", "Vendor Advisory"),
@@ -476,7 +522,8 @@ class _Package:
     name: str
     actor: str
     tracks: tuple[_Track, ...]
-    maintained: bool
+    maintainers: tuple[str, ...]
+    """The usernames whose emails `maintainer_emails` contains."""
 
 
 _PACKAGES: Final = {
@@ -490,21 +537,35 @@ _PACKAGES: Final = {
                 _Track(_GIT_16, _GIT, (_SERVER_16, _MICRO_6_2)),
                 _Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),
             ),
-            maintained=True,
+            ("dbrown",),
+        ),
+        _Package(
+            12,
+            "fictional-openssl",
+            "asmith",
+            (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
+            ("dbrown", "ghill"),
+        ),
+        _Package(
+            12,
+            "fictional-zlib",
+            "asmith",
+            (_Track(_GIT_16, _GIT, (_SERVER_16, _MICRO_6_2)),),
+            ("ghill",),
         ),
         _Package(
             13,
             "fictional-httpd",
             "asmith",
             (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
-            maintained=True,
+            ("dbrown",),
         ),
         _Package(
             14,
             "fictional-libxml",
             "asmith",
             (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
-            maintained=True,
+            ("dbrown",),
         ),
         _Package(
             15,
@@ -514,7 +575,7 @@ _PACKAGES: Final = {
                 _Track(_GIT_16, _GIT, (_SERVER_16, _MICRO_6_2)),
                 _Track(_SP4_UPDATE, _IBS, (_LTSS_15_SP4,)),
             ),
-            maintained=False,
+            (),
         ),
         _Package(
             16,
@@ -524,14 +585,21 @@ _PACKAGES: Final = {
                 _Track(_SP5_UPDATE, _IBS, (_LTSS_15_SP5,)),
                 _Track(_SP3_UPDATE, _IBS, (_SERVER_15_SP3,)),
             ),
-            maintained=False,
+            (),
         ),
         _Package(
             18,
             "fictional-openssh",
             "asmith",
             (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
-            maintained=True,
+            ("dbrown",),
+        ),
+        _Package(
+            26,
+            "fictional-glibc",
+            "bwilson",
+            (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
+            ("ghill",),
         ),
     )
 }
@@ -541,7 +609,20 @@ _SUSE_ASSESSMENTS: Final = {
     "CVE-2099-0014": ("CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H", "asmith"),
     "CVE-2099-0015": ("CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N", "bwilson"),
     "CVE-2099-0016": ("CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N", "asmith"),
+    "CVE-2099-0012": ("CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H", "asmith"),
+    "CVE-2099-0024": ("CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N", "bwilson"),
 }
+
+_AGED_TICKETS: Final = ((7, 5), (12, 20), (13, 25), (26, 35))
+"""Aged Tickets: `(SNTL number, age in days)`, in the order of their
+operations."""
+_AGED_PUBLISHED_DAYS: Final = {
+    "CVE-2099-0012": 21,
+    "CVE-2099-0013": 26,
+    "CVE-2099-0024": 36,
+}
+"""Aged Tickets: the published date of the CVE of an aged Ticket, in days
+before `T`, where it replaces `T - n`."""
 _SUSE_PROVIDER: Final = "SUSE"
 
 _MANUAL_REFERENCE: Final = ManualReferenceCreateInput(
@@ -568,6 +649,8 @@ _IBS_REQUESTS: Final = {
     900003: (_MR, 90001, 6),
     900004: (_MI, 90002, 9),
     900005: (_MR, 90002, 2),
+    900006: (_MI, 90003, 30),
+    900007: (_MR, 90003, 20),
 }
 _REVIEW, _NEW = IBSRequestState.REVIEW, IBSRequestState.NEW
 _ACCEPTED, _DECLINED = IBSRequestState.ACCEPTED, IBSRequestState.DECLINED
@@ -591,6 +674,13 @@ _OBSERVATIONS: Final[
         (DeliveryStatus.IN_PROGRESS, ((900004, _REVIEW, 9),)),
         (DeliveryStatus.IN_PROGRESS, ((900004, _ACCEPTED, 8), (900005, _NEW, 2))),
     ),
+    "fictional-glibc": (
+        (DeliveryStatus.IN_PROGRESS, ((900006, _REVIEW, 29),)),
+        (
+            DeliveryStatus.IN_PROGRESS,
+            ((900006, _ACCEPTED, 27), (900007, _REVIEW, 19)),
+        ),
+    ),
 }
 """The complete observations of each package's SP7 track, in order (IBS
 Requests)."""
@@ -612,7 +702,9 @@ def _description(cve_id: str) -> str:
 
 
 def _published(cve_id: str, now: datetime) -> datetime:
-    return now - timedelta(days=int(cve_id.rsplit("-", 1)[1]))
+    """`T - n` days, or the published date of the CVE of an aged Ticket."""
+    days = _AGED_PUBLISHED_DAYS.get(cve_id, int(cve_id.rsplit("-", 1)[1]))
+    return now - timedelta(days=days)
 
 
 def _nvd_payload(cve: _CVE, now: datetime) -> CVEIngestPayload:
@@ -904,16 +996,6 @@ class _Load:
 
             self.user_ids[user.username] = await self.run(create)
 
-        async def deactivate(db: AsyncSession) -> None:
-            await user_service.deactivate_user(
-                db,
-                self.user_ids[_INACTIVE],
-                acting_user_id=self.user_ids[_ADMIN],
-                reason=_DEACTIVATION_REASON,
-            )
-
-        await self.run(deactivate)
-
     # -- System settings ------------------------------------------------------
 
     async def system_settings(self) -> None:
@@ -932,18 +1014,89 @@ class _Load:
 
     async def fetchers(self) -> None:
         await self.run(fetcher_bootstrap.bootstrap_fetcher_configs)
+        await self.run(self.earlier_runs)
         for name in sorted(FETCHER_REGISTRY):
+            # `sync_nvd_cves` stays enabled until its last run (CVEs).
+            if name != _NVD_FETCHER:
+                await self.disable_fetcher(name)
 
-            async def disable(db: AsyncSession, name: str = name) -> None:
-                # The returned RedBeat propagation is not applied (Isolation).
-                await fetcher_operations.update_fetcher_config(
-                    db,
-                    fetcher_name=name,
-                    user_id=self.user_ids[_ADMIN],
-                    payload=fetcher_operations.UpdateConfigPayload(enabled=False),
+    async def disable_fetcher(self, name: str) -> None:
+        """`update_fetcher_config()` with `enabled = false` by `jdoe`."""
+
+        async def disable(db: AsyncSession) -> None:
+            # The returned RedBeat propagation is not applied (Isolation).
+            await fetcher_operations.update_fetcher_config(
+                db,
+                fetcher_name=name,
+                user_id=self.user_ids[_ADMIN],
+                payload=fetcher_operations.UpdateConfigPayload(enabled=False),
+            )
+
+        await self.run(disable)
+
+    async def earlier_runs(self, db: AsyncSession) -> None:
+        """The runs before the load, written in one operation (Fetcher Runs
+        and CVE Source Records)."""
+        for earlier in _EARLIER_RUNS:
+            started = self.now - timedelta(hours=earlier.hours)
+            failed = earlier.status is FetcherRunStatus.FAILURE
+            db.add(
+                _scheduled_run(
+                    earlier.fetcher,
+                    started=started,
+                    finished=started + timedelta(seconds=earlier.seconds),
+                    status=earlier.status,
+                    error_message=_RUN_ERROR_MESSAGE if failed else None,
+                    error_detail=_RUN_ERROR_DETAIL if failed else None,
+                    error_traceback=_RUN_ERROR_TRACEBACK if failed else None,
                 )
+            )
+        await db.flush()
 
-            await self.run(disable)
+    async def database_now(self) -> datetime:
+        """The database wall clock, read in a session that writes nothing."""
+        async with self.session_factory() as session:
+            instant: datetime | None = await session.scalar(
+                select(func.clock_timestamp())
+            )
+            await session.rollback()
+        assert instant is not None
+        return instant
+
+    async def last_nvd_run(self, started: datetime) -> None:
+        """The last run of `sync_nvd_cves`: the failure of its failed item,
+        then its record, finished at the database time of the write, so that
+        the failure lies within the run (Fetcher Runs and CVE Source
+        Records)."""
+
+        async def run(db: AsyncSession) -> None:
+            await cve_service.record_source_status(
+                db, self.cve_ids[_NVD_FAILED_CVE], _NVD, CVESourceFetchStatus.FAILURE
+            )
+            finished = await db.scalar(select(func.clock_timestamp()))
+            assert finished is not None
+            db.add(
+                _scheduled_run(
+                    _NVD_FETCHER,
+                    started=started,
+                    finished=finished,
+                    status=FetcherRunStatus.PARTIAL,
+                    items_succeeded=_LAST_RUN_SUCCEEDED,
+                    items_created=_LAST_RUN_SUCCEEDED,
+                    items_failed=1,
+                )
+            )
+            await db.flush()
+
+        await self.run(run)
+
+        async def missing(db: AsyncSession) -> None:
+            # A single-CVE fetch of the NVD source that does not find the CVE.
+            await cve_service.record_source_status(
+                db, self.cve_ids[_NVD_MISSING_CVE], _NVD, CVESourceFetchStatus.MISSING
+            )
+
+        await self.run(missing)
 
     # -- Product catalog ------------------------------------------------------
 
@@ -1047,8 +1200,13 @@ class _Load:
             self.cve_ids[ticket.cve_id] = cve_uuid
 
     async def cves_and_tickets(self) -> None:
+        nvd_run_started = await self.database_now()
         for cve_id in _FIRST_BEFORE_MANUAL:
             await self.first_ingestion(cve_id)
+        await self.last_nvd_run(nvd_run_started)
+        # Before the first manual creation, so that its freshness refresh
+        # finds no enabled source (Isolation).
+        await self.disable_fetcher(_NVD_FETCHER)
         for ticket in _MANUAL_TICKETS:
             await self.manual_ticket(ticket)
         for cve_id in _FIRST_AFTER_MANUAL:
@@ -1114,7 +1272,7 @@ class _Load:
                 ticket_id=self.ticket_ids[package.ticket],
                 package_name=package.name,
                 tracks=tracks,
-                maintainer_emails={_MAINTAINER_EMAIL} if package.maintained else set(),
+                maintainer_emails={_EMAILS[name] for name in package.maintainers},
                 acting_user_id=self.user_ids[package.actor],
                 caller=await self.caller(db, package.actor),
             )
@@ -1224,8 +1382,44 @@ class _Load:
 
         await self.run(create)
 
+    async def age(self, number: int, days: int) -> None:
+        """Set the creation time of `SNTL-{number}` to `T - days` under its
+        lock; no other value but `updated_at` changes and no event is
+        created (Aged Tickets)."""
+        ticket_id = self.ticket_ids[number]
+
+        async def backdate(db: AsyncSession) -> None:
+            ticket = await db.get(Ticket, ticket_id, with_for_update=True)
+            assert ticket is not None
+            ticket.created_at = self.now - timedelta(days=days)
+            await db.flush()
+
+        await self.run(backdate)
+
     async def ticket_work(self) -> None:
         affected, fixed = PackageStatus.AFFECTED, PackageStatus.FIXED
+        # SNTL-9
+        sntl_9 = self.ticket_ids[9]
+
+        async def take(db: AsyncSession) -> None:
+            await ticket_service.assign_ticket(
+                db,
+                ticket_id=sntl_9,
+                assignee=_INACTIVE,
+                acting_user_id=self.user_ids[_INACTIVE],
+                caller=await self.caller(db, _INACTIVE),
+            )
+
+        async def deactivate(db: AsyncSession) -> None:
+            await user_service.deactivate_user(
+                db,
+                self.user_ids[_INACTIVE],
+                acting_user_id=self.user_ids[_ADMIN],
+                reason=_DEACTIVATION_REASON,
+            )
+
+        await self.run(take)
+        await self.run(deactivate)
         # SNTL-10
         await self.manual_reference(10, _SCANNER_REFERENCE, _BOT)
         # SNTL-11
@@ -1255,6 +1449,11 @@ class _Load:
         await self.run(assign)
         await self.run(prioritize)
         await self.manual_reference(12, _MANUAL_REFERENCE, "asmith")
+        await self.add_package("fictional-openssl")
+        await self.track_status("fictional-openssl", _SP7_UPDATE, affected, "asmith")
+        await self.add_package("fictional-zlib")
+        await self.track_status("fictional-zlib", _GIT_16, affected, "asmith")
+        await self.suse_assessment("CVE-2099-0012")
         # SNTL-13
         await self.add_package("fictional-httpd")
         await self.track_status("fictional-httpd", _SP7_UPDATE, affected, "asmith")
@@ -1334,6 +1533,53 @@ class _Load:
             )
 
         await self.run(duplicate)
+        # SNTL-26
+        await self.add_package("fictional-glibc")
+        await self.track_status("fictional-glibc", _SP7_UPDATE, affected, "bwilson")
+        await self.suse_assessment("CVE-2099-0024")
+        await self.ibs_observations("fictional-glibc")
+        # Aged Tickets, after the Ticket work.
+        for number, days in _AGED_TICKETS:
+            await self.age(number, days)
+
+
+# ---------------------------------------------------------------------------
+# Run records
+# ---------------------------------------------------------------------------
+
+
+def _scheduled_run(
+    fetcher: str,
+    *,
+    started: datetime,
+    finished: datetime,
+    status: FetcherRunStatus,
+    items_succeeded: int = 0,
+    items_created: int = 0,
+    items_failed: int = 0,
+    error_message: str | None = None,
+    error_detail: str | None = None,
+    error_traceback: str | None = None,
+) -> FetcherRun:
+    """A finalized scheduled run record: created and adopted at `started`,
+    with no user and no cursor (Fetcher Runs and CVE Source Records)."""
+    return FetcherRun(
+        fetcher_name=fetcher,
+        created_at=started,
+        started_at=started,
+        finished_at=finished,
+        duration_seconds=(finished - started).total_seconds(),
+        status=status.value,
+        items_succeeded=items_succeeded,
+        items_created=items_created,
+        items_updated=0,
+        items_failed=items_failed,
+        error_message=error_message,
+        error_detail=error_detail,
+        error_traceback=error_traceback,
+        triggered_by=FetcherRunTriggeredBy.SCHEDULE.value,
+        hard_time_limit_seconds=_HARD_TIME_LIMIT_SECONDS,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -26,9 +26,9 @@ performs it, and the content of the dataset.
 Out of scope:
 
 - historical timestamps: every persisted creation, update, and audit time is a
-  time of the load (Time Base);
-- fetcher run history, API keys, sessions, external users, and IBS track
-  release checkpoints;
+  time of the load, except the creation times of the aged Tickets and the
+  times of the earlier fetcher runs (Time Base);
+- API keys, sessions, external users, and IBS track release checkpoints;
 - loading into a database that holds data, and resetting or removing the
   dataset: a dataset backend is recreated from a new database;
 - an API operation (No API Operation).
@@ -41,9 +41,10 @@ Out of scope:
 | `docs/features/platform/cli-infrastructure.md` | Shared CLI mechanism. Steps and Transactions below is an explicit exception to its one-transaction rule for mutating workflows |
 | `docs/features/identity/user-service.md` | `create_user()` and `deactivate_user()` |
 | `docs/features/platform/system-settings.md` | `update_default_cvss_version()` |
-| `docs/features/platform/fetcher-infrastructure.md` (FetcherConfig) and `docs/features/platform/fetcher-operations.md` (`update_fetcher_config`) | Fetcher configuration bootstrap and disabling |
+| `docs/features/platform/fetcher-infrastructure.md` (FetcherConfig; Data Model, FetcherRun) and `docs/features/platform/fetcher-operations.md` (`update_fetcher_config`) | Fetcher configuration bootstrap and disabling; the run records of Fetcher Runs |
 | `docs/features/packages/product-catalog.md` (Catalog Publication Boundaries) | Product, lifecycle, and threshold publication |
-| `docs/features/tickets/cve-service.md` and `docs/features/tickets/ticket-references.md` | CVE ingestion and automatic references |
+| `docs/features/tickets/cve-service.md` and `docs/features/tickets/ticket-references.md` | CVE ingestion, CVE source records (`record_source_status()`), and automatic references |
+| `docs/features/tickets/ticket-deadlines.md` | The due dates and current phases of the Aged Tickets |
 | `docs/features/tickets/ticket-service.md`, `docs/features/tickets/ticket-mutations.md`, and `docs/features/tickets/ticket-priority.md` | Ticket creation, assignment, ignore, duplicate, confidentiality, access grants, SUSE assessments, and priority override |
 | `docs/features/packages/package-service.md` | Package records, track status, and Product release |
 | `docs/features/packages/ibs-submission-tracking.md` (Trusted Observation Application) | IBS request evidence and delivery status |
@@ -151,15 +152,21 @@ A load runs these steps in this order:
 |---|---|
 | `Users` | Users |
 | `System settings` | System Settings |
-| `Fetchers` | Fetchers |
+| `Fetchers` | Fetchers, with the earlier runs of Fetcher Runs and CVE Source Records |
 | `Product catalog` | Product Catalog |
-| `CVEs and tickets` | CVEs, and the creation of every Ticket (Tickets) |
-| `Ticket work` | The Ticket work of Tickets, Packages, Tracks, and Maintainers, IBS Requests, and References |
+| `CVEs and tickets` | CVEs, the last run of `sync_nvd_cves` and the CVE source records of Fetcher Runs and CVE Source Records, and the creation of every Ticket (Tickets) |
+| `Ticket work` | The Ticket work of Tickets, Packages, Tracks, and Maintainers, IBS Requests, and References, then the aging of Aged Tickets |
 
 Each operation of a step — one call of a service function named in Dataset
-Content, or for an ingestion its `upsert_cve()` call together with its
+Content, one write of the load named in Fetcher Runs and CVE Source Records or
+in Aged Tickets, or for an ingestion its `upsert_cve()` call together with its
 `upsert_references()` call (CVEs) — runs in its own session and transaction,
-which the load commits before the next operation begins. The three catalog
+which the load commits before the next operation begins. The load writes the
+run records and the creation times of the aged Tickets itself, because no
+service operation records a run without executing its fetcher or changes the
+creation time of a Ticket; these writes stand for the time that a real
+installation spends before the state of the dataset, and change nothing else.
+The three catalog
 publications commit their own transactions
 (`docs/features/packages/product-catalog.md`, Catalog Publication
 Boundaries). One transaction per operation is the granularity of the API
@@ -197,8 +204,12 @@ use:
 - A system operation passes no acting user and uses the service's system
   caller context. It stands for the system process that performs it in real
   use: CVE ingestion by the fetcher of the source that the data represents,
-  Product catalog synchronization, IBS request reconciliation, and IBS track
-  and Product release detection.
+  a single-CVE fetch of a CVE source, Product catalog synchronization, IBS
+  request reconciliation, and IBS track and Product release detection.
+- A run record of Fetcher Runs and CVE Source Records stands for the record
+  that a scheduled run of its fetcher writes
+  (`docs/features/platform/fetcher-infrastructure.md`, BaseFetcher Base
+  Class); it names no user.
 - The first administrator is created without an acting user, as the
   bootstrap command `sentinel manage-user create` creates it.
 
@@ -229,10 +240,12 @@ post-commit effect:
   Convergence Registration). A registered effect is a defect of the dataset:
   the operation rolls back, discarding the effect, and the load raises
   `ExampleDatasetEffectError`, which fails the step.
-- The dataset is built so that no operation registers one. Every fetcher is
-  disabled before the first CVE or Ticket exists, so a manual creation with a
-  CVE finds no eligible source for its freshness refresh
-  (`docs/features/tickets/ticket-service.md`, create_ticket, step 11). No
+- The dataset is built so that no operation registers one. Every fetcher
+  except `sync_nvd_cves` is disabled before the first CVE or Ticket exists,
+  and `sync_nvd_cves` after its last run and before the first manual Ticket
+  creation (Fetchers), so a manual creation with a CVE finds no eligible
+  source for its freshness refresh (`docs/features/tickets/ticket-service.md`,
+  create_ticket, step 11); an ingestion prepares no freshness refresh. No
   operation regresses a `Resolved` Ticket or exits the manual zone. Package
   records are created through `add_package_records()`, which registers no IBS
   request catch-up.
@@ -263,11 +276,23 @@ Dataset Content is computed from them: `T − 3d` is three days before the load
 instant, and `D + 365` is 365 days after the load date.
 
 The persisted creation, update, and audit timestamps are the database times of
-the operations, shortly after `T`; the load never backdates them. Remediation
-deadlines, which derive from the Ticket creation time, therefore advance with
-the age of the dataset (`docs/features/tickets/ticket-deadlines.md`). The
-lifecycle dates of Product Catalog keep every listed lifecycle phase during
-the first 180 days from `D`.
+the operations, shortly after `T`. The load backdates only two kinds of value,
+so that a dataset backend shows past due dates and a run history:
+
+- the creation time of each aged Ticket, which the last operations of the
+  `Ticket work` step set to `T − a` days for its age `a` (Aged Tickets); and
+- the times of the earlier fetcher runs, which lie before `T` (Fetcher Runs
+  and CVE Source Records).
+
+The audit events of an aged Ticket keep the times of the load, because audit
+history is never rewritten
+(`docs/features/platform/audit-trail-infrastructure.md`, Immutability): the
+history of an aged Ticket begins after its creation time. Remediation
+deadlines, which derive from the Ticket creation time, advance with the age of
+the dataset (`docs/features/tickets/ticket-deadlines.md`), so after a load the
+deadlines of the aged Tickets are already past and those of every other Ticket
+pass later. The lifecycle dates of Product Catalog keep every listed lifecycle
+phase during the first 180 days from `D`.
 
 ## Service
 
@@ -351,18 +376,18 @@ dataset user is a local user.
 | `dbrown` | Dave Brown | `dave.brown@example.com` | none | Yes | No |
 | `eblack` | Eve Black | `eve.black@example.com` | `vulnerability_analyst` | No | No |
 | `security-scanner` | Security Scanner | `security-scanner@example.com` | `restricted_analyst` | Yes | Yes |
+| `ghill` | Grace Hill | `grace.hill@example.com` | none | Yes | No |
 
 Operations of the `Users` step, in this order:
 
 1. `create_user()` for `jdoe`, without an acting user.
-2. `create_user()` for `asmith`, `bwilson`, `cwhite`, `dbrown`, `eblack`, and
-   `security-scanner`, in this order, by `jdoe`. Every role has the `_manual`
-   origin, and `security-scanner` is created with `bot = true`.
-3. `deactivate_user()` for `eblack` by `jdoe`, with the reason
-   `example dataset`.
+2. `create_user()` for `asmith`, `bwilson`, `cwhite`, `dbrown`, `eblack`,
+   `security-scanner`, and `ghill`, in this order, by `jdoe`. Every role has
+   the `_manual` origin, and `security-scanner` is created with `bot = true`.
 
-`dbrown` holds no role: a user without roles who maintains packages
-(Packages, Tracks, and Maintainers). `security-scanner` is a bot account
+`eblack` is deactivated by the Ticket work, after it has taken `SNTL-9`
+(Tickets). `dbrown` and `ghill` hold no role: users without roles who maintain
+packages (Packages, Tracks, and Maintainers). `security-scanner` is a bot account
 (`docs/features/identity/user-management.md`, Bot Accounts) whose Ticket work
 lets a client show an automated action in a Ticket audit log.
 
@@ -378,10 +403,13 @@ CVE exists yet, so the changes need no recalculation.
 Operations of the `Fetchers` step:
 
 1. `bootstrap_fetcher_configs()` (Isolation).
-2. `update_fetcher_config()` with `enabled = false` by `jdoe`, for every
-   registered fetcher, in ascending order of fetcher name.
+2. One write of the earlier runs of Fetcher Runs and CVE Source Records.
+3. `update_fetcher_config()` with `enabled = false` by `jdoe`, for every
+   registered fetcher except `sync_nvd_cves`, in ascending order of fetcher
+   name.
 
-Every fetcher is disabled after the load.
+The `CVEs and tickets` step disables `sync_nvd_cves` the same way after its
+last run (CVEs). Every fetcher is disabled after the load.
 
 ### Product Catalog
 
@@ -419,7 +447,8 @@ Ingestion), except the three CVEs created by a manual Ticket creation
 (Tickets). An NVD ingestion supplies the description `Fictional vulnerability
 {CVE ID} of the Sentinel example dataset.`, the state `PUBLISHED`, the
 published date `T − n` days, where `n` is the number that ends the CVE ID
-(`7` for `CVE-2099-0007`), the modified date `T − 1d`, the CVSS vector of the
+(`7` for `CVE-2099-0007`), or the published date that Aged Tickets gives for
+the CVE of an aged Ticket, the modified date `T − 1d`, the CVSS vector of the
 table with provider `NVD`, and the CWE of the table with source `NVD`. A MITRE ingestion supplies the same description and
 published date, the title `Fictional flaw {CVE ID}`, the state `PUBLISHED`
 unless the table states otherwise, and the further data of the table. A KEV,
@@ -450,6 +479,7 @@ EPSS, or GHSA ingestion supplies only the data of the table.
 | `CVE-2099-0021` | NVD | `CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:L/I:N/A:N` | low | — | — |
 | `CVE-2099-0022` | NVD | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H` | high | — | — |
 | `CVE-2099-0023` | NVD | `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N` | medium | — | — |
+| `CVE-2099-0024` | NVD | `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N` | high | — | — |
 
 The Severity column is the resolved Ticket severity after the load
 (`docs/features/tickets/cvss-scoring.md`, Severity Resolution Cascade).
@@ -460,9 +490,13 @@ in the same transaction by `upsert_references()` when the CVE has automatic
 references (References). The `CVEs and tickets` step runs:
 
 1. the first ingestion of `CVE-2099-0001` to `CVE-2099-0017`, in order;
-2. the manual Ticket creations of Tickets, in order;
-3. the first ingestion of `CVE-2099-0021` to `CVE-2099-0023`, in order; and
-4. the further ingestions: NVD for `CVE-2099-0018` to `CVE-2099-0020`, then
+2. the last run of `sync_nvd_cves` and the NVD source record of
+   `CVE-2099-0008` (Fetcher Runs and CVE Source Records);
+3. `update_fetcher_config()` with `enabled = false` by `jdoe` for
+   `sync_nvd_cves`;
+4. the manual Ticket creations of Tickets, in order;
+5. the first ingestion of `CVE-2099-0021` to `CVE-2099-0024`, in order; and
+6. the further ingestions: NVD for `CVE-2099-0018` to `CVE-2099-0020`, then
    MITRE, KEV, EPSS, and GHSA, each in ascending CVE order.
 
 The affected-version entry of `CVE-2099-0009` has the version type `semver`
@@ -477,27 +511,80 @@ The SUSE assessments are part of the Ticket work:
 | `CVE-2099-0014` | `CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H` | `asmith` |
 | `CVE-2099-0015` | `CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N` | `bwilson` |
 | `CVE-2099-0016` | `CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N` | `asmith` |
+| `CVE-2099-0012` | `CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H` | `asmith` |
+| `CVE-2099-0024` | `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N` | `bwilson` |
 
 Each is one `upsert_cvss_assessment()` with the `MANUAL_SUSE` caller.
+
+### Fetcher Runs and CVE Source Records
+
+The load writes these `FetcherRun` records
+(`docs/features/platform/fetcher-infrastructure.md`, Data Model, FetcherRun).
+Every run is a scheduled run (`triggered_by = schedule`, no user), with
+`hard_time_limit_seconds = 3600` and no cursor, because both fetchers derive
+their starting point from `started_at`:
+
+| Fetcher | `created_at` and `started_at` | `finished_at` | Status | Succeeded | Created | Updated | Failed |
+|---|---|---|---|---|---|---|---|
+| `sync_nvd_cves` | `T − 2d` | 30 seconds later | `success` | 0 | 0 | 0 | 0 |
+| `sync_nvd_cves` | `T − 1d` | 12 seconds later | `failure` | 0 | 0 | 0 | 0 |
+| `sync_ghsa_advisories` | `T − 6h` | 20 seconds later | `success` | 0 | 0 | 0 | 0 |
+| `sync_nvd_cves` | Before the first ingestion of the `CVEs and tickets` step | After its CVE source record | `partial` | 15 | 15 | 0 | 1 |
+
+`duration_seconds` is `finished_at − started_at`. The failed run carries the
+error of a server error of the source, as `BaseFetcher.run()` records it
+(`docs/features/platform/fetcher-infrastructure.md`, Error Message
+Sanitization):
+
+- `error_message`: `External service returned server error`;
+- `error_detail`: `Server error '503 Service Unavailable' for url
+  'https://nvd.example.com/rest/json/cves/2.0'`; and
+- `error_traceback`: the three lines `Traceback (most recent call last):`,
+  `  File "fictional_nvd_fetcher.py", line 1, in execute`, and
+  `httpx.HTTPStatusError: ` followed by the error detail, each ending with a
+  line feed.
+
+The first three runs, which lie before `T`, are one write of the `Fetchers`
+step, before any fetcher is disabled. The last run stands for the NVD run that
+ingested the first CVEs:
+
+- its `created_at` and `started_at` are the database time that the load reads
+  before the first ingestion of the `CVEs and tickets` step, so the run covers
+  the NVD ingestions of `CVE-2099-0001` to `CVE-2099-0017`, its 15 successful
+  items, each of which created its CVE;
+- in its own operation after those ingestions, `record_source_status()`
+  records `failure` for the NVD source of `CVE-2099-0006`, its failed item,
+  and the load then writes the run record with that database time and with
+  the database time of the write as `finished_at`. The failure therefore lies
+  within the run, and the failure drill-down of the run
+  (`docs/features/platform/fetcher-operations.md`, Get Fetcher Run Detail)
+  lists it.
+
+Next, one system operation of `record_source_status()` records `missing` for
+the NVD source of `CVE-2099-0008`, as a single-CVE fetch of the NVD source
+that does not find the CVE records it. `sync_nvd_cves` is then disabled
+(CVEs). Every other CVE source record is the `success` record of an
+ingestion.
 
 ### Tickets
 
 On a newly created database the Tickets receive the identifiers `SNTL-1` to
-`SNTL-25` in this order. Every Ticket with a CVE is created by the first
+`SNTL-26` in this order. Every Ticket with a CVE is created by the first
 ingestion of its CVE, except `SNTL-18` to `SNTL-20`; every Ticket without a CVE
 is created manually. The table states the final state after the load.
 
 The dataset holds more than one page of Tickets at the default page size of
-20 (`docs/api-spec.md`) for every caller: 23 Tickets are not confidential and
+20 (`docs/api-spec.md`) for every caller: 24 Tickets are not confidential and
 are visible to every authenticated user.
 
 | Ticket | CVE | Created by | Status | Assignee | Confidential | Severity |
 |---|---|---|---|---|---|---|
 | `SNTL-1` to `SNTL-7` | `CVE-2099-0001` to `CVE-2099-0007` | Ingestion | `New` | — | No | As CVEs |
 | `SNTL-8` | `CVE-2099-0008` | Ingestion | `Ignored`, because its CVE is rejected | — | No | unresolved |
-| `SNTL-9`, `SNTL-10` | `CVE-2099-0009`, `CVE-2099-0010` | Ingestion | `New` | — | No | As CVEs |
+| `SNTL-9` | `CVE-2099-0009` | Ingestion | `Analysis` | — | No | high |
+| `SNTL-10` | `CVE-2099-0010` | Ingestion | `New` | — | No | medium |
 | `SNTL-11` | `CVE-2099-0011` | Ingestion | `Analysis` | `bwilson` | No | high |
-| `SNTL-12` | `CVE-2099-0012` | Ingestion | `Analysis` | `asmith` | No | high |
+| `SNTL-12` | `CVE-2099-0012` | Ingestion | `Analyzed` | `asmith` | No | high |
 | `SNTL-13` | `CVE-2099-0013` | Ingestion | `Analyzed` | `asmith` | No | high |
 | `SNTL-14` | `CVE-2099-0014` | Ingestion | `Resolved` | `asmith` | No | high |
 | `SNTL-15` | `CVE-2099-0015` | Ingestion | `Resolved` | `bwilson` | No | medium |
@@ -509,6 +596,7 @@ are visible to every authenticated user.
 | `SNTL-21` | — | `asmith`, with the manual severity high | `Analysis` | `asmith` | No | high |
 | `SNTL-22` | — | `bwilson` | `Duplicated`, a duplicate of `SNTL-21` | `bwilson` | No | unresolved |
 | `SNTL-23` to `SNTL-25` | `CVE-2099-0021` to `CVE-2099-0023` | Ingestion | `New` | — | No | As CVEs |
+| `SNTL-26` | `CVE-2099-0024` | Ingestion | `Analyzed` | `bwilson` | No | high |
 
 The manual Ticket creations are `create_ticket()` calls with the `manual`
 source by the creator of the table, with the CVE and the manual severity of
@@ -523,9 +611,10 @@ named user is a system operation (Attribution).
 
 | Ticket | Operations |
 |---|---|
+| `SNTL-9` | `eblack` assigns the Ticket to itself. `jdoe` deactivates `eblack` with the reason `example dataset`, which unassigns the Ticket and keeps its status (`docs/features/identity/user-service.md`, `deactivate_user()`) |
 | `SNTL-10` | `security-scanner` adds the manual reference of `SNTL-10` (References) |
 | `SNTL-11` | `bwilson` adds `fictional-curl` (Packages, Tracks, and Maintainers). `bwilson` sets the `fles-16.0` track to `AFFECTED` |
-| `SNTL-12` | `bwilson` assigns the Ticket to `asmith`. `bwilson` sets the priority override `P1`. `asmith` adds the manual reference of `SNTL-12` (References) |
+| `SNTL-12` | `bwilson` assigns the Ticket to `asmith`. `bwilson` sets the priority override `P1`. `asmith` adds the manual reference of `SNTL-12` (References). `asmith` adds `fictional-openssl` and `fictional-zlib`, sets the track of each to `AFFECTED`, and adds the SUSE assessment |
 | `SNTL-13` | `asmith` adds `fictional-httpd`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-13` are applied in order (IBS Requests) |
 | `SNTL-14` | `asmith` adds `fictional-libxml`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-14` are applied in order. Track release detection sets the track to `FIXED`. Product release detection confirms the release of `Server 15 SP7` at `T − 2d` with the advisory `SUSE-SU-2099:0001-1` |
 | `SNTL-15` | `bwilson` adds `fictional-sudo`, sets the `fles-16.0` track to `NOT_AFFECTED` and the `SUSE:FLES-15-SP4:Update` track to `WONT_FIX`, and adds the SUSE assessment |
@@ -534,20 +623,26 @@ named user is a system operation (Attribution).
 | `SNTL-18` | `asmith` adds `fictional-openssh` and sets its track to `AFFECTED`. The IBS observations of `SNTL-18` are applied in order. `asmith` grants access to `cwhite` |
 | `SNTL-19` | `bwilson` makes the Ticket confidential |
 | `SNTL-22` | `bwilson` marks the Ticket as a duplicate of `SNTL-21` |
+| `SNTL-26` | `bwilson` adds `fictional-glibc`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-26` are applied in order |
 
-The operations use `add_package_records()`, `set_track_status()`,
-`upsert_cvss_assessment()`, `assign_ticket()`, `set_priority_override()`,
-`create_reference()`, `ignore_ticket()`, `grant_access()`,
-`set_confidentiality()`, `mark_as_duplicate()`, `set_product_released_at()`,
-and `apply_ibs_request_observation()`. Track release detection is
-`set_track_status()` with `FIXED` and no acting user.
+The operations use `assign_ticket()`, `deactivate_user()`,
+`add_package_records()`, `set_track_status()`, `upsert_cvss_assessment()`,
+`set_priority_override()`, `create_reference()`, `ignore_ticket()`,
+`grant_access()`, `set_confidentiality()`, `mark_as_duplicate()`,
+`set_product_released_at()`, and `apply_ibs_request_observation()`. Track
+release detection is `set_track_status()` with `FIXED` and no acting user.
+After these operations, the step ages the Tickets of Aged Tickets.
 
 The resulting states follow the gates of `docs/features/tickets/tickets.md`:
 
+- `SNTL-9` is in `Analysis` without an assignee: its assignment by `eblack`
+  moved it from `New`, and the deactivation of `eblack` cleared the assignee
+  without changing its status (`docs/features/tickets/tickets.md`,
+  Reassignment).
 - `SNTL-11` stays in `Analysis` because its `SUSE:FLES-15-SP7:Update` track is
   in `ANALYSIS`.
-- `SNTL-13` is `Analyzed`: its `AFFECTED` track has the eligible, unreleased
-  Product `Server 15 SP7`.
+- `SNTL-12`, `SNTL-13`, and `SNTL-26` are `Analyzed`: each has an `AFFECTED`
+  track with the eligible, unreleased Product `Server 15 SP7`.
 - `SNTL-14` is `Resolved` through a `FIXED` track whose only eligible Product
   is released.
 - `SNTL-15` is `Resolved` through `NOT_AFFECTED` and `WONT_FIX` tracks.
@@ -557,17 +652,46 @@ The resulting states follow the gates of `docs/features/tickets/tickets.md`:
   `ANALYSIS` and is not actionable, because its only Product is EOL.
 - `SNTL-18` and `SNTL-19` stay in `Analysis` without a SUSE assessment.
 
+### Aged Tickets
+
+The last operations of the `Ticket work` step age these Tickets, one operation
+each in this order. Each operation locks the Ticket and sets its `created_at`
+to `T − a` days; it changes no other value of the Ticket, except `updated_at`,
+which records the write, and creates no audit event
+(`docs/features/tickets/ticket-audit-log.md`, Canonical Mutation and No-Event
+Matrix). The NVD ingestion of the CVE of an aged Ticket supplies the published
+date of the table, which precedes the Ticket's creation time.
+
+| Ticket | Age `a` | Published date of its CVE | Current phase after the load | Past due date of that phase |
+|---|---|---|---|---|
+| `SNTL-7` | 5 days | `T − 7d` (as CVEs) | `triage` | `triage_due_at`, `T − 2d` |
+| `SNTL-12` | 20 days | `T − 21d` | `submission`, on the `fictional-openssl` track | `submission_due_at`, `T − 2d` |
+| `SNTL-13` | 25 days | `T − 26d` | `um`, on the `fictional-httpd` track | `um_due_at`, `T − 4d` |
+| `SNTL-26` | 35 days | `T − 36d` | `qa`, on the `fictional-glibc` track | `qa_due_at`, `T − 5d` |
+
+Each aged Ticket has the 30-day SLA tier of its severity, so its current phase
+is past due and `current_phase_milestone` is `overdue`
+(`docs/features/tickets/ticket-deadlines.md`, Ticket Current Phase). Right
+after a load the aged Tickets are the only Tickets that match an `overdue`
+value of `GET /api/v1/tickets`, each the value of its current phase: every
+other Ticket was created at the load, and no due date of a phase that is still
+open has passed. The submission milestone of `SNTL-26` and `SNTL-13` is done
+through their delivery, and the `um` milestone of `SNTL-26` through its release
+request (IBS Requests).
+
 ### Packages, Tracks, and Maintainers
 
 Each package is added by one `add_package_records()` call by the user of
-Tickets, with the tracks and Products below; `maintainer_emails` contains
-`dave.brown@example.com` where the Maintainer column says `dbrown`. A track's
-delivery status is `PENDING` unless IBS Requests changes it.
+Tickets, with the tracks and Products below; `maintainer_emails` contains the
+email (Users) of every user of the Maintainers column. A track's delivery
+status is `PENDING` unless IBS Requests changes it.
 
-| Ticket | Package | Workflow | Track | Products | Track status | Delivery | Maintainer |
+| Ticket | Package | Workflow | Track | Products | Track status | Delivery | Maintainers |
 |---|---|---|---|---|---|---|---|
 | `SNTL-11` | `fictional-curl` | `git` | `fles-16.0` | `Server 16.0`, `Micro 6.2` | `AFFECTED` | `PENDING` | `dbrown` |
 | | | `ibs` | `SUSE:FLES-15-SP7:Update` | `Server 15 SP7` | `ANALYSIS` | `PENDING` | |
+| `SNTL-12` | `fictional-openssl` | `ibs` | `SUSE:FLES-15-SP7:Update` | `Server 15 SP7` | `AFFECTED` | `PENDING` | `dbrown`, `ghill` |
+| | `fictional-zlib` | `git` | `fles-16.0` | `Server 16.0`, `Micro 6.2` | `AFFECTED` | `PENDING` | `ghill` |
 | `SNTL-13` | `fictional-httpd` | `ibs` | `SUSE:FLES-15-SP7:Update` | `Server 15 SP7` | `AFFECTED` | `IN_PROGRESS` | `dbrown` |
 | `SNTL-14` | `fictional-libxml` | `ibs` | `SUSE:FLES-15-SP7:Update` | `Server 15 SP7`, released | `FIXED` | `RELEASED` | `dbrown` |
 | `SNTL-15` | `fictional-sudo` | `git` | `fles-16.0` | `Server 16.0`, `Micro 6.2` | `NOT_AFFECTED` | `PENDING` | — |
@@ -575,16 +699,23 @@ delivery status is `PENDING` unless IBS Requests changes it.
 | `SNTL-16` | `fictional-kernel` | `ibs` | `SUSE:FLES-15-SP5:Update` | `Server LTSS 15 SP5`, not eligible | `AFFECTED` | `PENDING` | — |
 | | | `ibs` | `SUSE:FLES-15-SP3:Update` | `Server 15 SP3`, EOL | `ANALYSIS` | `PENDING` | |
 | `SNTL-18` | `fictional-openssh` | `ibs` | `SUSE:FLES-15-SP7:Update` | `Server 15 SP7` | `AFFECTED` | `IN_PROGRESS` | `dbrown` |
+| `SNTL-26` | `fictional-glibc` | `ibs` | `SUSE:FLES-15-SP7:Update` | `Server 15 SP7` | `AFFECTED` | `IN_PROGRESS` | `ghill` |
 
 A Product is eligible unless the table states otherwise
 (`docs/features/packages/package-model.md`, Axis 2: Eligibility): `Server LTSS
 15 SP4` is in Reactive Support, and the SUSE score of `CVE-2099-0016` is below
 the threshold of `Server LTSS 15 SP5`.
 
-The maintainer workbench of `dbrown` (`docs/features/packages/maintainer.md`,
-Classification) therefore holds one pending item (`SNTL-11`, `fles-16.0`),
-two in-progress items (`SNTL-13` and `SNTL-18`), and one completed item
-(`SNTL-14`). `dbrown` sees the confidential `SNTL-18` through maintainership.
+`SNTL-12` has several packages, with different maintainers, and a package with
+two maintainers. The maintainer workbenches
+(`docs/features/packages/maintainer.md`, Classification) therefore hold:
+
+| Maintainer | Pending | In progress | Completed |
+|---|---|---|---|
+| `dbrown` | `SNTL-11` (`fles-16.0`), `SNTL-12` (`fictional-openssl`) | `SNTL-13`, `SNTL-18` | `SNTL-14` |
+| `ghill` | `SNTL-12` (`fictional-openssl` and `fictional-zlib`) | `SNTL-26` | — |
+
+`dbrown` sees the confidential `SNTL-18` through maintainership.
 
 ### IBS Requests
 
@@ -596,6 +727,8 @@ two in-progress items (`SNTL-13` and `SNTL-18`), and one completed item
 | `900003` | `maintenance_release` | `SNTL-14` | `90001` | `T − 6d` | `accepted` |
 | `900004` | `maintenance_incident` | `SNTL-18` | `90002` | `T − 9d` | `accepted` |
 | `900005` | `maintenance_release` | `SNTL-18` | `90002` | `T − 2d` | `new` |
+| `900006` | `maintenance_incident` | `SNTL-26` | `90003` | `T − 30d` | `accepted` |
+| `900007` | `maintenance_release` | `SNTL-26` | `90003` | `T − 20d` | `review` |
 
 The evidence arrives as the sequence of complete observations that the shared
 reconciliation would make over the history of the requests
@@ -613,9 +746,12 @@ state, with that state's upstream update time:
 | `SNTL-14` | 3 | `900003` `accepted` (`T − 3d`), its release proven | `RELEASED` |
 | `SNTL-18` | 1 | `900004` `review` (`T − 9d`) | `IN_PROGRESS` |
 | `SNTL-18` | 2 | `900004` `accepted` (`T − 8d`); `900005` `new` (`T − 2d`) | `IN_PROGRESS` |
+| `SNTL-26` | 1 | `900006` `review` (`T − 29d`) | `IN_PROGRESS` |
+| `SNTL-26` | 2 | `900006` `accepted` (`T − 27d`); `900007` `review` (`T − 19d`) | `IN_PROGRESS` |
 
-A `review` SR, an effective accepted SR, and a `new` RR establish progress, a
-proven release establishes `RELEASED`, and a later observation holds only the
+A `review` SR, an effective accepted SR, and a `new` or `review` RR establish
+progress, a proven release establishes `RELEASED`, and a later observation
+holds only the
 requests whose evidence it observes anew, as Required Roots defines: the
 proving RR alone for a proven release.
 
@@ -660,7 +796,8 @@ Identity, IBSRequestAction):
 
 ### Audit Trails
 
-The load writes no audit event itself. The delegated services create every
+The load writes no audit event itself, and its own writes of the run records
+and of the aging create none. The delegated services create every
 event of their contracts, so every audit trail of
 `docs/features/platform/audit-trail-infrastructure.md` (Audit Trail Index)
 holds events after the load:

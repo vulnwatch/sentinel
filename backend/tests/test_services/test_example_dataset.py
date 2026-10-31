@@ -42,11 +42,16 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.core.enums import (
+    CurrentPhase,
+    CVESourceSortField,
     DeliveryStatus,
     LifecyclePhase,
+    MilestonePhase,
+    MilestoneStatus,
     PackageStatus,
     Role,
     Severity,
+    SortOrder,
     TicketStatus,
     WorkflowType,
 )
@@ -60,9 +65,11 @@ from app.models.cve_cwe import CVECWE
 from app.models.cve_epss_score import CVEEPSSScore
 from app.models.cve_external_identifier import CVEExternalIdentifier
 from app.models.cve_kev_entry import CVEKEVEntry
+from app.models.cve_source import CVESource
 from app.models.cve_ssvc_assessment import CVESSVCAssessment
 from app.models.fetcher_audit_event import FetcherAuditEvent
 from app.models.fetcher_config import FetcherConfig
+from app.models.fetcher_run import FetcherRun
 from app.models.ibs_request import IBSRequest
 from app.models.ibs_request_action import IBSRequestAction
 from app.models.ibs_request_action_track import IBSRequestActionTrack
@@ -82,7 +89,13 @@ from app.models.ticket_package_track import TicketPackageTrack
 from app.models.ticket_reference import TicketReference
 from app.models.user import User
 from app.models.user_role import UserRole
-from app.services import example_dataset, package_service, ticket_service, user_service
+from app.services import (
+    cve_service,
+    example_dataset,
+    package_service,
+    ticket_service,
+    user_service,
+)
 from app.services import settings as settings_service
 from app.services.base_fetcher import FETCHER_REGISTRY
 from app.services.example_dataset import (
@@ -165,9 +178,10 @@ USERS: Final[dict[str, tuple[str, str, bool, bool, tuple[Role, ...]]]] = {
         True,
         (Role.RESTRICTED_ANALYST,),
     ),
+    "ghill": ("Grace Hill", "grace.hill@example.com", True, False, ()),
 }
 """Users: username -> (full name, email, active, bot, roles), in creation
-order."""
+order. `eblack` is active until the Ticket work deactivates it."""
 
 ROLE_WIRE: Final = {
     Role.ADMIN: "admin",
@@ -284,6 +298,7 @@ NVD_VECTORS: Final = {
     "CVE-2099-0021": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:L/I:N/A:N",
     "CVE-2099-0022": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
     "CVE-2099-0023": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N",
+    "CVE-2099-0024": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N",
 }
 """CVEs: the NVD CVSS vector of every CVE that an NVD ingestion supplies."""
 
@@ -292,6 +307,8 @@ SUSE_VECTORS: Final = {
     "CVE-2099-0014": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H",
     "CVE-2099-0015": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N",
     "CVE-2099-0016": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N",
+    "CVE-2099-0012": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+    "CVE-2099-0024": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N",
 }
 """CVEs: the SUSE assessments."""
 
@@ -307,7 +324,14 @@ CWES: Final = {
     "CVE-2099-0018": "CWE-287",
 }
 
-CVE_IDS: Final = tuple(f"CVE-2099-{n:04d}" for n in range(1, 24))
+CVE_IDS: Final = tuple(f"CVE-2099-{n:04d}" for n in range(1, 25))
+AGED_PUBLISHED_DAYS: Final = {
+    "CVE-2099-0012": 21,
+    "CVE-2099-0013": 26,
+    "CVE-2099-0024": 36,
+}
+"""Aged Tickets: the published date of the CVE of an aged Ticket, in days
+before `T`; every other CVE is published `T - n` days."""
 MITRE_INGESTED: Final = frozenset(
     {"CVE-2099-0006", "CVE-2099-0008", "CVE-2099-0009", "CVE-2099-0010"}
 )
@@ -321,6 +345,31 @@ EPSS: Final = {
     "CVE-2099-0018": (0.31, 0.92),
 }
 """EPSS: score and percentile, each assessed `D - 1`."""
+
+NVD_FETCHER: Final = "sync_nvd_cves"
+GHSA_FETCHER: Final = "sync_ghsa_advisories"
+RUN_ERROR_DETAIL: Final = (
+    "Server error '503 Service Unavailable' for url "
+    "'https://nvd.example.com/rest/json/cves/2.0'"
+)
+EARLIER_RUNS: Final = [
+    (NVD_FETCHER, 48, 30, "success", None, None, None),
+    (
+        NVD_FETCHER,
+        24,
+        12,
+        "failure",
+        "External service returned server error",
+        RUN_ERROR_DETAIL,
+        "Traceback (most recent call last):\n"
+        '  File "fictional_nvd_fetcher.py", line 1, in execute\n'
+        f"httpx.HTTPStatusError: {RUN_ERROR_DETAIL}\n",
+    ),
+    (GHSA_FETCHER, 6, 20, "success", None, None, None),
+]
+"""Fetcher Runs and CVE Source Records: the earlier runs as (fetcher, hours
+before `T`, duration in seconds, status, error message, error detail, error
+traceback)."""
 
 CRITICAL, HIGH, MEDIUM = Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM
 LOW, NONE = Severity.LOW, Severity.NONE
@@ -339,10 +388,10 @@ TICKETS: Final[
     6: ("CVE-2099-0006", NEW, None, False, None),
     7: ("CVE-2099-0007", NEW, None, False, CRITICAL),
     8: ("CVE-2099-0008", IGNORED, None, False, None),
-    9: ("CVE-2099-0009", NEW, None, False, HIGH),
+    9: ("CVE-2099-0009", ANALYSIS, None, False, HIGH),
     10: ("CVE-2099-0010", NEW, None, False, MEDIUM),
     11: ("CVE-2099-0011", ANALYSIS, "bwilson", False, HIGH),
-    12: ("CVE-2099-0012", ANALYSIS, "asmith", False, HIGH),
+    12: ("CVE-2099-0012", ANALYZED, "asmith", False, HIGH),
     13: ("CVE-2099-0013", ANALYZED, "asmith", False, HIGH),
     14: ("CVE-2099-0014", RESOLVED, "asmith", False, HIGH),
     15: ("CVE-2099-0015", RESOLVED, "bwilson", False, MEDIUM),
@@ -356,9 +405,17 @@ TICKETS: Final[
     23: ("CVE-2099-0021", NEW, None, False, LOW),
     24: ("CVE-2099-0022", NEW, None, False, HIGH),
     25: ("CVE-2099-0023", NEW, None, False, MEDIUM),
+    26: ("CVE-2099-0024", ANALYZED, "bwilson", False, HIGH),
 }
 """Tickets: `SNTL-n` -> (CVE, status, assignee, confidential, resolved
 severity; `None` is unresolved)."""
+
+AGED: Final = {7: 5, 12: 20, 13: 25, 26: 35}
+"""Aged Tickets: `SNTL-n` -> age in days."""
+
+OVERDUE: Final = {"triage": {7}, "submission": {12}, "um": {13}, "qa": {26}}
+"""Aged Tickets: the Tickets that each `overdue` value lists after the load,
+each also the Ticket's current phase, past due."""
 
 GIT_16: Final = "fles-16.0"
 SP7_UPDATE: Final = "SUSE:FLES-15-SP7:Update"
@@ -393,6 +450,18 @@ TRACKS: Final[
         PackageStatus.ANALYSIS,
         P_PENDING,
         {SERVER_15_SP7: (True, "")},
+    ),
+    (12, "fictional-openssl", SP7_UPDATE): (
+        IBS,
+        AFFECTED,
+        P_PENDING,
+        {SERVER_15_SP7: (True, "")},
+    ),
+    (12, "fictional-zlib", GIT_16): (
+        GIT,
+        AFFECTED,
+        P_PENDING,
+        {SERVER_16: (True, ""), MICRO_6_2: (True, "")},
     ),
     (13, "fictional-httpd", SP7_UPDATE): (
         IBS,
@@ -436,19 +505,29 @@ TRACKS: Final[
         P_IN_PROGRESS,
         {SERVER_15_SP7: (True, "")},
     ),
+    (26, "fictional-glibc", SP7_UPDATE): (
+        IBS,
+        AFFECTED,
+        P_IN_PROGRESS,
+        {SERVER_15_SP7: (True, "")},
+    ),
 }
 """Packages, Tracks, and Maintainers: track -> (workflow, status, delivery,
 Products as CPE -> (eligible, `RELEASED` or "" for unreleased))."""
 
-MAINTAINED: Final = frozenset(
+MAINTAINERS: Final = frozenset(
     {
-        (11, "fictional-curl"),
-        (13, "fictional-httpd"),
-        (14, "fictional-libxml"),
-        (18, "fictional-openssh"),
+        (11, "fictional-curl", "dbrown"),
+        (12, "fictional-openssl", "dbrown"),
+        (12, "fictional-openssl", "ghill"),
+        (12, "fictional-zlib", "ghill"),
+        (13, "fictional-httpd", "dbrown"),
+        (14, "fictional-libxml", "dbrown"),
+        (18, "fictional-openssh", "dbrown"),
+        (26, "fictional-glibc", "ghill"),
     }
 )
-"""The packages that `dbrown` maintains."""
+"""Packages, Tracks, and Maintainers: (SNTL number, package, maintainer)."""
 
 MI, MR = "maintenance_incident", "maintenance_release"
 BRANCHES: Final = "SUSE:FLES-15-SP7:Branches"
@@ -460,6 +539,8 @@ IBS_REQUESTS: Final[dict[int, tuple[str, int, int, str, int]]] = {
     900003: (MR, 14, 6, "accepted", 3),
     900004: (MI, 18, 9, "accepted", 8),
     900005: (MR, 18, 2, "new", 2),
+    900006: (MI, 26, 30, "accepted", 27),
+    900007: (MR, 26, 20, "review", 19),
 }
 """IBS Requests: number -> (type, SNTL number, upstream created in days
 before `T`, final state, upstream update of the final state in days before
@@ -561,6 +642,32 @@ IBS_ACTIONS: Final[
         None,
         None,
     ),
+    900006: (
+        MI,
+        BRANCHES,
+        "fictional-glibc.SUSE_FLES-15-SP7_Update",
+        "SUSE:Maintenance:90003",
+        "fictional-glibc.SUSE_FLES-15-SP7_Update",
+        SP7_UPDATE,
+        "fictional-glibc",
+        SP7_UPDATE,
+        90003,
+        "1",
+        "00000000000000000000000000900006",
+    ),
+    900007: (
+        MR,
+        "SUSE:Maintenance:90003",
+        "fictional-glibc.SUSE_FLES-15-SP7_Update",
+        SP7_UPDATE,
+        "fictional-glibc.90003",
+        None,
+        "fictional-glibc",
+        SP7_UPDATE,
+        90003,
+        None,
+        None,
+    ),
 }
 """IBS Requests: the one action of each request as (type, source project,
 source package, target project, target package, target release project,
@@ -625,7 +732,7 @@ TICKET_EVENT_TYPES: Final = frozenset(
 ATTRIBUTED_TICKET_EVENTS: Final = frozenset(
     {
         # Tickets, "Created by": ingestion (system) or the manual creator.
-        *((n, "ticket_created", None) for n in (*range(1, 18), 23, 24, 25)),
+        *((n, "ticket_created", None) for n in (*range(1, 18), 23, 24, 25, 26)),
         (18, "ticket_created", "asmith"),
         (19, "ticket_created", "bwilson"),
         (20, "ticket_created", "cwhite"),
@@ -633,12 +740,17 @@ ATTRIBUTED_TICKET_EVENTS: Final = frozenset(
         (22, "ticket_created", "bwilson"),
         (18, "coordinated_release_changed", "asmith"),
         # Ticket work: the direct event of each operation, by its actor.
+        (9, "assignment", "eblack"),
+        (9, "assignment", None),  # the unassignment of the deactivation
         (10, "reference_added", "security-scanner"),
         (11, "package_added", "bwilson"),
         (11, "track_status_changed", "bwilson"),
         (12, "assignment", "bwilson"),
         (12, "priority_changed", "bwilson"),
         (12, "reference_added", "asmith"),
+        (12, "package_added", "asmith"),
+        (12, "track_status_changed", "asmith"),
+        (12, "cvss_assessment_changed", "asmith"),
         (13, "package_added", "asmith"),
         (13, "track_status_changed", "asmith"),
         (13, "cvss_assessment_changed", "asmith"),
@@ -659,8 +771,12 @@ ATTRIBUTED_TICKET_EVENTS: Final = frozenset(
         (18, "access_grant_added", "asmith"),
         (19, "confidentiality_changed", "bwilson"),
         (22, "duplicate_set", "bwilson"),
+        (26, "assignment", "bwilson"),  # auto-assignment of the package addition
+        (26, "package_added", "bwilson"),
+        (26, "track_status_changed", "bwilson"),
+        (26, "cvss_assessment_changed", "bwilson"),
         # Maintainership is system-attributed (ticket-audit-log.md).
-        *((n, "package_maintainer_added", None) for n in (11, 13, 14, 18)),
+        *((n, "package_maintainer_added", None) for n in (11, 12, 13, 14, 18, 26)),
     }
 )
 """Attribution: `(SNTL number, Ticket event, actor)` that the dataset
@@ -673,7 +789,6 @@ operations produce; `None` is the system actor."""
 TABLE_EXCEPTIONS: Final = frozenset(
     {
         "api_key",  # API keys are out of scope (example-dataset.md, Scope)
-        "fetcher_run",  # fetcher run history is out of scope
         "session",  # sessions are out of scope
         "track_release_checkpoint",  # IBS track release checkpoints are out of scope
     }
@@ -799,6 +914,14 @@ async def usernames(db: AsyncSession) -> dict[uuid.UUID, str]:
     return dict(rows.all())
 
 
+async def _caller(db: AsyncSession, username: str) -> TicketCaller:
+    """The consumer caller context of a dataset user."""
+    user_id = await db.scalar(select(User.id).where(User.username == username))
+    assert user_id is not None
+    roles = await user_service.get_user_roles(db, user_id)
+    return TicketCaller.authenticated(user_id, get_effective_scope(roles))
+
+
 async def setting_value(db: AsyncSession) -> str | None:
     return await db.scalar(
         select(SystemSetting.value).where(SystemSetting.key == "default_cvss_version")
@@ -906,7 +1029,7 @@ class TestUsers:
             for name, (_, _, _, _, user_roles) in USERS.items()
             for role in user_roles
         }
-        assert not any(name == "dbrown" for name, *_ in roles)
+        assert not any(name in {"dbrown", "ghill"} for name, *_ in roles)
         for name, (_, _, _, _, password_hash, external_id) in users.items():
             assert external_id is None, name
             assert password_hash is not None, name
@@ -1026,11 +1149,189 @@ def test_every_fetcher_is_disabled_with_its_event(loaded: Loaded) -> None:
     configs, events = read(loaded.url, reader)
 
     assert loaded.fetchers
+    assert NVD_FETCHER in loaded.fetchers
     assert configs == dict.fromkeys(loaded.fetchers, False)
-    # One `disabled` event by `jdoe` per fetcher, in ascending name order.
+    # One `disabled` event by `jdoe` per fetcher, in ascending name order,
+    # except `sync_nvd_cves`, which is disabled after its last run.
     assert events == [
-        (name, "disabled", "jdoe", None, None, None) for name in loaded.fetchers
+        (name, "disabled", "jdoe", None, None, None)
+        for name in (*(n for n in loaded.fetchers if n != NVD_FETCHER), NVD_FETCHER)
     ]
+
+
+async def _runs(db: AsyncSession) -> list[FetcherRun]:
+    return list(
+        (
+            await db.scalars(
+                select(FetcherRun).order_by(FetcherRun.created_at, FetcherRun.id)
+            )
+        ).all()
+    )
+
+
+class TestFetcherRuns:
+    def test_run_records(self, loaded: Loaded) -> None:
+        runs = read(loaded.url, _runs)
+
+        *earlier, last = runs
+        assert [
+            (
+                run.fetcher_name,
+                run.created_at,
+                run.started_at,
+                run.finished_at,
+                run.duration_seconds,
+                run.status,
+                run.error_message,
+                run.error_detail,
+                run.error_traceback,
+            )
+            for run in earlier
+        ] == [
+            (
+                fetcher,
+                loaded.now - timedelta(hours=hours),
+                loaded.now - timedelta(hours=hours),
+                loaded.now - timedelta(hours=hours, seconds=-seconds),
+                float(seconds),
+                status,
+                message,
+                detail,
+                traceback,
+            )
+            for fetcher, hours, seconds, status, message, detail, traceback in (
+                EARLIER_RUNS
+            )
+        ]
+        assert last.fetcher_name == NVD_FETCHER
+        assert last.status == "partial"
+        assert last.started_at is not None
+        assert last.finished_at is not None
+        assert last.created_at == last.started_at
+        assert last.duration_seconds == (
+            (last.finished_at - last.started_at).total_seconds()
+        )
+        assert (last.error_message, last.error_detail, last.error_traceback) == (
+            None,
+            None,
+            None,
+        )
+        for run in runs:
+            assert (
+                run.triggered_by,
+                run.triggered_by_user_id,
+                run.cursor,
+                run.hard_time_limit_seconds,
+            ) == ("schedule", None, None, 3600), run.created_at
+        assert [
+            (r.items_succeeded, r.items_created, r.items_updated, r.items_failed)
+            for r in runs
+        ] == [(0, 0, 0, 0), (0, 0, 0, 0), (0, 0, 0, 0), (15, 15, 0, 1)]
+
+    def test_last_nvd_run_covers_its_items_and_precedes_the_disable(
+        self, loaded: Loaded
+    ) -> None:
+        """The last run of `sync_nvd_cves` covers the NVD ingestions of
+        `CVE-2099-0001` to `CVE-2099-0017` and its failure, and ends before
+        the fetcher is disabled; every earlier run precedes the load."""
+
+        async def reader(
+            db: AsyncSession,
+        ) -> tuple[list[FetcherRun], dict[str, datetime], datetime, datetime]:
+            created = await db.execute(
+                select(CVE.cve_id, CVESource.fetched_at)
+                .join(CVE, CVE.id == CVESource.cve_id)
+                .where(CVESource.source == "nvd")
+            )
+            disabled = await db.scalar(
+                select(FetcherAuditEvent.created_at).where(
+                    FetcherAuditEvent.fetcher_name == NVD_FETCHER
+                )
+            )
+            first_disable = await db.scalar(
+                select(func.min(FetcherAuditEvent.created_at))
+            )
+            assert disabled is not None
+            assert first_disable is not None
+            return await _runs(db), dict(created.all()), disabled, first_disable
+
+        runs, nvd_fetched, disabled, first_disable = read(loaded.url, reader)
+
+        *earlier, last = runs
+        assert last.started_at is not None
+        assert last.finished_at is not None
+        window = [
+            cve_id
+            for cve_id, fetched in nvd_fetched.items()
+            if last.started_at <= fetched <= last.finished_at
+        ]
+        assert sorted(window) == sorted(
+            [*(c for c in NVD_VECTORS if int(c[-4:]) <= 17), "CVE-2099-0006"]
+        )
+        # The other fetchers are disabled before the run starts, and
+        # `sync_nvd_cves` after it ends; the earlier runs precede both.
+        assert first_disable < last.started_at
+        assert last.finished_at < disabled
+        for run in earlier:
+            assert run.finished_at is not None
+            assert run.finished_at < first_disable
+
+    def test_cve_source_records(self, loaded: Loaded) -> None:
+        async def reader(
+            db: AsyncSession,
+        ) -> dict[tuple[str, str], tuple[str, bool]]:
+            rows = await db.execute(
+                select(
+                    CVE.cve_id,
+                    CVESource.source,
+                    CVESource.status,
+                    CVESource.fetched_at,
+                    CVESource.first_failed_at,
+                ).join(CVE, CVE.id == CVESource.cve_id)
+            )
+            return {
+                (cve_id, source): (status, first_failed == fetched)
+                for cve_id, source, status, fetched, first_failed in rows
+            }
+
+        records = read(loaded.url, reader)
+
+        success = {
+            *((cve_id, "nvd") for cve_id in NVD_VECTORS),
+            *((cve_id, "mitre") for cve_id in MITRE_INGESTED),
+            ("CVE-2099-0001", "kev"),
+            *((cve_id, "epss") for cve_id in EPSS),
+            ("CVE-2099-0010", "ghsa"),
+        }
+        assert records == {
+            **dict.fromkeys(success, ("success", False)),
+            # A failure starts its streak at its own write.
+            ("CVE-2099-0006", "nvd"): ("failure", True),
+            ("CVE-2099-0008", "nvd"): ("missing", False),
+        }
+
+    def test_failure_drill_down_of_the_last_nvd_run(self, loaded: Loaded) -> None:
+        """fetcher-operations.md, Get Fetcher Run Detail (Failure
+        drill-down): the failures within the run of its source."""
+
+        async def reader(db: AsyncSession) -> list[str]:
+            last = (await _runs(db))[-1]
+            page = await cve_service.list_cve_sources(
+                db,
+                await _caller(db, "jdoe"),
+                source="nvd",
+                status="failure",
+                stalled=None,
+                from_date=last.started_at,
+                to_date=last.finished_at,
+                page=1,
+                per_page=100,
+                sort_by=CVESourceSortField.FETCHED_AT,
+                sort_order=SortOrder.ASC,
+            )
+            return [item.cve_id for item in page.items]
+
+        assert read(loaded.url, reader) == ["CVE-2099-0006"]
 
 
 def test_products_lifecycle_and_thresholds(loaded: Loaded) -> None:
@@ -1107,7 +1408,7 @@ class TestCVEs:
 
         assert sorted(cves) == list(CVE_IDS)
         for cve_id, cve in cves.items():
-            n = int(cve_id[-4:])
+            n = AGED_PUBLISHED_DAYS.get(cve_id, int(cve_id[-4:]))
             assert cve.description == (
                 f"Fictional vulnerability {cve_id} of the Sentinel example dataset."
             ), cve_id
@@ -1259,7 +1560,7 @@ class TestTickets:
             for n, (cve_id, status, assignee, confidential, severity) in TICKETS.items()
         }
         assert (
-            sum(not confidential for _, _, _, confidential, _ in tickets.values()) == 23
+            sum(not confidential for _, _, _, confidential, _ in tickets.values()) == 24
         )
 
     def test_ticket_attributes(self, loaded: Loaded) -> None:
@@ -1334,6 +1635,104 @@ class TestTickets:
         assert released is not None
         assert released["advisory_id"] == "SUSE-SU-2099:0001-1"
         assert released["product_cpe"] == SERVER_15_SP7
+
+
+class TestAgedTickets:
+    def test_creation_times_and_events(self, loaded: Loaded) -> None:
+        """Aged Tickets: `created_at` is `T - a` days; every other Ticket and
+        every Ticket event keeps the time of the load."""
+
+        async def reader(
+            db: AsyncSession,
+        ) -> tuple[dict[int, datetime], datetime, datetime]:
+            created = dict(
+                (await db.execute(select(Ticket.sequence_id, Ticket.created_at))).all()
+            )
+            first_user = await db.scalar(select(func.min(User.created_at)))
+            first_event = await db.scalar(select(func.min(TicketAuditEvent.created_at)))
+            assert first_user is not None
+            assert first_event is not None
+            return created, first_user, first_event
+
+        created, first_user, first_event = read(loaded.url, reader)
+
+        assert {n: created[n] for n in AGED} == {
+            n: loaded.ago(days) for n, days in AGED.items()
+        }
+        # Database times of the load: later than the first operation.
+        assert all(created[n] >= first_user for n in TICKETS if n not in AGED)
+        assert first_event >= first_user
+
+    def test_each_overdue_value_lists_one_aged_ticket_in_that_phase(
+        self, loaded: Loaded
+    ) -> None:
+        """ticket-deadlines.md, Relation to the Overdue Filter: right after
+        the load, `overdue=X` lists exactly the aged Ticket whose current
+        phase is `X`, past due."""
+
+        async def reader(
+            db: AsyncSession,
+        ) -> dict[str, list[tuple[int, Any, Any]]]:
+            caller = await _caller(db, "jdoe")
+            listed: dict[str, list[tuple[int, Any, Any]]] = {}
+            for phase in OVERDUE:
+                page = await ticket_service.list_tickets(
+                    db, caller=caller, overdue=[MilestonePhase(phase)], per_page=100
+                )
+                listed[phase] = [
+                    (
+                        int(item.ticket_id.removeprefix("SNTL-")),
+                        item.current_phase.phase,
+                        item.current_phase.milestone,
+                    )
+                    for item in page.items
+                ]
+            return listed
+
+        listed = read(loaded.url, reader)
+
+        assert listed == {
+            phase: [(n, CurrentPhase(phase), MilestoneStatus.OVERDUE) for n in numbers]
+            for phase, numbers in OVERDUE.items()
+        }
+
+    def test_sntl_9_is_in_analysis_without_an_assignee(self, loaded: Loaded) -> None:
+        """Tickets (SNTL-9): taken by `eblack`, then unassigned by its
+        deactivation, with the status kept."""
+
+        async def reader(
+            db: AsyncSession,
+        ) -> list[tuple[Any, ...]]:
+            actor = aliased(User)
+            rows = await db.execute(
+                select(
+                    TicketAuditEvent.event_type,
+                    actor.username,
+                    TicketAuditEvent.old_value,
+                    TicketAuditEvent.new_value,
+                    TicketAuditEvent.comment,
+                )
+                .join(Ticket, Ticket.id == TicketAuditEvent.ticket_id)
+                .outerjoin(actor, actor.id == TicketAuditEvent.user_id)
+                .where(
+                    Ticket.sequence_id == 9,
+                    TicketAuditEvent.event_type.in_(["assignment", "status_change"]),
+                )
+                .order_by(TicketAuditEvent.created_at, TicketAuditEvent.id)
+            )
+            return [tuple(row) for row in rows]
+
+        assert read(loaded.url, reader) == [
+            ("assignment", "eblack", None, "eblack", None),
+            ("status_change", None, "New", "Analysis", None),
+            (
+                "assignment",
+                None,
+                "eblack",
+                None,
+                "Unassigned from eblack: user deactivated",
+            ),
+        ]
 
 
 class TestPackages:
@@ -1432,59 +1831,116 @@ class TestPackages:
             )
             return {(n, package, name) for n, package, name in rows}
 
+        assert read(loaded.url, reader) == MAINTAINERS
+
+    def test_package_tree_names_the_maintainers(self, loaded: Loaded) -> None:
+        """The package tree of `SNTL-12` names both maintainers of its shared
+        package and the one of its other package (tickets.md,
+        PackageDetail)."""
+
+        async def reader(db: AsyncSession) -> dict[str, list[str]]:
+            packages = await package_service.get_ticket_packages(
+                db,
+                ticket_id="SNTL-12",
+                caller=await _caller(db, "asmith"),
+                evaluation_date=loaded.today,
+                evaluation_instant=loaded.now,
+            )
+            return {
+                p.package_name: [m.username for m in p.maintainers] for p in packages
+            }
+
         assert read(loaded.url, reader) == {
-            (n, package, "dbrown") for n, package in MAINTAINED
+            "fictional-openssl": ["dbrown", "ghill"],
+            "fictional-zlib": ["ghill"],
         }
 
-    def test_maintainer_workbench_of_dbrown(self, loaded: Loaded) -> None:
+    @pytest.mark.parametrize(
+        ("maintainer", "expected"),
+        [
+            pytest.param(
+                "dbrown",
+                (
+                    {
+                        ("SNTL-11", "fictional-curl", GIT_16),
+                        ("SNTL-12", "fictional-openssl", SP7_UPDATE),
+                    },
+                    {
+                        ("SNTL-13", "fictional-httpd", SP7_UPDATE),
+                        ("SNTL-18", "fictional-openssh", SP7_UPDATE),
+                    },
+                    {("SNTL-14", "fictional-libxml", SP7_UPDATE)},
+                ),
+                id="dbrown",
+            ),
+            pytest.param(
+                "ghill",
+                (
+                    {
+                        ("SNTL-12", "fictional-openssl", SP7_UPDATE),
+                        ("SNTL-12", "fictional-zlib", GIT_16),
+                    },
+                    {("SNTL-26", "fictional-glibc", SP7_UPDATE)},
+                    set(),
+                ),
+                id="ghill",
+            ),
+        ],
+    )
+    def test_maintainer_workbenches(
+        self,
+        loaded: Loaded,
+        maintainer: str,
+        expected: tuple[set[tuple[str, str, str]], ...],
+    ) -> None:
         async def reader(
             db: AsyncSession,
         ) -> tuple[list[MaintainerWorkItem], ...]:
-            user_id = await db.scalar(select(User.id).where(User.username == "dbrown"))
-            assert user_id is not None
-            roles = await user_service.get_user_roles(db, user_id)
-            caller = TicketCaller.authenticated(user_id, get_effective_scope(roles))
+            caller = await _caller(db, maintainer)
             day, instant = loaded.today, loaded.now
-            pending = await package_service.list_maintainer_pending_work(
-                db, caller=caller, evaluation_date=day, evaluation_instant=instant
+            pages = [
+                await operation(
+                    db, caller=caller, evaluation_date=day, evaluation_instant=instant
+                )
+                for operation in (
+                    package_service.list_maintainer_pending_work,
+                    package_service.list_maintainer_in_progress_work,
+                    package_service.list_maintainer_completed_work,
+                )
+            ]
+            for page in pages:
+                assert page.total == len(page.items)
+            return tuple(list(page.items) for page in pages)
+
+        lists = read(loaded.url, reader)
+
+        assert (
+            tuple(
+                {(i.ticket_id, i.package_name, i.reference) for i in items}
+                for items in lists
             )
-            in_progress = await package_service.list_maintainer_in_progress_work(
-                db, caller=caller, evaluation_date=day, evaluation_instant=instant
-            )
-            completed = await package_service.list_maintainer_completed_work(
-                db, caller=caller, evaluation_date=day, evaluation_instant=instant
-            )
-            sntl_18 = await package_service.get_maintainer_ticket_work(
+            == expected
+        )
+
+    def test_dbrown_sees_the_confidential_sntl_18_through_maintainership(
+        self, loaded: Loaded
+    ) -> None:
+        async def reader(db: AsyncSession) -> list[MaintainerWorkItem]:
+            work = await package_service.get_maintainer_ticket_work(
                 db,
                 ticket_id="SNTL-18",
-                caller=caller,
-                evaluation_date=day,
-                evaluation_instant=instant,
+                caller=await _caller(db, "dbrown"),
+                evaluation_date=loaded.today,
+                evaluation_instant=loaded.now,
             )
-            assert pending.total == len(pending.items)
-            assert in_progress.total == len(in_progress.items)
-            assert completed.total == len(completed.items)
-            return (
-                list(pending.items),
-                list(in_progress.items),
-                list(completed.items),
-                list(sntl_18.in_progress),
-            )
+            return list(work.in_progress)
 
-        pending, in_progress, completed, sntl_18 = read(loaded.url, reader)
-
-        def keys(items: list[MaintainerWorkItem]) -> set[tuple[str, str, str]]:
-            return {(i.ticket_id, i.package_name, i.reference) for i in items}
-
-        assert keys(pending) == {("SNTL-11", "fictional-curl", GIT_16)}
-        assert keys(in_progress) == {
-            ("SNTL-13", "fictional-httpd", SP7_UPDATE),
-            ("SNTL-18", "fictional-openssh", SP7_UPDATE),
-        }
-        assert keys(completed) == {("SNTL-14", "fictional-libxml", SP7_UPDATE)}
-        # `dbrown` holds no role and sees the confidential SNTL-18 through
-        # maintainership.
-        assert keys(sntl_18) == {("SNTL-18", "fictional-openssh", SP7_UPDATE)}
+        # `dbrown` holds no role, so only maintainership makes SNTL-18
+        # visible; its row says that the Ticket is confidential.
+        assert [
+            (i.ticket_id, i.package_name, i.reference, i.is_confidential)
+            for i in read(loaded.url, reader)
+        ] == [("SNTL-18", "fictional-openssh", SP7_UPDATE, True)]
 
 
 class TestIBSRequests:
@@ -1898,11 +2354,11 @@ def test_failure_keeps_the_operations_committed_before_it(
         users, events, value, counts = read(url, identity_state)
 
     assert raised.value is error
-    # Seven user creations and the deactivation committed; the failing step
-    # started and did not complete.
+    # The eight user creations committed; the failing step started and did
+    # not complete. `eblack` is deactivated only by the Ticket work.
     assert progress.events == [*users_step(8), ("started", "System settings")]
-    assert users == {name: active for name, (_, _, active, _, _) in USERS.items()}
-    assert events.count("user_deactivated") == 1
+    assert users == dict.fromkeys(USERS, True)
+    assert events.count("user_deactivated") == 0
     # Nothing of the failed or later steps exists.
     assert value == "3.1"
     assert populated(counts) == IDENTITY_TABLES
@@ -1958,13 +2414,16 @@ def test_failed_catalog_publication_propagates_and_publishes_nothing(
 def test_interruption_before_commit_rolls_back_that_operation_only(
     server: URL, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    real = user_service.deactivate_user
+    real = user_service.create_user
+    last = list(USERS)[-1]
 
     async def interrupted(db: AsyncSession, *args: Any, **kwargs: Any) -> Any:
-        await real(db, *args, **kwargs)  # flushes the deactivation
-        raise SystemExit(143)
+        created = await real(db, *args, **kwargs)  # flushes the creation
+        if kwargs["username"] == last:
+            raise SystemExit(143)
+        return created
 
-    monkeypatch.setattr(user_service, "deactivate_user", interrupted)
+    monkeypatch.setattr(user_service, "create_user", interrupted)
     progress = Progress()
     with production_registries(), dataset_database(server) as url:
         with pytest.raises(SystemExit) as raised:
@@ -1972,9 +2431,9 @@ def test_interruption_before_commit_rolls_back_that_operation_only(
         users, events, value, counts = read(url, identity_state)
 
     assert raised.value.code == 143
+    # The creation of the last user rolled back; the seven before it remain.
     assert progress.events == [("started", "Users"), *[("committed",)] * 7]
-    assert users == dict.fromkeys(USERS, True)
-    assert "user_deactivated" not in events
+    assert users == dict.fromkeys(list(USERS)[:-1], True)
     assert sorted(events) == sorted(["user_created"] * 7 + ["role_added"] * 6)
     assert value == "3.1"
     assert populated(counts) == IDENTITY_TABLES
@@ -2011,7 +2470,7 @@ def test_registered_post_commit_callback_rolls_back_the_operation(
     assert value == "3.1"
     assert counts["setting_audit_event"] == 0
     assert populated(counts) == IDENTITY_TABLES
-    assert users == {name: active for name, (_, _, active, _, _) in USERS.items()}
+    assert users == dict.fromkeys(USERS, True)
 
 
 def test_registered_ticket_convergence_rolls_back_the_operation(

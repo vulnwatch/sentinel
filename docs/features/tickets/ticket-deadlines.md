@@ -90,6 +90,9 @@ shares while preserving both invariants.
 Every due date starts from `Ticket.created_at`, which is immutable. The start
 does not change on reopen, manual-zone exit, CVE association, severity change,
 or confidentiality change, and the Coordinated Release Date is never a start.
+The only write of `created_at` after creation is the aging of a few Tickets by
+the example dataset loader, while it loads a newly created database
+(`docs/features/platform/example-dataset.md`, Aged Tickets).
 
 For a phase with cumulative milestone `c` (percent) and SLA tier `d` (days):
 

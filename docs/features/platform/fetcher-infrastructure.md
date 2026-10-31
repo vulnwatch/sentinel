@@ -3592,6 +3592,10 @@ Fetcher Run Timeline Data).
   on `created_at`, not `started_at`, for this reason.
 
 **Notes**:
+- A database loaded with the example dataset holds terminal run records that
+  the loader writes without executing a fetcher, with fictional values
+  (`docs/features/platform/example-dataset.md`, Fetcher Runs and CVE Source
+  Records).
 - `finished_at` is NULL while a run is `queued` or `running`. Combined
   with `status`, this can be used to detect stale runs (see "Stale Run
   Detection" — the elapsed basis differs between `queued` and
