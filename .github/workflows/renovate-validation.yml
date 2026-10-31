@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 env:
-  RENOVATE_IMAGE: renovate/renovate:44.175.3@sha256:2f69ea2f98db7d7ebb116fda2bc4252244f337ec66e63f8f45cf69c64f13a8f6
+  RENOVATE_IMAGE: renovate/renovate:44.181.4@sha256:e2440463a0fff07e43875643324f8b57f6c3a9a8365332b7183989514f81e9ee
 
 jobs:
   validate:
