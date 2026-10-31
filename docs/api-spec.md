@@ -76,10 +76,10 @@ Error Responses classifies the changes to them.
 This section classifies the changes to the error responses of an operation
 that an earlier release already has: its global, scoped, query-shape, method,
 and endpoint-specific responses (Response Applicability Derivation) and the
-routing responses (Routing Responses). It covers their status and `code`; a
-new field of an error response is a new field in a response. The probe
-responses of `/health` and `/ready` follow
-`docs/features/platform/health-endpoints.md`.
+routing responses (Routing Responses). It covers their status, their `code`,
+and the entries of their `errors` array (Response Format); a new field of an
+error response is a new field in a response. The probe responses of `/health`
+and `/ready` follow `docs/features/platform/health-endpoints.md`.
 
 A change is classified by the outcome that the contract of the earlier release
 states for each request that the change affects: success, or the error
@@ -107,6 +107,16 @@ following cases is breaking when one of them is. The cases are:
 - **Conformance fix**, not breaking: the implementation returns the error
   response that the contract of the earlier release states, where that release
   returned another response, success included.
+- **Changed error entry**, breaking: an invalid input that an entry of the
+  `errors` array of the earlier release reports is reported with another
+  `loc` or `type`, for example because a request member that a validator
+  checked becomes typed with an enum. This holds also when only a new version
+  of the validation library changes the entry.
+
+An `errors` entry for an invalid input that the earlier release does not
+report, such as the input of a new condition, is not breaking, and neither is
+a change to the order of the entries, to the `msg` of an entry, or to
+`detail`, also where a specification states the text of `msg` or `detail`.
 
 A later release can accept a request that the earlier release rejected
 because of an input that it did not know, such as a request to a new endpoint
@@ -150,6 +160,9 @@ that is not breaking. A client therefore:
   default presentation for that status, instead of failing. It does not reject
   the response because the OpenAPI document of its version lacks that status
   or code for the operation;
+- uses the `loc` and `type` of an `errors` entry, not its `msg` or its
+  position in the array, and tolerates an entry whose `loc` or `type` it does
+  not expect, for example by presenting its `msg`, instead of failing;
 - sends only the query parameters and request body members that the contract
   of its version declares for the operation, because a later release can
   declare one of them and reject its invalid values (Error Responses); and
@@ -831,9 +844,14 @@ Fields:
     `["query", "per_page"]`; a domain validation code can also locate there
     an input that its owning contract names, such as a stored value that
     the request did not submit
-  - `msg` (string, required): a human-readable error message
+  - `msg` (string, required): a human-readable error message. May change
+    without notice — do not match against this string
   - `type` (string, required): a stable machine-readable error type
     identifier, e.g. `"missing"`, `"string_type"`
+
+  The `loc` and `type` of an entry stay the same for the invalid input that
+  it reports; changing them is breaking (Error Responses, Changed error
+  entry).
 - `existing_ticket_id` (string, required; present only for `TICKET_CVE_CONFLICT`
   responses): the conflicting Ticket's `SNTL-{n}` identifier, a top-level
   field beside `code` and `detail` (see
