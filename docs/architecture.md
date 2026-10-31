@@ -170,8 +170,9 @@ the API, and is not request rate limiting.
 **Rationale:** the API trusts no forwarded header, so it sees only the
 address of the proxy and cannot tell clients apart (`docs/deployment.md`,
 Container Images). The proxy can identify the client, and it rejects excess
-requests before they reach an API worker. Feature specifications therefore define no
-request limits and do not rely on the application to throttle requests.
+requests before they reach an API worker. Feature specifications therefore
+define no request limits and do not rely on the application to throttle
+requests.
 
 ### Specs-first development
 
