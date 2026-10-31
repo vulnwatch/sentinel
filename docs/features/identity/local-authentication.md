@@ -199,10 +199,10 @@ verification or the step-6 or step-7 dummy verification where one runs, so
 logging adds no timing difference between existing and unknown usernames.
 When the same request emits the lockout transition event (see Rate Limiting,
 Lockout transition logging), `login_failed` precedes it. The record is not
-rate-limited: each request emits at most one, and per-IP throttling is
-delegated to the reverse proxy (see Security Considerations). Like the
-lockout transition event, it is an operational diagnostic log, not an
-`IdentityAuditEvent`.
+rate-limited: each request emits at most one, and limiting the rate of
+requests per client belongs to the proxy in front of the API (see Security
+Considerations). Like the lockout transition event, it is an operational
+diagnostic log, not an `IdentityAuditEvent`.
 
 ## Password Management
 
@@ -244,7 +244,7 @@ adequate resistance to offline brute-force attacks for this threat model
 while using negligible memory (~4 KB per operation), eliminating the risk
 of OOM under concurrent login attempts. Memory-hard algorithms
 (Argon2id, scrypt) offer stronger GPU resistance but are unnecessary
-given the limited role of local passwords and the existing rate limiting.
+given the limited role of local passwords and the account lockout.
 
 ### Setting a password
 
@@ -395,16 +395,16 @@ not a persistent identity mutation.
 
 **Notes**:
 
-- Lockout is per-username, not per-IP. This is simpler and sufficient
-  for an internal tool.
+- Lockout is per-username, not per-IP: limiting requests per client
+  belongs to the proxy in front of the API (see Security Considerations).
 - **Per-username lockout DoS (accepted risk)**: an unauthenticated
   attacker who knows a username can lock out that account with
   `LOGIN_MAX_ATTEMPTS` invalid attempts. This is mitigated by: (a) lockout
   does not invalidate existing sessions (the legitimate user already
   logged in continues working), (b) admin unlock is available via CLI or
-  admin UI, (c) the lockout expires automatically after the TTL. For
-  environments where this is unacceptable, a per-IP rate limit at the
-  reverse proxy layer provides secondary defense.
+  admin UI, (c) the lockout expires automatically after the TTL. The
+  proxy's request rate limit does not prevent it: `LOGIN_MAX_ATTEMPTS`
+  attempts per lockout period stay below any practical per-client limit.
 - The lockout does not affect API key authentication (API keys bypass
   the login endpoint entirely).
 - **Lockout does NOT invalidate existing sessions**. This is intentional:
@@ -428,7 +428,7 @@ not a persistent identity mutation.
   verification, even under sustained attack.
 - **Redis unavailability**: if Redis is unreachable (any `RedisError` —
   including connection failures and OOM rejections), the login endpoint
-  operates in **fail-open** mode — login proceeds without rate limiting.
+  operates in **fail-open** mode — login proceeds without the lockout.
   This prioritizes availability over brute-force protection. The
   rationale: Sentinel is an internal tool on a trusted network; a
   Redis outage should not lock all users out of the system. The Redis
@@ -454,8 +454,8 @@ not a persistent identity mutation.
   side-channels). A high-volume attack could create many short-lived
   keys. This is accepted because: (a) keys are TTL-bounded and expire
   after `LOGIN_LOCKOUT_MINUTES`, (b) each key is small (a few bytes),
-  (c) per-IP rate limiting at the reverse proxy layer (recommended for
-  exposed deployments) limits key creation rate.
+  (c) the proxy's per-client request rate limit bounds the rate at which
+  they are created.
 
 ## Login Page
 
@@ -513,22 +513,16 @@ behavior).
   revokes them automatically).
 - **Redis-based lockout**: survives application restarts, shared across
   all API server instances.
-- **Fail-open rate limiting (accepted risk)**: when Redis is unreachable,
-  the login endpoint operates without rate limiting to preserve
-  availability. This is accepted for an internal tool on a trusted
-  network. For deployments in untrusted environments (external networks,
-  public-facing instances), operators should configure a global
-  per-IP rate limit at the reverse proxy layer (e.g., nginx `limit_req`)
-  as an infrastructure-level backstop against brute-force during Redis
-  outages.
-- **Per-IP rate limiting delegated to reverse proxy**: Sentinel
-  intentionally does not implement per-IP rate limiting at the
-  application level. The reverse proxy (nginx, ingress controller) is
-  the appropriate layer for IP-based throttling because it sees the
-  client's real IP address without relying on `X-Forwarded-For` headers
-  (which can be spoofed by upstream hops). This covers both the
-  fail-open scenario (Redis outage) and distributed attacks using many
-  usernames from a single IP.
+- **Fail-open lockout (accepted risk)**: when Redis is unreachable, the
+  login endpoint operates without the lockout to preserve availability.
+  This is accepted for an internal tool on a trusted network. The proxy's
+  request rate limit still bounds brute force during the outage.
+- **Per-client throttling at the proxy**: Sentinel does not limit the rate
+  of login requests per client; the proxy in front of the API does
+  (`docs/architecture.md`, Request rate limiting at the proxy). That limit
+  covers both the fail-open scenario (Redis outage) and attempts against
+  many usernames from a single client, which the per-username lockout does
+  not see.
 - **No self-service password change (accepted risk)**: local users
   cannot change their own password. If a user suspects credential
   compromise, they must contact an admin who performs a password reset

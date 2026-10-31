@@ -11,6 +11,7 @@
   - [Celery + Redis with no result backend](#celery--redis-with-no-result-backend)
   - [PostgreSQL as single source of truth](#postgresql-as-single-source-of-truth)
   - [Capability-based RBAC](#capability-based-rbac)
+  - [Request rate limiting at the proxy](#request-rate-limiting-at-the-proxy)
   - [Specs-first development](#specs-first-development)
 - [Design Constraints](#design-constraints)
 - [Backend Layer Architecture](#backend-layer-architecture)
@@ -155,6 +156,22 @@ admin?") and from attribute-based access control (ABAC).
 **Rationale:** capability checks decouple endpoint authorization from role
 definitions. New roles can combine existing capabilities without changing
 endpoint code. See `docs/features/identity/rbac.md` for the full model.
+
+### Request rate limiting at the proxy
+
+Sentinel does not limit the rate of incoming requests. A proxy in front of the
+API limits it per client (`docs/deployment.md`, Sentinel Host), and
+`docs/api-spec.md` (Rate Limiting) states what the API contract therefore
+contains. The lockout of local login after failed attempts
+(`docs/features/identity/local-authentication.md`, Rate Limiting /
+Brute-Force Protection) protects an account's password, not the capacity of
+the API, and is not request rate limiting.
+
+**Rationale:** the API trusts no forwarded header, so it sees only the
+address of the proxy and cannot tell clients apart (`docs/deployment.md`,
+Container Images). The proxy sees the client, and it rejects excess requests
+before they reach an API worker. Feature specifications therefore define no
+request limits and do not rely on the application to throttle requests.
 
 ### Specs-first development
 

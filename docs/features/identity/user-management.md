@@ -1768,15 +1768,14 @@ handling is required.
   TTL); (2) an admin can unlock immediately via CLI or API; (3) existing
   sessions are NOT invalidated by lockout (see
   `docs/features/identity/local-authentication.md`) — a logged-in user continues
-  working normally even if their account is locked. Future mitigation:
-  per-IP rate limiting could be added if the threat model changes
+  working normally even if their account is locked
 
 ## Cross-references
 
 - `docs/features/identity/authentication.md` — authentication framework, API
   keys, session management
 - `docs/features/identity/local-authentication.md` — login endpoint, password
-  hashing, rate limiting
+  hashing, account lockout
 - `docs/features/identity/user-service.md` — service contract for create,
   update, deactivate, reactivate
 - `docs/features/identity/rbac.md` — role definitions and permission model

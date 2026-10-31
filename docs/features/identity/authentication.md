@@ -827,13 +827,12 @@ decoding follows the same rule.
    application does not trust forwarded headers (`X-Forwarded-For`,
    `Forwarded`). The API server's command turns off the forwarded-header
    processing of the ASGI server, so the peer address is the address of the
-   connection (`docs/deployment.md`, Container Images). Per-real-client-IP
-   rate limiting behind a reverse proxy is delegated to the proxy layer (see
-   `docs/features/identity/local-authentication.md`, Security
-   Considerations). If `request.client` is `None` (e.g., connections
-   over a Unix domain socket), the limiter uses the sentinel string
-   `"unknown"` as the key and the log field value; all such requests
-   share a single rate-limit bucket.
+   connection (`docs/deployment.md`, Container Images). Limiting requests
+   per real client address belongs to the proxy in front of the API
+   (`docs/architecture.md`, Request rate limiting at the proxy). If
+   `request.client` is `None` (e.g., connections over a Unix domain
+   socket), the limiter uses the sentinel string `"unknown"` as the key and
+   the log field value; all such requests share a single rate-limit bucket.
 
    **Log rate limiting**: the WARNING emission is rate-limited to prevent
    log flooding from brute-force attacks. The HTTP 401 response is
@@ -1177,7 +1176,12 @@ code `AUTH_LOGOUT_NOT_APPLICABLE` and message:
 
 - **JWT_SECRET_KEY** must be a cryptographically random string of at
   least 32 characters. It must never be committed to the repository or
-  logged.
+  logged. Whoever holds it can issue valid tokens. A symmetric algorithm
+  (`HS256`) is sufficient because the API is both the only issuer and the
+  only verifier of Sentinel JWTs: an asymmetric algorithm would protect no
+  verifier that must not be able to issue tokens. Every process role loads
+  the key (`docs/configuration.md`, Required Secrets) from the same image,
+  within one trust boundary.
 - **API key hashing uses plain SHA-256**, not a slow hash like bcrypt
   and not a keyed HMAC. API keys have ~190 bits of entropy (32
   alphanumeric characters generated server-side by a CSPRNG) and are
