@@ -559,9 +559,9 @@ Rules:
   state beyond the default.
 - `delivery_relevant = false`: the delivery status is the system default
   (`PENDING`) on a track with a final affectedness status
-  (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`). Consumers SHOULD treat the delivery
-  status as noise and not display or act on it; `PENDING` does not prove the
-  absence of delivery activity.
+  (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`). The delivery status is then noise:
+  it carries no delivery signal, consumers SHOULD NOT base decisions on it,
+  and `PENDING` does not prove the absence of delivery activity.
 
 When `delivery_relevant = true` **and** the affectedness is
 `NOT_AFFECTED` or `WONT_FIX`, the combination is anomalous: it signals
@@ -588,8 +588,9 @@ consumer-facing guidance:
   does not imply a fix is expected, prove the absence of an SR, or establish
   synchronization success; reference `delivery_relevant` for operational
   significance
-- `delivery_relevant`: explain that when `false`, consumers should not
-  display `delivery_status` or make decisions based on it
+- `delivery_relevant`: explain that when `false`, `delivery_status` is the
+  system default, carries no delivery signal, and consumers should not make
+  decisions based on it
 
 #### SUSE Maintenance Workflow Mapping
 
@@ -1265,8 +1266,9 @@ The following scenarios invoke `add_package_to_ticket`:
    failures. The `resolve_ticket_packages` task is a best-effort non-fetcher
    sub-operation with no task result, `FetcherRun`, progress state, or automatic
    task retry.
-2. **Manual**: an authorized user manually adds a package by name via the UI.
-   `add_package_to_ticket` is called with the entered name.
+2. **Manual**: an authorized user adds a package by name through
+   [Add Package to Ticket](#add-package-to-ticket). `add_package_to_ticket` is
+   called with the requested name.
 3. **Restore from soft-deletion**: restoring a package, track, or
    product clears its `deleted_at` only. New tracks/products that
    appeared on SMELT since the deletion are picked up by subsequent
@@ -1302,8 +1304,9 @@ An authorized user manages packages at the **package level only**:
   `add_package_to_ticket`, or supplied by the example dataset loader in its
   place (`docs/features/platform/example-dataset.md`).
 - The user **can** change the affectedness status of individual tracks
-  (via the status dropdown) and override the eligibility of individual
-  products.
+  ([Change Track Status](#change-track-status)) and override the eligibility
+  of individual products
+  ([Override Product Eligibility](#override-product-eligibility)).
 
 ### Removing a Package from a Ticket
 
@@ -1604,7 +1607,10 @@ The following concerns are identical regardless of `workflow_type`:
 - Ticket status gates (Analysis → Analyzed → Resolved)
 - Product eligibility (CVSS threshold, Reactive Support phase)
 - Soft-deletion and restore
-- UI — VA sees packages → tracks → products with no workflow distinction
+- Package tree shape — [List Ticket Packages](#list-ticket-packages) returns
+  packages → tracks → products for both workflows; each track's
+  `workflow_type` identifies its workflow, whose release observation differs
+  (see below)
 - Maintainership acquisition - one additive user association per
   `TicketPackage` occurrence, package-wide across all its tracks. The same
   SMELT endpoint serves IBS and Git/SLFO packages without a codestream join
@@ -2359,8 +2365,8 @@ only after accessibility and does not provide a probing oracle.
 ```
 
 The response includes the updated track and all its child Products with their
-current eligibility and actionability, allowing the client to update
-the UI tree without a separate fetch.
+current eligibility and actionability, so a client can update its copy of
+the package tree without reading it again.
 
 The same `200 OK` shape is returned for an effective change and for a true
 no-op. Every value is projected from locked-current state; lifecycle and

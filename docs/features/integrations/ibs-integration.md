@@ -1210,7 +1210,7 @@ event bus.
 
 - IBS and OBS credentials are managed via environment variables
 - API calls are made server-side only; credentials are never exposed to
-  the frontend
+  API clients
 - In staging and production, the IBS API account is a dedicated, non-personal
   account whose Ed25519 key is generated for it and used for no other purpose
 - The IBS SSH private key is never sent; only per-request signatures derived

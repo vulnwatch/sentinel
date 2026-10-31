@@ -211,8 +211,8 @@ Confidential Ticket Visibility). Authenticated access covers:
 - View tickets, CVEs, products, packages, and ticket package trees
 - View ticket references, CVSS assessments, and submission/release requests
 - View ticket audit logs
-- View fetcher dashboard (list, detail, charts, run history, error messages,
-  and the users who triggered runs or disabled and enabled a fetcher)
+- View fetchers (list, run history, run detail, timeline, error messages, and
+  the users who triggered runs or disabled and enabled a fetcher)
 - View IBS consumer status
 - View the platform version (`/api/v1/version`)
 
@@ -316,7 +316,7 @@ no response to a caller that the operation does not already admit.
 | View ticket references | Authenticated |
 | View CVSS assessments | Authenticated |
 | View submission/release requests | Authenticated |
-| View fetcher dashboard | Authenticated |
+| View fetchers | Authenticated |
 | View IBS consumer status | Authenticated |
 | View platform version | Authenticated |
 
@@ -743,7 +743,7 @@ here with the required authorization level and a link to the owning spec.
    row is allowed while another Admin origin remains. System actions
    (external sync, CLI) pass `acting_user_id = None` and are exempt. See
    `docs/features/identity/user-service.md`. This guard ensures that via
-   UI/API, an authenticated actor cannot accidentally remove their own final
+   the API, an authenticated actor cannot accidentally remove their own final
    Admin origin, so the acting admin always retains at least one Admin origin
    after their own operation. The system intentionally enforces no minimum
    admin count, and a concurrent removal performed by another admin is not
@@ -988,7 +988,7 @@ A user can acquire a role from two independent sources (origins):
   Rule 1.
 - **Externally-derived** (`group_name = <group name>`): derived from external group
   membership during external sync. Managed exclusively by the sync process
-  — cannot be removed **per-user** via UI or API (only via role mapping deletion or external sync reconciliation). Manual role operations
+  — cannot be removed **per-user** via the API (only via role mapping deletion or external sync reconciliation). Manual role operations
   never insert, delete, or mutate these rows; the rows are only observed for
   effective-role evaluation, the self-Admin guard, and final VA-origin loss.
   See `docs/features/identity/identity-provisioning.md`.

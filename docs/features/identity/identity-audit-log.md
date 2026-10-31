@@ -223,8 +223,8 @@ GET /api/v1/admin/identity/audit-log
 
 Returns a paginated list of identity audit events, ordered by
 `created_at` descending. Sorting is fixed — client-controlled
-`sort_by` / `sort_order` parameters are not supported (audit trail
-entries are always displayed in reverse chronological order).
+`sort_by` / `sort_order` parameters are not supported (an audit trail is
+read newest first).
 
 **Query parameters**:
 

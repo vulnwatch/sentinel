@@ -113,7 +113,7 @@ Architecture).
   Versioning). Live state and information that a client needs before sign-in
   belong to other resources, whose dependencies, failures, and access level
   differ: the probes report the readiness of a process
-  (`docs/features/platform/health-endpoints.md`), the fetcher dashboard
+  (`docs/features/platform/health-endpoints.md`), the fetcher list
   reports ingestion (`docs/features/platform/fetcher-operations.md`, List
   Fetchers), the IBS consumer has its status endpoint
   (`docs/features/integrations/ibs-rabbitmq-integration.md`, Get IBS Consumer

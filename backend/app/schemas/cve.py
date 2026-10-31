@@ -46,8 +46,9 @@ class CVEEPSSResponse(BaseModel):
     percentile: float = Field(description="EPSS percentile rank (0.0-1.0).")
     assessed_at: date = Field(
         description=(
-            "EPSS assessment date. EPSS refreshes only for active Tickets, so "
-            "consumers use this date to indicate staleness."
+            "EPSS assessment date of the retained score. The periodic refresh "
+            "covers only CVEs with an active Ticket, so the score of any other "
+            "CVE can be older than the latest EPSS publication."
         )
     )
 

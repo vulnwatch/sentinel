@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 class FetcherRun(Base):
     """A single execution of a fetcher, tracked from start to finish.
 
-    Primary data source for the fetcher dashboard charts. Records are
+    Primary data source for the fetcher run history and timeline. Records are
     retained indefinitely (no retention policy — see
     `docs/features/platform/fetcher-infrastructure.md`, Data
     Retention). Has no `updated_at`: the `queued -> running` adoption

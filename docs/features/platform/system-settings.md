@@ -3,13 +3,14 @@
 ## Purpose
 
 System-wide configuration and administrative operations for the Sentinel
-platform. The System Settings page provides settings that affect platform behavior
-across all users and tickets.
+platform. System settings affect platform behavior across all users and
+tickets.
 
 ## Access Control
 
-All administration endpoints and UI pages require the `manage_settings`
-capability.
+Every endpoint under `/api/v1/admin/settings`, including the default-CVSS
+operations of `docs/features/platform/default-cvss-version-operations.md`,
+requires the `manage_settings` capability.
 
 ## Service Module
 
@@ -485,7 +486,7 @@ Returns a paginated list of setting changes, ordered by `created_at`
 descending, with deterministic secondary ordering as defined by
 `docs/api-spec.md` (Deterministic Pagination Ordering). Sorting is fixed —
 client-controlled `sort_by` / `sort_order` parameters are not supported
-(audit trail entries are always displayed in reverse chronological order).
+(an audit trail is read newest first).
 
 **Query parameters**:
 

@@ -14,8 +14,8 @@ retention.
 
 The fetcher infrastructure is documented across several complementary
 specifications — see the Related Specifications section below for the
-full map. For the monitoring dashboard (API endpoints,
-CLI diagnostics) that consumes this infrastructure, see
+full map. For the monitoring and operation of fetchers (API endpoints,
+CLI diagnostics) that consume this infrastructure, see
 `docs/features/platform/fetcher-operations.md`.
 
 This document also defines the coexistence rules that prevent the
@@ -49,7 +49,7 @@ fetcher infrastructure is documented across five complementary specs:
 | `cve-fetcher-infrastructure.md` | BaseCVEFetcher class, on-demand fetch_single, CVE source type identity, CVE catch_up default, CVE conventions |
 | `git-fetcher-infrastructure.md` | BaseGitFetcher class, git_operations.py, clone/delta infrastructure |
 | `networking.md` | Shared HTTP client factory, transport retry, TLS trust store (cross-cutting) |
-| `fetcher-operations.md` | Monitoring dashboard, API endpoints, CLI diagnostics |
+| `fetcher-operations.md` | Monitoring and operational API endpoints, CLI diagnostics |
 
 ## BaseFetcher Base Class
 
@@ -362,7 +362,7 @@ class SyncExampleData(BaseFetcher):
     participates_in_catch_up: bool = False  # Optional: set True for per-ticket catch-up participation
 
     # Optional: per-fetcher operational parameters configurable at
-    # runtime via the admin dashboard. See "Custom Settings Schema"
+    # runtime through the fetcher config API. See "Custom Settings Schema"
     # section below for the schema format and validation rules.
     class Settings(BaseModel):  # optional inner class
         ...
@@ -439,10 +439,11 @@ constraint violation.
 ### Naming Convention
 
 This convention applies exclusively to `BaseFetcher` subclasses — the
-background tasks registered in the fetcher infrastructure and visible in
-the fetcher dashboard. It does NOT apply to sub-operation Celery tasks
-outside the `BaseFetcher` lifecycle, on-demand service methods,
-non-fetcher Celery tasks, or continuous consumers.
+background tasks registered in the fetcher infrastructure and visible
+through the fetcher endpoints (`GET /api/v1/fetchers`). It does NOT apply
+to sub-operation Celery tasks outside the `BaseFetcher` lifecycle,
+on-demand service methods, non-fetcher Celery tasks, or continuous
+consumers.
 
 #### Pattern: `<verb>_<source>_<noun>`
 
@@ -907,7 +908,8 @@ work to the Git worker.
 ## Error Message Sanitization
 
 The `error_message` field in `FetcherRun` is visible to **all users**
-(every authenticated user, regardless of role, via the fetcher dashboard).
+(every authenticated user, regardless of role, through the fetcher run
+endpoints).
 Raw Python exception messages often contain infrastructure details —
 internal hostnames, IP addresses, file paths, connection strings, or service
 names — that MUST NOT be exposed to that audience.
@@ -1076,7 +1078,9 @@ for the full template.
 
 Fetcher-specific operational parameters (throttle delays, retry counts,
 lookback windows, retention periods) can be declared by each fetcher and
-managed at runtime through the admin dashboard without worker restart.
+managed at runtime through the fetcher config endpoints
+(`docs/features/platform/fetcher-operations.md`, Get Fetcher Config; Update
+Fetcher Config) without worker restart.
 
 This mechanism complements the generic `FetcherConfig` fields (`enabled`,
 `schedule_override`, `run_timeout`, `request_delay`) which apply
@@ -1089,7 +1093,8 @@ Operational parameters that:
 
 - Are safe to change at runtime without security implications
 - May need tuning based on workload or external service behavior
-- Benefit from visibility and changeability through the admin dashboard
+- Benefit from visibility and changeability at runtime through the fetcher
+  config endpoints
 
 ### What stays as environment variables
 
@@ -1209,8 +1214,8 @@ the invalid field.
    registered fetcher cannot create a `FetcherConfig` record with an
    out-of-range `request_delay` default.
 10. `description` MUST be a non-empty string. A fetcher without a
-    description cannot be meaningfully presented in the dashboard or
-    CLI.
+    description cannot be meaningfully described by List Fetchers or
+    `sentinel fetcher list`.
 11. `default_schedule` MUST be a valid 5-field cron expression. Invalid
     syntax is rejected at import time (not deferred to Beat startup).
 12. The concrete class MUST define an `execute()` coroutine (checked
@@ -1310,8 +1315,8 @@ This registry is used by:
 
 - The API layer: the GET config endpoint returns
   `Settings.model_json_schema()` as the `settings_schema` field,
-  providing a standard JSON Schema that the admin UI renders
-  dynamically
+  providing a standard JSON Schema from which a client builds the input
+  of each setting without fetcher-specific code
 - The API validation layer: the PATCH endpoint type-checks each
   submitted value against its `Settings` field type in strict JSON
   mode, then instantiates the `Settings` model with the candidate
@@ -1321,8 +1326,8 @@ This registry is used by:
   Custom settings canonicalization)
 - The `sentinel fetcher config` CLI command (settings display)
 
-Because Pydantic produces standard JSON Schema, the admin UI can render
-settings forms without custom serialization logic — field types,
+Because Pydantic produces standard JSON Schema, a client can build and check
+the input of every setting without custom serialization logic — field types,
 constraints, defaults, descriptions, choices, and warnings are all
 present in the schema output.
 
@@ -1362,8 +1367,8 @@ present in the schema output.
   is metadata only; Pydantic does not enforce choices declared via
   `json_schema_extra`. `Literal["json", "xml", "csv"]` or a `StrEnum`
   provides both enforcement and schema generation. The `choices` key
-  in `json_schema_extra` MAY be retained alongside `Literal` for UI
-  rendering convenience but is not the enforcement mechanism.
+  in `json_schema_extra` MAY be retained alongside `Literal` as
+  client-facing metadata but is not the enforcement mechanism.
 
 ### Runtime Configuration Snapshot
 
@@ -1451,7 +1456,7 @@ of `run()`:
 
 This follows the same three-tier error architecture as all fetcher
 errors (see "Error Message Sanitization"). The sanitized message avoids
-exposing potentially sensitive configuration values to dashboard users
+exposing potentially sensitive configuration values to authenticated callers
 without `manage_fetchers`.
 
 ### Referencing custom settings in fetcher specifications
@@ -1770,7 +1775,6 @@ is used by:
 
 - The API endpoints to list all known fetchers
 - The Celery Beat schedule to register periodic tasks
-- The dashboard (indirectly, via the list endpoint)
 - The on-demand single-CVE fetch system to discover fetchers that
   implement `fetch_single`
 - The custom settings validation layer (schema lookup for PATCH
@@ -2584,7 +2588,7 @@ calculated by the `list_fetchers` service function at request time (see
 `null`. This is intentional — both cases mean "this fetcher will not run
 on a schedule." The API consumer does not need to distinguish these cases:
 a disabled fetcher's `enabled` field is `false`, which provides the
-distinction for UI display purposes.
+distinction.
 
 **API endpoint failure handling**: if Redis is unreachable, or a
 connection hangs (blackholed/firewalled, no response within the
@@ -2799,7 +2803,7 @@ with each other.
 
 - These tasks are **never** registered in `FETCHER_REGISTRY` and
   **never** have a `FetcherConfig` row.
-- These tasks **do not appear** in the fetcher dashboard
+- These tasks **do not appear** in the fetcher endpoints
   (`GET /api/v1/fetchers` and related endpoints) — they are outside the
   fetcher subsystem entirely.
 - Their schedule is **fixed in code**. There is no admin-facing way to
@@ -3528,7 +3532,9 @@ within the threshold.
 ### FetcherRun
 
 Records every execution of a fetcher. This is the primary data source for
-the dashboard charts.
+the run history and the timeline
+(`docs/features/platform/fetcher-operations.md`, List Fetcher Runs; Get
+Fetcher Run Timeline Data).
 
 | Column | Type | Constraints | Description |
 |---|---|---|---|
@@ -3877,7 +3883,7 @@ records exist.
 - `sentinel fetcher config` displays a read-only snapshot of the stored
   configuration without schema context
 - Historical data (runs, audit events) remains in the database and is
-  accessible through the API and dashboard UI
+  accessible through the API
 
 ### No automatic cleanup
 

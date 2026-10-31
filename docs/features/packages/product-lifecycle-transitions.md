@@ -173,7 +173,7 @@ failure with exact outcome and effect counters.
 ## Sub-task: `re_evaluate_product_eligibility`
 
 This on-demand Celery task is a sub-operation, not a `BaseFetcher`; it has no
-independent schedule or dashboard entry.
+independent schedule or entry in the fetcher list.
 
 | Parameter | Type | Meaning |
 |-----------|------|---------|

@@ -112,7 +112,7 @@ the external identity provider.
 
 For external users, the external identity provider is the sole source of
 truth for the `active` field. Manual deactivation or reactivation by
-admins (via API, CLI, or UI) is not permitted — these operations are
+admins (via API or CLI) is not permitted — these operations are
 reserved for the external sync process.
 
 **Rationale**: if an admin could manually deactivate an external user, the

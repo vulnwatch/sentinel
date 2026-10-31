@@ -136,7 +136,7 @@ is passed explicitly to the factory.
 - Write: 10 seconds (longest wait to send the next part of the request)
 - Pool: 10 seconds (time waiting for a connection from the pool)
 
-Not configurable via env var or admin panel — these are engineering
+Not configurable via env var or the fetcher config API — these are engineering
 decisions. Fetchers that need different values override via
 `http_client_options`.
 
