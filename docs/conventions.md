@@ -523,7 +523,7 @@ forms (see `docs/features/platform/testing-strategy.md`, Structural Tests).
   route's method. A route-level declaration of a status replaces the
   shared `422`, so a route-level `422` names `VALIDATION_ERROR` and admits
   `ValidationErrorResponse`, in a union with `ErrorResponse` when the status
-  also has a dedicated code. A route-level declaration keeps precedence over
+  also has a dedicated code whose body carries no `errors` array. A route-level declaration keeps precedence over
   a derived response, whose condition is appended to its description. An
   endpoint that produces a global response without the shared dependency,
   such as logout's `401`, declares it itself. Structural tests in
@@ -551,9 +551,11 @@ forms (see `docs/features/platform/testing-strategy.md`, Structural Tests).
   `max_length` or an enum or `Literal` type, which also publishes it. A
   constraint that the operation enforces elsewhere, such as an enum filter
   whose parser ignores invalid values or a rule with a dedicated error code,
-  is published through `json_schema_extra`, built from the constant,
-  mapping, or enum that the enforcing code reads, so that the published and
-  the enforced constraint cannot drift; an enum filter uses
+  or that a validator enforces with a rule that no keyword expresses
+  exactly, such as the range of a request-body `SNTL-{n}`, is published
+  through `json_schema_extra`, built from the constant, mapping, or enum
+  that the enforcing code reads, so that the published and the enforced
+  constraint cannot drift; an enum filter uses
   `app.api.openapi.enum_filter_schema()`. `app/api/openapi.py` publishes the
   shared Query Parameter Length Limit from the parameter discovery of its
   dependency. Publishing a keyword is the only use of a hand-written
@@ -611,12 +613,13 @@ forms (see `docs/features/platform/testing-strategy.md`, Structural Tests).
 ### Pydantic Conventions
 
 - Separate schemas for Create, Update, and Response
-- **Response enums**: a response field whose values form a response enum
-  (`docs/api-spec.md`, Response Enums) is typed with its `StrEnum` from
-  `app/core/enums.py` when the enum's values are the wire values, and with a
-  `Literal` alias of the wire values otherwise, such as `RoleValue`; a test
-  compares the alias with its enum. The OpenAPI document then publishes the
-  field as an `enum`
+- **Response enums**: a response field that the OpenAPI document publishes
+  as an `enum` (`docs/api-spec.md`, Response Enums) is typed with its
+  `StrEnum` from `app/core/enums.py` when the field takes every value of the
+  enum and the enum's values are the wire values, and with a `Literal` alias
+  of the wire values otherwise, such as `RoleValue` or the subset
+  `SelfIdentityAuditEventTypeValue`; a test compares the alias with its
+  enum
 - Use `model_config = ConfigDict(from_attributes=True)` for ORM integration
 - Validate transport shape, types, and transport-specific constraints in
   Pydantic schemas. Services enforce domain and data-integrity invariants for

@@ -1357,7 +1357,7 @@ ascending Unicode code point of `cwe_id`:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `source` | string | Naming authority (e.g., `"ghsa"`). Serialized as lowercase |
+| `source` | string | Naming authority: `"ghsa"`, `"pysec"`, or `"rustsec"`, the lowercase values of `CVEExternalIdentifierSource` (`docs/data-model.md`) |
 | `identifier` | string | External ID (e.g., `"GHSA-xxxx-xxxx-xxxx"`) |
 | `url` | string \| null | Direct link to the advisory page |
 

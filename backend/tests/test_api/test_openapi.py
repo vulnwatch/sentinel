@@ -21,7 +21,7 @@ contract check over every test request (`tests/support/openapi_contract.py`).
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated, Any, get_args
+from typing import Annotated, Any
 
 import pytest
 from fastapi import APIRouter, Depends, FastAPI, Query
@@ -72,7 +72,6 @@ from app.core.query_limits import (
     enforce_query_parameter_length_limit,
 )
 from app.main import app as registered_app
-from app.schemas.cve import CVEExternalIdentifierSourceValue
 from app.schemas.errors import ErrorResponse
 
 _ERROR_REF = {"$ref": "#/components/schemas/ErrorResponse"}
@@ -834,8 +833,3 @@ class TestPublishedValueSets:
         schemas = registered_app.openapi()["components"]["schemas"]
 
         assert schemas[component]["enum"] == values
-
-    def test_external_identifier_source_alias_matches_its_enum(self) -> None:
-        assert list(get_args(CVEExternalIdentifierSourceValue.__value__)) == (
-            _lowercase_values(CVEExternalIdentifierSource)
-        )

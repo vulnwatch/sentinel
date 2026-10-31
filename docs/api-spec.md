@@ -46,11 +46,15 @@ successful response:
 
 The OpenAPI document publishes as an `enum` the response enum of every field
 that it describes, such as an audit event type, a role, or a run status,
-except two kinds of field: a member of a free-form object, such as the
-`detail` of an audit event, and a field that names a fetcher or a CVE source,
-whose values the fetcher registry defines and which can name one that is no
-longer registered. The document types such a field as a string, and its
-specification lists the values.
+except three kinds of field, which it types as strings and whose values their
+specifications list:
+
+- a member of a free-form object, such as the `detail` of an audit event;
+- a field whose listed values depend on another field, such as the
+  `old_value` and `new_value` of an audit event, which a specification lists
+  per event type; and
+- a field that names a fetcher or a CVE source, whose values the fetcher
+  registry defines and which can name one that is no longer registered.
 
 Two kinds of field have no response enum. A field whose contract fixes one
 value, such as an OpenAPI `const` that does not select the variant of a union,
@@ -488,21 +492,26 @@ for example that no filter applies.
 The OpenAPI document publishes the closed value sets and the input
 constraints that the contract states for a path parameter, a query
 parameter, or a request-body member, so that a client can check its input
-before it sends it. A closed value set is published as an `enum`, a grammar
-as a `pattern`, and a length bound as a `minLength` or `maxLength`. A value
-set that the fetcher registry defines, such as the CVE sources that a
-refetch accepts, is not a closed value set of the contract, like the fetcher
-names of a response (Response Enums).
+before it sends it. An input constraint is a rule on the value as sent; a
+rule that depends on stored state, on the current time, or on the outcome of
+authentication, such as an API key expiry that must lie in the future or the
+lengths that local login answers with its generic `401`, is not one. A
+closed value set is published as an `enum`, a grammar as a `pattern`, and a
+length bound as a `minLength` or `maxLength`. A value set that the fetcher
+registry defines, such as the CVE sources that a refetch accepts, is not a
+closed value set of the contract, like the fetcher names of a response
+(Response Enums).
 
 A published keyword states what the contract accepts; it does not change the
 outcome of a request that violates it. That outcome is the global `422
 VALIDATION_ERROR` unless the contract states another one, such as:
 
-- a dedicated code, which keeps its precedence over the other conditions of
-  the operation, for example `422 USER_PASSWORD_POLICY_VIOLATION` for a
+- a dedicated code, which keeps its place in the precedence that the
+  operation states, for example `422 USER_PASSWORD_POLICY_VIOLATION` for a
   password outside the policy
   (`docs/features/identity/local-authentication.md`, Password validation) or
-  `422 CVE_INVALID_FORMAT` for a malformed `cve_id` of a request body; or
+  `422 CVE_INVALID_FORMAT` for a malformed `cve_id` of a request body
+  (`docs/features/tickets/tickets.md`, Create Ticket; Associate CVE); or
 - the removal of a value outside the `enum` of an enum filter, which is
   ignored, not rejected (Enum Filter Validation).
 
@@ -514,10 +523,12 @@ part of it:
   username or an API key name, which is trimmed and lowercased before it is
   validated: a keyword applies to the input as sent, so it would reject
   input that the operation accepts;
-- the grammar of a path parameter that locates a resource, such as
-  `{ticket_id}` or `{cve_id}`: every value is a locator, and a malformed one
-  receives the not-found response of the resource (Ticket Identifier
-  Resolution, CVE Identifier Resolution); and
+- the grammar or value set of a path parameter that locates a resource, such
+  as `{ticket_id}`, `{cve_id}`, or `{cvss_version}`: every value is a
+  locator, and one outside the grammar or set receives the not-found
+  response of the resource (Ticket Identifier Resolution, CVE Identifier
+  Resolution, `docs/features/tickets/cvss-scoring.md`, Delete SUSE CVSS
+  Assessment); and
 - a constraint that no keyword expresses exactly, such as the range of `n`
   in a request-body `SNTL-{n}` or the grammar of a cron expression.
 
@@ -816,7 +827,9 @@ Fields:
   following schema:
   - `loc` (array of strings/integers, required): the path to the invalid
     field within the request payload, e.g. `["body", "field_name"]` or
-    `["query", "per_page"]`
+    `["query", "per_page"]`; a domain validation code can also locate there
+    an input that its owning contract names, such as a stored value that
+    the request did not submit
   - `msg` (string, required): a human-readable error message
   - `type` (string, required): a stable machine-readable error type
     identifier, e.g. `"missing"`, `"string_type"`

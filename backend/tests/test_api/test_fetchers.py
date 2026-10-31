@@ -47,6 +47,7 @@ import app.services.fetcher_schedule as fetcher_schedule_module
 from app.api import dependencies
 from app.api.dependencies import SESSION_COOKIE_NAME
 from app.core.enums import Role, SessionCreationReason
+from app.core.errors import InputError
 from app.database import async_session_factory, get_db
 from app.main import app
 from app.models.api_key import ApiKey
@@ -57,6 +58,7 @@ from app.models.session import Session
 from app.models.user import User
 from app.models.user_role import UserRole
 from app.services.base_fetcher import FETCHER_REGISTRY, BaseFetcher
+from app.services.fetcher_operations import CustomSettingError
 from app.services.session_service import create_session
 from tests.support.ticket_api import UNAUTHENTICATED
 
@@ -218,6 +220,32 @@ def _register(*stubs: type[Any]) -> None:
     FETCHER_REGISTRY.clear()
     for stub in stubs:
         FETCHER_REGISTRY[stub.name] = stub
+
+
+@pytest.mark.e2e
+class TestSettingErrors:
+    def test_locates_each_entry_under_custom_settings_of_the_body(self) -> None:
+        """An entry of a key is located at the key; an error of the whole
+        `Settings` model, which has no key, at `custom_settings` itself
+        (`fetcher-operations.md`, Update Fetcher Config). Marked `e2e` like
+        `TestRouteInventory`: this module's autouse fixtures use Redis."""
+        errors = fetchers_module._setting_errors(
+            (
+                CustomSettingError(("count",), "int_type", "Not an integer"),
+                CustomSettingError((), "value_error", "Value error, low exceeds high"),
+            )
+        )
+
+        assert errors == [
+            InputError(
+                ("body", "custom_settings", "count"), "Not an integer", "int_type"
+            ),
+            InputError(
+                ("body", "custom_settings"),
+                "Value error, low exceeds high",
+                "value_error",
+            ),
+        ]
 
 
 async def _fetcher_admin(

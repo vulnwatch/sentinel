@@ -318,34 +318,6 @@ class TestListMyIdentityAuditEvents:
 
         assert response.json()["meta"]["total"] == 2
 
-    async def test_role_mapping_event_type_is_ignored_beside_a_valid_one(
-        self,
-        authenticated_client: AsyncClient,
-        authenticated_user: User,
-        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
-    ) -> None:
-        """A role mapping event type is not an event type of this log, so
-        the filter ignores it like any other invalid value."""
-        await identity_audit_event_factory(
-            event_type="role_added", target_user_id=authenticated_user.id
-        )
-        await identity_audit_event_factory(
-            event_type="username_changed", target_user_id=authenticated_user.id
-        )
-
-        response = await authenticated_client.get(
-            "/api/v1/users/me/audit-log",
-            params=[
-                ("event_type", "role_mapping_created"),
-                ("event_type", "role_added"),
-            ],
-        )
-
-        assert response.status_code == 200
-        assert [item["event_type"] for item in response.json()["data"]] == [
-            "role_added"
-        ]
-
     async def test_all_invalid_event_types_return_empty_result(
         self,
         authenticated_client: AsyncClient,

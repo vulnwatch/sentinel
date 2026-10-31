@@ -101,8 +101,8 @@ All exceptions inherit from `FetcherOperationsServiceError(ServiceError)`.
 | `FetcherDeregisteredError` | 409 | `FETCHER_DEREGISTERED` | Fetcher exists in DB but is not present in the registry (code removed) |
 | `FetcherDisabledError` | 409 | `FETCHER_DISABLED` | Fetcher is disabled (`enabled = false`) |
 | `FetcherAlreadyRunningError` | 409 | `FETCHER_ALREADY_RUNNING` | An active (`queued` or `running`, non-stale) run exists for this fetcher |
-| `FetcherSettingUnknownError` | 422 | `FETCHER_SETTING_UNKNOWN` | Unknown keys in `custom_settings`; the exception locates each of them |
-| `FetcherSettingInvalidError` | 422 | `FETCHER_SETTING_INVALID` | Submitted non-null `custom_settings` values have the wrong JSON type for their declared `Settings` fields, or the candidate merged state (current stored values plus submitted changes) fails the `Settings` model's type/range/choices validation — in the latter case an invalid field may be a value the caller did not submit; the exception locates every failing field of the check that failed |
+| `FetcherSettingUnknownError` | 422 | `FETCHER_SETTING_UNKNOWN` | Unknown keys in `custom_settings` |
+| `FetcherSettingInvalidError` | 422 | `FETCHER_SETTING_INVALID` | Submitted non-null `custom_settings` values have the wrong JSON type for their declared `Settings` fields, or the candidate merged state (current stored values plus submitted changes) fails the `Settings` model's type/range/choices validation — in the latter case an invalid field may be a value the caller did not submit |
 | `FetcherBrokerUnavailableError` | 503 | `CELERY_UNAVAILABLE` | Task broker unavailable during manual trigger publication |
 
 #### System-Internal Exceptions
@@ -1445,11 +1445,11 @@ with a caller-owned transaction.
   stored value the caller did not submit in this request
 - Both `FETCHER_SETTING_*` responses carry an `errors` array in the format
   of `VALIDATION_ERROR` (`docs/api-spec.md`, Response Format), with one
-  entry per entry that `update_fetcher_config` reports (guards 4 and 5):
+  element per entry that `update_fetcher_config` reports (guards 4 and 5):
   `loc` is `["body", "custom_settings", <key>]`, also for a stored value
   that the request did not submit, or `["body", "custom_settings"]` for an
   error of the whole `Settings` model; `type` and `msg` are the entry's
-  error type and message. `detail` repeats the entries as text
+  error type and message
 - Type violations of `enabled`, `run_timeout`, and `request_delay`
   (`docs/api-spec.md`, JSON Request Body Scalar Types) return the global
   `422 VALIDATION_ERROR`; only `custom_settings` values use

@@ -968,11 +968,11 @@ administrator user reads (`GET /api/v1/users`, `GET /api/v1/users/{user}`,
 `GET /api/v1/users/me`, `POST /api/v1/admin/users/{user}/roles`, the CLI
 `--role` parameter, and `RoleMapping` API payloads.
 
-**Response enum**: the OpenAPI document publishes the three values as an
-`enum` for every response field and request member that carries a role
-value, so they form a response enum (`docs/api-spec.md`, Response Enums),
-and as the `enum` of the `role` filters (`docs/api-spec.md`, Enum Filter
-Validation). Adding a role is therefore a new value of the response enum.
+**Response enum**: the three values form a response enum
+(`docs/api-spec.md`, Response Enums), so adding a role is a new value of the
+response enum. The OpenAPI document publishes them as the `enum` of every
+response field and request member whose values are role values, and of the
+`role` filters (`docs/api-spec.md`, Enum Filter Validation).
 
 **Deterministic ordering**: any response array of role values (e.g.,
 the `roles` of `GET /api/v1/users/me` and of the user directory entry) is

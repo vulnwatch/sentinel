@@ -2290,6 +2290,35 @@ class TestUpdateFetcherConfigGuards:
         assert error.location == (key,)
         assert error.type == error_type
 
+    async def test_every_merged_state_error_is_located(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        """Once the type check passes, every error of the merged-state
+        validation is reported, not only the first
+        (`fetcher-operations.md`, `update_fetcher_config`, guard 5)."""
+        _register(_MultiSettingsFetcher)
+        config = await fetcher_config_factory(fetcher_name=_MultiSettingsFetcher.name)
+        admin = await user_factory()
+
+        with pytest.raises(FetcherSettingInvalidError) as exc_info:
+            await update_fetcher_config(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                user_id=admin.id,
+                payload=UpdateConfigPayload(
+                    custom_settings={"zeta_setting": 500, "alpha_setting": 500}
+                ),
+            )
+
+        message = "Input should be less than or equal to 100"
+        assert exc_info.value.errors == (
+            CustomSettingError(("alpha_setting",), "less_than_equal", message),
+            CustomSettingError(("zeta_setting",), "less_than_equal", message),
+        )
+
     async def test_model_level_error_carries_no_key(
         self,
         db_session: AsyncSession,
