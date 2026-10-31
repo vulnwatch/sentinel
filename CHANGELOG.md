@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.15.0](https://github.com/vulnwatch/sentinel/compare/v0.14.0...v0.15.0) (2026-10-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* publish the API value sets and input constraints in OpenAPI ([#1165](https://github.com/vulnwatch/sentinel/issues/1165))
+
+### Features
+
+* publish the API value sets and input constraints in OpenAPI ([#1165](https://github.com/vulnwatch/sentinel/issues/1165)) ([97a14f7](https://github.com/vulnwatch/sentinel/commit/97a14f7ef812a9516f9e0f642c6b047985842cbc)), closes [#1160](https://github.com/vulnwatch/sentinel/issues/1160)
+
 ## [0.14.0](https://github.com/vulnwatch/sentinel/compare/v0.13.1...v0.14.0) (2026-10-29)
 
 
