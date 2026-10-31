@@ -772,6 +772,317 @@ class TestUserFilters:
 
 
 # ---------------------------------------------------------------------------
+# Product and track filters (tickets.md, List Tickets)
+# ---------------------------------------------------------------------------
+
+SLES_CPE = "cpe:/o:example:sles:15:sp6"
+SLED_CPE = "cpe:/o:example:sled:15:sp6"
+SP6_UPDATE = "SUSE:SLE-15-SP6:Update"
+SP4_UPDATE = "SUSE:SLE-15-SP4:Update"
+SLFO_MAIN = "slfo-main"
+
+
+@pytest.fixture
+def occurrence(
+    ticket_package_factory: Factory,
+    ticket_package_track_factory: Factory,
+    ticket_package_product_factory: Factory,
+) -> Callable[..., Awaitable[TicketPackageTrack]]:
+    """Create one track of `ticket` under a new package with an occurrence
+    of each given catalog Product, every record included unless a
+    marker is given."""
+
+    async def _create(
+        ticket: Ticket,
+        reference: str,
+        *products: Any,
+        workflow_type: WorkflowType = WorkflowType.IBS,
+        package_deleted_at: datetime | None = None,
+        track_deleted_at: datetime | None = None,
+        product_deleted_at: datetime | None = None,
+        **track_fields: Any,
+    ) -> TicketPackageTrack:
+        package = await ticket_package_factory(
+            ticket_id=ticket.id, deleted_at=package_deleted_at
+        )
+        track: TicketPackageTrack = await ticket_package_track_factory(
+            ticket_package_id=package.id,
+            reference=reference,
+            workflow_type=workflow_type.value,
+            deleted_at=track_deleted_at,
+            **track_fields,
+        )
+        for product in products:
+            await ticket_package_product_factory(
+                ticket_package_track_id=track.id,
+                product_id=product.id,
+                deleted_at=product_deleted_at,
+            )
+        return track
+
+    return _create
+
+
+@pytest.mark.integration
+class TestProductAndTrackFilters:
+    async def test_product_matches_the_exact_cpe_of_an_included_occurrence(
+        self,
+        db_session: AsyncSession,
+        clock: Clock,
+        ticket_factory: Factory,
+        product_factory: Factory,
+        occurrence: Factory,
+    ) -> None:
+        sles = await product_factory(cpe=SLES_CPE)
+        sled = await product_factory(cpe=SLED_CPE)
+        shipped = await ticket_factory()
+        await occurrence(shipped, SP6_UPDATE, sles, sled)
+        other = await ticket_factory()
+        await occurrence(other, SP6_UPDATE, sled)
+        await ticket_factory()
+
+        assert await _ids(db_session, product=SLES_CPE) == [_sntl(shipped)]
+        assert set(await _ids(db_session, product=SLED_CPE)) == _set([shipped, other])
+        for value in (
+            SLES_CPE.upper(),
+            f" {SLES_CPE}",
+            f"{SLES_CPE} ",
+            "cpe:/o:example:sles:15",
+            "cpe:/o:example:sles:15:sp6%",
+            "",
+            "cpe:/o:example:unknown:1",
+        ):
+            page = await _list(db_session, product=value)
+            assert page.items == (), value
+            assert page.total == 0, value
+
+    async def test_track_matches_the_exact_ibs_or_git_reference(
+        self,
+        db_session: AsyncSession,
+        clock: Clock,
+        ticket_factory: Factory,
+        product_factory: Factory,
+        occurrence: Factory,
+    ) -> None:
+        sles = await product_factory(cpe=SLES_CPE)
+        ibs = await ticket_factory()
+        await occurrence(ibs, SP6_UPDATE, sles)
+        git = await ticket_factory()
+        await occurrence(git, SLFO_MAIN, sles, workflow_type=WorkflowType.GIT)
+        ga = await ticket_factory()
+        await occurrence(ga, "SUSE:SLE-15-SP6:GA", sles)
+
+        assert await _ids(db_session, track=SP6_UPDATE) == [_sntl(ibs)]
+        assert await _ids(db_session, track=SLFO_MAIN) == [_sntl(git)]
+        for value in (
+            SP6_UPDATE.lower(),
+            "SUSE:SLE-15-SP6",
+            f"{SP6_UPDATE} ",
+            f" {SLFO_MAIN}",
+            "slfo-%",
+            "",
+            "Example:Unknown:Update",
+        ):
+            page = await _list(db_session, track=value)
+            assert page.items == (), value
+            assert page.total == 0, value
+
+    async def test_only_manual_exclusion_removes_a_match(
+        self,
+        db_session: AsyncSession,
+        clock: Clock,
+        ticket_factory: Factory,
+        product_factory: Factory,
+        occurrence: Factory,
+    ) -> None:
+        """Effective exclusion (package-model.md, Manual Exclusion Markers):
+        a package or track marker removes both filters' match, a Product
+        marker only `product`'s. A track whose Products are all excluded,
+        or that has none, is not itself excluded and still matches."""
+        sles = await product_factory(cpe=SLES_CPE)
+        included = await ticket_factory()
+        await occurrence(included, SP6_UPDATE, sles)
+        package_excluded = await ticket_factory()
+        await occurrence(
+            package_excluded, SP6_UPDATE, sles, package_deleted_at=EXCLUDED_AT
+        )
+        track_excluded = await ticket_factory()
+        await occurrence(track_excluded, SP6_UPDATE, sles, track_deleted_at=EXCLUDED_AT)
+        product_excluded = await ticket_factory()
+        await occurrence(
+            product_excluded, SP6_UPDATE, sles, product_deleted_at=EXCLUDED_AT
+        )
+        no_products = await ticket_factory()
+        await occurrence(no_products, SP6_UPDATE)
+
+        assert await _ids(db_session, product=SLES_CPE) == [_sntl(included)]
+        assert set(await _ids(db_session, track=SP6_UPDATE)) == _set(
+            [included, product_excluded, no_products]
+        )
+        assert await _ids(db_session, product=SLES_CPE, track=SP6_UPDATE) == [
+            _sntl(included)
+        ]
+
+    async def test_lifecycle_eligibility_affectedness_delivery_and_status_do_not_matter(
+        self,
+        db_session: AsyncSession,
+        clock: Clock,
+        ticket_factory: Factory,
+        product_factory: Factory,
+        occurrence: Factory,
+        ticket_package_product_factory: Factory,
+    ) -> None:
+        # A General Support end in the past makes the Product EOL on every
+        # evaluation date (product-catalog.md, Lifecycle Evaluator).
+        eol = await product_factory(
+            cpe=SLES_CPE, general_support_end_date=date(2000, 1, 31)
+        )
+        # Older than the latest snapshot, which observed `eol`: a historical
+        # Product (product-catalog.md, List Products).
+        historical = await product_factory(
+            cpe=SLED_CPE, catalog_last_seen_at=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        ineligible = await ticket_factory()
+        track = await occurrence(ineligible, SP6_UPDATE)
+        await ticket_package_product_factory(
+            ticket_package_track_id=track.id,
+            product_id=eol.id,
+            eligible=False,
+            is_eligible_override=True,
+        )
+        released = await ticket_factory(status=TicketStatus.RESOLVED.value)
+        track = await occurrence(
+            released,
+            SP6_UPDATE,
+            status=PackageStatus.FIXED.value,
+            delivery_status=DeliveryStatus.RELEASED.value,
+        )
+        await ticket_package_product_factory(
+            ticket_package_track_id=track.id,
+            product_id=eol.id,
+            released_at=datetime(2026, 3, 1, tzinfo=UTC),
+        )
+        not_affected = await ticket_factory(status=TicketStatus.IGNORED.value)
+        await occurrence(
+            not_affected, SP6_UPDATE, eol, status=PackageStatus.NOT_AFFECTED.value
+        )
+        old_product = await ticket_factory(status=TicketStatus.DUPLICATED.value)
+        await occurrence(old_product, SP6_UPDATE, historical)
+
+        expected = _set([ineligible, released, not_affected])
+        assert set(await _ids(db_session, product=SLES_CPE)) == expected
+        assert set(await _ids(db_session, product=SLES_CPE, track=SP6_UPDATE)) == (
+            expected
+        )
+        assert await _ids(db_session, product=SLED_CPE) == [_sntl(old_product)]
+        assert set(await _ids(db_session, track=SP6_UPDATE)) == expected | {
+            _sntl(old_product)
+        }
+
+    async def test_both_filters_correlate_on_the_same_occurrence(
+        self,
+        db_session: AsyncSession,
+        clock: Clock,
+        ticket_factory: Factory,
+        product_factory: Factory,
+        occurrence: Factory,
+    ) -> None:
+        sles = await product_factory(cpe=SLES_CPE)
+        sled = await product_factory(cpe=SLED_CPE)
+        # The track delivers several Products, the filtered one among them.
+        shared_track = await ticket_factory()
+        await occurrence(shared_track, SP6_UPDATE, sled, sles)
+        # The Product reaches the Ticket only through another track.
+        other_track = await ticket_factory()
+        await occurrence(other_track, SP6_UPDATE, sled)
+        await occurrence(other_track, SP4_UPDATE, sles)
+        # The Product's occurrence under the track is excluded; another
+        # track still delivers it.
+        excluded_under_track = await ticket_factory()
+        await occurrence(
+            excluded_under_track, SP6_UPDATE, sles, product_deleted_at=EXCLUDED_AT
+        )
+        await occurrence(excluded_under_track, SP4_UPDATE, sles)
+        # Two packages qualify: the Ticket is listed and counted once.
+        twice = await ticket_factory()
+        await occurrence(twice, SP6_UPDATE, sles)
+        await occurrence(twice, SP6_UPDATE, sles, sled)
+
+        page = await _list(db_session, product=SLES_CPE, track=SP6_UPDATE)
+        assert {item.ticket_id for item in page.items} == _set([shared_track, twice])
+        assert page.total == 2
+        assert set(await _ids(db_session, product=SLES_CPE)) == _set(
+            [shared_track, other_track, excluded_under_track, twice]
+        )
+        assert set(await _ids(db_session, track=SP6_UPDATE)) == _set(
+            [shared_track, other_track, excluded_under_track, twice]
+        )
+        assert set(await _ids(db_session, product=SLES_CPE, track=SP4_UPDATE)) == (
+            _set([other_track, excluded_under_track])
+        )
+
+    async def test_filters_combine_with_the_others_by_and_without_fan_out(
+        self,
+        db_session: AsyncSession,
+        clock: Clock,
+        ticket_factory: Factory,
+        product_factory: Factory,
+        occurrence: Factory,
+    ) -> None:
+        sles = await product_factory(cpe=SLES_CPE)
+        sled = await product_factory(cpe=SLED_CPE)
+        analysis = await ticket_factory(status=TicketStatus.ANALYSIS.value)
+        for _ in range(3):
+            await occurrence(analysis, SP6_UPDATE, sles, sled)
+            await occurrence(analysis, SP4_UPDATE, sles, sled)
+        new = await ticket_factory(status=TicketStatus.NEW.value)
+        await occurrence(new, SP6_UPDATE, sles)
+
+        page = await _list(
+            db_session,
+            product=SLES_CPE,
+            track=SP6_UPDATE,
+            status=[TicketStatus.ANALYSIS],
+            per_page=1,
+        )
+        assert [item.ticket_id for item in page.items] == [_sntl(analysis)]
+        assert page.total == 1
+        assert await _ids(db_session, product=SLES_CPE, search="no-such-package") == []
+        assert set(await _ids(db_session, track=SP6_UPDATE)) == _set([analysis, new])
+
+    async def test_filters_never_widen_visibility(
+        self,
+        db_session: AsyncSession,
+        clock: Clock,
+        ticket_factory: Factory,
+        product_factory: Factory,
+        occurrence: Factory,
+    ) -> None:
+        sles = await product_factory(cpe=SLES_CPE)
+        hidden = await ticket_factory(is_confidential=True)
+        await occurrence(hidden, SP6_UPDATE, sles)
+        stranger = TicketCaller.authenticated(uuid.uuid4(), Scope.NON_CONFIDENTIAL)
+
+        unknown = await _list(db_session, stranger, product="cpe:/o:example:none:1")
+        cases: list[dict[str, Any]] = [
+            {"product": SLES_CPE},
+            {"track": SP6_UPDATE},
+            {"product": SLES_CPE, "track": SP6_UPDATE},
+        ]
+        for filters in cases:
+            # Only an invisible Ticket matches: the same response as an
+            # unknown value.
+            assert await _list(db_session, stranger, **filters) == unknown, filters
+            assert await _ids(db_session, **filters) == [_sntl(hidden)], filters
+
+        public = await ticket_factory()
+        await occurrence(public, SP6_UPDATE, sles)
+        page = await _list(db_session, stranger, product=SLES_CPE, per_page=1)
+        assert [item.ticket_id for item in page.items] == [_sntl(public)]
+        assert page.total == 1
+
+
+# ---------------------------------------------------------------------------
 # Overdue filter (ticket-deadlines.md, Ticket-Level Overdue Filter)
 # ---------------------------------------------------------------------------
 

@@ -108,10 +108,12 @@ from app.core.exceptions import (
 from app.core.identifiers import format_ticket_id, is_valid_cve_id, parse_ticket_id
 from app.models.cve import CVE
 from app.models.cve_external_identifier import CVEExternalIdentifier
+from app.models.product import Product
 from app.models.ticket import Ticket
 from app.models.ticket_access_grant import TicketAccessGrant
 from app.models.ticket_package import TicketPackage
 from app.models.ticket_package_maintainer import TicketPackageMaintainer
+from app.models.ticket_package_product import TicketPackageProduct
 from app.models.ticket_package_track import TicketPackageTrack
 from app.models.user import User
 from app.services import cve_service, package_service
@@ -733,6 +735,42 @@ def _current_phase_condition(
     return current.phase.in_(values) if values else false()
 
 
+def _occurrence_condition(
+    product: str | None, track: str | None
+) -> ColumnElement[bool]:
+    """The `product` and `track` filters (tickets.md, List Tickets) as one
+    existence check on `Ticket`, for at least one supplied value.
+
+    A Ticket matches through a track of an included package that is not
+    itself excluded, whose `reference` equals `track` when supplied and
+    which holds, when `product` is supplied, a Product occurrence that is
+    not excluded and whose catalog `cpe` equals `product`. Supplying both
+    therefore correlates them on the same occurrence. Both values compare
+    exactly; lifecycle, eligibility, affectedness, delivery, and release
+    are not inputs, and existence semantics never multiply Ticket rows."""
+    statement = (
+        select(TicketPackageTrack.id)
+        .join(TicketPackage, TicketPackage.id == TicketPackageTrack.ticket_package_id)
+        .where(
+            TicketPackage.ticket_id == Ticket.id,
+            TicketPackage.deleted_at.is_(None),
+            TicketPackageTrack.deleted_at.is_(None),
+        )
+    )
+    if track is not None:
+        statement = statement.where(TicketPackageTrack.reference == track)
+    if product is not None:
+        statement = (
+            statement.join(
+                TicketPackageProduct,
+                TicketPackageProduct.ticket_package_track_id == TicketPackageTrack.id,
+            )
+            .join(Product, Product.id == TicketPackageProduct.product_id)
+            .where(TicketPackageProduct.deleted_at.is_(None), Product.cpe == product)
+        )
+    return exists(statement).correlate(Ticket)
+
+
 def _user_filter_ids(identifier: str) -> Select[UUID]:
     """The `User.id` matching a UUID-or-username filter value (at most
     one), resolved inside the list statement through the user-domain
@@ -865,6 +903,8 @@ async def list_tickets(
     overdue: Collection[MilestonePhase] | None = None,
     current_phase: Collection[CurrentPhase] | None = None,
     maintainer: str | None = None,
+    product: str | None = None,
+    track: str | None = None,
     sort_by: TicketSortField = TicketSortField.CREATED_AT,
     sort_order: SortOrder = SortOrder.DESC,
     page: int = 1,
@@ -883,8 +923,9 @@ async def list_tickets(
     nothing. A
     `None` member of `severity` or `priority` is the `unresolved` value
     (SQL `NULL`). `assignee` is a User UUID, exact username, or the
-    literal `none`; `maintainer` a User UUID or exact username. `page`
-    is positive and `per_page` is 1-100.
+    literal `none`; `maintainer` a User UUID or exact username. `product`
+    is a canonical Product CPE and `track` a track reference, each `None`
+    when omitted. `page` is positive and `per_page` is 1-100.
 
     Q3: captures one UTC evaluation instant and derives the read
     `evaluation_date` from its UTC date. Then, in one SQL statement and
@@ -899,6 +940,9 @@ async def list_tickets(
        repeatable filter; `assignee=none` selects unassigned Tickets
        before any User resolution; an unknown assignee or maintainer
        matches nothing; maintainer matching uses an included package;
+       `product` and `track` match exact values through occurrences that
+       are not effectively excluded, correlated on the same occurrence
+       when both are supplied, and an unknown value matches nothing;
     4. resolves severity once per Ticket through the canonical cascade,
        the effective priority as `COALESCE(priority_override,
        priority_auto)`, and the five due dates through
@@ -988,6 +1032,8 @@ async def list_tickets(
                 )
             ).correlate(Ticket)
         )
+    if product is not None or track is not None:
+        conditions.append(_occurrence_condition(product, track))
 
     # Only the identity and sort key are materialized for every candidate;
     # the display projections (resolved severity, priority, due dates, the

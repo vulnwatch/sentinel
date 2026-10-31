@@ -247,6 +247,8 @@ class TicketListQuery(BaseModel):
     overdue: list[str] = Field(default_factory=list)
     current_phase: list[str] = Field(default_factory=list)
     maintainer: str | None = None
+    product: str | None = None
+    track: str | None = None
     page: int = Field(default=1, ge=1, le=2_147_483_647)
     per_page: int = Field(default=20, ge=1, le=100)
     sort_by: TicketSortField = TicketSortField.CREATED_AT

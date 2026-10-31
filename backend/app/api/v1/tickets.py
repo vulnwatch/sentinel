@@ -286,6 +286,32 @@ def _ticket_list_query(
             )
         ),
     ] = None,
+    product: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Filter by Product: canonical Product CPE, exact and "
+                "case-sensitive, current or historical. Matches a Ticket with "
+                "at least one occurrence of the Product whose package, track, "
+                "and Product are not excluded. With `track`, the occurrence must "
+                "lie under a track of that reference. An unknown CPE yields an "
+                "empty page."
+            )
+        ),
+    ] = None,
+    track: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Filter by track: IBS codestream project name or Git branch "
+                "name, exact and case-sensitive. Matches a Ticket with at least "
+                "one track of that reference whose package and track are not "
+                "excluded. Product lifecycle, eligibility, affectedness, and "
+                "delivery have no effect on either filter. An unknown reference "
+                "yields an empty page."
+            )
+        ),
+    ] = None,
     page: Annotated[int, Query(ge=1, le=2_147_483_647, description="Page number.")] = 1,
     per_page: Annotated[
         int, Query(ge=1, le=100, description="Items per page; maximum 100.")
@@ -322,6 +348,8 @@ def _ticket_list_query(
         overdue=overdue,
         current_phase=current_phase,
         maintainer=maintainer,
+        product=product,
+        track=track,
         page=page,
         per_page=per_page,
         sort_by=sort_by,
@@ -422,7 +450,8 @@ def serialize_ticket_detail(detail: TicketDetailProjection) -> TicketDetail:
     description=(
         "Returns a paginated list of the Tickets visible to the caller, with "
         "multi-field search, repeatable status, severity, priority, overdue, and "
-        "current phase filters, assignee and maintainer filters, and sorting. "
+        "current phase filters, assignee, maintainer, Product, and track "
+        "filters, and sorting. "
         "Visibility is applied before every filter, sort, count, and page. Requires "
         "authentication (JWT session or API key); the caller's scope, grants, "
         "and package maintainership determine access to confidential Tickets."
@@ -450,6 +479,8 @@ async def list_tickets(
         overdue=_parse_repeatable(query.overdue, _OVERDUE_FILTER),
         current_phase=_parse_repeatable(query.current_phase, _CURRENT_PHASE_FILTER),
         maintainer=query.maintainer,
+        product=query.product,
+        track=query.track,
         sort_by=query.sort_by,
         sort_order=query.sort_order,
         page=query.page,
