@@ -998,9 +998,10 @@ Ticket response objects (both list and detail) MUST include the
 is no information leakage concern because a user only receives tickets
 they are authorized to see (see [Confidentiality Filtering](#confidentiality-filtering)).
 
-The same field is part of every Ticket reference in a row that a list or read
-returns only when the caller can see the referenced Ticket, so that a client
-can mark a confidential Ticket without reading it:
+The same field is part of every Ticket reference in a row outside the Ticket's
+own resources that a list or read returns only when the caller can see the
+referenced Ticket, so that a client can mark a confidential Ticket without
+reading it:
 
 - `CVEAssociatedTicket` of `CVEListItem` and `CVEResourceDetail`
   ([cve-tracking.md](cve-tracking.md#list-cves));

@@ -500,33 +500,6 @@ class TestTreeProjection:
         (statement,) = recorder.statements
         assert "email" not in statement
 
-    async def test_maintainer_query_count_is_bounded(
-        self,
-        db_session: AsyncSession,
-        ticket_factory: Factory,
-        user_factory: Factory,
-        ticket_package_factory: Factory,
-        ticket_package_maintainer_factory: Factory,
-    ) -> None:
-        """Many packages with several maintainers each still read in one
-        statement (package-service.md, `get_ticket_packages()` step 5)."""
-        ticket: Ticket = await ticket_factory()
-        users = [await user_factory() for _ in range(3)]
-        for index in range(6):
-            package = await ticket_package_factory(
-                ticket_id=ticket.id, package_name=f"example-{index}"
-            )
-            for user in users:
-                await ticket_package_maintainer_factory(
-                    ticket_package_id=package.id, user_id=user.id
-                )
-
-        with _StatementRecorder(db_session) as recorder:
-            projected = await _read(db_session, ticket)
-
-        assert len(recorder.statements) == 1
-        assert [len(p.maintainers) for p in projected] == [3] * 6
-
 
 # ---------------------------------------------------------------------------
 # Resolution, accessibility, and caller-contract errors

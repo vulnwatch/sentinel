@@ -1798,8 +1798,7 @@ Each global operation:
 6. computes `total`, applies page slicing, and projects exactly one semantic
    workbench item per qualifying track from that same candidate set and
    coherent PostgreSQL observation, including the Ticket's `is_confidential`,
-   `submission_due_at`, and
-   `submission_milestone` computed under
+   and `submission_due_at` and `submission_milestone` computed under
    `docs/features/tickets/ticket-deadlines.md` with the supplied
    `evaluation_instant`; and
 7. returns an empty page with `total = 0` when no candidate qualifies, or an

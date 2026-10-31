@@ -3390,10 +3390,10 @@ requirements without defining another visibility rule.
 **Projection, privacy, and side effects:**
 
 - Global and per-Ticket items contain exactly `package_name`, canonical
-  `ticket_id`, `is_confidential`, nullable `cve_id`, nullable resolved `severity`,
-  `workflow_type`, `reference`, affectedness `status`, `delivery_status`,
-  nullable `submission_due_at`, and nullable `submission_milestone`, all using
-  lowercase API enum values.
+  `ticket_id`, `is_confidential`, nullable `cve_id`, nullable resolved
+  `severity`, `workflow_type`, `reference`, affectedness `status`,
+  `delivery_status`, nullable `submission_due_at`, and nullable
+  `submission_milestone`, all using lowercase API enum values.
 - Generated OpenAPI and response tests prove absence of Ticket UUIDs,
   maintainer IDs, usernames, emails, groups, association counts, SMELT payload
   or provenance, `submission_chain`, effective SR/proving RR fields,

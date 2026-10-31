@@ -98,7 +98,7 @@ event type.
   advisory instead of `updateinfo.xml`
   (`docs/features/platform/example-dataset.md`, Attribution). The events of
   its aged Tickets keep the times of the load, later than their backdated
-  creation time (Aged Tickets).
+  creation time (`docs/features/platform/example-dataset.md`, Aged Tickets).
 - `old_value` and `new_value` store human-readable strings. For enum values,
   store the persisted value of the enum member, which can differ from the
   lowercase value that other API fields use for it: `New` or `Analysis` for a

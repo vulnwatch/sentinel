@@ -359,11 +359,11 @@ EARLIER_RUNS: Final = [
         24,
         12,
         "failure",
-        "External service returned server error",
+        "NVD API returned HTTP 503",
         RUN_ERROR_DETAIL,
         "Traceback (most recent call last):\n"
         '  File "fictional_nvd_fetcher.py", line 1, in execute\n'
-        f"httpx.HTTPStatusError: {RUN_ERROR_DETAIL}\n",
+        "FetcherError: NVD API returned HTTP 503\n",
     ),
     (GHSA_FETCHER, 6, 20, "success", None, None, None),
 ]
@@ -1644,7 +1644,7 @@ class TestAgedTickets:
 
         async def reader(
             db: AsyncSession,
-        ) -> tuple[dict[int, datetime], datetime, datetime]:
+        ) -> tuple[dict[int, datetime], datetime, datetime, list[int]]:
             created = dict(
                 (await db.execute(select(Ticket.sequence_id, Ticket.created_at))).all()
             )
@@ -1652,13 +1652,25 @@ class TestAgedTickets:
             first_event = await db.scalar(select(func.min(TicketAuditEvent.created_at)))
             assert first_user is not None
             assert first_event is not None
-            return created, first_user, first_event
+            # The aging is the last write of an aged Ticket and sets its
+            # `updated_at`; an event of the aging would share that time.
+            at_or_after_aging = await db.scalars(
+                select(Ticket.sequence_id)
+                .join(TicketAuditEvent, TicketAuditEvent.ticket_id == Ticket.id)
+                .where(
+                    Ticket.sequence_id.in_(list(AGED)),
+                    TicketAuditEvent.created_at >= Ticket.updated_at,
+                )
+            )
+            return created, first_user, first_event, list(at_or_after_aging)
 
-        created, first_user, first_event = read(loaded.url, reader)
+        created, first_user, first_event, at_or_after_aging = read(loaded.url, reader)
 
         assert {n: created[n] for n in AGED} == {
             n: loaded.ago(days) for n, days in AGED.items()
         }
+        # Aging creates no Ticket event (ticket-audit-log.md, No-Event Matrix).
+        assert at_or_after_aging == []
         # Database times of the load: later than the first operation.
         assert all(created[n] >= first_user for n in TICKETS if n not in AGED)
         assert first_event >= first_user

@@ -158,16 +158,16 @@ A load runs these steps in this order:
 | `Ticket work` | The Ticket work of Tickets, Packages, Tracks, and Maintainers, IBS Requests, and References, then the aging of Aged Tickets |
 
 Each operation of a step — one call of a service function named in Dataset
-Content, one write of the load named in Fetcher Runs and CVE Source Records or
-in Aged Tickets, or for an ingestion its `upsert_cve()` call together with its
+Content; one write of the load named in Fetcher Runs and CVE Source Records or
+in Aged Tickets, together with the service call that the same operation names
+there; or for an ingestion its `upsert_cve()` call together with its
 `upsert_references()` call (CVEs) — runs in its own session and transaction,
 which the load commits before the next operation begins. The load writes the
 run records and the creation times of the aged Tickets itself, because no
 service operation records a run without executing its fetcher or changes the
 creation time of a Ticket; these writes stand for the time that a real
 installation spends before the state of the dataset, and change nothing else.
-The three catalog
-publications commit their own transactions
+The three catalog publications commit their own transactions
 (`docs/features/packages/product-catalog.md`, Catalog Publication
 Boundaries). One transaction per operation is the granularity of the API
 request or fetcher work unit that each operation stands for: each transaction
@@ -290,9 +290,9 @@ history is never rewritten
 history of an aged Ticket begins after its creation time. Remediation
 deadlines, which derive from the Ticket creation time, advance with the age of
 the dataset (`docs/features/tickets/ticket-deadlines.md`), so after a load the
-deadlines of the aged Tickets are already past and those of every other Ticket
-pass later. The lifecycle dates of Product Catalog keep every listed lifecycle
-phase during the first 180 days from `D`.
+due date of the current phase of each aged Ticket is already past, and further
+due dates pass as the dataset ages. The lifecycle dates of Product Catalog keep
+every listed lifecycle phase during the first 180 days from `D`.
 
 ## Service
 
@@ -385,9 +385,9 @@ Operations of the `Users` step, in this order:
    `security-scanner`, and `ghill`, in this order, by `jdoe`. Every role has
    the `_manual` origin, and `security-scanner` is created with `bot = true`.
 
-`eblack` is deactivated by the Ticket work, after it has taken `SNTL-9`
-(Tickets). `dbrown` and `ghill` hold no role: users without roles who maintain
-packages (Packages, Tracks, and Maintainers). `security-scanner` is a bot account
+The Ticket work deactivates `eblack` after `eblack` takes `SNTL-9` (Tickets).
+`dbrown` and `ghill` hold no role: users without roles who maintain packages
+(Packages, Tracks, and Maintainers). `security-scanner` is a bot account
 (`docs/features/identity/user-management.md`, Bot Accounts) whose Ticket work
 lets a client show an automated action in a Ticket audit log.
 
@@ -532,17 +532,18 @@ their starting point from `started_at`:
 | `sync_nvd_cves` | Before the first ingestion of the `CVEs and tickets` step | After its CVE source record | `partial` | 15 | 15 | 0 | 1 |
 
 `duration_seconds` is `finished_at − started_at`. The failed run carries the
-error of a server error of the source, as `BaseFetcher.run()` records it
-(`docs/features/platform/fetcher-infrastructure.md`, Error Message
+error that `sync_nvd_cves` records for an HTTP 503 page response
+(`docs/features/tickets/cve-sync-nvd.md`, Sanitized error messages;
+`docs/features/platform/fetcher-infrastructure.md`, Error Message
 Sanitization):
 
-- `error_message`: `External service returned server error`;
-- `error_detail`: `Server error '503 Service Unavailable' for url
+- `error_message`: `NVD API returned HTTP 503`;
+- `error_detail`, the chained `httpx.HTTPStatusError` with a fictional URL:
+  `Server error '503 Service Unavailable' for url
   'https://nvd.example.com/rest/json/cves/2.0'`; and
 - `error_traceback`: the three lines `Traceback (most recent call last):`,
   `  File "fictional_nvd_fetcher.py", line 1, in execute`, and
-  `httpx.HTTPStatusError: ` followed by the error detail, each ending with a
-  line feed.
+  `FetcherError: NVD API returned HTTP 503`, each ending with a line feed.
 
 The first three runs, which lie before `T`, are one write of the `Fetchers`
 step, before any fetcher is disabled. The last run stands for the NVD run that
@@ -611,7 +612,7 @@ named user is a system operation (Attribution).
 
 | Ticket | Operations |
 |---|---|
-| `SNTL-9` | `eblack` assigns the Ticket to itself. `jdoe` deactivates `eblack` with the reason `example dataset`, which unassigns the Ticket and keeps its status (`docs/features/identity/user-service.md`, `deactivate_user()`) |
+| `SNTL-9` | `eblack` takes the Ticket: `assign_ticket()` with `eblack` as acting user and assignee. `jdoe` deactivates `eblack` with the reason `example dataset`, which unassigns the Ticket and keeps its status (`docs/features/identity/user-service.md`, `deactivate_user()`) |
 | `SNTL-10` | `security-scanner` adds the manual reference of `SNTL-10` (References) |
 | `SNTL-11` | `bwilson` adds `fictional-curl` (Packages, Tracks, and Maintainers). `bwilson` sets the `fles-16.0` track to `AFFECTED` |
 | `SNTL-12` | `bwilson` assigns the Ticket to `asmith`. `bwilson` sets the priority override `P1`. `asmith` adds the manual reference of `SNTL-12` (References). `asmith` adds `fictional-openssl` and `fictional-zlib`, sets the track of each to `AFFECTED`, and adds the SUSE assessment |
@@ -751,9 +752,8 @@ state, with that state's upstream update time:
 
 A `review` SR, an effective accepted SR, and a `new` or `review` RR establish
 progress, a proven release establishes `RELEASED`, and a later observation
-holds only the
-requests whose evidence it observes anew, as Required Roots defines: the
-proving RR alone for a proven release.
+holds only the requests whose evidence it observes anew, as Required Roots
+defines: the proving RR alone for a proven release.
 
 Every request has one action, for the package of its Ticket `L` in the
 codestream `SUSE:FLES-15-SP7:Update`, with the values of

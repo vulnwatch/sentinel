@@ -451,15 +451,18 @@ _EARLIER_RUNS: Final = (
     _EarlierRun(_GHSA_FETCHER, 6, 20, FetcherRunStatus.SUCCESS),
 )
 _HARD_TIME_LIMIT_SECONDS: Final = 3600
-_RUN_ERROR_MESSAGE: Final = "External service returned server error"
+_RUN_ERROR_MESSAGE: Final = "NVD API returned HTTP 503"
+"""The `FetcherError` of `sync_nvd_cves` for an HTTP 5xx page
+(cve-sync-nvd.md, Sanitized error messages)."""
 _RUN_ERROR_DETAIL: Final = (
     "Server error '503 Service Unavailable' for url "
     "'https://nvd.example.com/rest/json/cves/2.0'"
 )
+"""The chained `httpx.HTTPStatusError`, with a fictional URL."""
 _RUN_ERROR_TRACEBACK: Final = (
     "Traceback (most recent call last):\n"
     '  File "fictional_nvd_fetcher.py", line 1, in execute\n'
-    f"httpx.HTTPStatusError: {_RUN_ERROR_DETAIL}\n"
+    f"FetcherError: {_RUN_ERROR_MESSAGE}\n"
 )
 _LAST_RUN_SUCCEEDED: Final = 15
 """The NVD ingestions of `CVE-2099-0001` to `CVE-2099-0017`, each creating
