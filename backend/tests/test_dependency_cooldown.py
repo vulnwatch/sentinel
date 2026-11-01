@@ -12,6 +12,12 @@ would exempt the package from the cooldown, silently. See issue #1014. The
 `uvx` tools are covered in `tests/test_workflow_tool_pins.py` and the pip-audit
 step in `tests/test_ci_workflow.py`.
 
+The scripts pin their dependencies to exact versions, outside `backend/uv.lock`,
+the only file that Dependabot alerts and pip-audit read, so a script dependency
+that the backend also declares is pinned to the version that the lock holds
+(Workflow Conventions, Python dependency updates and vulnerability response).
+See issue #1107.
+
 No package is exempt from Renovate's cooldown: the uv image comes from Docker
 Hub, the only registry from which Renovate reads the release timestamps of
 images, and its tag must match every `setup-uv` version, so a uv PR that lacks
@@ -33,6 +39,7 @@ from typing import Any
 import pytest
 
 from tests.support.dependency_config import (
+    PYPROJECT_PATH,
     backend_cooldown,
     backend_uv_settings,
     renovate_config,
@@ -42,6 +49,7 @@ from tests.support.yaml_files import job_steps, load_yaml_file, workflow_jobs
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 DOCKERFILE_PATH = REPO_ROOT / "backend" / "Dockerfile"
+UV_LOCK_PATH = REPO_ROOT / "backend" / "uv.lock"
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 
 # The reference regular expression of PEP 723 for an inline metadata block.
@@ -49,6 +57,12 @@ PEP_723_BLOCK = re.compile(
     r"(?m)^# /// (?P<type>[a-zA-Z0-9-]+)$\s(?P<content>(^#(| .*)$\s)+)^# ///$"
 )
 UTC_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+# The distribution name that starts a PEP 508 requirement.
+REQUIREMENT_NAME = re.compile(r"\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)")
+# A script dependency, pinned to one exact version.
+EXACT_PIN = re.compile(
+    r"(?P<name>[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)==(?P<version>[^\s;,]+)"
+)
 UV_GROUP = "uv version (CI + Docker image)"
 # The image of the uv binary that backend/Dockerfile copies, by tag and digest.
 UV_IMAGE = re.compile(
@@ -61,23 +75,63 @@ FRONTEND_DIRECTIVE = re.compile(
 )
 
 
-def _script_uv_settings() -> dict[str, dict[str, Any]]:
-    """The `[tool.uv]` table of the PEP 723 metadata of every script under
-    `scripts/` that declares it, by path relative to the repository root."""
-    settings: dict[str, dict[str, Any]] = {}
+def _script_metadata() -> dict[str, dict[str, Any]]:
+    """The PEP 723 metadata of every script under `scripts/` that declares it,
+    by path relative to the repository root."""
+    scripts: dict[str, dict[str, Any]] = {}
     for path in sorted(SCRIPTS_DIR.glob("*.py")):
         block = PEP_723_BLOCK.search(path.read_text(encoding="utf-8"))
         if not block or block["type"] != "script":
             continue
-        metadata = tomllib.loads(
+        relative = path.relative_to(REPO_ROOT).as_posix()
+        scripts[relative] = tomllib.loads(
             "".join(
                 line[2:] if line.startswith("# ") else line[1:]
                 for line in block["content"].splitlines(keepends=True)
             )
         )
-        relative = path.relative_to(REPO_ROOT).as_posix()
-        settings[relative] = metadata.get("tool", {}).get("uv", {})
-    return settings
+    return scripts
+
+
+def _script_uv_settings() -> dict[str, dict[str, Any]]:
+    """The `[tool.uv]` table of each script's PEP 723 metadata, empty when the
+    script declares none, by path relative to the repository root."""
+    return {
+        relative: metadata.get("tool", {}).get("uv", {})
+        for relative, metadata in _script_metadata().items()
+    }
+
+
+def _normalized(name: str) -> str:
+    """A distribution name in the normalized form of PEP 503."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _backend_declared_dependencies() -> set[str]:
+    """The normalized names of every dependency that `backend/pyproject.toml`
+    declares: runtime, optional, and dependency groups."""
+    pyproject = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))
+    requirements: list[object] = list(pyproject["project"]["dependencies"])
+    for extra in pyproject["project"].get("optional-dependencies", {}).values():
+        requirements.extend(extra)
+    for group in pyproject.get("dependency-groups", {}).values():
+        requirements.extend(group)
+    return {
+        _normalized(match[1])
+        for requirement in requirements
+        if isinstance(requirement, str)
+        and (match := REQUIREMENT_NAME.match(requirement))
+    }
+
+
+def _locked_versions() -> dict[str, set[str]]:
+    """The versions of every package in `backend/uv.lock`, by name, which uv
+    records normalized; a package locked per environment has several."""
+    lock = tomllib.loads(UV_LOCK_PATH.read_text(encoding="utf-8"))
+    versions: dict[str, set[str]] = {}
+    for package in lock["package"]:
+        versions.setdefault(package["name"], set()).add(package["version"])
+    return versions
 
 
 def _paths_of_setting(node: object, name: str, path: str = "") -> list[str]:
@@ -120,6 +174,36 @@ def test_scripts_resolve_with_the_backend_cooldown() -> None:
     assert {
         relative: uv.get("exclude-newer") for relative, uv in scripts.items()
     } == dict.fromkeys(scripts, backend_cooldown())
+
+
+@pytest.mark.unit
+def test_script_pins_of_backend_dependencies_match_the_lock() -> None:
+    # Renovate can move a script pin without backend/uv.lock, for example while
+    # uv cannot lock the new version yet, and no alert or audit would then see
+    # the version that the script runs. Lock file maintenance can likewise move
+    # the lock without the pin; the grouped update PR, which moves both, is
+    # merged first. A pin that is not exact could not be compared, so every
+    # script dependency must be one.
+    declared = _backend_declared_dependencies()
+    locked = _locked_versions()
+    pins = {
+        f"{relative}: {requirement}": EXACT_PIN.fullmatch(requirement)
+        for relative, metadata in _script_metadata().items()
+        for requirement in metadata.get("dependencies", [])
+    }
+    shared = {
+        entry: (pin["version"], locked.get(_normalized(pin["name"]), set()))
+        for entry, pin in pins.items()
+        if pin is not None and _normalized(pin["name"]) in declared
+    }
+
+    assert [entry for entry, pin in pins.items() if pin is None] == []
+    assert shared, "no script pins a dependency that the backend declares"
+    assert {
+        entry: sorted(versions)
+        for entry, (version, versions) in shared.items()
+        if versions != {version}
+    } == {}
 
 
 @pytest.mark.unit
