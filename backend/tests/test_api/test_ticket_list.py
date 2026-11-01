@@ -366,6 +366,53 @@ class TestListEndpoint:
             assert response.status_code == 200, params
             assert response.json()["meta"]["total"] == 0, params
 
+    async def test_product_and_track_reach_the_service_on_the_same_occurrence(
+        self,
+        authenticated_client: AsyncClient,
+        fixed_clock: list[datetime],
+        ticket_factory: Factory,
+        product_factory: Factory,
+        ticket_package_factory: Factory,
+        ticket_package_track_factory: Factory,
+        ticket_package_product_factory: Factory,
+    ) -> None:
+        sles = await product_factory(cpe="cpe:/o:example:sles:15:sp6")
+        sled = await product_factory(cpe="cpe:/o:example:sled:15:sp6")
+        through_update = await ticket_factory()
+        package = await ticket_package_factory(ticket_id=through_update.id)
+        update = await ticket_package_track_factory(
+            ticket_package_id=package.id, reference="SUSE:SLE-15-SP6:Update"
+        )
+        await ticket_package_product_factory(
+            ticket_package_track_id=update.id, product_id=sles.id
+        )
+        through_git = await ticket_factory()
+        package = await ticket_package_factory(ticket_id=through_git.id)
+        update = await ticket_package_track_factory(
+            ticket_package_id=package.id, reference="SUSE:SLE-15-SP6:Update"
+        )
+        await ticket_package_product_factory(
+            ticket_package_track_id=update.id, product_id=sled.id
+        )
+        slfo = await ticket_package_track_factory(
+            ticket_package_id=package.id, reference="slfo-main", workflow_type="git"
+        )
+        await ticket_package_product_factory(
+            ticket_package_track_id=slfo.id, product_id=sles.id
+        )
+
+        assert set(
+            await _ids(authenticated_client, product="cpe:/o:example:sles:15:sp6")
+        ) == {_sntl(through_update), _sntl(through_git)}
+        assert await _ids(authenticated_client, track="slfo-main") == [
+            _sntl(through_git)
+        ]
+        assert await _ids(
+            authenticated_client,
+            product="cpe:/o:example:sles:15:sp6",
+            track="SUSE:SLE-15-SP6:Update",
+        ) == [_sntl(through_update)]
+
     async def test_search_and_sort_reach_the_service(
         self,
         authenticated_client: AsyncClient,
@@ -420,6 +467,10 @@ class TestListEndpoint:
             ({"search": "x" * 501}, "search"),
             ({"assignee": "x" * 501}, "assignee"),
             ({"maintainer": "x" * 501}, "maintainer"),
+            ({"product": "x" * 501}, "product"),
+            ({"track": "x" * 501}, "track"),
+            ({"product": "cpe:/o:example\x00"}, "product"),
+            ({"track": "slfo-main\x00"}, "track"),
             ({"status": ["new", "x" * 501]}, "status"),
         ],
     )
@@ -733,12 +784,24 @@ class TestOpenApiContract:
             "overdue",
             "current_phase",
             "maintainer",
+            "product",
+            "track",
             "page",
             "per_page",
             "sort_by",
             "sort_order",
         }
         assert [p for p in parameters if p["in"] == "path"] == []
+
+    def test_product_and_track_are_single_bounded_strings(self) -> None:
+        parameters = {p["name"]: p for p in self._operation()["parameters"]}
+
+        for name in ("product", "track"):
+            schema = parameters[name]["schema"]
+            assert parameters[name]["required"] is False, name
+            assert schema["type"] == "string", name
+            assert schema["maxLength"] == 500, name
+            assert not {"enum", "pattern", "items", "default"} & set(schema), name
 
     def test_repeatable_filters_are_arrays(self) -> None:
         parameters = {p["name"]: p for p in self._operation()["parameters"]}

@@ -3007,11 +3007,25 @@ visibility predicate.
   enum filters, `assignee=none` before resolution, and unknown optional
   assignee/maintainer values producing an empty page. Package-name search and
   `package_names` exclude directly excluded package occurrences.
-- Ticket list tests create one-to-many package, maintainer, and external-ID
-  fan-out and prove one row per Ticket plus an uninflated filtered total. They
-  cover equal primary sort keys, semantic severity/status ordering, nullable
-  severity, exact package-name deduplication and Unicode code-point ordering,
-  the internal UUID tie-breaker, and a page beyond the last.
+- Ticket list `product` and `track` tests cover exact, case-sensitive matching
+  without trimming; an IBS and a Git track reference; a historical Product;
+  unknown values producing an empty page; and each exclusion level that
+  removes a match (package, track, or Product marker for `product`; package or
+  track marker for `track`). An EOL Product, an ineligible or overridden
+  occurrence, a final affectedness, a delivered or released occurrence, an
+  inactive Ticket, and, for `track`, a track whose Products are all excluded
+  still match. With both filters, a Ticket matches through a qualifying
+  Product occurrence under the track, also when the track has other Products,
+  but not when the Product lies only under another track of the Ticket or its
+  occurrence under the track is excluded. Both filters compose with the other
+  filters by AND and never return or count a Ticket that the caller cannot
+  see: a value that matches only an invisible Ticket produces the same
+  response as an unknown value.
+- Ticket list tests create one-to-many package, track, Product, maintainer, and
+  external-ID fan-out and prove one row per Ticket plus an uninflated filtered
+  total. They cover equal primary sort keys, semantic severity/status ordering,
+  nullable severity, exact package-name deduplication and Unicode code-point
+  ordering, the internal UUID tie-breaker, and a page beyond the last.
 - Ticket detail tests cover CVE-less and CVE-associated Tickets, nullable and
   complete current assignee projection, direct duplicate target sequence
   projection without target-content access or chain following, external-ID and
