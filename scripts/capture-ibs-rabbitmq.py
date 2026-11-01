@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.14"
-# dependencies = ["aio-pika==10.1.2"]
+# dependencies = ["aio-pika==10.2.1"]
 #
 # # The backend's release-age cooldown (docs/deployment.md, Workflow
 # # Conventions → Release-age cooldown).

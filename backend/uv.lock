@@ -12,15 +12,15 @@ exclude-newer-span = "P7D"
 
 [[package]]
 name = "aio-pika"
-version = "10.1.2"
+version = "10.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiormq" },
     { name = "yarl" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/65/5e/69c0cae52bb07481a9dd53f66f71a52c40ddfdaea90c3bde3334fdc17b22/aio_pika-10.1.2.tar.gz", hash = "sha256:b383eafe985ebc83a6b073a311e10c5acd202126d1c93055b87762f4f54ce863", size = 94931, upload-time = "2026-10-24T13:26:19.08Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5d/31/70f0d7a9fe1affc3241d86d24c24714a4a2ac648961efd3d835ef734a6a1/aio_pika-10.2.1.tar.gz", hash = "sha256:e4f77afd9179a3cca5a904c3b0a1190256a36d9f90650db908b1b2245eb27487", size = 101040, upload-time = "2026-10-25T11:47:24.577Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/db/dcd250df91a5478f195a2b1ecd45f7e9d24def7ca92ca6bd11af692d668d/aio_pika-10.1.2-py3-none-any.whl", hash = "sha256:a141bf4467b32f1a2c6ab5d89564086bfd764090ac65e184ffe8f9458377c633", size = 60346, upload-time = "2026-10-24T13:26:17.314Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/ae/f69eb62f240f743d5d3aff659a6ed76077f73b722a0d8f9f9559ab825836/aio_pika-10.2.1-py3-none-any.whl", hash = "sha256:66c85d311e30f1dd3e28109d686c9bf1d9dd1a74582004c7cb7bed284d8fe3b1", size = 61568, upload-time = "2026-10-25T11:47:23.119Z" },
 ]
 
 [[package]]
