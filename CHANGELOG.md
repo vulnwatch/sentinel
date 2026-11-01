@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.1](https://github.com/vulnwatch/sentinel/compare/v0.15.0...v0.15.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* reconnect the capture helper on loss and update aio-pika ([#1172](https://github.com/vulnwatch/sentinel/issues/1172)) ([6275070](https://github.com/vulnwatch/sentinel/commit/6275070931e58bb4d853a682ea0e367b6c876391)), closes [#1171](https://github.com/vulnwatch/sentinel/issues/1171)
+
 ## [0.15.0](https://github.com/vulnwatch/sentinel/compare/v0.14.0...v0.15.0) (2026-11-01)
 
 
