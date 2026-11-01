@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.15.0](https://github.com/vulnwatch/sentinel/compare/v0.14.0...v0.15.0) (2026-11-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* publish the API value sets and input constraints in OpenAPI ([#1165](https://github.com/vulnwatch/sentinel/issues/1165))
+
+### Features
+
+* filter the Ticket list by Product and track ([#1169](https://github.com/vulnwatch/sentinel/issues/1169)) ([7482e3e](https://github.com/vulnwatch/sentinel/commit/7482e3eb53c91c9f8a093da13720e2f71915e375))
+* mark confidential Tickets in rows and name package maintainers ([#1167](https://github.com/vulnwatch/sentinel/issues/1167)) ([3cf9447](https://github.com/vulnwatch/sentinel/commit/3cf944756956a41b411c2ec319da421a7161d17e))
+* publish the API value sets and input constraints in OpenAPI ([#1165](https://github.com/vulnwatch/sentinel/issues/1165)) ([97a14f7](https://github.com/vulnwatch/sentinel/commit/97a14f7ef812a9516f9e0f642c6b047985842cbc)), closes [#1160](https://github.com/vulnwatch/sentinel/issues/1160)
+
 ## [0.14.0](https://github.com/vulnwatch/sentinel/compare/v0.13.1...v0.14.0) (2026-10-29)
 
 
