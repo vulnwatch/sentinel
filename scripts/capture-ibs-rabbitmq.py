@@ -18,6 +18,11 @@ received message (payload and AMQP metadata) to a JSONL file.
 The output file is opened in append mode: multiple runs on the same path
 add new sessions without overwriting previous data.
 
+A lost connection or channel, or a consumer that the broker cancels, is
+recorded as ``connection_lost`` with its ``reason`` (``connection_lost``,
+``channel_lost``, or ``consumer_cancelled``), and the capture reconnects
+after an exponential backoff (``--reconnect-initial``, ``--reconnect-max``).
+
 **Payloads are stored exactly as received.** They may contain real
 usernames and other IBS-internal data. Output files must not be committed
 to the repository or shared outside the local workstation.
@@ -56,7 +61,7 @@ import ssl
 import sys
 import uuid
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -155,6 +160,17 @@ def build_ssl_context(ca_cert: Path) -> ssl.SSLContext:
 
 
 # -- AMQP helpers ------------------------------------------------------------
+
+
+def loss_callback(lost: asyncio.Future[str], reason: str) -> Callable[..., None]:
+    """Return a callback that records ``reason`` as the first loss of a
+    connection attempt; later losses of the same attempt are ignored."""
+
+    def callback(*_: object) -> None:
+        if not lost.done():
+            lost.set_result(reason)
+
+    return callback
 
 
 def delivery_mode_name(mode: DeliveryMode | None) -> str | None:
@@ -309,6 +325,10 @@ async def capture(args: argparse.Namespace) -> int:
                     "attempt": reconnect_attempt + 1,
                 }
             )
+            # The non-robust connection completes `closed()` only when the
+            # client closes it, so a broker-side loss is observed through
+            # the close callbacks and the broker's `basic.cancel`.
+            lost: asyncio.Future[str] = loop.create_future()
             try:
                 connection = await aio_pika.connect(
                     args.broker_url,
@@ -316,7 +336,13 @@ async def capture(args: argparse.Namespace) -> int:
                     heartbeat=args.heartbeat,
                     client_properties={"connection_name": "sentinel-contract-capture"},
                 )
+                connection.close_callbacks.add(loss_callback(lost, "connection_lost"))
                 channel = await connection.channel()
+                channel.close_callbacks.add(loss_callback(lost, "channel_lost"))
+                underlay = await channel.get_underlay_channel()
+                underlay.on_consumer_cancel_callbacks.add(
+                    loss_callback(lost, "consumer_cancelled")
+                )
                 await channel.set_qos(prefetch_count=1)
                 exchange = await channel.declare_exchange(
                     args.exchange,
@@ -364,8 +390,9 @@ async def capture(args: argparse.Namespace) -> int:
                 remaining = (
                     max(0.0, deadline - loop.time()) if deadline is not None else None
                 )
+                waiters: set[asyncio.Future[Any]] = {stop_task, lost}
                 done, _ = await asyncio.wait(
-                    {stop_task, connection.closed()},
+                    waiters,
                     timeout=remaining,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
@@ -384,6 +411,7 @@ async def capture(args: argparse.Namespace) -> int:
                         "record_type": "connection_lost",
                         "captured_at": utc_now(),
                         "session_id": session_id,
+                        "reason": lost.result(),
                         "note": (
                             "Exclusive queue deleted; events lost "
                             "until next consumer_ready."
