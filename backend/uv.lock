@@ -10,17 +10,6 @@ resolution-markers = [
 exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P7D"
 
-[options.exclude-newer-package]
-aio-pika = "2026-10-24T13:26:20Z"
-aiormq = "2026-10-24T12:36:23Z"
-alembic = "2026-10-22T03:24:38Z"
-certifi = "2026-10-20T02:24:17Z"
-fastapi = "2026-10-23T18:47:34Z"
-pydantic-settings = "2026-10-20T11:37:20Z"
-ruff = "2026-10-22T18:38:01Z"
-sqlalchemy = "2026-10-21T19:44:48Z"
-wcwidth = "2026-10-20T16:02:44Z"
-
 [[package]]
 name = "aio-pika"
 version = "10.1.2"

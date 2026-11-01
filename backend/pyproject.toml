@@ -94,22 +94,6 @@ build-backend = "uv_build"
 [tool.uv]
 exclude-newer = "7 days"
 
-# Temporary: each cutoff admits the version locked when the cooldown was
-# adopted, uploaded less than seven days earlier, and nothing uploaded after
-# it, so that the adoption downgrades no package. Remove the table from
-# 2026-10-31T13:26:20Z, when every listed version is seven days old (issue
-# #1107).
-[tool.uv.exclude-newer-package]
-aio-pika = "2026-10-24T13:26:20Z"
-aiormq = "2026-10-24T12:36:23Z"
-alembic = "2026-10-22T03:24:38Z"
-certifi = "2026-10-20T02:24:17Z"
-fastapi = "2026-10-23T18:47:34Z"
-pydantic-settings = "2026-10-20T11:37:20Z"
-ruff = "2026-10-22T18:38:01Z"
-sqlalchemy = "2026-10-21T19:44:48Z"
-wcwidth = "2026-10-20T16:02:44Z"
-
 [tool.uv.build-backend]
 module-name = "app"
 module-root = ""
