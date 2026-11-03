@@ -1,4 +1,8 @@
-"""Behavioral tests for the portable command timeout supervisor."""
+"""Behavioral tests for the portable command timeout supervisor.
+
+The supervisor runs on `sys.executable`, the backend project's interpreter,
+which is also the one that `scripts/image-smoke.sh` runs it on (issue #1178).
+"""
 
 from __future__ import annotations
 

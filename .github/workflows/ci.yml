@@ -277,6 +277,12 @@ jobs:
         with:
           version: "0.13.6"
           enable-cache: true
+      # The harness runs its timeout supervisor on the project's interpreter,
+      # which it finds but does not install (docs/features/platform/
+      # testing-strategy.md, Image / Container Smoke Testing → Execution).
+      - name: Sync backend environment
+        working-directory: backend
+        run: uv sync --locked
       - name: Read Python version from .python-version
         id: python-version
         run: echo "version=$(cat backend/.python-version)" >> "$GITHUB_OUTPUT"
