@@ -435,41 +435,6 @@ class TestListEndpoint:
             authenticated_client, search="42", sort_by="ticket_id", sort_order="asc"
         ) == [_sntl(first), _sntl(second)]
 
-    async def test_current_due_sorts_reach_the_service(
-        self,
-        authenticated_client: AsyncClient,
-        fixed_clock: list[datetime],
-        ticket_factory: Factory,
-    ) -> None:
-        """`current_due_at` and `priority_then_current_due` (ticket-deadlines.md,
-        Current Due Date): `New` Tickets sort by `triage_due_at`, and the
-        combined value by the effective priority first, `desc` by default."""
-        early_p3 = await ticket_factory(
-            priority_auto=TicketPriority.P3.value, created_at=_CREATED_AT
-        )
-        late_p1 = await ticket_factory(
-            priority_auto=TicketPriority.P1.value,
-            created_at=_CREATED_AT + timedelta(hours=1),
-        )
-        late_p3 = await ticket_factory(
-            priority_auto=TicketPriority.P3.value,
-            created_at=_CREATED_AT + timedelta(hours=2),
-        )
-
-        assert await _ids(
-            authenticated_client, sort_by="current_due_at", sort_order="asc"
-        ) == [_sntl(early_p3), _sntl(late_p1), _sntl(late_p3)]
-        assert await _ids(
-            authenticated_client, sort_by="priority_then_current_due"
-        ) == [
-            _sntl(late_p1),
-            _sntl(early_p3),
-            _sntl(late_p3),
-        ]
-        assert await _ids(
-            authenticated_client, sort_by="priority_then_current_due", sort_order="asc"
-        ) == [_sntl(late_p3), _sntl(early_p3), _sntl(late_p1)]
-
     async def test_page_beyond_the_last_is_empty_with_the_correct_total(
         self,
         authenticated_client: AsyncClient,

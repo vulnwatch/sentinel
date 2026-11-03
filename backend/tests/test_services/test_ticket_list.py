@@ -1876,6 +1876,9 @@ class TestSorting:
         p3_future = await ticket_factory(
             priority_auto=TicketPriority.P3.value, created_at=_days(0)
         )
+        p4 = await ticket_factory(
+            priority_auto=TicketPriority.P4.value, created_at=_days(4)
+        )
         unprioritized_past = await ticket_factory(created_at=_days(-8))
         unprioritized_future = await ticket_factory(created_at=_days(1))
         unprioritized_without_due = await ticket_factory(
@@ -1888,11 +1891,13 @@ class TestSorting:
             p2,
             p3_past,
             p3_future,
+            p4,
             unprioritized_past,
             unprioritized_future,
             unprioritized_without_due,
         ]
         ascending = [
+            p4,
             p3_future,
             p3_past,
             p2,
@@ -1916,6 +1921,7 @@ class TestSorting:
             (TicketPriority.P2, _days(2)),
             (TicketPriority.P3, _days(-2)),
             (TicketPriority.P3, _days(3)),
+            (TicketPriority.P4, _days(7)),
             (None, _days(-5)),
             (None, _days(4)),
             (None, None),
@@ -1931,7 +1937,7 @@ class TestSorting:
         assert [item.ticket_id for p in pages for item in p.items] == [
             _sntl(t) for t in descending
         ]
-        assert {p.total for p in pages} == {9}
+        assert {p.total for p in pages} == {10}
         assert await _ids(db_session, sort_by=sort_by, status=[TicketStatus.NEW]) == [
             _sntl(t) for t in descending if t is not p1_without_due
         ]
