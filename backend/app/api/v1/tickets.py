@@ -5,7 +5,8 @@ Get Ticket, Response Schemas > TicketSummary and TicketDetail) for the
 authoritative endpoint contracts, Create Ticket for manual creation
 (`docs/features/tickets/ticket-service.md`, `create_ticket`), Associate
 CVE for the later association (`associate_cve`), Assign Ticket
-(`assign_ticket`), Set Priority Override
+(`assign_ticket`, and `unassign_ticket` for self-unassignment), Set
+Priority Override
 (`docs/features/tickets/ticket-priority.md`, `set_priority_override()`),
 Ignore Ticket (`ignore_ticket`), Mark Ticket as Duplicate
 (`mark_as_duplicate`), Reopen Ticket (`reopen_from_ignored`), Revert
@@ -114,6 +115,7 @@ from app.services.ticket_service import (
     TICKET_CONVERGENCE_DISPATCH_FAILED_MESSAGE,
     AccessGrantAction,
     AssigneeInactiveError,
+    AssigneeNotCallerError,
     AssigneeNotVAError,
     DuplicateConcurrentModificationError,
     DuplicateTargetIsDuplicatedError,
@@ -842,6 +844,14 @@ def _assignee_inactive_error() -> AppError:
     )
 
 
+def _assignee_not_caller_error() -> AppError:
+    return AppError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=ErrorCode.TICKET_ASSIGNEE_NOT_CALLER,
+        detail="Only the current assignee can unassign themselves.",
+    )
+
+
 @router.patch(
     "/tickets/{ticket_id}/priority",
     response_model=TicketDetailResponse,
@@ -922,11 +932,13 @@ async def set_ticket_priority(
     summary="Assign Ticket",
     description=(
         "Assigns or reassigns a Ticket to an active vulnerability analyst, "
-        "identified by UUID or exact username. A Ticket cannot be unassigned "
-        "through the API. Reassigning to the current assignee is an idempotent "
-        "success. A `new` Ticket moves to `analysis`, and the Ticket status is "
-        "re-evaluated. Returns the post-mutation Ticket detail. Requires "
-        "`triage_ticket`."
+        "identified by UUID or exact username. Reassigning to the current "
+        "assignee is an idempotent success. A `new` Ticket moves to `analysis`, "
+        "and the Ticket status is re-evaluated. JSON `null` instead unassigns "
+        "the caller, who must be the current assignee: the Ticket keeps its "
+        "status, and a Ticket without an assignee is an idempotent success. "
+        "Another user's assignment cannot be cleared, only reassigned. Returns "
+        "the post-mutation Ticket detail. Requires `triage_ticket`."
     ),
     responses={
         400: {
@@ -949,6 +961,8 @@ async def set_ticket_priority(
             "model": ErrorResponse,
             "description": (
                 "`TICKET_ASSIGNEE_INACTIVE`: the target user is inactive. "
+                "`TICKET_ASSIGNEE_NOT_CALLER`: `user_id` is `null` and another "
+                "user is the current assignee. "
                 "`TICKET_NOT_MUTABLE`: the Ticket is Ignored or Duplicated."
             ),
         },
@@ -972,22 +986,31 @@ async def assign_ticket(
     resolution and body validation. The UUID-or-username `user_id` is
     passed unchanged: `assign_ticket()` resolves and locks the target
     before the Ticket but reports its absence only after locked-current
-    Ticket accessibility and operability. The handler captures the one
-    workflow `evaluation_date`, reused by reconciliation and by the
-    `TicketDetail` assembled from the locked post-state inside the same
-    transaction (`docs/features/tickets/ticket-service.md`,
-    `get_ticket_detail()`).
+    Ticket accessibility and operability. JSON `null` routes to
+    `unassign_ticket()`, which locks only the Ticket (tickets.md,
+    Self-Unassignment). The handler captures the one workflow
+    `evaluation_date`, reused by reconciliation and by the `TicketDetail`
+    assembled from the locked post-state inside the same transaction
+    (`docs/features/tickets/ticket-service.md`, `get_ticket_detail()`).
     """
     evaluation_date = _utc_now().date()
     try:
-        await ticket_service.assign_ticket(
-            db,
-            ticket_id=ticket.id,
-            assignee=body.user_id,
-            acting_user_id=principal.user.id,
-            caller=caller,
-            evaluation_date=evaluation_date,
-        )
+        if body.user_id is None:
+            await ticket_service.unassign_ticket(
+                db,
+                ticket_id=ticket.id,
+                acting_user_id=principal.user.id,
+                caller=caller,
+            )
+        else:
+            await ticket_service.assign_ticket(
+                db,
+                ticket_id=ticket.id,
+                assignee=body.user_id,
+                acting_user_id=principal.user.id,
+                caller=caller,
+                evaluation_date=evaluation_date,
+            )
     except TicketNotFoundError:
         raise ticket_not_found_error() from None
     except TicketNotMutableError:
@@ -998,6 +1021,8 @@ async def assign_ticket(
         raise _assignee_inactive_error() from None
     except AssigneeNotVAError:
         raise _assignee_not_va_error() from None
+    except AssigneeNotCallerError:
+        raise _assignee_not_caller_error() from None
     detail = await ticket_service.assemble_ticket_detail(
         db, ticket_id=ticket.id, evaluation_date=evaluation_date
     )

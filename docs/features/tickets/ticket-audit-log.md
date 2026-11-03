@@ -33,7 +33,7 @@ event type.
 | `event_type` | Trigger | `user_id` | `old_value` | `new_value` | `comment` | `detail` |
 |---|---|---|---|---|---|---|
 | `status_change` | Ticket status transitions (manual or system-initiated) | Authorized acting user for direct manual transitions; `NULL` for derived or automatic transitions | Previous status (e.g., `New`) | New status (e.g., `Analysis`) | Exactly `CVE rejected` for CVE rejection; otherwise `NULL` | `NULL` |
-| `assignment` | Ticket assigned, reassigned, or system-unassigned | Authorized acting user for direct assignment and auto-assignment; `NULL` for system unassignment | Previous assignee username or `NULL` | New assignee username or `NULL` (unassigned) | `NULL` for assignment/reassignment; system unassignment uses `Unassigned from {username}: {reason}` with a closed reason below | `NULL` |
+| `assignment` | Ticket assigned, reassigned, unassigned by its assignee, or system-unassigned | Authorized acting user for direct assignment, auto-assignment, and self-unassignment; `NULL` for system unassignment | Previous assignee username or `NULL` | New assignee username or `NULL` (unassigned) | `NULL` for assignment, reassignment, and self-unassignment; system unassignment uses `Unassigned from {username}: {reason}` with a closed reason below | `NULL` |
 | `duplicate_set` | Ticket marked as duplicate | Authorized acting user | `NULL` | `SNTL-{n}` identifier of the original ticket | `NULL` | `NULL` |
 | `duplicate_removed` | Duplicate mark reverted | Authorized acting user | `SNTL-{n}` identifier of the original ticket | `NULL` | `NULL` | `NULL` |
 | `duplicate_target_changed` | Atomic repoint: the ticket's `duplicate_of_id` was updated within the same transaction as the triggering mark-as-duplicate operation, because the ticket's previous target was itself marked as duplicate | `NULL` | `SNTL-{n}` identifier of the previous target | `SNTL-{n}` identifier of the new target | `NULL` | `{"triggered_by_ticket": "SNTL-{n}"}` — the identifier of the ticket whose mark-as-duplicate operation triggered this repoint |
@@ -224,7 +224,7 @@ illustrative phrase or pass arbitrary text into a Ticket audit comment.
 | Post-ingest CVE package resolution | `CVE package resolution` |
 | Product catalog backfill | `Product catalog backfill` |
 | Ticket convergence package resolution | `Ticket convergence` |
-| Assignment, reassignment, assignment promotion, ordinary gate reconciliation, manual-zone entry or exit, and other normal status transitions | `NULL` |
+| Assignment, reassignment, self-unassignment, assignment promotion, ordinary gate reconciliation, manual-zone entry or exit, and other normal status transitions | `NULL` |
 | CVE rejection `New → Ignored` | `CVE rejected` |
 | System unassignment | `Unassigned from {username}: {reason}` |
 
@@ -260,6 +260,7 @@ an intentional no-event contract, not missing audit coverage.
 |---|---|---|---|
 | Ticket creation | `ticket_created` first, then optional `assignment`, optional `severity_changed`, optional `coordinated_release_changed`, optional `cve_associated`, and, for manual creation, optional system `priority_changed` | Direct creation events use the acting user; ingestion uses system | `ticket_service`; manual path locks User, then optional CVE before insert; system path locks optional CVE before insert |
 | Direct assignment or reassignment | One `assignment`; optional system `New → Analysis`; optional final gate event | Acting user for assignment, system for derived status | `ticket_service`; target User then Ticket |
+| Self-unassignment | One `assignment` with `new_value = NULL`; no status or other event | Acting user | `ticket_service`; Ticket |
 | Auto-assignment during an effective mutation | One `assignment`; system `New → Analysis` when applicable | Acting user for assignment, system for promotion | Owning mutation service; stabilized acting User then optional CVE then Ticket |
 | User deactivation, final VA-role loss, or assignment-eligibility sanitation | One `assignment` per effectively cleared non-NULL assignee | System | `user_service`: User `FOR NO KEY UPDATE` then ordered Ticket locks; reconciliation sanitation: existing Ticket lock plus a fresh unlocked User/role observation |
 | Ignore, mark duplicate, reopen, or revert duplicate | Direct `status_change`, `duplicate_set`, or `duplicate_removed` as applicable; one `duplicate_target_changed` per repointed dependent; derived Product, sanitation, and final status events retain their normal contracts | Acting user for the direct ignore, duplicate-set, or duplicate-remove decision; reopen's resulting gate status and all other derived consequences use system | `ticket_service`; Ticket, ordered multi-Ticket, or locked dependent roots as specified there |
@@ -329,12 +330,12 @@ then Ticket, deterministically ordered multiple Tickets, and assignment-capable
 User then optional CVE then ordered Tickets. A multi-User identity batch locks
 every User by UUID before the union of Ticket candidates by UUID. A username
 that the owning contract reads through a documented unlocked User observation
-under the Ticket lock (assignment-eligibility sanitation, or the previous
+under the Ticket lock (assignment-eligibility sanitation, the previous
 assignee replaced by `auto_assign_actor(force=True)` or by explicit
-`assign_ticket()`) is the event-time value
-of that observation. The central
-audit contract does not require every operation
-to route through `ticket_mutations` or acquire a Ticket lock first.
+`assign_ticket()`, or the caller cleared by `unassign_ticket()`) is the
+event-time value of that observation. The central audit contract does not
+require every operation to route through `ticket_mutations` or acquire a
+Ticket lock first.
 
 Every required event is inserted and flushed with the mutation in the same
 caller-owned transaction. Audit validation, insertion, or flush failure escapes

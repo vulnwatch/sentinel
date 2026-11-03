@@ -7,7 +7,8 @@ resolution), the Ticket list (`list_tickets()`), and the Ticket detail
 read in its consumer and mutation-assembly modes (Ticket Query
 Operations > `get_ticket_detail()`), Ticket creation
 (`create_ticket()`), CVE association (`associate_cve()`), explicit
-assignment (`assign_ticket()`), and the manual priority override
+assignment (`assign_ticket()`), self-unassignment (`unassign_ticket()`),
+and the manual priority override
 (`set_priority_override()`), the manual-zone entries (`ignore_ticket()`,
 `mark_as_duplicate()`, and the trusted system CVE-rejection boundary
 `ignore_new_for_rejected_cve()`), and the manual-zone exits
@@ -1232,6 +1233,14 @@ class AssigneeInactiveError(TicketServiceError):
         super().__init__("Assignee is inactive.")
 
 
+class AssigneeNotCallerError(TicketServiceError):
+    """Self-unassignment is requested while another user is the assignee.
+    Maps to `409 TICKET_ASSIGNEE_NOT_CALLER`. The message is static."""
+
+    def __init__(self) -> None:
+        super().__init__("Only the current assignee can unassign themselves.")
+
+
 class SelfDuplicateError(TicketServiceError):
     """A Ticket cannot be marked as a duplicate of itself. Maps to
     `400 TICKET_SELF_DUPLICATE`. The message is static."""
@@ -1781,6 +1790,80 @@ async def assign_ticket(
             new_value=TicketStatus.ANALYSIS.value,
         )
     await reconcile_ticket_status(ticket, db, evaluation_date=evaluation_date)
+    return ticket
+
+
+# ---------------------------------------------------------------------------
+# Self-unassignment (ticket-service.md, `unassign_ticket`)
+# ---------------------------------------------------------------------------
+
+
+async def unassign_ticket(
+    db: AsyncSession,
+    *,
+    ticket_id: UUID,
+    acting_user_id: UUID,
+    caller: TicketCaller,
+) -> Ticket:
+    """Clear the acting user's own assignment of a Ticket.
+
+    Category A consumer mutation (ticket-service.md, `unassign_ticket`;
+    tickets.md, Self-Unassignment, Assign Ticket).
+
+    Q1: `ticket_id` is the internal Ticket UUID (the API resolves the
+    public `SNTL-{n}` locator first). `acting_user_id` is the
+    authenticated caller; `caller` is the request-resolved caller
+    information whose `user_id` must identify `acting_user_id`.
+
+    Q2: the caller has verified `triage_ticket` and owns the transaction.
+    Locks only the Ticket `FOR UPDATE`: no User becomes the assignee, so
+    no User root is taken (`docs/conventions.md`, Cross-Domain Root Lock
+    Order).
+
+    Q3: (1)-(2) locks the Ticket and revalidates accessibility from
+    locked-current state; (3) `ensure_ticket_operable()`; (4) a Ticket
+    without an assignee is a no-op with no write or event; (5) another
+    assignee raises `AssigneeNotCallerError`; (6) observes the caller's
+    username with one unlocked read under the Ticket lock, as the
+    event-time snapshot; (7)-(8) clears the assignee and creates one
+    `assignment` event attributed to the caller (`old_value` that
+    username, `new_value` `NULL`). Never changes the status, calls
+    `reconcile_ticket_status()` or `auto_assign_actor()`, registers a
+    convergence effect, reads audit history, or commits.
+
+    Q4: returns the locked Ticket in its post-mutation state.
+
+    Q5: re-invocation is the step-4 no-op.
+
+    Q6: raises `ValueError` before any database operation when `caller`
+    does not identify `acting_user_id`. Raises `TicketNotFoundError` for
+    a missing or inaccessible Ticket, `TicketNotMutableError` for
+    `Ignored` or `Duplicated`, then `AssigneeNotCallerError`. Audit,
+    database, and flush exceptions propagate and roll back the caller's
+    transaction.
+    """
+    if caller.user_id != acting_user_id:
+        raise ValueError("caller must identify the acting user.")
+
+    ticket = await lock_accessible_ticket(db, ticket_id, caller)
+    ensure_ticket_operable(ticket)
+    if ticket.assignee_id is None:
+        return ticket
+    if ticket.assignee_id != acting_user_id:
+        raise AssigneeNotCallerError()
+
+    username = (
+        await db.execute(select(User.username).where(User.id == acting_user_id))
+    ).scalar_one()
+    ticket.assignee_id = None
+    await TicketAuditLog.log_event(
+        db,
+        ticket_id=ticket.id,
+        event_type=TicketAuditEventType.ASSIGNMENT,
+        user_id=acting_user_id,
+        old_value=username,
+        new_value=None,
+    )
     return ticket
 
 

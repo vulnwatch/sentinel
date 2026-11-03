@@ -667,6 +667,33 @@ inactive-status Ticket returns to `Analysis` or `Analyzed`; it is not the
 primary repair for an assignment race. Deferred external-origin behavior is
 owned by `identity-provisioning.md`.
 
+### Self-Unassignment
+
+The current assignee can unassign themselves through the explicit assignment
+endpoint with `user_id: null` ([Assign Ticket](#assign-ticket)), for example to
+return a Ticket that they no longer work on, or that auto-assignment gave them,
+to the unassigned queue (`?assignee=none`). Only the current assignee can clear
+their own assignment. No user operation unassigns another user: apart from
+system-initiated unassignment (above), a Ticket assigned to someone else can
+only be reassigned, and handing a Ticket to a named colleague remains an
+explicit reassignment.
+
+- Self-unassignment applies in the same statuses as reassignment: every status
+  except `Ignored` and `Duplicated`.
+- It clears `assignee_id` and creates one `assignment` audit event attributed to
+  the caller. It does not change the Ticket status, reconcile gates, or
+  auto-assign: the Ticket keeps its status and awaits a new assignee (see
+  [Architectural Invariant](#architectural-invariant)).
+- On a Ticket without an assignee it is an idempotent success with no effect.
+  When another user is the assignee it is rejected with 409
+  `TICKET_ASSIGNEE_NOT_CALLER`.
+
+Auto-assignment is unchanged: a later effective modifying operation by the same
+active VA assigns the Ticket to them again (see
+[Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets)).
+See [ticket-service.md](ticket-service.md#unassign_ticket) for the
+service-layer contract.
+
 ### Auto-Assignment on Unassigned Tickets
 
 When an active user with the `vulnerability_analyst` role performs any
@@ -1875,8 +1902,9 @@ PATCH /api/v1/tickets/{ticket_id}/assignee
 **`Capability: triage_ticket`**
 - **Response schema**: `TicketDetail`
 
-Assigns or reassigns a ticket. See
-[Reassignment](#reassignment) for reassignment rules and
+Assigns or reassigns a ticket, or lets its current assignee unassign
+themselves. See [Reassignment](#reassignment) for reassignment rules,
+[Self-Unassignment](#self-unassignment) for unassignment, and
 [Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets)
 for auto-assignment behavior.
 
@@ -1888,21 +1916,36 @@ Request body:
 }
 ```
 
-- `user_id` (string, required): UUID or username of the target user. The
-  target must be active and hold the `vulnerability_analyst` role.
+Self-unassignment request:
 
-> **No unassignment by design**: the `user_id` field is required and
-> cannot be null. Via the API, a ticket can only be **reassigned** to
-> another active VA — never unassigned. This enforces explicit handover.
-> System-initiated unassignment may occur as a side effect of user
-> deactivation or VA role loss (see
-> [user-service.md](../identity/user-service.md#deactivate_user)); the
-> unassignment clears `assignee_id` but does **not** change the ticket
-> status — the ticket remains in its current gate-zone status and appears
-> in the unassigned ticket queue (`?assignee=none`) awaiting
-> reassignment (see
-> [ticket-mutations.md](ticket-mutations.md#assignment-eligibility-sanitization)
-> and the [Architectural Invariant](#architectural-invariant)).
+```json
+{
+  "user_id": null
+}
+```
+
+- `user_id` (string | null, required): a string is the UUID or username of the
+  target user, who must be active and hold the `vulnerability_analyst` role,
+  and assigns or reassigns the Ticket through `ticket_service.assign_ticket()`.
+  JSON `null` clears the caller's own assignment through
+  `ticket_service.unassign_ticket()`. An omitted field or a value of another
+  type produces the global `422 VALIDATION_ERROR`
+
+`null` never clears another user's assignment: a Ticket assigned to someone
+else can only be reassigned. The target-user errors (`USER_NOT_FOUND`,
+`TICKET_ASSIGNEE_NOT_VA`, `TICKET_ASSIGNEE_INACTIVE`) apply only to a string
+`user_id`, and `TICKET_ASSIGNEE_NOT_CALLER` only to `null`. For both forms,
+Ticket accessibility (`404 TICKET_NOT_FOUND`) and operability (`409
+TICKET_NOT_MUTABLE`) precede every endpoint-specific error.
+
+System-initiated unassignment may also occur as a side effect of user
+deactivation or VA role loss (see
+[user-service.md](../identity/user-service.md#deactivate_user)). Neither
+self-unassignment nor system unassignment changes the ticket status: the ticket
+remains in its current status and appears in the unassigned ticket queue
+(`?assignee=none`) awaiting a new assignee (see
+[ticket-mutations.md](ticket-mutations.md#assignment-eligibility-sanitization)
+and the [Architectural Invariant](#architectural-invariant)).
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
@@ -1914,6 +1957,7 @@ Response: `TicketDetail` object in standard `{"data": ...}` envelope
 | 400 | `TICKET_ASSIGNEE_NOT_VA` | Target user does not hold the Vulnerability Analyst role |
 | 404 | `USER_NOT_FOUND` | Target user not found |
 | 409 | `TICKET_ASSIGNEE_INACTIVE` | Target user is inactive |
+| 409 | `TICKET_ASSIGNEE_NOT_CALLER` | `user_id` is `null` and another user is the current assignee |
 
 ### Ignore Ticket
 
@@ -2371,9 +2415,9 @@ table:
   `TicketAccessGrant` or included-package maintainer association) — see
   [Confidential Tickets](#confidential-tickets)
 - Creating tickets: `create_ticket` capability
-- Assigning, changing status, associating CVE, setting manual severity, and
-  setting, changing, or clearing the priority override: `triage_ticket`
-  capability
+- Assigning, unassigning oneself, changing status, associating CVE, setting
+  manual severity, and setting, changing, or clearing the priority override:
+  `triage_ticket` capability
 - Refetching an accessible CVE: `triage_ticket` capability
 - Rerunning complete Ticket convergence: `triage_ticket` OR
   `manage_fetchers`, plus ordinary Ticket visibility

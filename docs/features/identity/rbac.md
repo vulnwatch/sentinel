@@ -22,7 +22,7 @@ endpoint contract.
 | Capability | Operations Covered |
 |---|---|
 | `create_ticket` | Create ticket manually |
-| `triage_ticket` | Assign/reassign ticket, change ticket status (all transitions: ignore, reopen, duplicate, revert-duplicate), associate CVE with ticket, set/update manual severity, set/change/clear the priority override, refetch an accessible CVE, rerun complete Ticket convergence |
+| `triage_ticket` | Assign/reassign ticket, unassign oneself from a ticket, change ticket status (all transitions: ignore, reopen, duplicate, revert-duplicate), associate CVE with ticket, set/update manual severity, set/change/clear the priority override, refetch an accessible CVE, rerun complete Ticket convergence |
 | `manage_packages` | Add/remove packages from tickets, exclude/restore (package, track, product), change track affectedness to any non-`FIXED` status, set `FIXED` only on a locked-current CVE-less Ticket, override product eligibility |
 | `manage_cvss` | Add/edit/delete SUSE CVSS assessments |
 | `manage_references` | Add/edit/delete ticket references |
@@ -247,7 +247,7 @@ no response to a caller that the operation does not already admit.
 | Action | Required Capability |
 |---|---|
 | Create ticket manually | `create_ticket` |
-| Assign/reassign ticket | `triage_ticket` |
+| Assign/reassign ticket, or unassign oneself from it | `triage_ticket` |
 | Change ticket status (ignore, reopen, duplicate, revert-duplicate) | `triage_ticket` |
 | Associate CVE with ticket | `triage_ticket` |
 | Set/update manual severity | `triage_ticket` |

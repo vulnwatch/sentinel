@@ -3,11 +3,10 @@
 ## Purpose
 
 Centralize Ticket reads, lifecycle operations, and cross-domain Ticket
-compositions — listing, detail assembly, creation, CVE association, assignment,
-priority override, manual-zone entry and exit, and confidentiality management,
-including the Coordinated Release Date — in a single
-service module
-(`ticket_service`). This ensures that:
+compositions — listing, detail assembly, creation, CVE association, assignment
+and self-unassignment, priority override, manual-zone entry and exit, and
+confidentiality management, including the Coordinated Release Date — in a
+single service module (`ticket_service`). This ensures that:
 
 - `FOR UPDATE` locking is consistently applied on the Ticket row
 - every `TicketAuditEvent` required by the owning domain contract is created
@@ -100,13 +99,14 @@ the dataset user that stands for the authenticated caller
 inherently user-initiated — there is no system scenario for granting or
 revoking explicit access.
 
-`assign_ticket()`, `set_priority_override()`, `ignore_ticket()`,
-`mark_as_duplicate()`, `revert_duplicate()`, `set_confidentiality()`,
-`set_coordinated_release_date()`, and direct access-grant operations require a
-non-null authorized acting user. Their API handlers must
-not use system attribution. `create_ticket()` and `reopen_from_ignored()` retain
-their documented system callers. `ignore_new_for_rejected_cve()` is exclusively
-system-only and has no actor parameter.
+`assign_ticket()`, `unassign_ticket()`, `set_priority_override()`,
+`ignore_ticket()`, `mark_as_duplicate()`, `revert_duplicate()`,
+`set_confidentiality()`, `set_coordinated_release_date()`, and direct
+access-grant operations require a non-null authorized acting user. Their API
+handlers must not use system attribution. `create_ticket()` and
+`reopen_from_ignored()` retain their documented system callers.
+`ignore_new_for_rejected_cve()` is exclusively system-only and has no actor
+parameter.
 
 ### Caller category and Ticket accessibility
 
@@ -215,12 +215,14 @@ pessimistic locking pattern defined in `docs/conventions.md`
 (Concurrency Control). Every such operation acquires `FOR UPDATE` on the
 Ticket row as its first root operation unless it can assign a User.
 
-Every user-attributed path that can create or change an assignment first
-acquires `FOR SHARE` on the prospective assignee User and validates eligibility
-from that locked row. It then acquires any CVE and Ticket roots in the global
+Every user-attributed path that can make a User the assignee first acquires
+`FOR SHARE` on that prospective assignee User and validates eligibility from
+that locked row. It then acquires any CVE and Ticket roots in the global
 `User -> CVE -> Ticket` order. The User lock is retained until transaction
 completion and conflicts with deactivation or a potentially final VA-origin
 removal. System-only paths that do not assign acquire no User lock.
+`unassign_ticket()` only clears the caller's own assignment and makes no User
+the assignee, so it locks only the Ticket.
 
 For operations whose existing error precedence requires Ticket accessibility or
 operability before a missing or ineligible assignment target is reported, User
@@ -820,6 +822,85 @@ ordinary gate events use `comment = NULL`.
 **auto_assign_actor**: Not called — this operation performs an explicit
 assignment to a specified user, which supersedes implicit
 auto-assignment of the acting user.
+
+### unassign_ticket
+
+Clears the acting user's own assignment of a Ticket (see
+[tickets.md](tickets.md#self-unassignment), Self-Unassignment).
+
+```python
+async def unassign_ticket(
+    db: AsyncSession,
+    *,
+    ticket_id: UUID,
+    acting_user_id: UUID,
+) -> Ticket:
+```
+
+`acting_user_id` is the authenticated caller, whose request-resolved caller
+information drives locked-current accessibility (see Caller category and
+Ticket accessibility). The API passes it for `PATCH .../assignee` with
+`user_id: null`. The operation takes no evaluation date because it neither
+reconciles nor changes any dated state.
+
+**Behavioral steps**:
+
+1. Acquire `FOR UPDATE` on the Ticket row. No User lock is acquired: the
+   operation makes no User the assignee (see Concurrency control)
+2. Revalidate consumer accessibility from the locked-current Ticket; denial
+   raises `TicketNotFoundError` before every other decision
+3. Call `ensure_ticket_operable(ticket)`: `Ignored` and `Duplicated` raise
+   `TicketNotMutableError`
+4. **Idempotency check**: if `ticket.assignee_id` is `NULL`, return the Ticket
+   unchanged (no write, no audit event)
+5. If `ticket.assignee_id` is not `acting_user_id`, raise
+   `AssigneeNotCallerError` with no effect
+6. Observe the caller's current username with one unlocked PostgreSQL read
+   under the Ticket lock. It is the event-time snapshot of the previous
+   assignee, as for the previous assignee of `assign_ticket()`, and is not an
+   eligibility decision
+7. Set `ticket.assignee_id = NULL`
+8. Create `TicketAuditEvent` (`assignment`, `user_id = acting_user_id`,
+   `old_value` = the observed username, `new_value = NULL`, `comment = NULL`,
+   `detail = NULL`)
+9. Return the locked Ticket in its post-mutation state
+
+Self-unassignment is valid in `New`, `Analysis`, `Analyzed`, and `Resolved`.
+Every assigning path promotes `New` to `Analysis`, so a `New` Ticket ordinarily
+has no assignee and step 4 returns it unchanged; an anomalous `New` assignment
+to the caller is cleared by steps 6–8 without a status change.
+
+**Locking**: `FOR UPDATE` on the Ticket only.
+
+**Concurrency**: the operation serializes with every other Ticket mutation on
+the Ticket lock and classifies its result from the locked-current assignee.
+If a reassignment to another user commits first, the waiter raises
+`AssigneeNotCallerError`. If deactivation or final VA-origin loss of the caller
+commits first, the waiter is a no-op for a `New`, `Analysis`, or `Analyzed`
+Ticket, whose assignment the identity batch already cleared, and clears a
+`Resolved` assignment, which the batch preserved. If self-unassignment commits
+first, the identity batch observes a Ticket no longer assigned to that user and
+creates no `assignment` event for it
+(`docs/features/identity/user-service.md`, `_unassign_active_tickets()`). A
+concurrent self-unassignment by the same user produces one effective clear and
+one no-op.
+
+**reconcile_ticket_status**: NOT called — assignment is not a gate input, and
+Ticket status reflects work state, not staffing state (Architectural Invariant
+in `tickets.md`). No Ticket convergence effect is registered.
+
+**auto_assign_actor**: Not called. The operation never assigns anyone, the
+caller included.
+
+**Audit events**: one `assignment` event, only for an effective clear (step 8).
+No status, Product, priority, or other event.
+
+**Transaction and exceptions**: the function flushes but neither commits nor
+rolls back. It propagates `TicketNotFoundError`, `TicketNotMutableError`,
+`AssigneeNotCallerError`, and database, audit, and flush failures; any failure
+or caller rollback leaves neither the cleared assignee nor the event. The API
+returns the `TicketDetail` projection of the post-mutation Ticket under
+[`get_ticket_detail()`](#get_ticket_detail).
 
 ### set_priority_override
 
@@ -1849,6 +1930,7 @@ to the corresponding HTTP status code and error code per `api-spec.md`.
 | `TicketCVEConflictError` | 409 | `TICKET_CVE_CONFLICT` | CVE is already associated with another ticket |
 | `AssigneeNotVAError` | 400 | `TICKET_ASSIGNEE_NOT_VA` | Target user lacks the vulnerability_analyst role |
 | `AssigneeInactiveError` | 409 | `TICKET_ASSIGNEE_INACTIVE` | Target user is inactive (for assignment) |
+| `AssigneeNotCallerError` | 409 | `TICKET_ASSIGNEE_NOT_CALLER` | Self-unassignment is requested while another user is the assignee |
 | `InactiveUserError` † | 409 | `USER_INACTIVE` | A new access grant is requested for an inactive target that has no existing grant |
 | `SelfDuplicateError` | 400 | `TICKET_SELF_DUPLICATE` | Ticket cannot be marked as duplicate of itself |
 | `DuplicateTargetIsDuplicatedError` | 409 | `TICKET_DUPLICATE_TARGET_DUPLICATED` | Target ticket is already in Duplicated status |
@@ -1886,6 +1968,7 @@ ticket_mutations (infrastructure)
 | create_ticket          | —                      | —                      | —                     | —                     | —                   |
 | associate_cve          | ✓                      | ✓                      | ✓                     | ✓                     | —                   |
 | assign_ticket          | ✓                      | ✓                      | —                     | —                     | —                   |
+| unassign_ticket        | ✓                      | —                      | —                     | —                     | —                   |
 | set_priority_override  | ✓                      | ✓                      | —                     | ✓                     | —                   |
 | ignore_ticket          | ✓                      | —                      | —                     | ✓                     | —                   |
 | ignore_new_for_rejected_cve | —                  | —                      | —                     | —                     | —                   |
@@ -2052,6 +2135,24 @@ behavior of `ticket_service` operations:
     event after optional `severity_changed` and before optional
     `cve_associated`; creation with a CRD without confidential creation, or
     through the ingestion source, raises `ValueError` before database access
+21. **Self-unassignment**: `unassign_ticket()` clears the caller's own
+    assignment in `Analysis`, `Analyzed`, and `Resolved` without changing the
+    status, with one `assignment` event (`user_id` the caller, `old_value` the
+    caller's username, `new_value`, `comment`, and `detail` `NULL`); an
+    unassigned Ticket is a no-op with no event; another assignee raises
+    `AssigneeNotCallerError` with no effect; accessibility precedes
+    operability, which precedes the assignee checks; a visibility loss
+    committed before the Ticket lock is denied as in item 15; no
+    reconciliation, auto-assignment, or convergence registration occurs; audit
+    or flush failure rolls back the clear and the event together. The absence
+    of a User lock is proven by completion while an independent session holds
+    the caller's User `FOR NO KEY UPDATE`. Independent sessions also cover a
+    reassignment winner (rejection), a deactivation winner (no-op for
+    `Analysis`, clear for `Resolved`), two concurrent self-unassignments (one
+    event), and a self-unassignment that holds the Ticket lock while a
+    deactivation of the caller holds the User and waits for that Ticket: both
+    commit without deadlock, and the batch creates no system `assignment`
+    event for that Ticket
 
 ## Cross-references
 
