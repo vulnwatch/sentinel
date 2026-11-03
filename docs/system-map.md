@@ -684,7 +684,8 @@ deactivation and active manual final-VA-origin loss lock the same User
 incompatibly and then clear active-status assignments in Ticket UUID order.
 Reconciliation defensively clears an inactive or non-VA assignee when its final
 gate result is `Analysis` or `Analyzed`, while `Resolved` preserves the current
-assignee.
+assignee. The current assignee can also clear their own assignment under the
+Ticket lock alone, without a status change.
 
 ### Ticket Status Zones
 

@@ -978,8 +978,8 @@ system operation that cannot create or change an assignment likewise needs no
 User lock merely because it mutates a Ticket. Foreign-key validation and
 unlocked User observations are not additional roots in this protocol.
 
-Every user-attributed path that can create or change `Ticket.assignee_id`
-acquires `FOR SHARE` on the prospective assignee User before its CVE or Ticket
+Every user-attributed path that can set `Ticket.assignee_id` to a User
+acquires `FOR SHARE` on that prospective assignee User before its CVE or Ticket
 root. It retains that lock through assignment eligibility validation and the
 Ticket mutation. Assignment paths may therefore proceed concurrently toward
 the same User. A User lifecycle or role-origin mutation that can make an
@@ -989,7 +989,9 @@ lock modes conflict with one another, so assignment and eligibility loss have
 one stable serialization point, while ordinary foreign-key `FOR KEY SHARE`
 validation remains compatible. A mutation that can only make a User eligible,
 such as reactivation, may retain its owning specification's same or stronger
-User lock.
+User lock. A user-attributed path that only clears the caller's own
+assignment, such as self-unassignment, makes no User an assignee and acquires
+no User root.
 
 The active contract currently applies this role-origin rule to manual role
 mutation. Deferred external-provisioning and `RoleMapping` workflows must

@@ -442,7 +442,7 @@ module functions. This prevents non-gate operations (assignment,
 duplicate set/revert, ignore)
 from racing with gate operations on the same ticket.
 
-An operation that can create or change `assignee_id` is the cross-domain
+An operation that can set `assignee_id` to a User is the cross-domain
 exception to Ticket-first acquisition. Before any CVE or Ticket lock, it
 acquires `FOR SHARE` on the prospective assignee User and retains that lock
 through the assignment decision and Ticket mutation. It then follows the
@@ -450,7 +450,9 @@ ordinary CVE-then-Ticket or Ticket-only order. `auto_assign_actor()` receives
 that stabilized User and performs no query or lock on it after the Ticket lock;
 its only User read is the unlocked previous-assignee username observation of a
 `force = True` replacement (see `auto_assign_actor()` step 6). System paths and
-paths that cannot assign acquire no User lock.
+paths that cannot assign acquire no User lock, including self-unassignment
+(`ticket_service.unassign_ticket()`), which only clears the caller's own
+assignment.
 
 ### Single-ticket scope
 
@@ -557,7 +559,7 @@ function.
 | Module | Functions that call `ensure_ticket_operable` |
 |--------|----------------------------------------------|
 | `ticket_mutations` | Manual-SUSE `upsert_cvss_assessment`, `delete_cvss_assessment`, `set_severity_manual` |
-| `ticket_service` | `associate_cve`, `assign_ticket`, `ignore_ticket`, `mark_as_duplicate`, `set_priority_override` |
+| `ticket_service` | `associate_cve`, `assign_ticket`, `unassign_ticket`, `ignore_ticket`, `mark_as_duplicate`, `set_priority_override` |
 | `package_service` | Gate-relevant mutations call the guard; `set_track_delivery_status` also calls it for operability but remains outside assignment, audit, and Ticket reconciliation |
 
 Trusted external ingestion does not call this guard. It may maintain
@@ -1358,9 +1360,9 @@ async def auto_assign_actor(
 
 ## Related Operations
 
-Ticket lifecycle operations and cross-domain compositions (assignment, CVE
-association, manual-zone entry and exit, confidentiality, and access-grant
-management) live in `ticket_service` —
+Ticket lifecycle operations and cross-domain compositions (assignment and
+self-unassignment, CVE association, manual-zone entry and exit,
+confidentiality, and access-grant management) live in `ticket_service` —
 see [ticket-service.md](ticket-service.md) for the full service contract.
 
 These operations use the same `FOR UPDATE` pattern documented in
