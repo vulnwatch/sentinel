@@ -30,6 +30,7 @@ import json
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Final
 
 import pytest
@@ -1218,7 +1219,9 @@ class TestDefaults:
         async def recorded(seconds: float) -> None:
             slept.append(seconds)
 
-        monkeypatch.setattr(asyncio, "sleep", recorded)
+        monkeypatch.setattr(
+            ibs_consumer_status, "asyncio", SimpleNamespace(sleep=recorded)
+        )
 
         await ibs_consumer_status._sleep(30.0)
 

@@ -2,15 +2,16 @@
 (backend/app/services/http_client.py).
 
 All tests are unit tests: no database, no real network I/O, no real
-sleeps. Retry sleeps are verified via a monkeypatched `asyncio.sleep`
-that records call arguments instead of waiting. TLS tests never rely on
-the default `SUSE_CA_CERT_PATH` (or the process CWD) — every path is
-passed explicitly.
+sleeps. Retry sleeps are verified by replacing the module's `asyncio`
+binding with one whose `sleep` records call arguments instead of
+waiting; the shared `asyncio` module stays untouched, so other
+coroutines on the session event loop keep sleeping for real. TLS tests
+never rely on the default `SUSE_CA_CERT_PATH` (or the process CWD) —
+every path is passed explicitly.
 """
 
 from __future__ import annotations
 
-import asyncio
 import gzip
 import ssl
 import tracemalloc
@@ -18,6 +19,7 @@ import zlib
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Final
 from unittest.mock import AsyncMock
 
@@ -1151,7 +1153,7 @@ def _request(method: str = "GET") -> httpx.Request:
 @pytest.fixture
 def mock_sleep(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     sleep_mock = AsyncMock()
-    monkeypatch.setattr(asyncio, "sleep", sleep_mock)
+    monkeypatch.setattr(hc, "asyncio", SimpleNamespace(sleep=sleep_mock))
     return sleep_mock
 
 
@@ -1534,7 +1536,7 @@ class TestRetrySleepCancellation:
         async def _tracking_sleep(seconds: float) -> None:
             calls.append(seconds)
 
-        monkeypatch.setattr(asyncio, "sleep", _tracking_sleep)
+        monkeypatch.setattr(hc, "asyncio", SimpleNamespace(sleep=_tracking_sleep))
         script = [_response(500), _response(200)]
         inner = _ScriptedTransport(script)
         transport = hc._RetryTransport(inner, retry_non_idempotent=False)
