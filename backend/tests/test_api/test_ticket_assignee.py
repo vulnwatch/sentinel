@@ -277,9 +277,6 @@ class TestTicketNotFound:
             # The target's absence is never disclosed for an inaccessible
             # Ticket (ticket-service.md, Concurrency control).
             pytest.param("absent", id="absent-target"),
-            # Self-unassignment never discloses the assignee of an
-            # inaccessible Ticket.
-            pytest.param("null", id="self-unassignment"),
         ],
     )
     async def test_inaccessible_ticket_is_indistinguishable_from_a_missing_one(
@@ -292,13 +289,11 @@ class TestTicketNotFound:
         target_kind: str,
     ) -> None:
         hidden: Ticket = await ticket_factory(is_confidential=True)
-        identifier: str | None
-        if target_kind == "eligible":
-            identifier = str((await target_user()).id)
-        elif target_kind == "absent":
-            identifier = str(uuid.uuid7())
-        else:
-            identifier = None
+        identifier = (
+            str((await target_user()).id)
+            if target_kind == "eligible"
+            else str(uuid.uuid7())
+        )
         before = await ticket_row(db_session, hidden.id)
 
         inaccessible = await authenticated_client.patch(
@@ -606,29 +601,18 @@ class TestErrorMappings:
         assert await ticket_row(db_session, target.id) == before
         assert await event_count(db_session, target.id) == 0
 
-    @pytest.mark.parametrize(
-        ("status", "assignee", "expected"),
-        [
-            pytest.param(
-                TicketStatus.ANALYSIS, "other", _ASSIGNEE_NOT_CALLER, id="not-caller"
-            ),
-            pytest.param(TicketStatus.IGNORED, "caller", NOT_MUTABLE, id="not-mutable"),
-        ],
-    )
-    async def test_self_unassignment_rejection_returns_its_complete_body(
+    async def test_self_unassignment_of_another_assignee_returns_not_caller(
         self,
         authenticated_client: AsyncClient,
         va_user: User,
         db_session: AsyncSession,
         ticket_factory: Factory,
         target_user: TargetUser,
-        status: TicketStatus,
-        assignee: str,
-        expected: dict[str, str],
     ) -> None:
-        assignee_id = (await target_user()).id if assignee == "other" else va_user.id
+        """The mapping of the new code; the shared mappings (not found, not
+        mutable) and the guard order are proven once at the service tier."""
         target: Ticket = await ticket_factory(
-            status=status.value, assignee_id=assignee_id
+            status=TicketStatus.ANALYSIS.value, assignee_id=(await target_user()).id
         )
         before = await ticket_row(db_session, target.id)
 
@@ -637,7 +621,7 @@ class TestErrorMappings:
         )
 
         assert response.status_code == 409
-        assert response.json() == expected
+        assert response.json() == _ASSIGNEE_NOT_CALLER
         assert await ticket_row(db_session, target.id) == before
         assert await event_count(db_session, target.id) == 0
 
