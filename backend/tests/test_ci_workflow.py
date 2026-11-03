@@ -482,7 +482,7 @@ def test_pip_audit_audits_the_hashed_locked_set_on_the_project_python(
     tmp_path: Path,
 ) -> None:
     # With hashes, --disable-pip audits the exported set as it is, instead
-    # of installing it into an environment of the host interpreter where
+    # of installing it into an environment of the tool's interpreter where
     # pip's own dependencies hide a locked package; --strict fails on a
     # package that cannot be audited. Issue #1103.
     result, runner_temp, uv_log, uvx_log = _run_audit_step(tmp_path)

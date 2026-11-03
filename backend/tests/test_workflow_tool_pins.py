@@ -10,10 +10,12 @@ dropped from dependency extraction rather than rejected. See issue #1060. The
 and digest, through `scripts/lint-shell.sh` (issue #1099). Every `uvx` tool, in
 a workflow, a script, a Git hook, or the `Makefile`, runs on the project's
 Python version (issue #1103) and with the backend's release-age cooldown
-(issue #1014). The image scan runs Trivy from its image, pinned
-by version and digest, which Renovate looks up on Docker Hub (issue #1097). The
-Swagger UI of the API's `/api/docs` page shares the GitHub Pages site's pin, and
-the site enables the operation filter (issue #1070).
+(issue #1014), and every workflow that sets up uv runs the project only on a
+uv-managed interpreter, which follows the pinned uv (issue #1177). The image
+scan runs Trivy from its image, pinned by version and digest, which Renovate
+looks up on Docker Hub (issue #1097). The Swagger UI of the API's `/api/docs`
+page shares the GitHub Pages site's pin, and the site enables the operation
+filter (issue #1070).
 
 The workflows are parsed as YAML (`tests/support/yaml_files.py`); only the
 `Makefile`, the scripts and the Git hooks, the `/api/docs` page module, and the
@@ -112,6 +114,19 @@ def _shell_lint_pins() -> list[re.Match[str]]:
 
 def _workflow_files() -> list[Path]:
     return sorted({*WORKFLOWS_DIR.glob("*.yml"), *WORKFLOWS_DIR.glob("*.yaml")})
+
+
+def _setup_uv_workflows() -> list[Path]:
+    """Every workflow with an `astral-sh/setup-uv` step."""
+    return [
+        path
+        for path in _workflow_files()
+        if any(
+            str(step.get("uses", "")).startswith("astral-sh/setup-uv@")
+            for job in workflow_jobs(load_yaml_file(path)).values()
+            for step in job_steps(job)
+        )
+    ]
 
 
 def _uvx_sources() -> dict[str, list[str]]:
@@ -337,6 +352,37 @@ def test_uvx_tools_run_on_the_project_python() -> None:
     ]
 
     assert without_project_python == []
+
+
+@pytest.mark.unit
+def test_setup_uv_workflows_run_the_project_only_on_managed_interpreters() -> None:
+    # uv prefers a managed interpreter but falls back to one that the runner
+    # image provides, which then chooses the interpreter of CI outside the
+    # pinned uv (docs/conventions.md, Runtime Version; issue #1177). The
+    # workflow-level setting reaches every job, step, and script that runs uv,
+    # and no job or step may override it.
+    preference_variables = {
+        "UV_MANAGED_PYTHON",
+        "UV_NO_MANAGED_PYTHON",
+        "UV_PYTHON_PREFERENCE",
+    }
+    workflows = _setup_uv_workflows()
+    without_managed_python: list[str] = []
+    overrides: list[str] = []
+    for path in workflows:
+        workflow = load_yaml_file(path)
+        if workflow.get("env", {}).get("UV_MANAGED_PYTHON") != "1":
+            without_managed_python.append(path.name)
+        for job_id, job in workflow_jobs(workflow).items():
+            for scope in [job, *job_steps(job)]:
+                names = preference_variables & scope.get("env", {}).keys()
+                overrides.extend(
+                    f"{path.name}: {job_id}: {name}" for name in sorted(names)
+                )
+
+    assert workflows
+    assert without_managed_python == []
+    assert overrides == []
 
 
 @pytest.mark.unit

@@ -1401,7 +1401,7 @@ the Python runtime version used across all environments:
 | Consumer | How it reads the source of truth |
 |---|---|
 | Local development (pyenv, uv, mise) | Reads `backend/.python-version` natively |
-| CI project commands (`uv sync`, `uv run` after `astral-sh/setup-uv`) | `uv` reads `backend/.python-version` natively |
+| CI project commands (`uv sync`, `uv run` after `astral-sh/setup-uv`) | `uv` reads `backend/.python-version` natively and uses only an interpreter that it manages (see below) |
 | Python tools run as `uvx <package>@<version>` | `uvx` ignores `.python-version` and would use the first interpreter that `uv` finds, so each invocation passes the file's value in `UV_PYTHON` (see `docs/deployment.md`, Workflow Conventions) |
 | Dockerfile | `ARG PYTHON_VERSION=<value>` default; CI passes `--build-arg` from source of truth |
 | ruff `target-version` | Inferred from `requires-python` in `pyproject.toml` (no explicit `target-version`) |
@@ -1416,6 +1416,22 @@ The `.python-version` file uses **minor-version granularity** (e.g.,
 Docker image tag suffix, a `setup-python` specifier, and a pyenv/uv
 prefix match. Patch-level reproducibility is captured by Docker image
 digests and lockfiles, not by the version pin.
+
+Each consumer therefore selects the patch release within the minor on its
+own. The image runs the patch release of its digest-pinned base image
+(`docs/deployment.md`, Container Build Conventions, Base image pinning).
+In CI, every workflow with an `astral-sh/setup-uv` step sets
+`UV_MANAGED_PYTHON: "1"` in its workflow-level `env`, so uv uses only an
+interpreter that it manages, never one that the runner image provides:
+it downloads the latest patch release of the minor that the pinned uv
+knows, verified against the checksum embedded in the uv binary. The CI
+patch release thus follows the pinned uv, which Renovate updates under
+the release-age cooldown (`docs/deployment.md`, Workflow Conventions),
+and not the runner image; it can differ from the image's, and no check
+compares the two. Without the setting, uv would use a Python of the minor
+that the runner image installs whenever no managed one is installed yet,
+as on every fresh runner. Local development and the Git hooks keep uv's
+default, which also accepts an interpreter installed on the host.
 
 #### Dockerfile Convention
 
