@@ -1619,7 +1619,13 @@ Query parameters:
   `status` (semantic ordering, see Sorting), `ticket_id` (sorts by numeric `sequence_id`),
   `triage_due_at`, `submission_due_at`, `um_due_at`, `qa_due_at`,
   `release_due_at` (Ticket-level due dates; `NULL` sorts last, see
-  [ticket-deadlines.md](ticket-deadlines.md#sorting)).
+  [ticket-deadlines.md](ticket-deadlines.md#sorting)), `current_due_at` (the
+  due date of the Ticket's current phase; `NULL` sorts last), and
+  `priority_then_current_due` (effective priority, semantic ordering, see
+  Sorting, then the current due date; with the default `desc`, `P1` first and
+  the earliest current due date first within one priority; `NULL` sorts last
+  for each key). See
+  [ticket-deadlines.md](ticket-deadlines.md#current-due-date) for both.
 - `sort_order` (string, optional): `asc` or `desc` (default: `desc`).
 
 **Product and track filters.** When both `product` and `track` are supplied,

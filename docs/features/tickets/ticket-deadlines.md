@@ -11,8 +11,9 @@ later actors with little time.
 This specification is the authoritative source for the SLA tiers, the phase
 shares, the due-date formula, the per-track milestone completion,
 applicability, and status rules, the track and Ticket `current_phase`, the
-`overdue` and `current_phase` list filters, the due-date sort fields, and the
-pure functions and read-query ownership that implement them. The Coordinated
+`overdue` and `current_phase` list filters, the due-date sort fields and the
+current due date, and the pure functions and read-query ownership that
+implement them. The Coordinated
 Release Date of a confidential Ticket is a separate concept owned by
 [tickets.md](tickets.md#coordinated-release-date); it is not an SLA input.
 
@@ -384,7 +385,8 @@ values follow Enum Filter Validation in `docs/api-spec.md`). A Ticket matches a
 value when its `current_phase` equals that value; a Ticket whose
 `current_phase` is `null` matches no value. The filter combines with `overdue`
 and every other filter by AND semantics. The list offers no sort by current
-phase: the due-date sort fields order Tickets by urgency.
+phase itself; it orders Tickets by the due date of their current phase
+([Current Due Date](#current-due-date)).
 
 ### Observable Bottleneck Only
 
@@ -402,6 +404,47 @@ the Ticket-level date. `null` dates sort last in both directions under Nullable
 Sort Field Ordering in `docs/api-spec.md`. The maintainer workbench lists accept
 `sort_by=submission_due_at` with the same rule (see
 [maintainer.md](../packages/maintainer.md#shared-global-list-query-contract)).
+
+### Current Due Date
+
+The **current due date** of a Ticket is the due date of its
+[current phase](#ticket-current-phase):
+
+| Ticket `current_phase` | Current due date |
+|---|---|
+| `triage`, `submission`, `um`, `qa` | The due date of that phase: `triage_due_at`, `submission_due_at`, `um_due_at`, or `qa_due_at` |
+| `null`, with due dates | `release_due_at` |
+| `done`; `null` without due dates | `null` |
+
+A `null` current phase with due dates belongs to an `Analyzed` Ticket without
+an open phase that Sentinel observes and with a track whose later phases it
+cannot observe (rule 4 of [Rules](#rules)). Its milestones do not show whether
+that track still has work, and the final deadline still applies, so the
+current due date is `release_due_at`. A `done` Ticket has no remaining phase,
+and a Ticket without an SLA has no due dates.
+
+The current due date is not a response field; each row carries the
+`current_phase` and the due dates that determine it. `GET /api/v1/tickets`
+accepts two `sort_by` values that order by it:
+
+- `current_due_at` orders by the current due date, `null` last in both
+  directions under Nullable Sort Field Ordering in `docs/api-spec.md`.
+- `priority_then_current_due` orders by the effective priority
+  ([ticket-priority.md](ticket-priority.md#persistence-and-effective-priority))
+  and then, among Tickets of equal priority, by the current due date. With the
+  default `sort_order=desc` it lists the most urgent Tickets first: priority
+  descending, `P1` first (Semantic Sort Fields in `docs/api-spec.md`), then the
+  current due date ascending, so that a past date comes before a date still
+  ahead. `sort_order=asc` reverses both keys: priority ascending, then the
+  current due date descending. In both directions a `null` priority sorts after
+  every priority and, within one priority, a `null` current due date after
+  every date.
+
+Both values then apply the internal tie-breaker of Deterministic Pagination
+Ordering in `docs/api-spec.md`, in the direction of `sort_order`. The order and
+the projection of the rows use the response's one
+[evaluation instant](#evaluation-instant), so the order agrees with the
+`current_phase` and the due dates of every returned row.
 
 ## Dimension Governance
 
@@ -514,12 +557,18 @@ Ticket-level due dates, the per-track milestone statuses, and the Ticket
 `current_phase` and `current_phase_milestone` used by filtering, sorting,
 counting, and the list projection. For the same inputs and evaluation instant,
 the SQL expressions and the pure functions MUST produce identical results; a
-test asserts this. The list projects the Ticket current phase through the SQL
-expressions; the detail derives it with `resolve_ticket_current_phase()` from
-the milestones of its composed package tree. Filtering, sorting, and totals are
-evaluated in PostgreSQL before pagination; no Python post-filter may remove
-rows from a page. Track and Product existence checks use existence semantics,
-so they cannot duplicate a Ticket or inflate `total`.
+test asserts this. The [current due date](#current-due-date) has an SQL
+expression and no pure function, because no response projects it: it selects
+among the SQL due dates by the SQL Ticket `current_phase`, and a test asserts
+over the shared multi-track input matrix that it equals the date that the rule
+selects from the results of `compute_due_dates()` and
+`resolve_ticket_current_phase()`. The list projects the Ticket current phase
+through the SQL expressions; the detail derives it with
+`resolve_ticket_current_phase()` from the milestones of its composed package
+tree. Filtering, sorting, and totals are evaluated in PostgreSQL before
+pagination; no Python post-filter may remove rows from a page. Track and
+Product existence checks use existence semantics, so they cannot duplicate a
+Ticket or inflate `total`.
 
 The overdue comparison depends on the current instant and therefore cannot be
 served by an index even if due dates were persisted. Persisting due dates would
@@ -532,7 +581,7 @@ be a transparent optimization that does not change this API contract.
 | `TicketSummary`, `TicketDetail`: `triage_due_at`, `submission_due_at`, `um_due_at`, `qa_due_at`, `release_due_at` | Ticket-level due dates | [tickets.md](tickets.md#response-schemas) |
 | `TicketSummary`, `TicketDetail`: `current_phase`, `current_phase_milestone` | Ticket current phase | [tickets.md](tickets.md#response-schemas) |
 | `TrackDetail`: the five due dates, `milestones`, `current_phase` | Per-track milestones | [tickets.md](tickets.md#shared-sub-schemas) |
-| `GET /api/v1/tickets` `overdue` and `current_phase` filters and five due-date `sort_by` values | Ticket-level overdue work, current phase, and deadline ordering | [tickets.md](tickets.md#list-tickets) |
+| `GET /api/v1/tickets` `overdue` and `current_phase` filters, five due-date `sort_by` values, and `sort_by` values `current_due_at` and `priority_then_current_due` | Ticket-level overdue work, current phase, and deadline ordering | [tickets.md](tickets.md#list-tickets) |
 | Maintainer workbench `submission_due_at`, `submission_milestone`, `sort_by=submission_due_at` | Submission deadline of the maintainer's tracks | [maintainer.md](../packages/maintainer.md#workbench-row-and-privacy-contract) |
 
 No endpoint mutates a deadline.
@@ -612,6 +661,15 @@ Tests MUST cover:
     a mutation (for example `null` after Ignore, and `triage` after a Reopen
     that returns the Ticket to `Analysis`); and SQL/pure-function equivalence
     for the Ticket current phase over a shared multi-track input matrix.
+16. The current due date: over the shared multi-track input matrix, equality
+    with the date that [Current Due Date](#current-due-date) selects from the
+    pure functions, including `release_due_at` for a `null` current phase with
+    due dates and `null` for `done` and without an SLA; `current_due_at` in
+    both directions with `null` last; `priority_then_current_due` in both
+    directions over every priority and `null`, with a past current due date
+    before a future one within one priority and `null` last at both levels;
+    deterministic tie-breaking across pages for both values; and agreement of
+    both orders with the `current_phase` and due dates of the returned rows.
 
 ## Cross-references
 
