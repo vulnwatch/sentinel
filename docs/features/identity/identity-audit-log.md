@@ -428,8 +428,8 @@ Ticket `assignment` events are created in the same caller-owned transaction;
 an Identity or Ticket audit failure rolls back both domains together (see
 `docs/features/tickets/ticket-audit-log.md`, Cross-Event Ordering, Locking,
 and Rollback). An effective change of the bot marker to `true` likewise
-creates its derived Ticket `assignment` events, before `bot_changed`, in the
-transaction of `update_user()`.
+creates its derived Ticket `assignment` events, before the field-change
+events of the same `update_user()` call, in its transaction.
 
 **External sync coverage**: the `user_created` event type applies to ALL user
 creation regardless of source (manual admin creation AND external sync). On

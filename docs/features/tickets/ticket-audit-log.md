@@ -190,8 +190,10 @@ event type.
   `TicketAccessGrant` creates no `access_grant_removed` event; that type is
   reserved for an effective manual revoke. User deactivation and reactivation
   retain grants and create no grant event. A later `false` to `true` transition
-  does not recreate deleted grants and creates only its own
-  `confidentiality_changed` event. Neither direction modifies the Coordinated
+  does not recreate deleted grants and creates no grant event; besides its own
+  `confidentiality_changed` event it creates only the system `assignment` of an
+  ineligible assignee that it clears (see the matrix below). Neither direction
+  modifies the Coordinated
   Release Date or creates a `coordinated_release_changed` event.
 - `coordinated_release_changed` is created only when the stored CRD changes. An
   unchanged value, including the same instant supplied with a different UTC

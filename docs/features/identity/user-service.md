@@ -87,8 +87,9 @@ For local users (`external_id IS NULL`), administrators set `bot` at creation
 and change it through `update_user()`. The marker is an input of assignment
 eligibility only (`docs/features/identity/rbac.md`, Business Rule 10):
 `update_user()` unassigns the user from their active-status Tickets when it
-becomes `true`, and no other operation in this service decides anything on
-it (see `docs/features/identity/user-management.md`, Bot Accounts).
+becomes `true`, and no operation in this service reads it except to evaluate
+assignment eligibility (see `docs/features/identity/user-management.md`, Bot
+Accounts).
 
 Fields managed by dedicated operations have their own ownership rules:
 
@@ -712,13 +713,16 @@ operations with their own business rules.
 
    When the effective changes include `bot` from `false` to `true`, call
    `_unassign_active_tickets(db, user, "bot account")` after classifying
-   the changes and before any field update is written: a bot account is
-   eligible for no Ticket (`docs/features/identity/rbac.md`, Business
-   Rule 10). The helper locks the User's Tickets while the User row is still
+   the changes and before assigning any requested value to the User: a bot
+   account is eligible for no Ticket (`docs/features/identity/rbac.md`,
+   Business Rule 10). The helper's queries would otherwise flush pending User
+   changes; it must lock the User's Tickets while the User row is still
    unwritten, because an update of `username` or `email`, columns with a
    unique index, takes a row lock that conflicts with the foreign-key
-   validation of a transaction that holds one of those Tickets. A change of
-   `bot` to `false` unassigns nothing and restores no assignment.
+   validation of a transaction that holds one of those Tickets
+   (`docs/conventions.md`, Cross-Domain Root Lock Order). Its events
+   therefore record the username before this update. A change of `bot` to
+   `false` unassigns nothing and restores no assignment.
 7. For each changed field other than `synced_at`, create an
    `IdentityAuditEvent` via `IdentityAuditLog.log_event()`:
    `username_changed`, `email_changed`, `full_name_changed`, `bot_changed`,

@@ -1002,10 +1002,9 @@ The confidentiality of a Ticket is the one eligibility input that is Ticket
 state. Assignment paths evaluate it from the locked-current Ticket. A
 confidentiality change that makes the current assignee ineligible acquires no
 User root: it observes the assignee without a lock under the Ticket lock,
-and every identity mutation above decides each of the User's assigned Tickets
-from its locked-current state, so either commit order leaves no ineligible
-assignee on a `New`, `Analysis`, or `Analyzed` Ticket
-(`docs/features/identity/user-service.md`, Assignment concurrent with
+while every identity mutation above decides each of the User's assigned
+Tickets from its locked-current state. The resulting outcomes are owned by
+`docs/features/identity/user-service.md` (Assignment concurrent with
 eligibility loss).
 
 The active contract currently applies this role-origin rule to manual role

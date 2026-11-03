@@ -2251,14 +2251,18 @@ An effective transition to confidential of a Ticket in `New`, `Analysis`, or
 `Analyzed` clears an assignee who is not eligible to be the assignee of a
 confidential Ticket, such as a restricted analyst, also one who sees the
 Ticket through an explicit grant or package maintainership
-(`docs/features/identity/rbac.md`, Business Rule 10). The clear is a system
-`assignment` event in the same transaction; the status is unchanged, the
+(`docs/features/identity/rbac.md`, Business Rule 10). Like the grant deletion
+above, the clear is a mandatory cascade of setting the field: the
+assignment-eligibility re-evaluation of the Ticket, not a separately
+requested command. It creates a system `assignment` event in the same
+transaction; the status is unchanged, the
 response shows `assignee: null`, and the Ticket appears in the unassigned
 queue, where the caller, who holds `manage_confidentiality` and therefore
 scope `all` with the predefined roles, can take it. In `Resolved`, `Ignored`,
 and `Duplicated` the assignee is retained, so that this endpoint never
-changes the workflow of a manual-zone Ticket; reconciliation clears an
-ineligible assignee if the Ticket later returns to `Analysis` or `Analyzed`
+changes the assignment of a `Resolved` or manual-zone Ticket; reconciliation
+clears an ineligible assignee if the Ticket later returns to `Analysis` or
+`Analyzed`
 ([Assignment Eligibility Sanitization](ticket-mutations.md#assignment-eligibility-sanitization)).
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope

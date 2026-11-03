@@ -1540,12 +1540,12 @@ process and cannot be removed via the API. See
 
 **Unique constraint**: (user_id, role, group_name)
 
-Assignment eligibility is the current PostgreSQL combination of `User.active`
-and existence of at least one `UserRole` origin with persisted role value
-`Vulnerability Analyst` (`vulnerability_analyst` at API and service
-boundaries). This is a derived invariant, not an additional column, constraint,
-or persisted role summary. See `docs/conventions.md` (Cross-Domain Root Lock
-Order) for its locking protocol.
+Assignment eligibility (`docs/features/identity/rbac.md`, Business Rule 10) is
+derived from the current `User.active` and `User.bot` values, the
+capabilities and effective scope of every current `UserRole` origin, and, per
+Ticket, `Ticket.is_confidential`. This is a derived invariant, not an
+additional column, constraint, or persisted role summary. See
+`docs/conventions.md` (Cross-Domain Root Lock Order) for its locking protocol.
 
 #### Role Enum
 

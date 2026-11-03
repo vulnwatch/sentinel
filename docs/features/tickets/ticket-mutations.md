@@ -467,7 +467,7 @@ path evaluates it from the locked-current Ticket. System paths and paths that
 cannot assign acquire no User lock, including self-unassignment
 (`ticket_service.unassign_ticket()`), which only clears the caller's own
 assignment, and `ticket_service.set_confidentiality()`, which can only clear
-an assignee that the new confidentiality makes ineligible and reads that
+an assignee who is not eligible for the now-confidential Ticket and reads that
 assignee through the unlocked assignee eligibility observation.
 
 ### Single-ticket scope

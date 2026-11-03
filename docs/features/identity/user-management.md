@@ -40,7 +40,7 @@ to `false`.
 The marker has exactly one effect on behavior: a bot account is never the
 assignee of a Ticket (`docs/features/identity/rbac.md`, Business Rule 10).
 An automation performs Ticket work but owns none, so its operations neither
-take a Ticket from the unassigned queue nor end its triage. Apart from
+take a Ticket from the unassigned queue nor move it out of `New`. Apart from
 assignment eligibility, the marker changes no authorization, capability,
 scope, role, authentication method, session, API key, audit attribution, or
 other business rule: Sentinel treats a bot account exactly like every other
@@ -1239,8 +1239,13 @@ Principle in `docs/features/identity/user-service.md`).
 5. `bot` sets the bot marker (see Bot Accounts); omission leaves it
    unchanged. An effective change to `true` also unassigns the user from
    their Tickets in `New`, `Analysis`, and `Analyzed` in the same
-   transaction. A non-boolean value and explicit `bot: null` return the global
-   HTTP 422 `VALIDATION_ERROR` response through request-schema validation
+   transaction. The marker always assumes the requested value and no guard
+   rejects it; the unassignment is the assignment-eligibility re-evaluation
+   that the field change implies, a domain cascading consequence rather than
+   a separately requested command, so the operation remains a field-setting
+   PATCH (`docs/api-spec.md`, Mutation Patterns). A non-boolean value and
+   explicit `bot: null` return the global HTTP 422 `VALIDATION_ERROR` response
+   through request-schema validation
 6. If the user is an external user (`external_id IS NOT NULL`), return HTTP 409
    with code `USER_EXTERNAL_FIELD_READONLY`:
    `"Cannot modify identity fields for external users. These fields are managed by the external identity provider."`

@@ -884,8 +884,8 @@ here with the required authorization level and a link to the owning spec.
     > therefore obtains assignment eligibility from its capabilities and
     > scope, with no change to this rule. The bot marker excludes
     > automation, which performs Ticket work but owns none, so that its
-    > operations neither take Tickets out of the unassigned queue nor end
-    > their triage. Per-Ticket visibility does not count: a grant is
+    > operations neither take Tickets out of the unassigned queue nor move
+    > them out of `New`. Per-Ticket visibility does not count: a grant is
     > revocable at any time and deleted by declassification, and
     > maintainership follows package exclusion, so tying ownership to
     > either would make every such change an unassignment. If a future role

@@ -153,7 +153,7 @@ committed post-state.
 
 | Module | Relationship |
 |--------|-------------|
-| `services/ticket_mutations.py` | `ticket_service` imports `reconcile_ticket_status()`, `recalculate_cvss_chain()`, `auto_assign_actor()`, `ensure_ticket_operable()`, and `refresh_priority_auto()` from `ticket_mutations`, plus the acting-User stabilization and its assignment-eligibility predicate for the creation-time eligibility decision and for explicit assignment, and the shared locked-current Ticket lock with accessibility revalidation used by consumer mutations that lock the Ticket as their own root. The dependency is unidirectional: `ticket_service` → `ticket_mutations`. Neither module imports from the other in the reverse direction |
+| `services/ticket_mutations.py` | `ticket_service` imports `reconcile_ticket_status()`, `recalculate_cvss_chain()`, `auto_assign_actor()`, `ensure_ticket_operable()`, and `refresh_priority_auto()` from `ticket_mutations`, plus the acting-User stabilization and its assignment-eligibility predicate for the creation-time eligibility decision and for explicit assignment, the assignee eligibility observation used by `set_confidentiality()`, and the shared locked-current Ticket lock with accessibility revalidation used by consumer mutations that lock the Ticket as their own root. The dependency is unidirectional: `ticket_service` → `ticket_mutations`. Neither module imports from the other in the reverse direction |
 | `services/package_service.py` | `ticket_service` invokes package-owned projection behavior for Ticket detail and the synchronous eligibility boundary during manual-zone exits. `package_service` does not import `ticket_service`; both modules depend on `ticket_mutations` for status evaluation |
 | `services/cve_service.py` | `ticket_service` calls the lock-aware form of `ensure_cve_exists()` to resolve, create, and lock the CVE root for creation and association. `cve_service` in turn calls `create_ticket()` and other lifecycle compositions from `upsert_cve()` (see `cve-service.md`, Relationship with other modules); the Python import mechanism that keeps this mutual dependency cycle-safe is an implementation choice |
 | `services/cvss.py` | No direct dependency. CVSS resolution is delegated through `ticket_mutations.recalculate_cvss_chain()` where this service requires it |
@@ -192,8 +192,8 @@ Explicit opt-outs (functions that do NOT call `ensure_ticket_operable`):
 - `set_confidentiality`, `grant_access`, and `revoke_access` — visibility-only
   operations valid in every Ticket status; they neither assign, reconcile, nor
   exit the manual zone. `set_confidentiality` additionally clears an assignee
-  that the new confidentiality makes ineligible, only in `New`, `Analysis`,
-  and `Analyzed`
+  who is not eligible for the now-confidential Ticket, only in `New`,
+  `Analysis`, and `Analyzed`
 - `set_coordinated_release_date` — embargo-metadata operation valid in every
   Ticket status while the Ticket is confidential; it neither assigns,
   reconciles, nor exits the manual zone
@@ -227,8 +227,8 @@ retained until transaction completion and conflicts with deactivation,
 role-origin removal, and a change of the bot marker to `true`. System-only
 paths that do not assign acquire no User lock. `unassign_ticket()` only
 clears the caller's own assignment and `set_confidentiality()` can only clear
-an assignee that the new confidentiality makes ineligible; neither makes a
-User the assignee, so each locks only the Ticket.
+an assignee who is not eligible for the now-confidential Ticket; neither makes
+a User the assignee, so each locks only the Ticket.
 
 For operations whose existing error precedence requires Ticket accessibility or
 operability before a missing or ineligible assignment target is reported, User
@@ -822,10 +822,8 @@ function captures one date at entry if reconciliation becomes applicable.
 **Locking**: `FOR SHARE` on target User, then `FOR UPDATE` on Ticket. Target
 absence is reported only after locked-current Ticket accessibility and
 operability, preserving their existing precedence. A concurrent
-`set_confidentiality()` serializes on the Ticket lock: if it commits first,
-step 5 evaluates the confidential Ticket; if this assignment commits first,
-`set_confidentiality()` observes the new assignee and clears it when it is
-ineligible for the confidential Ticket.
+`set_confidentiality()` serializes on the Ticket lock (see
+[`set_confidentiality`](#set_confidentiality), Concurrency and result).
 
 **reconcile_ticket_status**: YES — evaluates whether the ticket's
 existing data satisfies gates above `Analysis` (Analyzed or Resolved).
@@ -901,7 +899,10 @@ Ticket commits first — deactivation, role-origin removal, or bot marking of
 the caller, or `set_confidentiality()` making the Ticket confidential — the
 waiter is a no-op for a `New`, `Analysis`, or `Analyzed` Ticket, whose
 assignment that change already cleared, and clears a `Resolved` assignment,
-which the change preserved. If self-unassignment commits first, the identity
+which the change preserved. After a confidentiality change this holds only
+while the caller still sees the Ticket through an explicit grant or package
+maintainership; otherwise step 2 raises `TicketNotFoundError`. If
+self-unassignment commits first, the identity
 batch or the confidentiality transition observes a Ticket no longer assigned
 to that user and creates no `assignment` event for it
 (`docs/features/identity/user-service.md`, Private Helpers). A
@@ -1681,13 +1682,10 @@ pre-lock Ticket or grant result.
 Assignment, self-unassignment, and every other Ticket mutation also serialize
 on the Ticket lock: an assignment that commits first is observed by step 7,
 and an assignment that waits evaluates the committed confidential Ticket. An
-identity change that makes the assignee ineligible is not serialized with this
-operation on the User row; both orders still leave no ineligible assignee in an
-active status, because the identity batch decides each assigned Ticket from
-its locked-current state (`docs/features/identity/user-service.md`,
-Assignment concurrent with eligibility loss). An observation made while a role
-addition for the assignee is uncommitted sees the User without that role and
-clears the assignment; the later addition restores nothing.
+identity change that makes the assignee ineligible does not serialize with this
+operation on the User row; its outcomes in both commit orders are owned by
+`docs/features/identity/user-service.md` (Assignment concurrent with
+eligibility loss).
 
 **Transaction and rollback**: the function calls neither commit nor rollback.
 Any grant-deletion, assignment-clear, audit, database, or flush failure escapes
@@ -2217,7 +2215,11 @@ behavior of `ticket_service` operations:
     event), and a self-unassignment that holds the Ticket lock while a
     deactivation of the caller holds the User and waits for that Ticket: both
     commit without deadlock, and the batch creates no system `assignment`
-    event for that Ticket
+    event for that Ticket. A `set_confidentiality(true)` winner makes a waiting
+    restricted analyst's self-unassignment a no-op for `Analysis` and a clear
+    for `Resolved` when the caller holds a grant, and `TicketNotFoundError`
+    without one; a self-unassignment winner leaves the later confidentiality
+    transition with no `assignment` event
 22. **Assignment eligibility**: for explicit assignment, manual creation,
     auto-assignment through a `ticket_service` mutation, and the embedded
     assignment of reopen and revert-duplicate, an active non-bot restricted

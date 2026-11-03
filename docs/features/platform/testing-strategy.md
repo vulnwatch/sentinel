@@ -3091,8 +3091,10 @@ visibility predicate.
   exactly one acting-user `confidentiality_changed` event with no
   `access_grant_removed` events. Inject grant-deletion, audit, database, and
   flush failures and assert complete rollback of the flag, grants, and event.
-- After declassification, `false` to `true` creates only its own
-  `confidentiality_changed` event and does not recreate manual grants. Persisted
+- After declassification, `false` to `true` creates its own
+  `confidentiality_changed` event, no grant event, and, only when it clears an
+  ineligible assignee of a `New`, `Analysis`, or `Analyzed` Ticket, one system
+  `assignment` event; it does not recreate manual grants. Persisted
   `TicketPackageMaintainer` rows remain unchanged throughout; after
   reclassification an active associated user qualifies through an included
   package, while an excluded package remains non-qualifying until restored.
@@ -3963,7 +3965,8 @@ or identity audit validation are affected, tests MUST cover:
 - `update_user()` locks the User `FOR NO KEY UPDATE`; a change of `bot` to
   `true` together with an `email` change completes without deadlock while
   another transaction holds one of the User's Tickets and writes it twice, and
-  its Ticket `assignment` events precede `bot_changed`
+  its Ticket `assignment` events, which record the username before the
+  update, precede the call's field-change events
 - `set_confidentiality(true)` races with role removal and bot marking of the
   assignee in both commit orders, with independent sessions, and no committed
   active-status confidential Ticket keeps an assignee with scope
