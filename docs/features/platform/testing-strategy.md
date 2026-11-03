@@ -1592,10 +1592,10 @@ timeout supervisor, `scripts/run-with-timeout.py`, which runs on the backend
 project's interpreter, the one on which its own unit tests run. Before any
 bounded phase, the runner asks uv for that interpreter (`uv python find` in
 `backend/`), which is the interpreter of the project environment once it is
-synchronized, and starts the supervisor with it directly. It never uses a
-`python3` found on the host's `PATH`, and never starts the supervisor through
-`uv run`, which would stand between the supervisor and the signals and exit
-statuses that it handles. The lookup is local and installs nothing: when uv
+synchronized, and starts the supervisor with it directly. It does not take
+whichever `python3` comes first on the host's `PATH`, and never starts the
+supervisor through `uv run`, which would stand between the supervisor and the
+signals and exit statuses that it handles. The lookup is local and installs nothing: when uv
 finds no interpreter, the runner fails before any Docker operation and names
 `uv sync` in `backend/` as the remedy. CI therefore synchronizes the project
 environment before it starts the runner.
@@ -1698,7 +1698,7 @@ pytest, every disposable project, diagnostics, and teardown each have an
 explicit finite bound. The CI job timeout is only the final safety net. Polls
 use monotonic deadlines and produce the last relevant observation on timeout.
 The local interpreter lookup that selects the timeout supervisor (see
-Execution) precedes these phases and is not bounded by it.
+Execution) precedes these phases and is not bounded by the supervisor.
 
 For startup, readiness, pytest, or disposable-project failure, diagnostics are
 captured before teardown and include, when available:

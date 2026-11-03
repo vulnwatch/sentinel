@@ -80,9 +80,10 @@ validate_bounds() {
 }
 
 # Selects the interpreter of the timeout supervisor before any bounded
-# phase: the backend project's, on which the supervisor's tests run, never
-# a python3 from PATH. uv only finds it, so it stays out of the signal and
-# exit-status path of every phase; the lookup is local and installs nothing.
+# phase: the backend project's, on which the supervisor's tests run, not
+# whichever python3 comes first on PATH. uv only finds it, so it stays out
+# of the signal and exit-status path of every phase; the lookup is local
+# and installs nothing.
 resolve_supervisor() {
     local status=0
     if [[ ! -f "${TIMEOUT_RUNNER}" ]]; then
@@ -94,9 +95,12 @@ resolve_supervisor() {
         return 1
     fi
     SUPERVISOR_PYTHON="$(cd "${ROOT_DIR}/backend" && uv python find)" || status=$?
-    if ((status != 0)) || [[ ! -f "${SUPERVISOR_PYTHON}" || ! -x "${SUPERVISOR_PYTHON}" ]]; then
+    if ((status == 0)) && [[ ! -f "${SUPERVISOR_PYTHON}" || ! -x "${SUPERVISOR_PYTHON}" ]]; then
+        status=1
+    fi
+    if ((status != 0)); then
         echo "Error: uv found no Python interpreter for the backend project; run 'cd backend && uv sync'." >&2
-        return 1
+        return "${status}"
     fi
 }
 

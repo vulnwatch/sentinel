@@ -414,17 +414,18 @@ def test_runner_runs_supervisor_on_project_interpreter_not_host_python3(
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    "overrides",
+    ("overrides", "expected_status"),
     [
-        pytest.param({"PYTHON_FIND_EXIT": "2"}, id="lookup-fails"),
+        pytest.param({"PYTHON_FIND_EXIT": "2"}, 2, id="lookup-fails"),
         pytest.param(
             {"IMAGE_SMOKE_STUB_PYTHON": "/nonexistent/backend/.venv/bin/python"},
+            1,
             id="no-such-interpreter",
         ),
     ],
 )
 def test_runner_rejects_missing_project_interpreter_before_preflight(
-    tmp_path: Path, overrides: dict[str, str]
+    tmp_path: Path, overrides: dict[str, str], expected_status: int
 ) -> None:
     temporary_dir = tmp_path / "tmp"
     temporary_dir.mkdir()
@@ -432,7 +433,7 @@ def test_runner_rejects_missing_project_interpreter_before_preflight(
         tmp_path, env_overrides={"TMPDIR": str(temporary_dir)} | overrides
     )
 
-    assert result.returncode == 1
+    assert result.returncode == expected_status
     assert "uv found no Python interpreter for the backend project" in result.stderr
     assert "cd backend && uv sync" in result.stderr
     assert [call.split()[0] for call in calls] == ["interpreter-lookup"]
@@ -839,7 +840,8 @@ def test_workflows_sync_project_environment_before_running_harness() -> None:
     # fresh runner has no managed one (UV_MANAGED_PYTHON) until uv syncs
     # the backend environment, so every job that starts it syncs first.
     harness_jobs = []
-    for path in sorted(WORKFLOWS_DIR.glob("*.yml")):
+    workflows = [*WORKFLOWS_DIR.glob("*.yml"), *WORKFLOWS_DIR.glob("*.yaml")]
+    for path in sorted(workflows):
         for job_id, job in workflow_jobs(load_yaml_file(path)).items():
             steps = job_steps(job)
             runs = [str(step.get("run", "")) for step in steps]

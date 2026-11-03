@@ -1403,7 +1403,7 @@ the Python runtime version used across all environments:
 | Local development (pyenv, uv, mise) | Reads `backend/.python-version` natively |
 | CI project commands (`uv sync`, `uv run` after `astral-sh/setup-uv`) | `uv` reads `backend/.python-version` natively and uses only an interpreter that it manages (see below) |
 | Python tools run as `uvx <package>@<version>` | `uvx` ignores `.python-version` and would use the first interpreter that `uv` finds, so each invocation passes the file's value in `UV_PYTHON` (see `docs/deployment.md`, Workflow Conventions) |
-| Image-smoke timeout supervisor (`scripts/run-with-timeout.py`) | `scripts/image-smoke.sh` runs it on the interpreter that `uv python find` selects for `backend/`, never on a `python3` from the host's `PATH` (see `docs/features/platform/testing-strategy.md`, Image / Container Smoke Testing → Execution) |
+| Image-smoke timeout supervisor (`scripts/run-with-timeout.py`) | `scripts/image-smoke.sh` runs it on the interpreter that `uv python find` selects for `backend/`, not on whichever `python3` comes first on the host's `PATH` (see `docs/features/platform/testing-strategy.md`, Image / Container Smoke Testing → Execution) |
 | Dockerfile | `ARG PYTHON_VERSION=<value>` default; CI passes `--build-arg` from source of truth |
 | ruff `target-version` | Inferred from `requires-python` in `pyproject.toml` (no explicit `target-version`) |
 
