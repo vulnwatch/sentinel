@@ -964,7 +964,7 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 | severity_manual | VARCHAR(20) | nullable                     | Manual severity set by the VA (Critical, High, Medium, Low, None). `NULL` = not set (unresolved). `None` = VA explicitly assessed as informational (equivalent to CVSS score 0.0). Used for severity resolution when `cve_id IS NULL`. Cannot be set when `cve_id IS NOT NULL` (severity is derived from CVSS). Cleared to `NULL` by `associate_cve` when a CVE is linked. Mutually exclusive with `cve_id` (see CHECK below). See `docs/features/tickets/tickets.md` (Severity Resolution) |
 | priority_auto     | VARCHAR(10) | nullable                     | TicketPriority derived automatically from the resolved severity and the associated CVE's exploitation evidence. `NULL` = not yet prioritizable. Written only by `ticket_mutations.refresh_priority_auto()`. See `docs/features/tickets/ticket-priority.md` |
 | priority_override | VARCHAR(10) | nullable                     | Sticky manual TicketPriority override set by an authorized user. `NULL` = no override. Never modified by automatic processing. The effective priority is `COALESCE(priority_override, priority_auto)` and is not stored. See `docs/features/tickets/ticket-priority.md` |
-| assignee_id       | UUID        | FK(user.id), nullable        | Current assignee. Assignment eligibility and lifecycle behavior are defined in `docs/features/tickets/tickets.md` and `docs/features/identity/user-service.md` |
+| assignee_id       | UUID        | FK(user.id), nullable        | Current assignee. Assignment eligibility is defined in `docs/features/identity/rbac.md` (Business Rule 10); assignment and unassignment behavior in `docs/features/tickets/tickets.md`, `docs/features/tickets/ticket-service.md`, and `docs/features/identity/user-service.md` |
 | duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Self-referencing FK to the target ticket when status is Duplicated. Always references a non-Duplicated ticket (enforced by the transactional locking protocol in `mark_as_duplicate`). See `docs/features/tickets/tickets.md` (Duplicate Handling) |
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp            |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record update timestamp              |
@@ -983,8 +983,9 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
   `duplicate_of_id IS NOT NULL` — supports `mark_as_duplicate` finding
   dependents of the source ticket.
 - `ix_ticket_assignee_id`: non-unique B-tree index on `assignee_id`. It serves
-  the Ticket selection by assignee in `_unassign_active_tickets()`, which runs
-  while the target User is locked (see
+  the Ticket selection by assignee in `_unassign_active_tickets()` and
+  `_unassign_ineligible_tickets()`, which run while the target User is locked
+  (see
   `docs/features/identity/user-service.md`), the deactivation-preview
   `tickets_count`, and the Ticket-list `assignee` filter. It is not partial, so
   it also serves `assignee=none`.
@@ -1000,7 +1001,8 @@ from current PostgreSQL state.
 for the full transition diagram, gates, and rules.
 
 Summary:
-- New -> Analysis (manual: assignment or any modifying operation)
+- New -> Analysis (manual: assignment, or any modifying operation by a user
+  eligible to be the assignee)
 - New -> Ignored (manual or automatic: CVE rejection)
 - Analysis -> Analyzed (automatic: all gates met — at least one manually
   included track, no actionable track in ANALYSIS, severity set, and at least
@@ -1016,12 +1018,13 @@ Summary:
   broken)
 - Any except Ignored and Duplicated -> Duplicated (manual, reversible)
 - Duplicated -> (evaluated status) (manual: revert via
-  `ticket_service.revert_duplicate()`; a locked-current active VA actor becomes
-  assignee, while an inactive or non-VA actor retains the current assignee)
+  `ticket_service.revert_duplicate()`; a locked-current actor eligible to be
+  the assignee becomes assignee, while an ineligible actor retains the current
+  assignee)
 - Ignored -> (evaluated status) (manual or automatic via
-  `ticket_service.reopen_from_ignored()`; a locked-current active VA actor
-  becomes assignee, while an inactive, non-VA, or system caller retains the
-  current assignee)
+  `ticket_service.reopen_from_ignored()`; a locked-current actor eligible to
+  be the assignee becomes assignee, while an ineligible actor or system caller
+  retains the current assignee)
 
 `REJECTED -> PUBLISHED` reopens the unique associated Ticket only when its
 locked-current status is `Ignored`; the decision uses current CVE/Ticket state
@@ -1031,7 +1034,7 @@ CVSS composition in the same transaction.
 Every successful manual-zone exit registers one transaction-local Ticket
 convergence effect,
 including an immediate `Resolved` result. Assignment-eligibility sanitation
-clears an inactive or non-VA assignee only when the final result is `Analysis`
+clears an ineligible assignee only when the final result is `Analysis`
 or `Analyzed`.
 
 Forward and reverse transitions between Analysis, Analyzed, and Resolved
@@ -1492,7 +1495,7 @@ confidential tickets via `TicketAccessGrant` or an included
 | email            | VARCHAR(255) | UNIQUE, NOT NULL         | Email address (stored as lowercase) |
 | full_name        | VARCHAR(255) | nullable                 | Display name                     |
 | active           | BOOLEAN     | NOT NULL, DEFAULT true   | Whether the account is active. For external users, synced from the identity provider |
-| bot              | BOOLEAN     | NOT NULL, DEFAULT false  | Whether an automation operates the account instead of a person. Descriptive only: no authorization or business rule reads it. Set by administrators for local users and by external provisioning for external users. See `docs/features/identity/user-management.md` (Bot Accounts) |
+| bot              | BOOLEAN     | NOT NULL, DEFAULT false  | Whether an automation operates the account instead of a person. Not an authorization input; the only business rule that reads it is assignment eligibility: a bot account is never a Ticket assignee (`docs/features/identity/rbac.md`, Business Rule 10). Set by administrators for local users and by external provisioning for external users. See `docs/features/identity/user-management.md` (Bot Accounts) |
 | password_hash    | VARCHAR(72)  | nullable                 | bcrypt hash of password (with SHA-256 pre-hash). NULL for external users. See `docs/features/identity/local-authentication.md` |
 | external_id      | UUID        | UNIQUE, nullable         | Stable external identifier from the identity provider (immutable after creation). Used as the matching key during external sync. NULL for local users |
 | manager_id       | UUID        | FK(user.id), nullable    | Direct line manager (resolved from external provider's manager reference during sync). Self-referencing foreign key |

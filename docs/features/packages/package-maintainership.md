@@ -242,7 +242,7 @@ Under the Ticket lock, `add_package_records()`:
 
 1. for a user-attributed invocation capable of creating package-tree state, has
    already acquired `FOR SHARE` on the acting User before the Ticket lock and
-   stabilized active VA eligibility; system invocations have no assignment User
+   stabilized its assignment eligibility; system invocations have no assignment User
    root;
 2. applies its existing `active_ticket_only` skip before mutation; a skipped
    inactive Ticket creates neither package records nor maintainer associations;

@@ -536,8 +536,8 @@ defer Product and gate effects until their explicit manual-zone exit.
 Only an effective manual SUSE mutation may apply ordinary auto-assignment after
 the serialized no-op/not-found classification. Before the CVE and optional
 Ticket locks, that path acquires `FOR SHARE` on the acting User and stabilizes
-active VA eligibility. An ineligible actor's effective CVSS mutation continues
-but assignment is skipped. Trusted external ingestion and default-version
+its assignment eligibility. An ineligible actor's effective CVSS mutation
+continues but assignment is skipped. Trusted external ingestion and default-version
 recalculation are system actions and never acquire an assignment User lock or
 assign.
 

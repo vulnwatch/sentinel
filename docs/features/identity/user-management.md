@@ -37,13 +37,17 @@ person: a script, a CI pipeline, an AI agent, or another integration. The
 `bot` field of the User records it (`docs/data-model.md`, User); it defaults
 to `false`.
 
-The marker is descriptive only. It changes no authorization, capability,
-scope, role, assignment eligibility, authentication method, session, API key,
-audit attribution, or other business rule: Sentinel treats a bot account
-exactly like every other account with the same origin, roles, and state. No
-operation decides anything on the marker, and no list filters or sorts on it.
-Clients use it only to present the actions of bot accounts differently from
-those of people, for example in a Ticket audit log.
+The marker has exactly one effect on behavior: a bot account is never the
+assignee of a Ticket (`docs/features/identity/rbac.md`, Business Rule 10).
+An automation performs Ticket work but owns none, so its operations neither
+take a Ticket from the unassigned queue nor end its triage. Apart from
+assignment eligibility, the marker changes no authorization, capability,
+scope, role, authentication method, session, API key, audit attribution, or
+other business rule: Sentinel treats a bot account exactly like every other
+account with the same origin, roles, and state. No other operation decides
+anything on the marker, and no list filters or sorts on it. Clients also use
+it to present the actions of bot accounts differently from those of people,
+for example in a Ticket audit log.
 
 Who sets the marker follows the origin of the user (see External User Data
 Ownership in `docs/features/identity/user-service.md`):
@@ -58,7 +62,11 @@ Ownership in `docs/features/identity/user-service.md`):
   `docs/features/identity/identity-provisioning.md`.
 
 Every effective change of the marker creates one `bot_changed` identity audit
-event (`docs/features/identity/identity-audit-log.md`). Every user
+event (`docs/features/identity/identity-audit-log.md`). An effective change
+to `true` also unassigns the account from every Ticket in `New`, `Analysis`,
+or `Analyzed` in the same transaction, with one system `assignment` Ticket
+audit event per cleared Ticket (`docs/features/identity/user-service.md`,
+`update_user()`); a change to `false` restores no assignment. Every user
 representation that the API returns carries it: the user reference object
 (`docs/api-spec.md`, User References in Responses), the directory entry, the
 complete user profile and its `manager` object, and the authenticated
@@ -71,9 +79,10 @@ User). The `manage-user list` and `manage-user show` commands display it.
 > with several values in situations that earlier releases report with that
 > value is breaking (`docs/api-spec.md`, Response Enums), and it would be
 > confused with the authentication source (`local` or `external`). Neither
-> List Users nor List Users (Admin) declares a `bot` filter, because no
-> consumer needs one; adding it later is additive (`docs/api-spec.md`,
-> Versioning).
+> List Users nor List Users (Admin) declares a `bot` filter: a client that
+> excludes bot accounts, such as an assignment picker, reads the `bot` field
+> of each entry, and bot accounts are few; adding the filter later is
+> additive (`docs/api-spec.md`, Versioning).
 
 ## CLI Commands
 
@@ -327,7 +336,10 @@ conflict.
    `--no-bot` (`bot = False`) together in the same call when more than one
    is provided. An empty `--full-name ""` carries no special meaning: it is
    passed through as an ordinary provided value and stored verbatim;
-   clearing the display name requires `--clear-full-name`. If the service
+   clearing the display name requires `--clear-full-name`. `--bot` on an
+   account that is not yet a bot account also unassigns it from its Tickets
+   in `New`, `Analysis`, and `Analyzed` in the same transaction (see Bot
+   Accounts). If the service
    raises `UserConflictError` (duplicate email), exit with error:
    `"Error: A user with email '{email}' already exists."`
 5. Report exclusively from the returned `UserUpdateResult.changed_fields`:
@@ -859,7 +871,8 @@ caller capability.
 > **Design note — two audiences**: every read of application data requires
 > authentication (`docs/features/identity/rbac.md`, Access Levels), so the
 > directory serves every user account, role-less readers included. Its
-> consumers, such as an assignment picker (active Vulnerability Analysts), an
+> consumers, such as an assignment picker (the users eligible to be the
+> assignee of a Ticket, `docs/features/identity/rbac.md`, Business Rule 10), an
 > access-grant picker (a search by name, username, or email), and Ticket
 > filters, need a user's identity, email, and role values. The other fields of
 > the profile serve only user administration: the authentication source, the
@@ -954,7 +967,8 @@ Field notes:
   a display fallback (e.g., a UI showing `full_name ?? username`) apply
   it at presentation time
 - `bot`: `true` for a bot account, `false` otherwise (see Bot Accounts).
-  Descriptive only; it has no effect on authorization or business rules
+  It has no effect on authorization; a bot account is never eligible to be
+  the assignee of a Ticket
 - `roles`: the distinct role values that the user currently holds from any
   origin, manual or external; a role held from several origins appears once,
   and a user without roles has an empty array. Values use the wire format and
@@ -1223,7 +1237,9 @@ Principle in `docs/features/identity/user-service.md`).
 4. `full_name: null` is valid and explicitly clears the stored display name;
    omission leaves it unchanged
 5. `bot` sets the bot marker (see Bot Accounts); omission leaves it
-   unchanged. A non-boolean value and explicit `bot: null` return the global
+   unchanged. An effective change to `true` also unassigns the user from
+   their Tickets in `New`, `Analysis`, and `Analyzed` in the same
+   transaction. A non-boolean value and explicit `bot: null` return the global
    HTTP 422 `VALIDATION_ERROR` response through request-schema validation
 6. If the user is an external user (`external_id IS NOT NULL`), return HTTP 409
    with code `USER_EXTERNAL_FIELD_READONLY`:
@@ -1309,7 +1325,8 @@ overlapping input first.
    `acting_user_id = authenticated_admin.id`
 4. `update_roles()` owns locking, the effective-change classification, the
    self-Admin guard, the `UserRole` mutations, and the Identity audit
-   events, including any derived final-VA-loss Ticket unassignment (see
+   events, including the derived unassignment from every Ticket for which a
+   removal leaves the user ineligible (see
    `docs/features/identity/user-service.md`)
 5. The API transaction dependency commits before the response is
    transmitted. Any error rolls the complete operation back atomically
@@ -1687,8 +1704,9 @@ handling is required.
    set at creation time. There is no passwordless local user state.
    This invariant is enforced at the database level by a CHECK
    constraint (see `docs/data-model.md`, `chk_user_auth_exclusive`)
-6. **The bot marker is descriptive only**: it has no effect on authorization
-   or business rules (see Bot Accounts)
+6. **The bot marker affects assignment eligibility only**: a bot account is
+   never the assignee of a Ticket; the marker has no effect on authorization
+   or any other business rule (see Bot Accounts)
 
 ## Security Considerations
 
@@ -1731,12 +1749,13 @@ handling is required.
    records via `IdentityAuditLog.log_event()` (user creation, role
    changes, password resets, deactivation, reactivation, API key
    lifecycle). Deactivation additionally creates `TicketAuditEvent`
-   records for ticket unassignment. Ordinary role changes create no
-   `TicketAuditEvent`; an effective loss of the user's final
-   `vulnerability_analyst` origin creates one `assignment` event per
-   effectively unassigned active ticket, committed atomically with the
-   identity events in the same transaction (see
-   `docs/features/tickets/ticket-audit-log.md`). See
+   records for ticket unassignment. A role removal that leaves the user
+   ineligible to be the assignee of an assigned active ticket, and an
+   effective change of the bot marker to `true`, create one `assignment`
+   event per effectively unassigned active ticket, committed atomically
+   with the identity events in the same transaction (see
+   `docs/features/tickets/ticket-audit-log.md`); other role and profile
+   changes create no `TicketAuditEvent`. See
    `docs/features/identity/identity-audit-log.md` for the full event
    type contract and `docs/features/identity/user-service.md` for the
    service operations.

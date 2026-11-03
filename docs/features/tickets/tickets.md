@@ -171,13 +171,14 @@ via `POST /api/v1/tickets`.
   created without a CVE (can be associated later)
 - When a CVE-ID is provided:
   - [CVE Resolution Behavior](#cve-resolution-behavior) applies
-- If the locked-current creating user is active and holds the
-  `vulnerability_analyst` role:
+- If the locked-current creating user is eligible to be the assignee of the
+  new Ticket (`docs/features/identity/rbac.md`, Business Rule 10, evaluated
+  with the requested confidentiality), for example a vulnerability analyst,
+  or a non-bot restricted analyst creating a non-confidential Ticket:
   - `status`: `Analysis` (direct, bypasses `New` — the creating user is
     automatically assigned)
   - `assignee_id`: set to the creating user
-- If the locked-current creating user is inactive or does NOT hold the
-  `vulnerability_analyst` role (e.g., `restricted_analyst`):
+- If the locked-current creating user is not eligible (e.g., a bot account):
   - `status`: `New` (auto-assignment is skipped — see
     [Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets))
   - `assignee_id`: `NULL`
@@ -306,10 +307,10 @@ highest valid gate-zone status (`Analysis`, `Analyzed`, or `Resolved`).
 | `Resolved` | `Analysis` or `Analyzed` | A gate-relevant mutation invalidates resolution | Automatic; system | `ticket_mutations.reconcile_ticket_status()` |
 
 For a user action on a `New` Ticket, the existing auto-assignment rule still
-applies. A VA actor records `New -> Analysis` before the requested Ignore or
-Duplicate transition; a non-VA actor cannot be assigned and may record the
-direct `New -> Ignored` or `New -> Duplicated` transition. These are the same
-matrix paths, not additional legal targets.
+applies. An actor eligible to be the assignee records `New -> Analysis` before
+the requested Ignore or Duplicate transition; an ineligible actor cannot be
+assigned and may record the direct `New -> Ignored` or `New -> Duplicated`
+transition. These are the same matrix paths, not additional legal targets.
 
 **Note on CVE Rejections**: When a CVE's `cve_state` changes to `REJECTED`
 (detectable from any discovery fetcher — NVD, MITRE, or kernel), only its unique
@@ -530,7 +531,7 @@ the gate zone is `Analysis` — this function never produces `New`.
 The `New → Analysis` transition is not a gate evaluation. It is an
 explicit one-way event triggered only by the first assignment action:
 `auto_assign_actor()` (implicit assignment via any modifying operation
-by a VA on an unassigned ticket) or `assign_ticket()` (explicit
+by an eligible user on an unassigned ticket) or `assign_ticket()` (explicit
 assignment via the PATCH assignee endpoint). Once a ticket leaves
 `New`, it never returns there under normal operation.
 
@@ -606,9 +607,17 @@ actionability-aware gate evaluation, and architectural test requirements.
 >   contains the corresponding `assignment` event. A Ticket that has never been
 >   assigned may validly remain unassigned in the gate zone without an
 >   unassignment event.
+> - A `New` Ticket on which only users who are not eligible to be its
+>   assignee work — bot accounts, or users with effective scope
+>   `non_confidential` on a confidential Ticket — stays `New`, unassigned,
+>   and outside gate evaluation, with its triage phase open
+>   ([ticket-deadlines.md](ticket-deadlines.md#ticket-current-phase)), until
+>   an eligible user is assigned explicitly or auto-assigned. This is
+>   intended: their operations do not take the Ticket from the unassigned
+>   queue.
 >
-> Tickets created directly by an active VA (`create_ticket()` with a
-> locked-current active VA actor)
+> Tickets created directly by a user eligible to be their assignee
+> (`create_ticket()` with a locked-current eligible actor)
 > start at `Analysis` and bypass `New` entirely — no `New → Analysis`
 > transition occurs and no corresponding `status_change` audit event is
 > expected on these tickets.
@@ -624,46 +633,60 @@ per-operation locking matrix.
 
 ### Reassignment
 
-A ticket can be reassigned to a different VA at any time, as long as the
-ticket is in a mutable status (not Ignored or Duplicated). For Ignored
+A ticket can be reassigned to another eligible user at any time, as long as
+the ticket is in a mutable status (not Ignored or Duplicated). For Ignored
 tickets, the dedicated reopen flow (`POST .../reopen`) handles
 assignment; for Duplicated tickets, the revert-duplicate flow
 (`POST .../revert-duplicate`) handles it. Reassignment does not change
 the ticket status. All reassignments are logged in the ticket event
 history.
 
-**Target constraint**: the assignment target MUST be an **active** user
-holding the `vulnerability_analyst` role. Attempting to assign a ticket
-to a user without this role fails with 400 Bad Request
-(`TICKET_ASSIGNEE_NOT_VA`). Attempting to assign to an inactive user
-fails with 409 Conflict (`TICKET_ASSIGNEE_INACTIVE`). This applies to
-the explicit assignment endpoint (`PATCH .../assignee`).
+**Target constraint**: the assignment target MUST be eligible to be the
+assignee of the Ticket (`docs/features/identity/rbac.md`, Business Rule 10):
+an active user who is not a bot account, whose roles grant `triage_ticket`,
+and whose effective scope is `all` when the Ticket is confidential. With the
+predefined roles, vulnerability analysts can be assigned every Ticket and
+restricted analysts every non-confidential Ticket. Attempting to assign to an
+inactive user fails with 409 Conflict (`TICKET_ASSIGNEE_INACTIVE`); attempting
+to assign to any other ineligible user fails with 400 Bad Request
+(`TICKET_ASSIGNEE_NOT_ELIGIBLE`). This applies to the explicit assignment
+endpoint (`PATCH .../assignee`).
 Every assignment-capable path stabilizes the prospective assignee with a User
-`FOR SHARE` lock before any CVE or Ticket lock and evaluates both conditions
-from that locked state. Auto-assignment and embedded assignment are skipped if
-the acting user is inactive or lacks the role; explicit assignment retains the
-existing errors above.
+`FOR SHARE` lock before any CVE or Ticket lock, evaluates the user's
+conditions from that locked state, and evaluates the confidentiality
+condition from the locked-current Ticket. Auto-assignment and embedded
+assignment are skipped if the acting user is ineligible; explicit assignment
+retains the errors above.
 
 **System-initiated unassignment**: tickets are automatically unassigned
-in three scenarios:
+in these scenarios:
 
 1. **User deactivation**: bulk unassignment via `deactivate_user` when a
    user is deactivated (see
    [user-service.md](../identity/user-service.md#deactivate_user))
-2. **VA role loss**: bulk unassignment via
-   `_unassign_tickets_on_va_role_loss` when a user loses the
-   `vulnerability_analyst` role entirely — no remaining `UserRole`
-   records from any origin (see
+2. **Bot marking**: bulk unassignment via `update_user` when a user becomes a
+   bot account (see
+   [user-service.md](../identity/user-service.md#update_user))
+3. **Role-origin removal**: unassignment via `_unassign_ineligible_tickets`
+   from every Ticket for which the user's remaining roles of every origin no
+   longer make them eligible — every Ticket when no remaining role grants
+   `triage_ticket`, the confidential ones when no remaining role has scope
+   `all` (see
    [user-service.md](../identity/user-service.md#private-helpers))
-3. **Assignment-eligibility sanitation**: individual cleanup by
-   `reconcile_ticket_status` when it encounters an inactive or non-VA assignee
+4. **Confidentiality**: making a Ticket confidential clears an assignee who
+   is not eligible for the confidential Ticket (see
+   [Set Confidentiality](#set-confidentiality))
+5. **Assignment-eligibility sanitation**: individual cleanup by
+   `reconcile_ticket_status` when it encounters an ineligible assignee
    on a Ticket whose final result is `Analysis` or `Analyzed` (see
    [Assignment Eligibility Sanitization](ticket-mutations.md#assignment-eligibility-sanitization))
 
-Scenario 1 and active manual-role uses of scenario 2 are proactive and serialize
-with every assignment path on the User lock. Scenario 3 is defensive
-current-state sanitation during gate evaluation, including when a preserved
-inactive-status Ticket returns to `Analysis` or `Analyzed`; it is not the
+Scenarios 1–4 clear only `New`, `Analysis`, and `Analyzed` assignments.
+Scenarios 1, 2, and active manual-role uses of scenario 3 are proactive and
+serialize with every assignment path on the User lock; scenario 4 serializes
+with them on the Ticket lock. Scenario 5 is defensive current-state sanitation during
+gate evaluation, including when a preserved `Resolved`, `Ignored`, or
+`Duplicated` Ticket returns to `Analysis` or `Analyzed`; it is not the
 primary repair for an assignment race. Deferred external-origin behavior is
 owned by `identity-provisioning.md`.
 
@@ -689,22 +712,24 @@ explicit reassignment.
   `TICKET_ASSIGNEE_NOT_CALLER`.
 
 Auto-assignment is unchanged: a later effective modifying operation by the same
-active VA assigns the Ticket to them again (see
+user, while eligible, assigns the Ticket to them again (see
 [Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets)).
 See [ticket-service.md](ticket-service.md#unassign_ticket) for the
 service-layer contract.
 
 ### Auto-Assignment on Unassigned Tickets
 
-When an active user with the `vulnerability_analyst` role performs any
-modifying operation on a ticket with `assignee_id = NULL`, the ticket is
+When a user who is eligible to be the assignee of a ticket
+(`docs/features/identity/rbac.md`, Business Rule 10) performs any
+modifying operation on it while `assignee_id = NULL`, the ticket is
 automatically assigned to the acting user. The User is locked and checked
-before the Ticket lock. A `TicketAuditEvent` with
+before the Ticket lock; the Ticket's confidentiality is checked under the
+Ticket lock. A `TicketAuditEvent` with
 `event_type = assignment` is created atomically in the same transaction
-as the modifying operation. If the acting user is inactive or does not hold the
-`vulnerability_analyst` role (e.g., a `restricted_analyst`),
-auto-assignment is skipped — the ticket remains unassigned for a
-vulnerability analyst to claim.
+as the modifying operation. If the acting user is not eligible — for example
+a bot account, or a restricted analyst working on a confidential Ticket
+through an access grant or package maintainership — auto-assignment is
+skipped and the ticket remains unassigned for an eligible user to claim.
 
 If the ticket is in `New` status, `auto_assign_actor()` immediately
 promotes it to `Analysis` as an explicit side effect of the assignment,
@@ -718,12 +743,12 @@ explicit status (e.g., `ignore_ticket` → `Ignored`, `mark_as_duplicate`
 → `Duplicated`): `auto_assign_actor` sets `Analysis`, the caller then
 sets the explicit status. The audit trail records two `status_change`
 events — `New → Analysis` and `Analysis → Ignored` (or `Duplicated`).
-This is correct and intentional: the VA claimed the ticket before
+This is correct and intentional: the acting user claimed the ticket before
 choosing to act on it explicitly.
 
 This rule does not apply to system operations (background tasks,
-automated ingestion) or to users without the `vulnerability_analyst`
-role.
+automated ingestion) or to users who are not eligible to be the assignee of
+the ticket.
 
 Manual reference create, update, and delete are also excluded. They modify only
 supplementary editorial metadata and never call `auto_assign_actor()`, reconcile
@@ -791,10 +816,9 @@ When reverting a ticket from Duplicated status
 (`ticket_service.revert_duplicate()`):
 
 - `duplicate_of_id` is cleared (set to NULL)
-- If the locked-current acting user is active and holds the
-  `vulnerability_analyst` role, the ticket
-  is reassigned to them. If the acting user does not hold the VA role
-  (e.g., a `restricted_analyst`), the reassignment step is skipped — the
+- If the locked-current acting user is eligible to be the assignee of the
+  Ticket, the ticket is reassigned to them. If the acting user is not eligible
+  (e.g., a bot account), the reassignment step is skipped — the
   ticket retains its current assignee (or remains unassigned)
 - The ticket re-enters the gate zone; `reconcile_ticket_status`
   determines the correct status based on current gate conditions only after
@@ -845,9 +869,11 @@ tickets may reference the same target.
 Ignored is a **manual-zone status** — `reconcile_ticket_status` never
 operates on Ignored tickets. Two exit transitions are allowed:
 
-1. **VA assigns themselves (manual):** the VA becomes the assignee.
+1. **A user reopens (manual):** a user eligible to be the assignee of the
+   Ticket becomes the assignee; an ineligible user's reopen retains the
+   current assignee.
 2. **System reopens (automatic):** the current assignee is retained, including
-   an inactive or non-VA assignee when the final gate result is `Resolved`.
+   an ineligible assignee when the final gate result is `Resolved`.
    Final reconciliation clears an ineligible assignee only for `Analysis` or
    `Analyzed`. This handles cases like CVE rejection reverts (see
    `docs/features/tickets/cve-tracking.md`, "Rejection revert handling").
@@ -866,7 +892,7 @@ Both transitions go through `ticket_service.reopen_from_ignored()`:
 Every successful manual-zone exit registers one transaction-local Ticket
 convergence effect, including an exit whose immediate gate result is `Resolved`.
 If the final result is `Analysis` or `Analyzed`, reconciliation clears an
-inactive or non-VA assignee; if it is `Resolved`, the existing assignee is
+ineligible assignee; if it is `Resolved`, the existing assignee is
 retained even when that user is ineligible. A broker operational error while
 publishing this automatically registered effect is best-effort: it is logged
 after commit with exactly one sanitized event and does not change the successful
@@ -1019,6 +1045,12 @@ disclosure.
   The identifier-only exceptions under Identifier Disclosure Boundary do not
   expose protected content. Authorized users see confidential tickets normally
   alongside non-confidential ones.
+- **Assignment**: only a user whose effective scope is `all` can be the
+  assignee of a confidential Ticket (`docs/features/identity/rbac.md`,
+  Business Rule 10). An explicit `TicketAccessGrant` or package
+  maintainership gives visibility, not assignment eligibility. Making a
+  Ticket confidential clears an ineligible assignee in `New`, `Analysis`, or
+  `Analyzed` (see [Set Confidentiality](#set-confidentiality)).
 
 Ticket response objects (both list and detail) MUST include the
 `is_confidential: boolean` field. This field is always present — there
@@ -1258,6 +1290,10 @@ currently confidential because the retained association can govern a later
 confidentiality state. Package exclusion/restoration events record the dynamic
 loss/return of effective access; no maintainer-removal event exists.
 
+An effective `false` to `true` confidentiality transition that clears an
+ineligible assignee also creates one system `assignment` event after
+`confidentiality_changed` (see [Set Confidentiality](#set-confidentiality)).
+
 An effective `true` to `false` confidentiality transition deletes every manual
 grant atomically but creates only the one `confidentiality_changed` event. The
 automatic deletions are consequences of declassification, not manual revokes,
@@ -1481,7 +1517,7 @@ views without the full package tree.
 | `status` | string | TicketStatus enum: `new`, `analysis`, `analyzed`, `resolved`, `ignored`, `duplicated` |
 | `severity` | string \| null | Resolved severity (CVSS-derived → manual fallback). Values: `critical`, `high`, `medium`, `low`, `none`, or `null` if unresolved. `null` = no CVSS data and no manual severity set. `"none"` = CVSS score 0.0 (informational) |
 | `priority` | string \| null | Effective priority (manual override, otherwise automatic): `p1`, `p2`, `p3`, `p4`, or `null` when not yet prioritizable. See [ticket-priority.md](ticket-priority.md) |
-| `assignee` | UserSummary \| null | Assigned VA, or `null` if unassigned |
+| `assignee` | UserSummary \| null | Current assignee, or `null` if unassigned |
 | `cve` | CVESummary \| null | Associated CVE summary, or `null` if no CVE |
 | `duplicate_of_ticket_id` | string \| null | Duplicate target Ticket identity (`SNTL-{n}`), or `null` |
 | `is_confidential` | boolean | Whether the ticket is confidential |
@@ -1511,7 +1547,7 @@ projection with the full package tree, and uses expanded CVE data.
 | `priority` | string \| null | Effective priority: `priority_override` when set, otherwise `priority_automatic`. Values `p1`–`p4` or `null` |
 | `priority_automatic` | string \| null | System-derived priority (`Ticket.priority_auto`): `p1`–`p4`, or `null` when not yet prioritizable |
 | `priority_override` | string \| null | Manual override (`Ticket.priority_override`): `p1`–`p4`, or `null` when no override is set |
-| `assignee` | UserSummary \| null | Assigned VA, or `null` if unassigned |
+| `assignee` | UserSummary \| null | Current assignee, or `null` if unassigned |
 | `cve` | CVEDetail \| null | Expanded CVE data with dates, or `null` if no CVE |
 | `duplicate_of_ticket_id` | string \| null | Duplicate target Ticket identity (`SNTL-{n}`), or `null` |
 | `is_confidential` | boolean | Whether the ticket is confidential |
@@ -1712,9 +1748,9 @@ POST /api/v1/tickets
 **`Capability: create_ticket`**
 - **Response schema**: `TicketDetail` (201 Created)
 
-Creates a ticket manually. The creating user is automatically assigned
-if the locked-current user is active and holds the `vulnerability_analyst`
-role — see
+Creates a ticket manually. The creating user is automatically assigned, and
+the Ticket starts in `Analysis`, if the locked-current user is eligible to be
+the assignee of the new Ticket — see [Manual Creation](#manual-creation) and
 [Auto-Assignment on Unassigned Tickets](#auto-assignment-on-unassigned-tickets).
 
 Request body:
@@ -1925,22 +1961,25 @@ Self-unassignment request:
 ```
 
 - `user_id` (string | null, required): a string is the UUID or username of the
-  target user, who must be active and hold the `vulnerability_analyst` role,
-  and assigns or reassigns the Ticket through `ticket_service.assign_ticket()`.
+  target user, who must be eligible to be the assignee of the Ticket (see
+  [Reassignment](#reassignment), Target constraint), and assigns or
+  reassigns the Ticket through `ticket_service.assign_ticket()`.
   JSON `null` clears the caller's own assignment through
   `ticket_service.unassign_ticket()`. An omitted field or a value of another
   type produces the global `422 VALIDATION_ERROR`
 
 `null` never clears another user's assignment: a Ticket assigned to someone
 else can only be reassigned. The target-user errors (`USER_NOT_FOUND`,
-`TICKET_ASSIGNEE_NOT_VA`, `TICKET_ASSIGNEE_INACTIVE`) apply only to a string
-`user_id`, and `TICKET_ASSIGNEE_NOT_CALLER` only to `null`. For both forms,
-Ticket accessibility (`404 TICKET_NOT_FOUND`) and operability (`409
-TICKET_NOT_MUTABLE`) precede every endpoint-specific error.
+`TICKET_ASSIGNEE_INACTIVE`, `TICKET_ASSIGNEE_NOT_ELIGIBLE`, in this order of
+precedence) apply only to a string `user_id`, and `TICKET_ASSIGNEE_NOT_CALLER`
+only to `null`. For both forms, Ticket accessibility (`404 TICKET_NOT_FOUND`)
+and operability (`409 TICKET_NOT_MUTABLE`) precede every endpoint-specific
+error.
 
-System-initiated unassignment may also occur as a side effect of user
-deactivation or VA role loss (see
-[user-service.md](../identity/user-service.md#deactivate_user)). Neither
+System-initiated unassignment may also occur as a side effect of a change
+that makes the assignee ineligible, such as deactivation, a role-origin
+removal, bot marking, or making the Ticket confidential (see
+[Reassignment](#reassignment)). Neither
 self-unassignment nor system unassignment changes the ticket status: the ticket
 remains in its current status and appears in the unassigned ticket queue
 (`?assignee=none`) awaiting a new assignee (see
@@ -1954,7 +1993,7 @@ Response: `TicketDetail` object in standard `{"data": ...}` envelope
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 400 | `TICKET_ASSIGNEE_NOT_VA` | Target user does not hold the Vulnerability Analyst role |
+| 400 | `TICKET_ASSIGNEE_NOT_ELIGIBLE` | Active target user is not eligible to be the assignee of the Ticket: a bot account, without the `triage_ticket` capability, or without effective scope `all` when the Ticket is confidential |
 | 404 | `USER_NOT_FOUND` | Target user not found |
 | 409 | `TICKET_ASSIGNEE_INACTIVE` | Target user is inactive |
 | 409 | `TICKET_ASSIGNEE_NOT_CALLER` | `user_id` is `null` and another user is the current assignee |
@@ -2030,8 +2069,8 @@ POST /api/v1/tickets/{ticket_id}/reopen
 **`Capability: triage_ticket`**
 - **Response schema**: `TicketDetail`
 
-Reopens an Ignored ticket. If the locked-current calling user is active and
-holds the `vulnerability_analyst` role, they become the new assignee; otherwise,
+Reopens an Ignored ticket. If the locked-current calling user is eligible to be
+the assignee of the Ticket, they become the new assignee; otherwise,
 the ticket retains its current assignee (or remains unassigned). After
 assignment (if applicable), the workflow enters the gate zone at the
 unconditional `Analysis` floor, then
@@ -2065,7 +2104,7 @@ POST /api/v1/tickets/{ticket_id}/revert-duplicate
 - **Response schema**: `TicketDetail`
 
 Reverts a Duplicated ticket into the gate zone. If the locked-current user who
-performed the revert is active and holds the `vulnerability_analyst` role, the ticket
+performed the revert is eligible to be the assignee of the Ticket, the ticket
 is reassigned to them; otherwise, the ticket retains its current
 assignee. After clearing the duplicate link, the service enters the
 `Analysis` floor, synchronously converges existing automatic Product
@@ -2207,6 +2246,20 @@ not workflow or gate state.
 
 An effective transition to non-confidential leaves `coordinated_release_at`
 unchanged (see [Coordinated Release Date](#coordinated-release-date)).
+
+An effective transition to confidential of a Ticket in `New`, `Analysis`, or
+`Analyzed` clears an assignee who is not eligible to be the assignee of a
+confidential Ticket, such as a restricted analyst, also one who sees the
+Ticket through an explicit grant or package maintainership
+(`docs/features/identity/rbac.md`, Business Rule 10). The clear is a system
+`assignment` event in the same transaction; the status is unchanged, the
+response shows `assignee: null`, and the Ticket appears in the unassigned
+queue, where the caller, who holds `manage_confidentiality` and therefore
+scope `all` with the predefined roles, can take it. In `Resolved`, `Ignored`,
+and `Duplicated` the assignee is retained, so that this endpoint never
+changes the workflow of a manual-zone Ticket; reconciliation clears an
+ineligible assignee if the Ticket later returns to `Analysis` or `Analyzed`
+([Assignment Eligibility Sanitization](ticket-mutations.md#assignment-eligibility-sanitization)).
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
@@ -2396,7 +2449,7 @@ table:
 | sequence_id       | INTEGER     | UNIQUE, NOT NULL, auto-increment | Human-readable ID, exposed as `SNTL-{n}` |
 | cve_id            | UUID        | FK(cve.id), UNIQUE, nullable | Associated CVE (optional) |
 | status            | VARCHAR(20) | NOT NULL, DEFAULT New        | Ticket status |
-| assignee_id       | UUID        | FK(user.id), nullable        | Assigned VA |
+| assignee_id       | UUID        | FK(user.id), nullable        | Current assignee. See [Reassignment](#reassignment), Target constraint |
 | severity_manual | VARCHAR(20) | nullable                     | Manual severity (Critical, High, Medium, Low, None). NULL = not set (unresolved). `None` = an authorized acting user explicitly set informational severity (CVSS score 0.0). Used when `cve_id IS NULL`. Cleared to NULL by `associate_cve` when a CVE is linked. Mutually exclusive with `cve_id` (`chk_ticket_severity_manual_cve_exclusive`) |
 | duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Original ticket when Duplicated |
 | priority_auto     | VARCHAR(10) | nullable                     | System-derived priority. See [ticket-priority.md](ticket-priority.md) |

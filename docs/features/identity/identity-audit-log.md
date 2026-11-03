@@ -421,12 +421,15 @@ missing-row, and concurrent-loser inputs create no event. Events use
 NULL for the CLI), `target_user_id` = the affected user, `old_value` /
 `new_value` carrying only the role name, and `detail = NULL`. Within one
 invocation, all `role_added` events precede all `role_removed` events, and
-each group is ordered by wire-format role value. When the effective deletion
-removes the final `vulnerability_analyst` origin, the derived Ticket
-`assignment` events are created in the same caller-owned transaction; an
-Identity or Ticket audit failure rolls back both domains together (see
+each group is ordered by wire-format role value. When an effective deletion
+leaves the user ineligible to be the assignee of an assigned active-status
+Ticket (`docs/features/identity/rbac.md`, Business Rule 10), the derived
+Ticket `assignment` events are created in the same caller-owned transaction;
+an Identity or Ticket audit failure rolls back both domains together (see
 `docs/features/tickets/ticket-audit-log.md`, Cross-Event Ordering, Locking,
-and Rollback).
+and Rollback). An effective change of the bot marker to `true` likewise
+creates its derived Ticket `assignment` events, before `bot_changed`, in the
+transaction of `update_user()`.
 
 **External sync coverage**: the `user_created` event type applies to ALL user
 creation regardless of source (manual admin creation AND external sync). On

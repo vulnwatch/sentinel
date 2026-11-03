@@ -595,7 +595,7 @@ are visible to every authenticated user.
 | `SNTL-17` | `CVE-2099-0017` | Ingestion | `Ignored` | `bwilson` | No | medium |
 | `SNTL-18` | `CVE-2099-0018` | `asmith` | `Analysis` | `asmith` | Yes, with a coordinated release date `T + 30d` and an access grant to `cwhite` | critical |
 | `SNTL-19` | `CVE-2099-0019` | `bwilson` | `Analysis` | `bwilson` | Yes, without access grant | high |
-| `SNTL-20` | `CVE-2099-0020` | `cwhite` | `New` | — | No | medium |
+| `SNTL-20` | `CVE-2099-0020` | `cwhite` | `Analysis` | `cwhite` | No | medium |
 | `SNTL-21` | — | `asmith`, with the manual severity high | `Analysis` | `asmith` | No | high |
 | `SNTL-22` | — | `bwilson` | `Duplicated`, a duplicate of `SNTL-21` | `bwilson` | No | unresolved |
 | `SNTL-23` to `SNTL-25` | `CVE-2099-0021` to `CVE-2099-0023` | Ingestion | `New` | — | No | As CVEs |
@@ -605,9 +605,14 @@ The manual Ticket creations are `create_ticket()` calls with the `manual`
 source by the creator of the table, with the CVE and the manual severity of
 the table. Only `SNTL-18` is created confidential, with its coordinated
 release date; `SNTL-19` is created non-confidential and made confidential by
-the Ticket work. A creator who holds the `vulnerability_analyst` role is
-assigned and the Ticket starts in `Analysis`; `cwhite` is not, and `SNTL-20`
-stays `New` (`docs/features/tickets/tickets.md`, Manual Creation).
+the Ticket work. Every creator is eligible to be the assignee of the Ticket
+that they create, so each is assigned and each Ticket starts in `Analysis`
+(`docs/features/tickets/tickets.md`, Manual Creation). This includes `cwhite`,
+a restricted analyst who is not a bot account, for the non-confidential
+`SNTL-20` (`docs/features/identity/rbac.md`, Business Rule 10). The access
+grant to `cwhite` on the confidential `SNTL-18` makes `SNTL-18` visible to
+`cwhite` but does not make `cwhite` eligible to be its assignee, and the
+operations of the bot account `security-scanner` never assign it.
 
 Operations of the `Ticket work` step, in this order. Every operation without a
 named user is a system operation (Attribution).
@@ -654,6 +659,8 @@ The resulting states follow the gates of `docs/features/tickets/tickets.md`:
   `Server LTSS 15 SP5`. Its `SUSE:FLES-15-SP3:Update` track stays in
   `ANALYSIS` and is not actionable, because its only Product is EOL.
 - `SNTL-18` and `SNTL-19` stay in `Analysis` without a SUSE assessment.
+- `SNTL-20` stays in `Analysis`, assigned to its creator `cwhite`: it has no
+  package, so its Analyzed gate fails.
 
 ### Aged Tickets
 

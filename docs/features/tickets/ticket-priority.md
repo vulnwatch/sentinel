@@ -242,9 +242,8 @@ function captures one UTC date at entry.
 
 **Behavior**:
 
-1. Acquire `FOR SHARE` on the acting User and stabilize its active and
-   `vulnerability_analyst` eligibility, then acquire `FOR UPDATE` on the
-   Ticket.
+1. Acquire `FOR SHARE` on the acting User and stabilize its assignment
+   eligibility, then acquire `FOR UPDATE` on the Ticket.
 2. Revalidate consumer accessibility from the locked-current Ticket. Missing or
    inaccessible raises `TicketNotFoundError` with no effect.
 3. Call `ensure_ticket_operable(ticket)`. `Ignored` and `Duplicated` raise

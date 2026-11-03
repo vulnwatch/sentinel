@@ -97,6 +97,8 @@ sentinel manage-user update \
 Profile fields (`--email`, `--full-name`, `--clear-full-name`, `--bot`,
 `--no-bot`) are only permitted on local users; `--full-name` and
 `--clear-full-name` are mutually exclusive, as are `--bot` and `--no-bot`.
+`--bot` on an account that is not yet a bot account also unassigns it from
+its active Tickets.
 Role changes are permitted on local and external users and manage only the
 `_manual` origin. Reactivation is only permitted on local users.
 
