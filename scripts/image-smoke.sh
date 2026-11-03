@@ -6,7 +6,9 @@
 #
 # SENTINEL_IMAGE selects the candidate reference (default:
 # sentinel-backend:smoke). IMAGE_SMOKE_*_TIMEOUT variables and
-# IMAGE_SMOKE_TERM_GRACE tune finite lifecycle bounds in seconds.
+# IMAGE_SMOKE_TERM_GRACE tune finite lifecycle bounds in seconds. The
+# timeout supervisor and host pytest run on the backend project's Python,
+# which uv selects; run 'cd backend && uv sync' first.
 
 set -euo pipefail
 
@@ -30,6 +32,7 @@ TEARDOWN_TIMEOUT="${IMAGE_SMOKE_TEARDOWN_TIMEOUT-180}"
 TERM_GRACE="${IMAGE_SMOKE_TERM_GRACE-10}"
 
 NO_BUILD=0
+SUPERVISOR_PYTHON=""
 CANDIDATE_REF="${SENTINEL_IMAGE:-sentinel-backend:smoke}"
 CANDIDATE_ID=""
 COMPOSE_VERSION=""
@@ -76,11 +79,36 @@ validate_bounds() {
         validate_nonnegative_bound IMAGE_SMOKE_TERM_GRACE "${TERM_GRACE}"
 }
 
+# Selects the interpreter of the timeout supervisor before any bounded
+# phase: the backend project's, on which the supervisor's tests run, not
+# whichever python3 comes first on PATH. uv only finds it, so it stays out
+# of the signal and exit-status path of every phase; the lookup is local
+# and installs nothing.
+resolve_supervisor() {
+    local status=0
+    if [[ ! -f "${TIMEOUT_RUNNER}" ]]; then
+        echo "Error: scripts/run-with-timeout.py is required." >&2
+        return 1
+    fi
+    if ! command -v uv &>/dev/null; then
+        echo "Error: uv not found; it selects the backend project's Python for the timeout supervisor and runs host pytest." >&2
+        return 1
+    fi
+    SUPERVISOR_PYTHON="$(cd "${ROOT_DIR}/backend" && uv python find)" || status=$?
+    if ((status == 0)) && [[ ! -f "${SUPERVISOR_PYTHON}" || ! -x "${SUPERVISOR_PYTHON}" ]]; then
+        status=1
+    fi
+    if ((status != 0)); then
+        echo "Error: uv found no Python interpreter for the backend project; run 'cd backend && uv sync'." >&2
+        return "${status}"
+    fi
+}
+
 run_bounded() {
     local label="$1"
     local timeout="$2"
     shift 2
-    python3 "${TIMEOUT_RUNNER}" \
+    "${SUPERVISOR_PYTHON}" "${TIMEOUT_RUNNER}" \
         --label "${label}" \
         --timeout "${timeout}" \
         --grace-period "${TERM_GRACE}" \
@@ -191,10 +219,6 @@ check_docker_environment() {
     if ! command -v docker &>/dev/null; then
         echo "Error: Docker CLI not found." >&2
         echo "Install Docker Engine or Docker Desktop with Docker Compose ${MINIMUM_COMPOSE_VERSION} or later." >&2
-        return 1
-    fi
-    if ! command -v python3 &>/dev/null || [[ ! -f "${TIMEOUT_RUNNER}" ]]; then
-        echo "Error: Python 3 and scripts/run-with-timeout.py are required." >&2
         return 1
     fi
 
@@ -622,6 +646,8 @@ main() {
         esac
     done
     validate_bounds || return $?
+    resolve_supervisor || return $?
+    echo "[image-smoke] Timeout supervisor interpreter: ${SUPERVISOR_PYTHON}"
 
     REGISTRY_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sentinel-image-smoke.XXXXXXXXXX")"
     trap emergency_cleanup EXIT

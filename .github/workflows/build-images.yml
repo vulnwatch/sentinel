@@ -100,6 +100,13 @@ jobs:
           version: "0.13.6"
           enable-cache: true
 
+      # The harness runs its timeout supervisor on the project's interpreter,
+      # which it finds but does not install (docs/features/platform/
+      # testing-strategy.md, Image / Container Smoke Testing → Execution).
+      - name: Sync backend environment
+        working-directory: backend
+        run: uv sync --locked
+
       # Blocking smoke gate: brings up the full stack against the loaded
       # image, runs the `image`-marked pytest suite, tears down. A failure
       # here fails the job (fail-fast, no continue-on-error) and prevents

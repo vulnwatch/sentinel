@@ -10,10 +10,16 @@ from pathlib import Path
 
 import pytest
 
-from tests.support.yaml_files import load_yaml_file, string_values
+from tests.support.yaml_files import (
+    job_steps,
+    load_yaml_file,
+    string_values,
+    workflow_jobs,
+)
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = ROOT_DIR / "scripts" / "image-smoke.sh"
+WORKFLOWS_DIR = ROOT_DIR / ".github" / "workflows"
 IMAGE_ID = f"sha256:{'a' * 64}"
 DRIFTED_IMAGE_ID = f"sha256:{'f' * 64}"
 # Application roles in verification order, with their fake container IDs.
@@ -29,6 +35,8 @@ ROLE_CONTAINERS = {
 # in the order of the runner's bounded pre-pull list.
 INFRASTRUCTURE_IMAGES = {"postgres": "postgres:18", "redis": "redis:8"}
 
+# The backend project's interpreter, as `uv python find` reports it; it
+# runs the supervisor and lies outside PATH.
 PYTHON_STUB = r"""#!/usr/bin/env bash
 set -euo pipefail
 supervisor_path="$1"
@@ -77,6 +85,13 @@ if [[ "${ABORT_LABEL:-}" == "${label}" ]]; then
     exit 143
 fi
 exec "$@"
+"""
+
+# A host python3 on PATH, which the runner must never use.
+HOST_PYTHON_STUB = r"""#!/usr/bin/env bash
+set -euo pipefail
+printf 'host-python3 %s\n' "$*" >> "${IMAGE_SMOKE_STUB_LOG}"
+exit 97
 """
 
 DOCKER_STUB = r"""#!/usr/bin/env bash
@@ -223,6 +238,13 @@ exit 0
 
 UV_STUB = r"""#!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == "python" && "${2:-}" == "find" ]]; then
+    printf 'interpreter-lookup %s cwd=%s\n' "$*" "$(pwd -P)" \
+        >> "${IMAGE_SMOKE_STUB_LOG}"
+    [[ "${PYTHON_FIND_EXIT:-0}" == "0" ]] || exit "${PYTHON_FIND_EXIT}"
+    printf '%s\n' "${IMAGE_SMOKE_STUB_PYTHON}"
+    exit 0
+fi
 printf 'uv %s project=%s files=%s image=%s base=%s registry=%s\n' \
     "$*" "${COMPOSE_PROJECT:-}" "${COMPOSE_FILES:-}" \
     "${IMAGE_SMOKE_IMAGE_ID:-}" "${IMAGE_SMOKE_BASE_URL:-}" \
@@ -240,17 +262,31 @@ def _write_executable(path: Path, content: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def _prepare_bin(tmp_path: Path, *, docker: bool = True, python: bool = True) -> Path:
+def _project_python(tmp_path: Path) -> Path:
+    return tmp_path / "project" / "bin" / "python"
+
+
+def _temporary_dir(tmp_path: Path) -> Path:
+    """The runner's TMPDIR, so its temporary project registry stays under
+    `tmp_path` even when a test makes the registry cleanup fail."""
+    return tmp_path / "tmp"
+
+
+def _prepare_bin(tmp_path: Path, *, docker: bool = True, uv: bool = True) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(parents=True)
     for command in ("bash", "dirname", "mktemp", "rm", "sleep", "tr"):
         target = Path("/usr/bin") / command
         bin_dir.joinpath(command).symlink_to(target)
-    if python:
-        _write_executable(bin_dir / "python3", PYTHON_STUB)
+    _write_executable(bin_dir / "python3", HOST_PYTHON_STUB)
     if docker:
         _write_executable(bin_dir / "docker", DOCKER_STUB)
-    _write_executable(bin_dir / "uv", UV_STUB)
+    if uv:
+        _write_executable(bin_dir / "uv", UV_STUB)
+    project_python = _project_python(tmp_path)
+    project_python.parent.mkdir(parents=True)
+    _write_executable(project_python, PYTHON_STUB)
+    _temporary_dir(tmp_path).mkdir()
     return bin_dir
 
 
@@ -258,11 +294,11 @@ def _run_script(
     tmp_path: Path,
     *args: str,
     docker: bool = True,
-    python: bool = True,
+    uv: bool = True,
     runner_without_supervisor: bool = False,
     env_overrides: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
-    bin_dir = _prepare_bin(tmp_path, docker=docker, python=python)
+    bin_dir = _prepare_bin(tmp_path, docker=docker, uv=uv)
     log_path = tmp_path / "stub.log"
     log_path.write_text("", encoding="utf-8")
     env = os.environ | {
@@ -270,7 +306,9 @@ def _run_script(
         "DOCKER_HOST": "unix:///var/run/docker.sock",
         "IMAGE_SMOKE_STUB_LOG": str(log_path),
         "IMAGE_SMOKE_STATE_DIR": str(tmp_path),
+        "IMAGE_SMOKE_STUB_PYTHON": str(_project_python(tmp_path)),
         "IMAGE_SMOKE_TERM_GRACE": "0.01",
+        "TMPDIR": str(_temporary_dir(tmp_path)),
     }
     env.update(env_overrides or {})
     script_path = SCRIPT_PATH
@@ -362,22 +400,75 @@ def test_runner_rejects_missing_docker_cli(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_runner_rejects_missing_python_before_docker_preflight(tmp_path: Path) -> None:
-    result, calls = _run_script(tmp_path, python=False)
+def test_runner_runs_supervisor_on_project_interpreter_not_host_python3(
+    tmp_path: Path,
+) -> None:
+    # The supervisor's own tests run on the backend project's interpreter
+    # (tests/test_scripts/test_run_with_timeout.py), so the runner must run
+    # it there too, whatever python3 the host has (issue #1178).
+    result, calls = _run_script(tmp_path, "--no-build")
 
-    assert result.returncode == 1
-    assert "Python 3 and scripts/run-with-timeout.py are required" in result.stderr
-    assert _docker_calls(calls) == []
+    assert result.returncode == 0, result.stderr
+    lookups = [call for call in calls if call.startswith("interpreter-lookup ")]
+    assert lookups == [f"interpreter-lookup python find cwd={ROOT_DIR / 'backend'}"]
+    assert calls[0] == lookups[0]
+    assert _supervisor_calls(calls)
+    assert not any(call.startswith("host-python3") for call in calls)
+    assert (
+        f"[image-smoke] Timeout supervisor interpreter: {_project_python(tmp_path)}"
+        in result.stdout
+    )
 
 
 @pytest.mark.unit
-def test_runner_rejects_missing_timeout_supervisor_file(tmp_path: Path) -> None:
-    result, calls = _run_script(tmp_path, runner_without_supervisor=True)
+@pytest.mark.parametrize(
+    ("overrides", "expected_status"),
+    [
+        pytest.param({"PYTHON_FIND_EXIT": "2"}, 2, id="lookup-fails"),
+        pytest.param(
+            {"IMAGE_SMOKE_STUB_PYTHON": "/nonexistent/backend/.venv/bin/python"},
+            1,
+            id="no-such-interpreter",
+        ),
+    ],
+)
+def test_runner_rejects_missing_project_interpreter_before_preflight(
+    tmp_path: Path, overrides: dict[str, str], expected_status: int
+) -> None:
+    result, calls = _run_script(tmp_path, env_overrides=overrides)
+
+    assert result.returncode == expected_status
+    assert "uv found no Python interpreter for the backend project" in result.stderr
+    assert "cd backend && uv sync" in result.stderr
+    assert [call.split()[0] for call in calls] == ["interpreter-lookup"]
+    assert list(_temporary_dir(tmp_path).iterdir()) == []
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "missing",
+    [
+        pytest.param("uv", id="uv"),
+        pytest.param("supervisor", id="supervisor-script"),
+    ],
+)
+def test_runner_rejects_missing_tool_before_preflight(
+    tmp_path: Path, missing: str
+) -> None:
+    result, calls = _run_script(
+        tmp_path,
+        uv=missing != "uv",
+        runner_without_supervisor=missing == "supervisor",
+    )
 
     assert result.returncode == 1
-    assert "Python 3 and scripts/run-with-timeout.py are required" in result.stderr
-    assert "temporary project registry cleanup failed with exit 2" in result.stderr
-    assert _docker_calls(calls) == []
+    expected = {
+        "uv": "Error: uv not found",
+        "supervisor": "Error: scripts/run-with-timeout.py is required.",
+    }[missing]
+    assert expected in result.stderr
+    assert calls == []
+    assert list(_temporary_dir(tmp_path).iterdir()) == []
 
 
 @pytest.mark.unit
@@ -745,6 +836,40 @@ def test_compose_pins_app_roles_and_uses_dynamic_loopback_port() -> None:
 
 
 @pytest.mark.unit
+def test_workflows_sync_project_environment_before_running_harness() -> None:
+    # The runner finds the project's interpreter but installs none, and a
+    # fresh runner has no managed one (UV_MANAGED_PYTHON) until uv syncs
+    # the backend environment, so every job that starts it syncs first.
+    harness_jobs = []
+    workflows = [*WORKFLOWS_DIR.glob("*.yml"), *WORKFLOWS_DIR.glob("*.yaml")]
+    for path in sorted(workflows):
+        for job_id, job in workflow_jobs(load_yaml_file(path)).items():
+            steps = job_steps(job)
+            runs = [str(step.get("run", "")) for step in steps]
+            harness = [i for i, run in enumerate(runs) if "image-smoke.sh" in run]
+            if not harness:
+                continue
+            harness_jobs.append(f"{path.name}:{job_id}")
+            setup_uv = [
+                i
+                for i, step in enumerate(steps)
+                if str(step.get("uses", "")).startswith("astral-sh/setup-uv@")
+            ]
+            sync = [
+                i
+                for i, step in enumerate(steps)
+                if step.get("run") == "uv sync --locked"
+                and step.get("working-directory") == "backend"
+                and "if" not in step
+            ]
+            assert setup_uv, harness_jobs[-1]
+            assert sync, harness_jobs[-1]
+            assert setup_uv[0] < sync[0] < harness[0], harness_jobs[-1]
+
+    assert {"build-images.yml:build-backend", "ci.yml:image-smoke"} <= set(harness_jobs)
+
+
+@pytest.mark.unit
 def test_runner_no_build_reuses_local_image_and_pulls_only_infrastructure(
     tmp_path: Path,
 ) -> None:
@@ -1091,6 +1216,12 @@ def test_teardown_is_supervised_and_timeout_fails_green_run(tmp_path: Path) -> N
     )
     assert "timeout=0.25" in teardown_call
     assert "phase=teardown exit=124" in result.stderr
+    # The registry removal (`teardown-registry`) timed out too, so the
+    # registry stays behind: in the test's TMPDIR, not in the host's /tmp.
+    leftovers = list(_temporary_dir(tmp_path).iterdir())
+    assert [path.name.startswith("sentinel-image-smoke.") for path in leftovers] == [
+        True
+    ]
 
 
 @pytest.mark.unit
@@ -1321,9 +1452,12 @@ def test_github_output_is_written_only_after_complete_success(tmp_path: Path) ->
 
 
 @pytest.mark.unit
-def test_green_path_emits_no_failure_diagnostics(tmp_path: Path) -> None:
+def test_green_path_emits_no_failure_diagnostics_and_removes_registry(
+    tmp_path: Path,
+) -> None:
     result, calls = _run_script(tmp_path, "--no-build")
 
     assert result.returncode == 0
     assert "Failure diagnostics" not in result.stdout
     assert not any("supervisor diagnostic-" in call for call in calls)
+    assert list(_temporary_dir(tmp_path).iterdir()) == []

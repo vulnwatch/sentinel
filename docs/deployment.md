@@ -76,7 +76,7 @@ For architectural decisions and design constraints, see
 | PostgreSQL | 18+ | Primary database |
 | Redis | 8+ | Session cache, login lockout, Celery broker |
 | Git | 2.30+ | Git-based CVE fetcher operations (Git worker only; installed in the image, and on the developer host for the local Git worker) |
-| [uv](https://docs.astral.sh/uv/getting-started/installation/) | 0.13.5+ | Manages the Python 3.14 interpreter and all backend dependencies for local development (see "Quick Start" below). Development only |
+| [uv](https://docs.astral.sh/uv/getting-started/installation/) | 0.13.5+ | Manages the Python 3.14 interpreter and all backend dependencies for local development (see "Quick Start" below) and for the image-smoke harness, which runs host pytest and its timeout supervisor on that interpreter (see `docs/features/platform/testing-strategy.md`, Image / Container Smoke Testing). Development only |
 | [gh](https://cli.github.com/) | any recent release | Strongly recommended, development only — manages issues, pull requests, and GitHub Flow from the command line. See `docs/conventions.md` (Git Conventions) |
 | [glab](https://gitlab.com/gitlab-org/cli) | any recent release | Optional, development only — interacts with SUSE-internal GitLab repositories, issues, and merge requests (e.g., SMELT, SMASH). Requires authentication against `gitlab.suse.de`. See `AGENTS.md` (Local Environment) |
 | [gitleaks](https://github.com/gitleaks/gitleaks) | any recent release | Optional, development only — scans staged changes for secrets via the pre-commit hook. Local-only; no CI job performs secret scanning. See `docs/features/platform/testing-strategy.md` (Pre-Commit Hooks) |
