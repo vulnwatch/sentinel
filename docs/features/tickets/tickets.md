@@ -673,7 +673,8 @@ The current assignee can unassign themselves through the explicit assignment
 endpoint with `user_id: null` ([Assign Ticket](#assign-ticket)), for example to
 return a Ticket that they no longer work on, or that auto-assignment gave them,
 to the unassigned queue (`?assignee=none`). Only the current assignee can clear
-their own assignment. No operation unassigns another user: their Ticket can
+their own assignment. No user operation unassigns another user: apart from
+system-initiated unassignment (above), a Ticket assigned to someone else can
 only be reassigned, and handing a Ticket to a named colleague remains an
 explicit reassignment.
 
@@ -1915,7 +1916,7 @@ Request body:
 }
 ```
 
-To unassign yourself:
+Self-unassignment request:
 
 ```json
 {

@@ -333,10 +333,9 @@ that the owning contract reads through a documented unlocked User observation
 under the Ticket lock (assignment-eligibility sanitation, the previous
 assignee replaced by `auto_assign_actor(force=True)` or by explicit
 `assign_ticket()`, or the caller cleared by `unassign_ticket()`) is the
-event-time value
-of that observation. The central
-audit contract does not require every operation
-to route through `ticket_mutations` or acquire a Ticket lock first.
+event-time value of that observation. The central audit contract does not
+require every operation to route through `ticket_mutations` or acquire a
+Ticket lock first.
 
 Every required event is inserted and flushed with the mutation in the same
 caller-owned transaction. Audit validation, insertion, or flush failure escapes

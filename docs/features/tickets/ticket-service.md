@@ -5,10 +5,8 @@
 Centralize Ticket reads, lifecycle operations, and cross-domain Ticket
 compositions — listing, detail assembly, creation, CVE association, assignment
 and self-unassignment, priority override, manual-zone entry and exit, and
-confidentiality management,
-including the Coordinated Release Date — in a single
-service module
-(`ticket_service`). This ensures that:
+confidentiality management, including the Coordinated Release Date — in a
+single service module (`ticket_service`). This ensures that:
 
 - `FOR UPDATE` locking is consistently applied on the Ticket row
 - every `TicketAuditEvent` required by the owning domain contract is created
@@ -106,9 +104,9 @@ revoking explicit access.
 `set_confidentiality()`, `set_coordinated_release_date()`, and direct
 access-grant operations require a non-null authorized acting user. Their API
 handlers must not use system attribution. `create_ticket()` and
-`reopen_from_ignored()` retain
-their documented system callers. `ignore_new_for_rejected_cve()` is exclusively
-system-only and has no actor parameter.
+`reopen_from_ignored()` retain their documented system callers.
+`ignore_new_for_rejected_cve()` is exclusively system-only and has no actor
+parameter.
 
 ### Caller category and Ticket accessibility
 
@@ -867,9 +865,10 @@ reconciles nor changes any dated state.
    `detail = NULL`)
 9. Return the locked Ticket in its post-mutation state
 
-Self-unassignment is valid in `New`, `Analysis`, `Analyzed`, and `Resolved`. A
-`New` Ticket has no assignee under the Architectural Invariant in
-`tickets.md`, so step 4 returns it unchanged.
+Self-unassignment is valid in `New`, `Analysis`, `Analyzed`, and `Resolved`.
+Every assigning path promotes `New` to `Analysis`, so a `New` Ticket ordinarily
+has no assignee and step 4 returns it unchanged; an anomalous `New` assignment
+to the caller is cleared by steps 6–8 without a status change.
 
 **Locking**: `FOR UPDATE` on the Ticket only.
 
@@ -877,10 +876,11 @@ Self-unassignment is valid in `New`, `Analysis`, `Analyzed`, and `Resolved`. A
 the Ticket lock and classifies its result from the locked-current assignee.
 If a reassignment to another user commits first, the waiter raises
 `AssigneeNotCallerError`. If deactivation or final VA-origin loss of the caller
-commits first, it has already cleared an `Analysis` or `Analyzed` assignment and
-the waiter is a no-op; it preserved a `Resolved` assignment, which the waiter
-then clears. If self-unassignment commits first, the identity batch observes a
-Ticket no longer assigned to that user and creates no event for it
+commits first, the waiter is a no-op for a `New`, `Analysis`, or `Analyzed`
+Ticket, whose assignment the identity batch already cleared, and clears a
+`Resolved` assignment, which the batch preserved. If self-unassignment commits
+first, the identity batch observes a Ticket no longer assigned to that user and
+creates no `assignment` event for it
 (`docs/features/identity/user-service.md`, `_unassign_active_tickets()`). A
 concurrent self-unassignment by the same user produces one effective clear and
 one no-op.
@@ -2143,12 +2143,16 @@ behavior of `ticket_service` operations:
     `AssigneeNotCallerError` with no effect; accessibility precedes
     operability, which precedes the assignee checks; a visibility loss
     committed before the Ticket lock is denied as in item 15; no
-    reconciliation, auto-assignment, convergence registration, or User lock
-    occurs; audit or flush failure rolls back the clear and the event together.
-    Independent sessions cover a reassignment winner (rejection), a
-    deactivation winner (no-op for `Analysis`, clear for `Resolved`), a
-    self-unassignment winner before the deactivation batch (no identity event
-    for that Ticket), and two concurrent self-unassignments (one event)
+    reconciliation, auto-assignment, or convergence registration occurs; audit
+    or flush failure rolls back the clear and the event together. The absence
+    of a User lock is proven by completion while an independent session holds
+    the caller's User `FOR NO KEY UPDATE`. Independent sessions also cover a
+    reassignment winner (rejection), a deactivation winner (no-op for
+    `Analysis`, clear for `Resolved`), two concurrent self-unassignments (one
+    event), and a self-unassignment that holds the Ticket lock while a
+    deactivation of the caller holds the User and waits for that Ticket: both
+    commit without deadlock, and the batch creates no system `assignment`
+    event for that Ticket
 
 ## Cross-references
 
