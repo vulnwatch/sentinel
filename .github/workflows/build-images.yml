@@ -22,6 +22,10 @@ env:
   SMOKE_IMAGE: sentinel-backend:smoke
   IMAGE_NAME: ${{ github.repository }}
   OPENAPI_ARTIFACT_NAME: sentinel-openapi-${{ github.run_id }}
+  # uv runs the project only on a uv-managed interpreter, never on one that
+  # the runner image provides, so its patch release follows the pinned uv
+  # (docs/conventions.md, Runtime Version).
+  UV_MANAGED_PYTHON: "1"
 
 jobs:
   build-backend:

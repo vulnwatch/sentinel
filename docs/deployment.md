@@ -537,7 +537,13 @@ express carries a comment beside it stating why it is updated manually.
 The software that the GitHub-hosted runner image (`ubuntu-latest`) itself
 provides, such as the Docker Engine with its built-in BuildKit, the Buildx
 and Compose plugins, and `jq`, is outside this rule: its versions follow the
-runner image, which every job already trusts.
+runner image, which every job already trusts. The interpreter on which uv
+runs the project is not part of that software, even when the runner image
+ships the project's Python minor: every workflow with an
+`astral-sh/setup-uv` step sets `UV_MANAGED_PYTHON: "1"` in its
+workflow-level `env`, so uv uses only an interpreter that it manages, whose
+patch release follows the pinned uv (`docs/conventions.md`, Runtime
+Version).
 
 Dependency updates are managed by the hosted Mend Renovate GitHub App
 reading `renovate.jsonc` from the repository root; no workflow in this

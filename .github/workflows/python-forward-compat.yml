@@ -26,6 +26,12 @@ concurrency:
 permissions:
   contents: read
 
+# uv runs the project only on a uv-managed interpreter, never on one that the
+# runner image provides, so its patch release follows the pinned uv
+# (docs/conventions.md, Runtime Version).
+env:
+  UV_MANAGED_PYTHON: "1"
+
 jobs:
   forward-compat:
     name: Test Against Next Python Version
