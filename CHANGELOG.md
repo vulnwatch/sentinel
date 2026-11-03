@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.16.0](https://github.com/vulnwatch/sentinel/compare/v0.15.0...v0.16.0) (2026-11-03)
+
+
+### Features
+
+* sort Tickets by priority, then by their current due date ([#1182](https://github.com/vulnwatch/sentinel/issues/1182)) ([5a41e9d](https://github.com/vulnwatch/sentinel/commit/5a41e9d7bc47a0d6a31ed0eb57865d2fb9f571b4))
+
+
+### Bug Fixes
+
+* reconnect the capture helper on loss and update aio-pika ([#1172](https://github.com/vulnwatch/sentinel/issues/1172)) ([6275070](https://github.com/vulnwatch/sentinel/commit/6275070931e58bb4d853a682ea0e367b6c876391)), closes [#1171](https://github.com/vulnwatch/sentinel/issues/1171)
+
 ## [0.15.0](https://github.com/vulnwatch/sentinel/compare/v0.14.0...v0.15.0) (2026-11-01)
 
 
