@@ -1595,10 +1595,10 @@ bounded phase, the runner asks uv for that interpreter (`uv python find` in
 synchronized, and starts the supervisor with it directly. It does not take
 whichever `python3` comes first on the host's `PATH`, and never starts the
 supervisor through `uv run`, which would stand between the supervisor and the
-signals and exit statuses that it handles. The lookup is local and installs nothing: when uv
-finds no interpreter, the runner fails before any Docker operation and names
-`uv sync` in `backend/` as the remedy. CI therefore synchronizes the project
-environment before it starts the runner.
+signals and exit statuses that it handles. The lookup is local and installs
+nothing: when uv finds no interpreter, the runner fails before any Docker
+operation and names `uv sync` in `backend/` as the remedy. CI therefore
+synchronizes the project environment before it starts the runner.
 
 Host pytest reaches the API through a daemon-allocated port bound explicitly
 to the pytest host's loopback interface. A remote Docker context that cannot
