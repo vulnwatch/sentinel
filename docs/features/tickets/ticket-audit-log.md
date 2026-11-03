@@ -251,8 +251,9 @@ that the current assignee fails, in this deterministic precedence:
 `inactive assignee` (the User is inactive), then `bot account` (the User is a
 bot account), then `role removed` (no current role origin grants
 `triage_ticket`), then `confidential ticket` (the Ticket is confidential and
-the User's effective scope is not `all`). The confidentiality transition of a
-consistent Ticket therefore uses `confidential ticket`. In the observation,
+the User's effective scope is not `all`). The confidentiality transition
+therefore uses `confidential ticket` when the assignee fails no other
+condition. In the observation,
 `role removed` and `bot account` describe the observed current state under
 this closed vocabulary; they do not assert that audit history proves an
 earlier role or marker change.
@@ -706,7 +707,7 @@ required event sequence or explicit no-event outcome. For audited mutations:
     closed reason, `new_value = NULL`, and `detail = NULL` in Ticket UUID
     order. The confidentiality transition creates its event after
     `confidentiality_changed` with the observed username and reason
-    `confidential ticket` for a consistent Ticket
+    `confidential ticket` when the assignee fails no other condition
 20. Automatic eligibility tests assert exact actor, reason, cardinality, and
     no-event behavior for unchanged, override-skipped, manual-zone-deferred or
     skipped, rejected, not-found, concurrent no-op, and rollback outcomes;

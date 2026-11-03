@@ -147,17 +147,17 @@ assigned to the acting user. This is enforced via the shared helper
 The narrow exception is a package-resolution invocation whose only database
 change is creation of system-derived `TicketPackageMaintainer` associations.
 That invocation does not call `auto_assign_actor()` because maintainership is
-authorization/work-routing metadata rather than a user's package-tree decision. If
-the same invocation also creates any package-tree record, the normal
-auto-assignment rule applies.
+authorization/work-routing metadata rather than a user's package-tree
+decision. If the same invocation also creates any package-tree record, the
+normal auto-assignment rule applies.
 
 **Module-level rule**: auto-assignment is always applied by the function
 that acquires the `FOR UPDATE` lock, never by orchestration wrappers. Before
 that Ticket lock, a user-attributed function capable of assignment acquires
 `FOR SHARE` on the acting User and stabilizes its assignment eligibility. An
 actor ineligible for the locked-current Ticket leaves the ordinary package
-mutation available but skips assignment. System-only and association-only maintainership paths acquire no
-assignment User lock.
+mutation available but skips assignment. System-only and association-only
+maintainership paths acquire no assignment User lock.
 For example, `add_package_to_ticket` does NOT apply auto-assignment — it
 delegates to `add_package_records()`, which calls `auto_assign_actor` after
 acquiring the lock only when package-tree state changes.
@@ -253,8 +253,8 @@ scope.
 **Behavior**:
 
 1. For a user-attributed call, acquire `FOR SHARE` on the acting User and
-   stabilize its assignment eligibility. Then acquire `FOR UPDATE` on `ticket_id`.
-   A system call begins with the Ticket lock.
+   stabilize its assignment eligibility. Then acquire `FOR UPDATE` on
+   `ticket_id`. A system call begins with the Ticket lock.
 2. For a consumer caller, evaluate canonical Ticket accessibility against the
    locked-current Ticket. Missing and inaccessible both raise
    `TicketNotFoundError`.
@@ -967,8 +967,8 @@ implementation choice.
 1. Validate `acting_user_id` before any database operation. `None` raises
    `ValueError`; exclusion and restoration have no system caller.
 2. Resolve one `evaluation_date`, acquire `FOR SHARE` on the acting User and
-   stabilize its assignment eligibility, then acquire `FOR UPDATE` on the declared
-   Ticket.
+   stabilize its assignment eligibility, then acquire `FOR UPDATE` on the
+   declared Ticket.
 3. Evaluate canonical locked-current Ticket accessibility. Missing and
    inaccessible both raise `TicketNotFoundError`.
 4. Call `ensure_ticket_operable(ticket)`.

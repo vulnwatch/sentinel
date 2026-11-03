@@ -684,11 +684,11 @@ in these scenarios:
 Scenarios 1–4 clear only `New`, `Analysis`, and `Analyzed` assignments.
 Scenarios 1, 2, and active manual-role uses of scenario 3 are proactive and
 serialize with every assignment path on the User lock; scenario 4 serializes
-with them on the Ticket lock. Scenario 5 is defensive current-state sanitation during
-gate evaluation, including when a preserved `Resolved`, `Ignored`, or
-`Duplicated` Ticket returns to `Analysis` or `Analyzed`; it is not the
-primary repair for an assignment race. Deferred external-origin behavior is
-owned by `identity-provisioning.md`.
+with them on the Ticket lock. Scenario 5 is defensive current-state
+sanitation during gate evaluation, including when a preserved `Resolved`,
+`Ignored`, or `Duplicated` Ticket returns to `Analysis` or `Analyzed`; it is
+not the primary repair for an assignment race. Deferred external-origin
+behavior is owned by `identity-provisioning.md`.
 
 ### Self-Unassignment
 
@@ -2249,10 +2249,10 @@ unchanged (see [Coordinated Release Date](#coordinated-release-date)).
 
 An effective transition to confidential of a Ticket in `New`, `Analysis`, or
 `Analyzed` clears an assignee who is not eligible to be the assignee of a
-confidential Ticket, such as a restricted analyst, also one who sees the
+confidential Ticket, such as a restricted analyst, including one who sees the
 Ticket through an explicit grant or package maintainership
 (`docs/features/identity/rbac.md`, Business Rule 10). Like the grant deletion
-above, the clear is a mandatory cascade of setting the field: the
+above, the clear is a mandatory consequence of setting the field: the
 assignment-eligibility re-evaluation of the Ticket, not a separately
 requested command. It creates a system `assignment` event in the same
 transaction; the status is unchanged, the

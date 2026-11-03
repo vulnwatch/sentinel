@@ -3964,7 +3964,8 @@ or identity audit validation are affected, tests MUST cover:
   audit/flush failure
 - `update_user()` locks the User `FOR NO KEY UPDATE`; a change of `bot` to
   `true` together with an `email` change completes without deadlock while
-  another transaction holds one of the User's Tickets and writes it twice, and
+  another transaction holds one of the User's Tickets and writes it again,
+  which revalidates its `assignee_id` foreign key to the User, and
   its Ticket `assignment` events, which record the username before the
   update, precede the call's field-change events
 - `set_confidentiality(true)` races with role removal and bot marking of the

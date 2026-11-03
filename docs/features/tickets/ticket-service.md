@@ -797,8 +797,9 @@ function captures one date at entry if reconciliation becomes applicable.
    account, whose roles grant no `triage_ticket`, or — for a confidential
    Ticket — whose effective scope is not `all` raises
    `AssigneeNotEligibleError`. The exception carries the first of these
-   conditions, in that order, from which the API selects the static
-   response `detail`; the conditions share one error code
+   conditions, in that order, from which the API selects a
+   condition-specific response `detail`; the conditions share one error
+   code
 6. **Idempotency check**: if `ticket.assignee_id` equals the locked target's
     `id`, return ticket unchanged (no audit event, no status evaluation)
 7. Set `ticket.assignee_id` to the locked target's `id`
@@ -2046,8 +2047,9 @@ behavior of `ticket_service` operations:
    the ticket regresses to Analysis because gates #3 and #4 fail
 
 2. **Assignment promotes New → Analysis explicitly**: create a ticket in
-   New status. Assign an eligible user → verify ticket promotes to Analysis and a
-   `status_change` event with `old_value = "New"`, `new_value = "Analysis"`,
+   New status. Assign an eligible user → verify ticket promotes to Analysis
+   and a `status_change` event with `old_value = "New"`,
+   `new_value = "Analysis"`,
    `user_id = NULL` is created (not by `reconcile_ticket_status` but by
    the explicit step in `assign_ticket` before calling reconcile)
 
@@ -2144,8 +2146,8 @@ behavior of `ticket_service` operations:
     `coordinated_release_at` unchanged and creates no
     `coordinated_release_changed` event. `false` to `true` in `New`,
     `Analysis`, and `Analyzed` clears an assignee whose effective scope is
-    `non_confidential`, also one holding a grant or maintainership of the
-    Ticket, with one system `assignment` event after
+    `non_confidential`, including one holding a grant or maintainership of
+    the Ticket, with one system `assignment` event after
     `confidentiality_changed` (reason `confidential ticket`), no status
     change, and the response showing `assignee: null`; it retains an
     assignee with scope `all` and every assignee in `Resolved`, `Ignored`,
@@ -2226,7 +2228,7 @@ behavior of `ticket_service` operations:
     analyst is assigned to a non-confidential Ticket exactly as a
     vulnerability analyst is, including `New → Analysis`; a bot account is
     never assigned, whatever its roles; a user with scope
-    `non_confidential` is never assigned to a confidential Ticket, also with
+    `non_confidential` is never assigned to a confidential Ticket, even with
     a grant or maintainership; a user holding `admin` and
     `restricted_analyst` is assigned to a confidential Ticket; and an
     `admin`-only or role-less user is never assigned. Explicit assignment

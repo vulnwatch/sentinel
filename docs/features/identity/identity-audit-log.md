@@ -410,7 +410,10 @@ included (`bot_changed`); `synced_at` is an operational metadata exclusion
 and never produces an event (see Operational metadata exclusions above). If
 a single `update_user()` call modifies both `email` and `full_name`, two
 events are created (`email_changed` + `full_name_changed`) in the same
-transaction.
+transaction. An effective change of the bot marker to `true` also creates the
+derived Ticket `assignment` events of its unassignment, before the call's
+field-change events and in the same transaction; an Identity or Ticket audit
+failure rolls back both domains together.
 
 **Manual role mutation events**: `user_service.update_roles()` creates one
 `role_added` event per effective `_manual` `UserRole` insertion and one
@@ -427,9 +430,7 @@ Ticket (`docs/features/identity/rbac.md`, Business Rule 10), the derived
 Ticket `assignment` events are created in the same caller-owned transaction;
 an Identity or Ticket audit failure rolls back both domains together (see
 `docs/features/tickets/ticket-audit-log.md`, Cross-Event Ordering, Locking,
-and Rollback). An effective change of the bot marker to `true` likewise
-creates its derived Ticket `assignment` events, before the field-change
-events of the same `update_user()` call, in its transaction.
+and Rollback).
 
 **External sync coverage**: the `user_created` event type applies to ALL user
 creation regardless of source (manual admin creation AND external sync). On

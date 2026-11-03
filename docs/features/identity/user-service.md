@@ -440,8 +440,8 @@ lifecycle change makes ineligible for every Ticket. It accepts
 passes `user deactivated` and `update_user()` passes `bot account`. The
 reasons of the other system unassignment paths are not accepted. The caller
 must already hold `FOR NO KEY UPDATE` on `user`. The locked User's `id` and
-username are the authoritative target and audit snapshot. No role,
-active-status, or bot-marker guard applies inside this helper: the caller
+username are the authoritative target and audit snapshot. No role, `active`,
+or bot-marker guard applies inside this helper: the caller
 invokes it only for a change after which the User is eligible for no Ticket
 (`docs/features/identity/rbac.md`, Business Rule 10). A valid invocation
 returns `None`.
@@ -660,10 +660,11 @@ operations with their own business rules.
 
 1. Acquire a `FOR NO KEY UPDATE` lock on the User row by ID. If not found,
    raise `UserNotFoundError`. The locked row is the authoritative source for
-   guards, old audit values, and no-op detection. The mode conflicts with the
-   `FOR SHARE` lock of every assignment path, which a change of `bot` to
-   `true` requires (`docs/conventions.md`, Cross-Domain Root Lock Order),
-   while it remains compatible with foreign-key `FOR KEY SHARE` validation
+   guards, old audit values, and no-op detection. A change of `bot` to `true`
+   requires this mode, which conflicts with the `FOR SHARE` lock of every
+   assignment path while remaining compatible with foreign-key
+   `FOR KEY SHARE` validation (`docs/conventions.md`, Cross-Domain Root Lock
+   Order)
 2. If `user.external_id IS NOT NULL` and `acting_user_id` is not None:
    raise `ExternalUserFieldReadOnlyError`. Identity fields and the bot marker
    of external users are managed exclusively by external sync (see External

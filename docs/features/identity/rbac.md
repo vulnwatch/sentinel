@@ -835,7 +835,7 @@ here with the required authorization level and a link to the owning spec.
     The `triage_ticket` capability controls who can *perform* an assignment;
     this rule controls who can *be the assignee*, the user who owns the work
     on the Ticket. Capabilities and effective scope are resolved from the
-    user's current roles of every origin (Predefined Roles, Role Origins and
+    user's current roles of every origin (Predefined Roles; Role Origins and
     Coexistence). With the predefined roles, an active non-bot user holding
     `vulnerability_analyst` can be the assignee of every Ticket; one holding
     `restricted_analyst` without a role whose scope is `all`, of every
