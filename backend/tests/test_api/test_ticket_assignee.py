@@ -1,10 +1,11 @@
 """End-to-end tests for the Assign Ticket endpoint
 (`PATCH /api/v1/tickets/{ticket_id}/assignee`, `backend/app/api/v1/tickets.py`).
 
-See docs/features/tickets/tickets.md (Assign Ticket, Reassignment, Response
-Schemas > TicketDetail, Endpoint -> Schema Mapping),
-docs/features/tickets/ticket-service.md (`assign_ticket`; `get_ticket_detail()`
-mutation assembly), docs/api-spec.md (Authorization Chain Evaluation Order
+See docs/features/tickets/tickets.md (Assign Ticket, Reassignment,
+Self-Unassignment, Response Schemas > TicketDetail, Endpoint -> Schema
+Mapping), docs/features/tickets/ticket-service.md (`assign_ticket`;
+`unassign_ticket`; `get_ticket_detail()` mutation assembly),
+docs/api-spec.md (Authorization Chain Evaluation Order
 flow 3, Global Responses, Ticket Accessibility Check, Manual-Zone Mutability
 Guard, User Identifier Resolution, Partial Update Semantics),
 docs/features/identity/rbac.md (Endpoint Permission Map: `triage_ticket`),
@@ -15,11 +16,14 @@ Accessibility).
 These tests cover only the HTTP boundary: authentication, capability before
 lookup, request validation, the status and complete body of each error
 mapping (one representative request each), the response shape, OpenAPI, and
-the handler-owned steps (the one captured date and the final `TicketDetail`
-assembly with its rollback). The service matrix (reassignment, idempotency,
-guard order permutations, lock order, races) is proven once in
-`tests/test_services/test_assign_ticket.py` and
-`tests/test_services/test_assign_ticket_atomicity.py`.
+the handler-owned steps (the routing of a string or `null` `user_id`, the
+one captured date, and the final `TicketDetail` assembly with its
+rollback). The service matrices (reassignment, self-unassignment,
+idempotency, guard order permutations, lock order, races) are proven once in
+`tests/test_services/test_assign_ticket.py`,
+`tests/test_services/test_assign_ticket_atomicity.py`,
+`tests/test_services/test_unassign_ticket.py`, and
+`tests/test_services/test_unassign_ticket_atomicity.py`.
 """
 
 from __future__ import annotations
@@ -73,6 +77,10 @@ _ASSIGNEE_NOT_VA = {
     "code": "TICKET_ASSIGNEE_NOT_VA",
     "detail": "Assignee must hold the vulnerability_analyst role.",
 }
+_ASSIGNEE_NOT_CALLER = {
+    "code": "TICKET_ASSIGNEE_NOT_CALLER",
+    "detail": "Only the current assignee can unassign themselves.",
+}
 
 
 def _url(target: Ticket | str) -> str:
@@ -82,12 +90,13 @@ def _url(target: Ticket | str) -> str:
 
 
 def _forbid_lookups(monkeypatch: pytest.MonkeyPatch) -> tuple[AsyncMock, AsyncMock]:
-    """Replace the Ticket lookup and the mutation with spies that must stay
-    unused."""
+    """Replace the Ticket lookup and both mutations (assignment and
+    self-unassignment) with spies that must stay unused."""
     resolver = AsyncMock()
     mutation = AsyncMock()
     monkeypatch.setattr(ticket_service, "resolve_ticket_locator", resolver)
     monkeypatch.setattr(ticket_service, "assign_ticket", mutation)
+    monkeypatch.setattr(ticket_service, "unassign_ticket", mutation)
     return resolver, mutation
 
 
@@ -176,11 +185,12 @@ class TestAuthenticationAndCapability:
         resolver, mutation = _forbid_lookups(monkeypatch)
 
         for path in (_url(target), _url(f"SNTL-{MAX_SEQUENCE}")):
-            response = await client.patch(
-                path, json={"user_id": "nobody.va"}, headers=headers
-            )
-            assert response.status_code == 401
-            assert response.json() == UNAUTHENTICATED
+            for user_id in ("nobody.va", None):
+                response = await client.patch(
+                    path, json={"user_id": user_id}, headers=headers
+                )
+                assert response.status_code == 401
+                assert response.json() == UNAUTHENTICATED
 
         resolver.assert_not_awaited()
         mutation.assert_not_awaited()
@@ -202,23 +212,29 @@ class TestAuthenticationAndCapability:
     ) -> None:
         for role in roles:
             await user_role_factory(user_id=authenticated_user.id, role=role.value)
-        visible: Ticket = await ticket_factory()
+        visible: Ticket = await ticket_factory(
+            status=TicketStatus.ANALYSIS.value, assignee_id=authenticated_user.id
+        )
         assignee = await target_user()
         resolver, mutation = _forbid_lookups(monkeypatch)
 
-        existing = await authenticated_client.patch(
-            _url(visible), json={"user_id": str(assignee.id)}
-        )
-        missing = await authenticated_client.patch(
-            _url(f"SNTL-{MAX_SEQUENCE}"), json={"user_id": str(assignee.id)}
-        )
+        # A string assigns; `null` would unassign the caller, its assignee.
+        for user_id in (str(assignee.id), None):
+            existing = await authenticated_client.patch(
+                _url(visible), json={"user_id": user_id}
+            )
+            missing = await authenticated_client.patch(
+                _url(f"SNTL-{MAX_SEQUENCE}"), json={"user_id": user_id}
+            )
 
-        assert existing.status_code == missing.status_code == 403
-        assert existing.content == missing.content
-        assert existing.json() == FORBIDDEN
+            assert existing.status_code == missing.status_code == 403
+            assert existing.content == missing.content
+            assert existing.json() == FORBIDDEN
         resolver.assert_not_awaited()
         mutation.assert_not_awaited()
-        assert (await ticket_row(db_session, visible.id))["assignee_id"] is None
+        row = await ticket_row(db_session, visible.id)
+        assert row["assignee_id"] == authenticated_user.id
+        assert await event_count(db_session, visible.id) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +277,9 @@ class TestTicketNotFound:
             # The target's absence is never disclosed for an inaccessible
             # Ticket (ticket-service.md, Concurrency control).
             pytest.param("absent", id="absent-target"),
+            # Self-unassignment never discloses the assignee of an
+            # inaccessible Ticket.
+            pytest.param("null", id="self-unassignment"),
         ],
     )
     async def test_inaccessible_ticket_is_indistinguishable_from_a_missing_one(
@@ -273,11 +292,13 @@ class TestTicketNotFound:
         target_kind: str,
     ) -> None:
         hidden: Ticket = await ticket_factory(is_confidential=True)
-        identifier = (
-            str((await target_user()).id)
-            if target_kind == "eligible"
-            else str(uuid.uuid7())
-        )
+        identifier: str | None
+        if target_kind == "eligible":
+            identifier = str((await target_user()).id)
+        elif target_kind == "absent":
+            identifier = str(uuid.uuid7())
+        else:
+            identifier = None
         before = await ticket_row(db_session, hidden.id)
 
         inaccessible = await authenticated_client.patch(
@@ -313,6 +334,8 @@ class TestRequestValidation:
                 id="omitted",
             ),
             *[
+                # `null` is accepted (self-unassignment); a value of another
+                # type is not.
                 pytest.param(
                     {"user_id": value},
                     {
@@ -322,7 +345,7 @@ class TestRequestValidation:
                     },
                     id=f"invalid-{value!r}",
                 )
-                for value in (None, 42)
+                for value in (42, True)
             ],
         ],
     )
@@ -336,10 +359,13 @@ class TestRequestValidation:
         body: dict[str, Any],
         error: dict[str, Any],
     ) -> None:
-        target: Ticket = await ticket_factory()
+        target: Ticket = await ticket_factory(
+            status=TicketStatus.ANALYSIS.value, assignee_id=va_user.id
+        )
         before = await ticket_row(db_session, target.id)
         mutation = AsyncMock()
         monkeypatch.setattr(ticket_service, "assign_ticket", mutation)
+        monkeypatch.setattr(ticket_service, "unassign_ticket", mutation)
 
         response = await authenticated_client.patch(_url(target), json=body)
 
@@ -483,6 +509,49 @@ class TestUserIdentifierResolution:
 
 
 # ---------------------------------------------------------------------------
+# Self-unassignment (`user_id: null`)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+class TestSelfUnassignment:
+    async def test_null_clears_the_callers_assignment_and_keeps_the_status(
+        self,
+        authenticated_client: AsyncClient,
+        va_user: User,
+        db_session: AsyncSession,
+        ticket_factory: Factory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """`null` routes to `unassign_ticket()`, never to `assign_ticket()`;
+        the full detail shows no assignee and equals a subsequent GET."""
+        target: Ticket = await ticket_factory(
+            status=TicketStatus.ANALYSIS.value, assignee_id=va_user.id
+        )
+        assign = AsyncMock()
+        monkeypatch.setattr(ticket_service, "assign_ticket", assign)
+
+        response = await authenticated_client.patch(
+            _url(target), json={"user_id": None}
+        )
+        detail = await authenticated_client.get(f"/api/v1/tickets/{locator(target)}")
+
+        assert response.status_code == 200
+        assert set(response.json()) == {"data"}
+        data = response.json()["data"]
+        assert set(data) == TICKET_DETAIL_FIELDS
+        assert data == detail.json()["data"]
+        assert (data["status"], data["assignee"]) == ("analysis", None)
+        assign.assert_not_awaited()
+        state = await ticket_row(db_session, target.id)
+        assert (state["status"], state["assignee_id"]) == (
+            TicketStatus.ANALYSIS.value,
+            None,
+        )
+        assert await event_count(db_session, target.id) == 1
+
+
+# ---------------------------------------------------------------------------
 # Error mappings (one representative request each)
 # ---------------------------------------------------------------------------
 
@@ -533,6 +602,41 @@ class TestErrorMappings:
         )
 
         assert response.status_code == expected_status
+        assert response.json() == expected
+        assert await ticket_row(db_session, target.id) == before
+        assert await event_count(db_session, target.id) == 0
+
+    @pytest.mark.parametrize(
+        ("status", "assignee", "expected"),
+        [
+            pytest.param(
+                TicketStatus.ANALYSIS, "other", _ASSIGNEE_NOT_CALLER, id="not-caller"
+            ),
+            pytest.param(TicketStatus.IGNORED, "caller", NOT_MUTABLE, id="not-mutable"),
+        ],
+    )
+    async def test_self_unassignment_rejection_returns_its_complete_body(
+        self,
+        authenticated_client: AsyncClient,
+        va_user: User,
+        db_session: AsyncSession,
+        ticket_factory: Factory,
+        target_user: TargetUser,
+        status: TicketStatus,
+        assignee: str,
+        expected: dict[str, str],
+    ) -> None:
+        assignee_id = (await target_user()).id if assignee == "other" else va_user.id
+        target: Ticket = await ticket_factory(
+            status=status.value, assignee_id=assignee_id
+        )
+        before = await ticket_row(db_session, target.id)
+
+        response = await authenticated_client.patch(
+            _url(target), json={"user_id": None}
+        )
+
+        assert response.status_code == 409
         assert response.json() == expected
         assert await ticket_row(db_session, target.id) == before
         assert await event_count(db_session, target.id) == 0
@@ -677,6 +781,51 @@ class TestEvaluationDate:
         # workflow date; the mutation clock is never read.
         assert (service_clock.calls, mutation_clock.calls) == (1, 0)
 
+    async def test_self_unassignment_assembles_the_detail_on_the_captured_date(
+        self,
+        authenticated_client: AsyncClient,
+        va_user: User,
+        ticket_factory: Factory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """`unassign_ticket()` takes no date and never reconciles; the one
+        handler-captured date reaches only the final assembly."""
+        handler_clock = Clock(datetime(2026, 9, 27, 23, 59, 59, 999000, tzinfo=UTC))
+        monkeypatch.setattr(route, "_utc_now", handler_clock.now)
+        seen: dict[str, list[Any]] = {"mutation": [], "reconcile": [], "assembly": []}
+        original_mutation = ticket_service.unassign_ticket
+        original_assembly = ticket_service.assemble_ticket_detail
+
+        async def _mutation(db: AsyncSession, **kwargs: Any) -> Ticket:
+            seen["mutation"].append(set(kwargs))
+            return await original_mutation(db, **kwargs)
+
+        async def _reconcile(*args: Any, **kwargs: Any) -> None:
+            seen["reconcile"].append(kwargs)
+
+        async def _assembly(db: AsyncSession, **kwargs: Any) -> TicketDetailProjection:
+            seen["assembly"].append(kwargs.get("evaluation_date"))
+            return await original_assembly(db, **kwargs)
+
+        monkeypatch.setattr(ticket_service, "unassign_ticket", _mutation)
+        monkeypatch.setattr(ticket_service, "reconcile_ticket_status", _reconcile)
+        monkeypatch.setattr(ticket_service, "assemble_ticket_detail", _assembly)
+        target: Ticket = await ticket_factory(
+            status=TicketStatus.ANALYSIS.value, assignee_id=va_user.id
+        )
+
+        response = await authenticated_client.patch(
+            _url(target), json={"user_id": None}
+        )
+
+        assert response.status_code == 200
+        assert seen == {
+            "mutation": [{"ticket_id", "acting_user_id", "caller"}],
+            "reconcile": [],
+            "assembly": [date(2026, 9, 27)],
+        }
+        assert handler_clock.calls == 1
+
 
 # ---------------------------------------------------------------------------
 # OpenAPI contract
@@ -707,7 +856,10 @@ class TestOpenApiContract:
         ref: str = content["application/json"]["schema"]["$ref"]
         return ref.rsplit("/", 1)[-1]
 
-    def test_request_body_requires_a_non_nullable_string_user_id(self) -> None:
+    def test_request_body_requires_a_nullable_string_user_id(self) -> None:
+        """`null` is published because self-unassignment accepts it
+        (api-spec.md, Request Body Nullability and Defaults); the member is
+        still required and has no default."""
         operation = self._operation()
         assert operation["tags"] == ["Tickets"]
         request_body = operation["requestBody"]
@@ -718,8 +870,8 @@ class TestOpenApiContract:
         assert schema["required"] == ["user_id"]
         assert set(schema["properties"]) == {"user_id"}
         user_id = schema["properties"]["user_id"]
-        assert user_id["type"] == "string"
-        assert "anyOf" not in user_id
+        assert user_id["anyOf"] == [{"type": "string"}, {"type": "null"}]
+        assert "default" not in user_id
         assert "format" not in user_id
 
     def test_responses_declare_detail_and_error_envelopes(self) -> None:
@@ -732,6 +884,7 @@ class TestOpenApiContract:
         assert "TICKET_NOT_FOUND" in responses["404"]["description"]
         assert "USER_NOT_FOUND" in responses["404"]["description"]
         assert "TICKET_ASSIGNEE_INACTIVE" in responses["409"]["description"]
+        assert "TICKET_ASSIGNEE_NOT_CALLER" in responses["409"]["description"]
         assert "TICKET_NOT_MUTABLE" in responses["409"]["description"]
         assert "422" in responses
 

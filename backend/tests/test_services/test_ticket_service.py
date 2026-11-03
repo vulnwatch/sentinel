@@ -1729,6 +1729,7 @@ class TestTicketServiceQueryBoundary:
             "create_ticket",
             "associate_cve",
             "assign_ticket",
+            "unassign_ticket",
             "set_priority_override",
             "ignore_ticket",
             "ignore_new_for_rejected_cve",
