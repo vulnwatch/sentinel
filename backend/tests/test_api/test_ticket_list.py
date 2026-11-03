@@ -435,6 +435,41 @@ class TestListEndpoint:
             authenticated_client, search="42", sort_by="ticket_id", sort_order="asc"
         ) == [_sntl(first), _sntl(second)]
 
+    async def test_current_due_sorts_reach_the_service(
+        self,
+        authenticated_client: AsyncClient,
+        fixed_clock: list[datetime],
+        ticket_factory: Factory,
+    ) -> None:
+        """`current_due_at` and `priority_then_current_due` (ticket-deadlines.md,
+        Current Due Date): `New` Tickets sort by `triage_due_at`, and the
+        combined value by the effective priority first, `desc` by default."""
+        early_p3 = await ticket_factory(
+            priority_auto=TicketPriority.P3.value, created_at=_CREATED_AT
+        )
+        late_p1 = await ticket_factory(
+            priority_auto=TicketPriority.P1.value,
+            created_at=_CREATED_AT + timedelta(hours=1),
+        )
+        late_p3 = await ticket_factory(
+            priority_auto=TicketPriority.P3.value,
+            created_at=_CREATED_AT + timedelta(hours=2),
+        )
+
+        assert await _ids(
+            authenticated_client, sort_by="current_due_at", sort_order="asc"
+        ) == [_sntl(early_p3), _sntl(late_p1), _sntl(late_p3)]
+        assert await _ids(
+            authenticated_client, sort_by="priority_then_current_due"
+        ) == [
+            _sntl(late_p1),
+            _sntl(early_p3),
+            _sntl(late_p3),
+        ]
+        assert await _ids(
+            authenticated_client, sort_by="priority_then_current_due", sort_order="asc"
+        ) == [_sntl(late_p3), _sntl(early_p3), _sntl(late_p1)]
+
     async def test_page_beyond_the_last_is_empty_with_the_correct_total(
         self,
         authenticated_client: AsyncClient,
@@ -820,6 +855,26 @@ class TestOpenApiContract:
 
         assert set(enum_schema["enum"]) == {field.value for field in TicketSortField}
         assert sort_by.get("default") == "created_at"
+
+    def test_sort_by_describes_the_current_due_date_sorts(self) -> None:
+        """ticket-deadlines.md (Current Due Date): the description states the
+        current due date of a `null` current phase with due dates, the
+        direction of each key of `priority_then_current_due` under each
+        `sort_order`, and that `null` sorts last for each key."""
+        parameters = {p["name"]: p for p in self._operation()["parameters"]}
+        description = parameters["sort_by"]["description"]
+
+        for fragment in (
+            "`current_due_at` (the due date of the Ticket's `current_phase`, "
+            "or `release_due_at` when `current_phase` is `null` and the Ticket "
+            "has due dates;",
+            "`priority_then_current_due` (the effective priority, then the "
+            "current due date: `desc` lists `p1` first and, within one "
+            "priority, the earliest current due date first; `asc` reverses "
+            "both keys)",
+            "`null` values sort last in both directions, for each key.",
+        ):
+            assert fragment in description, fragment
 
     def test_paginated_envelope_and_summary_fields(self) -> None:
         schemas = self._schemas()

@@ -53,7 +53,7 @@ shared SQL expressions of `ticket_deadline_expressions` and
 from __future__ import annotations
 
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from enum import StrEnum
@@ -63,6 +63,7 @@ from uuid import UUID
 import structlog
 from celery.exceptions import OperationalError  # kombu.exceptions.OperationalError
 from sqlalchemy import (
+    CTE,
     ColumnElement,
     DateTime,
     Select,
@@ -139,6 +140,7 @@ from app.services.ticket_convergence_publication import (
 from app.services.ticket_deadline_expressions import (
     TicketCurrentPhaseExpressions,
     TicketDueDateExpressions,
+    ticket_current_due_date_expression,
     ticket_current_phase_expressions,
     ticket_due_date_expressions,
     track_milestone_status_expression,
@@ -778,47 +780,89 @@ def _user_filter_ids(identifier: str) -> Select[UUID]:
     return select(User.id).where(user_identifier_condition(identifier))
 
 
-def _sort_key(
+@dataclass(frozen=True, slots=True)
+class _SortKey:
+    """One key of the list order. A key `against_order` runs in the
+    direction opposite to `sort_order`."""
+
+    expression: ColumnElement[Any]
+    against_order: bool = False
+
+
+def _sort_keys(
     sort_by: TicketSortField,
     *,
     severity: ColumnElement[str | None],
     priority: ColumnElement[str | None],
     due: TicketDueDateExpressions,
-) -> ColumnElement[Any]:
-    """The primary sort expression for `sort_by` on `Ticket`."""
+    current_due: ColumnElement[datetime | None],
+) -> tuple[_SortKey, ...]:
+    """The sort keys for `sort_by` on `Ticket`, most significant first."""
     match sort_by:
         case TicketSortField.CREATED_AT:
-            return Ticket.created_at.expression
+            return (_SortKey(Ticket.created_at.expression),)
         case TicketSortField.UPDATED_AT:
-            return Ticket.updated_at.expression
+            return (_SortKey(Ticket.updated_at.expression),)
         case TicketSortField.TICKET_ID:
-            return Ticket.sequence_id.expression
+            return (_SortKey(Ticket.sequence_id.expression),)
         case TicketSortField.SEVERITY:
-            return severity_rank_expression(severity)
+            return (_SortKey(severity_rank_expression(severity)),)
         case TicketSortField.PRIORITY:
-            return case(_PRIORITY_RANK, value=priority)
+            return (_SortKey(case(_PRIORITY_RANK, value=priority)),)
         case TicketSortField.STATUS:
-            return case(_STATUS_RANK, value=Ticket.status)
+            return (_SortKey(case(_STATUS_RANK, value=Ticket.status)),)
         case TicketSortField.TRIAGE_DUE_AT:
-            return due.triage
+            return (_SortKey(due.triage),)
         case TicketSortField.SUBMISSION_DUE_AT:
-            return due.submission
+            return (_SortKey(due.submission),)
         case TicketSortField.UM_DUE_AT:
-            return due.um
+            return (_SortKey(due.um),)
         case TicketSortField.QA_DUE_AT:
-            return due.qa
+            return (_SortKey(due.qa),)
         case TicketSortField.RELEASE_DUE_AT:
-            return due.release
+            return (_SortKey(due.release),)
+        case TicketSortField.CURRENT_DUE_AT:
+            return (_SortKey(current_due),)
+        case TicketSortField.PRIORITY_THEN_CURRENT_DUE:
+            # `desc` lists the most urgent first: the highest priority, then
+            # the earliest current due date (ticket-deadlines.md, Current
+            # Due Date).
+            return (
+                _SortKey(case(_PRIORITY_RANK, value=priority)),
+                _SortKey(current_due, against_order=True),
+            )
+
+
+def _sort_label(index: int) -> str:
+    """The column label of the sort key at `index` in the list CTEs."""
+    return f"sort_key_{index}"
+
+
+def _sort_columns(keys: Sequence[_SortKey], source: CTE) -> tuple[_SortKey, ...]:
+    """`keys` as the sort-key columns that `source` materializes."""
+    return tuple(
+        _SortKey(source.c[_sort_label(index)], key.against_order)
+        for index, key in enumerate(keys)
+    )
 
 
 def _ordered(
-    sort_key: ColumnElement[Any], ticket_id: ColumnElement[Any], sort_order: SortOrder
-) -> tuple[ColumnElement[Any], ColumnElement[Any]]:
-    """Primary order with `NULL` last in both directions, then the internal
-    `Ticket.id` tie-breaker in the same direction."""
-    if sort_order is SortOrder.ASC:
-        return sort_key.asc().nulls_last(), ticket_id.asc()
-    return sort_key.desc().nulls_last(), ticket_id.desc()
+    keys: Sequence[_SortKey], ticket_id: ColumnElement[Any], sort_order: SortOrder
+) -> list[ColumnElement[Any]]:
+    """Each key with `NULL` last in both directions, in the direction of
+    `sort_order` or, for a key against it, the opposite one; then the
+    internal `Ticket.id` tie-breaker in the direction of `sort_order`."""
+    ascending = sort_order is SortOrder.ASC
+    ordered: list[ColumnElement[Any]] = [
+        (
+            key.expression.asc()
+            if ascending != key.against_order
+            else key.expression.desc()
+        ).nulls_last()
+        for key in keys
+    ]
+    ordered.append(ticket_id.asc() if ascending else ticket_id.desc())
+    return ordered
 
 
 def _summary(row: Row[*tuple[Any, ...]]) -> TicketSummaryProjection:
@@ -946,22 +990,26 @@ async def list_tickets(
     4. resolves severity once per Ticket through the canonical cascade,
        the effective priority as `COALESCE(priority_override,
        priority_auto)`, and the five due dates through
-       `ticket_due_date_expressions()`; filters, the sort key, and the
+       `ticket_due_date_expressions()`; filters, the sort keys, and the
        projection use these same expressions; `overdue` applies the
        Ticket-level rules at the one instant with existence semantics;
        the Ticket current phase and its milestone come from
        `ticket_current_phase_expressions()` with the same due dates and
        instant, evaluated in the filter only when `current_phase` is
-       supplied and in the projection for the page rows only;
+       supplied, in the sort key only when it is the current due date
+       (`ticket_current_due_date_expression()`), and in the projection
+       for the page rows only;
     5. never multiplies a Ticket row: every one-to-many relation is an
        existence check or a correlated aggregate;
     6. projects `package_names` from directly included packages in
        ascending Unicode code-point order (unique per Ticket by
        `(ticket_id, package_name)`);
-    7. orders by the requested key with `NULL` last in both directions
+    7. orders by the requested keys with `NULL` last in both directions
        (semantic ranks for status, severity, and priority; numeric
-       `sequence_id` for `ticket_id`), then by `Ticket.id` in the same
-       direction;
+       `sequence_id` for `ticket_id`; for `priority_then_current_due`
+       the priority rank in the direction of `sort_order`, then the
+       current due date in the opposite one), then by `Ticket.id` in the
+       direction of `sort_order`;
     8. counts after visibility and every filter, before page slicing.
     Creates no event, acquires no lock, and never commits or rolls back.
 
@@ -1035,19 +1083,25 @@ async def list_tickets(
     if product is not None or track is not None:
         conditions.append(_occurrence_condition(product, track))
 
-    # Only the identity and sort key are materialized for every candidate;
-    # the display projections (resolved severity, priority, due dates, the
-    # current phase) are evaluated for the page rows alone, in the same
-    # statement.
+    # Only the identity and the sort keys are materialized for every
+    # candidate; the display projections (resolved severity, priority, due
+    # dates, the current phase) are evaluated for the page rows alone, in
+    # the same statement. A current-due-date key evaluates the current
+    # phase for every candidate.
+    sort_keys = _sort_keys(
+        sort_by,
+        severity=resolved_severity,
+        priority=effective_priority,
+        due=due,
+        current_due=ticket_current_due_date_expression(current=current, due_dates=due),
+    )
     filtered = (
         select(
             Ticket.id.label("id"),
-            _sort_key(
-                sort_by,
-                severity=resolved_severity,
-                priority=effective_priority,
-                due=due,
-            ).label("sort_key"),
+            *(
+                key.expression.label(_sort_label(index))
+                for index, key in enumerate(sort_keys)
+            ),
         )
         .where(*conditions)
         .cte("filtered")
@@ -1055,7 +1109,9 @@ async def list_tickets(
     total = select(func.count().label("total")).select_from(filtered).cte("total")
     page_rows = (
         select(filtered)
-        .order_by(*_ordered(filtered.c.sort_key, filtered.c.id, sort_order))
+        .order_by(
+            *_ordered(_sort_columns(sort_keys, filtered), filtered.c.id, sort_order)
+        )
         .limit(per_page)
         .offset((page - 1) * per_page)
         .cte("page")
@@ -1114,7 +1170,9 @@ async def list_tickets(
             _LIST_DUPLICATE_TARGET.id == Ticket.duplicate_of_id,
         )
         .outerjoin(CVE, CVE.id == Ticket.cve_id)
-        .order_by(*_ordered(page_rows.c.sort_key, page_rows.c.id, sort_order))
+        .order_by(
+            *_ordered(_sort_columns(sort_keys, page_rows), page_rows.c.id, sort_order)
+        )
     )
     rows = (await db.execute(statement)).all()
     return TicketPage(

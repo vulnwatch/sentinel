@@ -1,16 +1,18 @@
-"""Ticket due dates, track milestone statuses, and the Ticket current phase
-as reusable SQL expressions.
+"""Ticket due dates, track milestone statuses, the Ticket current phase,
+and the current due date as reusable SQL expressions.
 
 SQL twin of the pure functions in `app.services.ticket_deadlines`. See
 `docs/features/tickets/ticket-deadlines.md` (SLA Tier, Phase Shares, Due
-Dates, Evaluation Instant, Track Milestones, Ticket Current Phase, Read
-Ownership and Query Integration) for the complete contract. Filtering,
-sorting, and counting by due dates, milestone statuses, and the Ticket
-current phase are evaluated in PostgreSQL through these expressions,
-before pagination; for the same inputs and evaluation instant they produce
-exactly the values of `compute_due_dates()`, `resolve_track_milestones()`,
-and `resolve_ticket_current_phase()` (proven by the SQL/pure parity tests
-over the shared matrices of `tests/support/deadline_matrix.py`).
+Dates, Evaluation Instant, Track Milestones, Ticket Current Phase, Current
+Due Date, Read Ownership and Query Integration) for the complete contract.
+Filtering, sorting, and counting by due dates, milestone statuses, the
+Ticket current phase, and the current due date are evaluated in
+PostgreSQL through these expressions, before pagination; for the same
+inputs and evaluation instant they produce exactly the values of
+`compute_due_dates()`, `resolve_track_milestones()`, and
+`resolve_ticket_current_phase()`, and the date that the current-due-date
+rule selects from them (proven by the SQL/pure parity tests over the
+shared matrices of `tests/support/deadline_matrix.py`).
 
 The expressions are built from the same specification constants as the
 pure functions (tiers, shares, manual zone, applicable statuses, and
@@ -502,3 +504,38 @@ def ticket_current_phase_expressions(
         else_=case(milestone_by_code, value=earliest, else_=null()),
     )
     return TicketCurrentPhaseExpressions(phase=current_phase, milestone=milestone)
+
+
+# ---------------------------------------------------------------------------
+# Ticket current due date
+# ---------------------------------------------------------------------------
+
+
+def ticket_current_due_date_expression(
+    *,
+    current: TicketCurrentPhaseExpressions,
+    due_dates: TicketDueDateExpressions,
+) -> ColumnElement[datetime | None]:
+    """Build the current due date of a Ticket (ticket-deadlines.md, Current
+    Due Date).
+
+    `current` and `due_dates` are the current-phase and due-date
+    expressions of the same Ticket entity, built for the response's one
+    evaluation date and instant. Yields the due date of the current phase
+    for `triage`, `submission`, `um`, and `qa`; `release` for a NULL
+    current phase, which is itself NULL when no SLA applies; and NULL for
+    `done`. The current phase is rendered once. It has no pure twin: no
+    response projects it, and the parity tests derive the expected date
+    from `compute_due_dates()` and `resolve_ticket_current_phase()`.
+    Raises no exception.
+    """
+    due_at_by_phase: dict[str, ColumnElement[datetime | None]] = {
+        phase.value: due_dates.for_phase(phase) for phase in MilestonePhase
+    }
+    due_at_by_phase[_NULL_STATUS] = due_dates.release
+    due_at: ColumnElement[datetime | None] = case(
+        due_at_by_phase,
+        value=func.coalesce(current.phase, _NULL_STATUS),
+        else_=null(),
+    )
+    return due_at

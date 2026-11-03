@@ -377,6 +377,9 @@ class TicketSortField(StrEnum):
     sorts by the numeric `sequence_id`, and the five due dates sort by
     the Ticket-level date with `NULL` last
     (`docs/features/tickets/ticket-deadlines.md`, Sorting).
+    `current_due_at` sorts by the current due date and
+    `priority_then_current_due` by the effective priority, then the
+    current due date (same document, Current Due Date).
     """
 
     CREATED_AT = "created_at"
@@ -390,6 +393,8 @@ class TicketSortField(StrEnum):
     UM_DUE_AT = "um_due_at"
     QA_DUE_AT = "qa_due_at"
     RELEASE_DUE_AT = "release_due_at"
+    CURRENT_DUE_AT = "current_due_at"
+    PRIORITY_THEN_CURRENT_DUE = "priority_then_current_due"
 
 
 class PackageSortField(StrEnum):

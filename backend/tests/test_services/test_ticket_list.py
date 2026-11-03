@@ -12,8 +12,8 @@ Owning specifications:
   Severity Resolution; Response Schemas > TicketSummary; List Tickets).
 - docs/features/tickets/ticket-priority.md (Testing Requirement 9).
 - docs/features/tickets/ticket-deadlines.md (Evaluation Instant,
-  Ticket-Level Overdue Filter, Ticket Current Phase, Sorting; Testing
-  Requirements 7-9, 11, 13-15).
+  Ticket-Level Overdue Filter, Ticket Current Phase, Sorting, Current Due
+  Date; Testing Requirements 7-9, 11, 13-16).
 - docs/api-spec.md (Semantic Sort Fields, Nullable Sort Field Ordering,
   Deterministic Pagination Ordering, User Identifier Resolution).
 - docs/features/platform/testing-strategy.md (Ticket Accessibility >
@@ -88,6 +88,7 @@ from tests.support.deadline_matrix import (
     DeadlineCase,
     O,
     ProductEvidence,
+    RequestEvidence,
     TicketPhaseCase,
     TrackEvidence,
 )
@@ -1523,6 +1524,39 @@ async def _order(
     return await _ids(db, sort_by=sort_by, sort_order=sort_order)
 
 
+def _current_due_at(
+    due: DueDates | None, phase: CurrentPhase | None
+) -> datetime | None:
+    """The current due date, transcribed from the table of
+    ticket-deadlines.md (Current Due Date): the due date of the current
+    phase, `release` for a `null` current phase with due dates, and `None`
+    for `done` and without an SLA."""
+    if due is None:
+        return None
+    match phase:
+        case CurrentPhase.TRIAGE:
+            return due.triage
+        case CurrentPhase.SUBMISSION:
+            return due.submission
+        case CurrentPhase.UM:
+            return due.um
+        case CurrentPhase.QA:
+            return due.qa
+        case CurrentPhase.DONE:
+            return None
+        case None:
+            return due.release
+
+
+def _row_current_due(item: TicketSummaryProjection) -> datetime | None:
+    """The current due date of a returned row, from its own fields."""
+    return _current_due_at(item.due_dates, item.current_phase.phase)
+
+
+def _days(days: int) -> datetime:
+    return CREATED_AT + timedelta(days=days)
+
+
 @pytest.mark.integration
 class TestSorting:
     async def test_default_order_is_created_at_descending(
@@ -1734,6 +1768,218 @@ class TestSorting:
             *reversed(nulls),
         ]
 
+    async def test_current_due_at_sorts_by_the_due_date_of_the_current_phase(
+        self, db_session: AsyncSession, clock: Clock, deadline_world: DeadlineWorld
+    ) -> None:
+        """Requirement 16 (ticket-deadlines.md, Current Due Date): each
+        Ticket sorts by the due date of its current phase, by
+        `release_due_at` for a `null` current phase with due dates, and
+        `done` and a Ticket without an SLA sort last in both directions.
+        30-day tier, days from CREATED_AT: triage 20 + 3 = 23, submission
+        0 + 18 = 18, um 1 + 21 = 22, qa -10 + 30 = 20, and release
+        (`Analyzed` without a CVE) -9 + 30 = 21. No single due-date field
+        gives this order."""
+        clock.instant = AFTER_ALL_DUE
+        tickets = {
+            name: await deadline_world.build_ticket(
+                _phase_case(name, created_at=_days(offset), **changes)
+            )
+            for name, offset, changes in (
+                ("triage", 20, {"ticket_status": TicketStatus.ANALYSIS}),
+                ("submission", 0, {"tracks": (TrackEvidence(),)}),
+                (
+                    "um",
+                    1,
+                    {
+                        "tracks": (
+                            TrackEvidence(delivery_status=DeliveryStatus.IN_PROGRESS),
+                        )
+                    },
+                ),
+                (
+                    "qa",
+                    -10,
+                    {"tracks": (TrackEvidence(requests=(RequestEvidence(),)),)},
+                ),
+                (
+                    "release",
+                    -9,
+                    {"ticket_has_cve": False, "tracks": (TrackEvidence(),)},
+                ),
+            )
+        }
+        done = await deadline_world.build_ticket(
+            _phase_case(
+                "done",
+                ticket_status=TicketStatus.RESOLVED,
+                tracks=(TrackEvidence(products=(ProductEvidence(released=True),)),),
+            )
+        )
+        no_sla = await deadline_world.build_ticket(
+            _phase_case("no-sla", ticket_status=TicketStatus.IGNORED)
+        )
+        names = ("submission", "qa", "release", "um", "triage")
+        ascending = [_sntl(tickets[name]) for name in names]
+        nulls = [_sntl(t) for t in sorted([done, no_sla], key=lambda t: t.id)]
+
+        page = await _list(
+            db_session,
+            sort_by=TicketSortField.CURRENT_DUE_AT,
+            sort_order=SortOrder.ASC,
+            per_page=100,
+        )
+
+        assert [item.ticket_id for item in page.items] == [*ascending, *nulls]
+        # The order agrees with the current phase and due dates of each row.
+        assert [_row_current_due(item) for item in page.items] == [
+            *(_days(days) for days in (18, 20, 21, 22, 23)),
+            None,
+            None,
+        ]
+        assert await _order(
+            db_session, TicketSortField.CURRENT_DUE_AT, SortOrder.DESC
+        ) == [*reversed(ascending), *reversed(nulls)]
+
+    async def test_priority_then_current_due_orders_each_priority_by_current_due(
+        self, db_session: AsyncSession, clock: Clock, ticket_factory: Factory
+    ) -> None:
+        """Requirement 16 (ticket-deadlines.md, Current Due Date): `desc`
+        lists `P1` first and, within one priority and among the Tickets
+        without one, the earliest current due date first, so a past date
+        comes before a future one, with `null` last; `asc` reverses both
+        keys and keeps `null` last at both levels. The Tickets are `New`
+        on the 30-day tier, so the current due date is `triage_due_at`,
+        `created_at` + 3 days; an `Ignored` Ticket and the `None` severity
+        label have none. Within every group the creation order, and
+        therefore the internal tie-breaker, differs from the expected
+        order in both directions."""
+        clock.instant = CREATED_AT
+        p1_past = await ticket_factory(
+            priority_auto=TicketPriority.P1.value, created_at=_days(-10)
+        )
+        p1_future = await ticket_factory(
+            priority_auto=TicketPriority.P4.value,
+            priority_override=TicketPriority.P1.value,
+            created_at=_days(2),
+        )
+        p1_without_due = await ticket_factory(
+            priority_auto=TicketPriority.P1.value,
+            status=TicketStatus.IGNORED.value,
+            created_at=_days(-20),
+        )
+        p2 = await ticket_factory(
+            priority_auto=TicketPriority.P2.value, created_at=_days(-1)
+        )
+        p3_past = await ticket_factory(
+            priority_auto=TicketPriority.P3.value, created_at=_days(-5)
+        )
+        p3_future = await ticket_factory(
+            priority_auto=TicketPriority.P3.value, created_at=_days(0)
+        )
+        unprioritized_past = await ticket_factory(created_at=_days(-8))
+        unprioritized_future = await ticket_factory(created_at=_days(1))
+        unprioritized_without_due = await ticket_factory(
+            severity_manual=Severity.NONE.value, created_at=_days(-30)
+        )
+        descending = [
+            p1_past,
+            p1_future,
+            p1_without_due,
+            p2,
+            p3_past,
+            p3_future,
+            unprioritized_past,
+            unprioritized_future,
+            unprioritized_without_due,
+        ]
+        ascending = [
+            p3_future,
+            p3_past,
+            p2,
+            p1_future,
+            p1_past,
+            p1_without_due,
+            unprioritized_future,
+            unprioritized_past,
+            unprioritized_without_due,
+        ]
+        sort_by = TicketSortField.PRIORITY_THEN_CURRENT_DUE
+
+        page = await _list(db_session, sort_by=sort_by, per_page=100)
+
+        assert [item.ticket_id for item in page.items] == [_sntl(t) for t in descending]
+        # The order agrees with the priority and current due date of each row.
+        assert [(item.priority, _row_current_due(item)) for item in page.items] == [
+            (TicketPriority.P1, _days(-7)),
+            (TicketPriority.P1, _days(5)),
+            (TicketPriority.P1, None),
+            (TicketPriority.P2, _days(2)),
+            (TicketPriority.P3, _days(-2)),
+            (TicketPriority.P3, _days(3)),
+            (None, _days(-5)),
+            (None, _days(4)),
+            (None, None),
+        ]
+        assert await _order(db_session, sort_by, SortOrder.ASC) == [
+            _sntl(t) for t in ascending
+        ]
+        # The order holds across pages and composes with the filters.
+        pages = [
+            await _list(db_session, sort_by=sort_by, page=n, per_page=2)
+            for n in range(1, 6)
+        ]
+        assert [item.ticket_id for p in pages for item in p.items] == [
+            _sntl(t) for t in descending
+        ]
+        assert {p.total for p in pages} == {9}
+        assert await _ids(db_session, sort_by=sort_by, status=[TicketStatus.NEW]) == [
+            _sntl(t) for t in descending if t is not p1_without_due
+        ]
+
+    async def test_current_due_date_uses_the_current_phase_at_the_one_instant(
+        self, db_session: AsyncSession, clock: Clock, deadline_world: DeadlineWorld
+    ) -> None:
+        """The order and the rows use the one evaluation instant. On the UTC
+        date 2026-03-28 the only Product of the lifecycle Ticket is in
+        General Support, so its current phase is `submission`, due
+        2026-03-28T14:37Z, before the other Ticket's (2026-03-29T14:37Z).
+        From 2026-03-29 the Product is `eol`, its track opens no phase, the
+        `Analyzed` Ticket is `done`, and it sorts last."""
+        lifecycle = await deadline_world.build(
+            _overdue_track_case(
+                "lifecycle", ticket_status=TicketStatus.ANALYZED, products=()
+            )
+        )
+        product = await deadline_world.factory("product_factory")(
+            general_support_end_date=date(2026, 3, 28)
+        )
+        await deadline_world.factory("ticket_package_product_factory")(
+            ticket_package_track_id=lifecycle.track.id, product_id=product.id
+        )
+        later = await deadline_world.build_ticket(
+            _phase_case("later", created_at=_days(1), tracks=(TrackEvidence(),))
+        )
+        sort: dict[str, Any] = {
+            "sort_by": TicketSortField.CURRENT_DUE_AT,
+            "sort_order": SortOrder.ASC,
+        }
+
+        clock.instant = datetime(2026, 3, 28, 23, 0, tzinfo=UTC)
+        before = await _list(db_session, **sort)
+        clock.instant = datetime(2026, 3, 29, 0, 30, tzinfo=UTC)
+        after = await _list(db_session, **sort)
+
+        assert [item.ticket_id for item in before.items] == [
+            _sntl(lifecycle.ticket),
+            _sntl(later),
+        ]
+        assert before.items[0].current_phase.phase is CurrentPhase.SUBMISSION
+        assert [item.ticket_id for item in after.items] == [
+            _sntl(later),
+            _sntl(lifecycle.ticket),
+        ]
+        assert after.items[1].current_phase.phase is CurrentPhase.DONE
+
     @pytest.mark.parametrize("sort_order", list(SortOrder))
     @pytest.mark.parametrize(
         "sort_by",
@@ -1743,6 +1989,8 @@ class TestSorting:
             TicketSortField.STATUS,
             TicketSortField.CREATED_AT,
             TicketSortField.TRIAGE_DUE_AT,
+            TicketSortField.CURRENT_DUE_AT,
+            TicketSortField.PRIORITY_THEN_CURRENT_DUE,
         ],
     )
     async def test_equal_keys_page_deterministically_by_internal_id(
