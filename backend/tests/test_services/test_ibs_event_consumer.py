@@ -31,6 +31,7 @@ import ssl
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any, cast
 
 import aiormq
@@ -1200,7 +1201,9 @@ class TestCancelAndWait:
         async def recorded(seconds: float) -> None:
             slept.append(seconds)
 
-        monkeypatch.setattr(asyncio, "sleep", recorded)
+        monkeypatch.setattr(
+            ibs_event_consumer, "asyncio", SimpleNamespace(sleep=recorded)
+        )
 
         await ibs_event_consumer._sleep(7.0)
 
