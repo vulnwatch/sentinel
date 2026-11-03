@@ -322,10 +322,17 @@ def _ticket_list_query(
             description=(
                 "Sort field (default `created_at`): `created_at`, `updated_at`, "
                 "`severity`, `priority`, and `status` (semantic ordering), "
-                "`ticket_id` (numeric), or a Ticket-level due date "
+                "`ticket_id` (numeric), a Ticket-level due date "
                 "(`triage_due_at`, `submission_due_at`, `um_due_at`, "
-                "`qa_due_at`, `release_due_at`). `null` values sort last in "
-                "both directions."
+                "`qa_due_at`, `release_due_at`), `current_due_at` (the due "
+                "date of the Ticket's `current_phase`, or `release_due_at` "
+                "when `current_phase` is `null` and the Ticket has due dates; "
+                "`null` for `done` and without an SLA), or "
+                "`priority_then_current_due` (the effective priority, then the "
+                "current due date: `desc` lists `p1` first and, within one "
+                "priority, the earliest current due date first; `asc` reverses "
+                "both keys). `null` values sort last in both directions, for "
+                "each key."
             )
         ),
     ] = TicketSortField.CREATED_AT,

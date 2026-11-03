@@ -298,6 +298,7 @@ no event. Audit history is never an input to priority resolution.
 | `TicketSummary.priority`, `TicketDetail.priority` | Effective priority | [tickets.md](tickets.md#response-schemas) |
 | `TicketDetail.priority_automatic`, `TicketDetail.priority_override` | Persisted automatic and manual values | [tickets.md](tickets.md#ticketdetail) |
 | `GET /api/v1/tickets` `priority` filter and `sort_by=priority` | Repeatable filter over effective priority, including `unresolved`; semantic ordering | [tickets.md](tickets.md#list-tickets), [api-spec.md](../../api-spec.md#semantic-sort-fields) |
+| `GET /api/v1/tickets` `sort_by=priority_then_current_due` | Effective priority in semantic ordering, then the due date of the Ticket's current phase | [ticket-deadlines.md](ticket-deadlines.md#current-due-date) |
 | `PATCH /api/v1/tickets/{ticket_id}/priority` | Set or clear the override | [tickets.md](tickets.md#set-priority-override) |
 | `CVEDetail` exploitation and weakness data; `GET /api/v1/cves/{cve_id}` | Evidence inputs, never a CVE priority | [tickets.md](tickets.md#shared-sub-schemas), [cve-tracking.md](cve-tracking.md#get-cve) |
 
@@ -354,6 +355,8 @@ Trail Testing).
 - `docs/features/tickets/cve-sync-kev.md`, `cve-sync-epss.md`,
   `cve-sync-mitre.md` — exploitation evidence sources
 - `docs/features/tickets/ticket-audit-log.md` — `priority_changed` contract
+- `docs/features/tickets/ticket-deadlines.md` — the current due date that
+  follows priority in `sort_by=priority_then_current_due`
 - `docs/features/platform/default-cvss-version-operations.md` — all-CVE
   runner and impact preview
 - `docs/data-model.md` — `Ticket` priority columns and `TicketPriority`

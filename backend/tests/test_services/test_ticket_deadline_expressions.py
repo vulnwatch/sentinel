@@ -16,7 +16,9 @@ Ticket, CVE, package, track, Product, and IBS request evidence rows
 expressions in PostgreSQL, and compared with both the independently
 transcribed expectation and the pure functions. The Ticket current phase
 (Ticket Current Phase; Requirement 15) is proven the same way over the
-shared multi-track matrix `TICKET_PHASE_CASES`.
+shared multi-track matrix `TICKET_PHASE_CASES`, and so is the current due
+date (Current Due Date; Requirement 16), against the date that its rule
+selects from the pure functions.
 """
 
 from __future__ import annotations
@@ -55,6 +57,7 @@ from app.services.ticket_deadline_expressions import (
     TicketDueDateExpressions,
     active_release_request_exists,
     sla_days_expression,
+    ticket_current_due_date_expression,
     ticket_current_phase_expressions,
     ticket_due_date_expressions,
     track_milestone_status_expression,
@@ -248,6 +251,39 @@ class TestTicketCurrentPhaseSqlPureParity:
         assert sql == expected == pure_tests._ticket_phase(case)
 
 
+@pytest.mark.integration
+class TestTicketCurrentDueDateSqlPureParity:
+    @pytest.mark.parametrize("case", TICKET_PHASE_CASES, ids=lambda case: case.id)
+    async def test_sql_equals_the_date_selected_from_the_pure_functions(
+        self,
+        db_session: AsyncSession,
+        deadline_world: DeadlineWorld,
+        case: TicketPhaseCase,
+    ) -> None:
+        """Requirement 16: the SQL current due date of one Ticket equals the
+        date that Current Due Date selects from `compute_due_dates()` and
+        `resolve_ticket_current_phase()`."""
+        ticket = await deadline_world.build_ticket(case)
+        instant = case.evaluation_instant
+        due = ticket_due_date_expressions()
+        current = ticket_current_phase_expressions(
+            evaluation_date=_evaluation_date(instant),
+            evaluation_instant=instant,
+            due_dates=due,
+        )
+
+        sql = await db_session.scalar(
+            select(
+                ticket_current_due_date_expression(current=current, due_dates=due)
+            ).where(Ticket.id == ticket.id)
+        )
+
+        pure_due = compute_due_dates(**case.ticket_case().due_dates_kwargs())
+        pure_phase = pure_tests._ticket_phase(case).phase
+        assert pure_phase is case.expected_phase
+        assert sql == list_tests._current_due_at(pure_due, pure_phase)
+
+
 @pytest.mark.unit
 class TestSharedMatrixStructure:
     def test_every_matrix_consumer_iterates_the_same_case_tuple(self) -> None:
@@ -267,16 +303,34 @@ class TestSharedMatrixStructure:
 
     def test_every_ticket_phase_consumer_iterates_the_same_case_tuple(self) -> None:
         """A case added to the Ticket current phase matrix is exercised by
-        the pure function, the SQL expressions, and the Ticket list and
-        detail."""
+        the pure function, the SQL expressions (current phase and current
+        due date), and the Ticket list and detail."""
         consumers = (
             pure_tests.TestResolveTicketCurrentPhaseMatrix.test_matrix_ticket_current_phase,
             TestTicketCurrentPhaseSqlPureParity.test_sql_equals_expectation_and_pure_function,
+            TestTicketCurrentDueDateSqlPureParity.test_sql_equals_the_date_selected_from_the_pure_functions,
             list_tests.TestCurrentPhaseMatrix.test_list_and_detail_match_the_shared_matrix,
         )
 
         for consumer in consumers:
             assert _parametrized_cases(consumer) is TICKET_PHASE_CASES
+
+    def test_ticket_phase_matrix_covers_every_current_due_date_row(self) -> None:
+        """Every row of the Current Due Date table has a case: each current
+        phase, and a `null` current phase with and without due dates."""
+        rows = {
+            (
+                case.expected_phase,
+                compute_due_dates(**case.ticket_case().due_dates_kwargs()) is not None,
+            )
+            for case in TICKET_PHASE_CASES
+        }
+
+        assert rows == {
+            *((phase, True) for phase in CurrentPhase),
+            (None, True),
+            (None, False),
+        }
 
     def test_ticket_phase_case_fields_cover_every_deadline_input(self) -> None:
         """`TicketPhaseCase` Ticket inputs plus `TrackEvidence` are exactly
@@ -719,6 +773,7 @@ class TestModuleBoundary:
             track_milestone_status_expression,
             active_release_request_exists,
             ticket_current_phase_expressions,
+            ticket_current_due_date_expression,
         ):
             assert not inspect.iscoroutinefunction(function)
         assert not any(

@@ -313,7 +313,7 @@ Conceptual semantic inputs are:
 | `maintainer` | `str \| None` | `None` | User UUID or exact username |
 | `product` | `str \| None` | `None` | Canonical Product CPE, exact match |
 | `track` | `str \| None` | `None` | Track reference, exact match |
-| `sort_by` | `created_at`, `updated_at`, `severity`, `priority`, `status`, `ticket_id`, `triage_due_at`, `submission_due_at`, `um_due_at`, `qa_due_at`, or `release_due_at` | `created_at` | Primary sort |
+| `sort_by` | `created_at`, `updated_at`, `severity`, `priority`, `status`, `ticket_id`, `triage_due_at`, `submission_due_at`, `um_due_at`, `qa_due_at`, `release_due_at`, `current_due_at`, or `priority_then_current_due` | `created_at` | Sort order before the tie-breaker |
 | `sort_order` | `asc` or `desc` | `desc` | Sort direction |
 | `page` | positive integer | `1` | One-indexed page |
 | `per_page` | integer 1–100 | `20` | Page size |
@@ -367,18 +367,25 @@ The result contains a collection of Ticket summary projections plus `total`,
    service-owned SQL expressions of the same section, under
    [ticket-deadlines.md](ticket-deadlines.md#ticket-current-phase) with the same
    due dates and instant; `current_phase` filtering and projection use those
-   values.
+   values. The current due date, which `current_due_at` and
+   `priority_then_current_due` sort by, selects among those due dates by that
+   `current_phase` under
+   [ticket-deadlines.md](ticket-deadlines.md#current-due-date).
 5. Collapse all one-to-many joins to one logical Ticket. Package, track,
    Product, maintainer, and external-identifier fan-out must not duplicate rows
    or inflate `total`.
 6. Project `package_names` from directly included package occurrences only,
    deduplicate exact persisted strings, and sort them in ascending Unicode
    code-point order. Database or deployment collation is not the API order.
-7. Apply the requested primary order and an internal `Ticket.id` UUID
-   tie-breaker in the same direction. `ticket_id` sorting uses numeric
+7. Apply the requested order and an internal `Ticket.id` UUID tie-breaker in
+   the direction of `sort_order`. `ticket_id` sorting uses numeric
    `sequence_id`; status, severity, and priority use the semantic ranks and
-   nullable rules in `docs/api-spec.md`; due dates use timestamp order with
-   `NULL` last.
+   nullable rules in `docs/api-spec.md`; due dates, the current due date
+   included, use timestamp order with `NULL` last. `priority_then_current_due`
+   orders by the priority rank and then by the current due date, each in the
+   direction that
+   [ticket-deadlines.md](ticket-deadlines.md#current-due-date) defines for
+   `sort_order` and each with `NULL` last, before the tie-breaker.
 8. Compute `total` after visibility and every filter but before page slicing,
    then return the requested page. A page beyond the last is an empty
    collection with the correct total.
