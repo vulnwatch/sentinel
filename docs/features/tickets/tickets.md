@@ -1620,7 +1620,8 @@ Query parameters:
   `triage_due_at`, `submission_due_at`, `um_due_at`, `qa_due_at`,
   `release_due_at` (Ticket-level due dates; `NULL` sorts last, see
   [ticket-deadlines.md](ticket-deadlines.md#sorting)), `current_due_at` (the
-  due date of the Ticket's current phase; `NULL` sorts last), and
+  due date of the Ticket's current phase, or `release_due_at` when the current
+  phase is `null` and the Ticket has due dates; `NULL` sorts last), and
   `priority_then_current_due` (effective priority, semantic ordering, see
   Sorting, then the current due date; with the default `desc`, `P1` first and
   the earliest current due date first within one priority; `NULL` sorts last

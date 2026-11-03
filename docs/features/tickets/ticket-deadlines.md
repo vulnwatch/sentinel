@@ -13,9 +13,9 @@ shares, the due-date formula, the per-track milestone completion,
 applicability, and status rules, the track and Ticket `current_phase`, the
 `overdue` and `current_phase` list filters, the due-date sort fields and the
 current due date, and the pure functions and read-query ownership that
-implement them. The Coordinated
-Release Date of a confidential Ticket is a separate concept owned by
-[tickets.md](tickets.md#coordinated-release-date); it is not an SLA input.
+implement them. The Coordinated Release Date of a confidential Ticket is a
+separate concept owned by [tickets.md](tickets.md#coordinated-release-date);
+it is not an SLA input.
 
 ## Actors and Phases
 
@@ -385,8 +385,8 @@ values follow Enum Filter Validation in `docs/api-spec.md`). A Ticket matches a
 value when its `current_phase` equals that value; a Ticket whose
 `current_phase` is `null` matches no value. The filter combines with `overdue`
 and every other filter by AND semantics. The list offers no sort by current
-phase itself; it orders Tickets by the due date of their current phase
-([Current Due Date](#current-due-date)).
+phase itself; `sort_by=current_due_at` orders Tickets by the due date of their
+current phase ([Current Due Date](#current-due-date)).
 
 ### Observable Bottleneck Only
 
@@ -431,20 +431,24 @@ accepts two `sort_by` values that order by it:
   directions under Nullable Sort Field Ordering in `docs/api-spec.md`.
 - `priority_then_current_due` orders by the effective priority
   ([ticket-priority.md](ticket-priority.md#persistence-and-effective-priority))
-  and then, among Tickets of equal priority, by the current due date. With the
-  default `sort_order=desc` it lists the most urgent Tickets first: priority
-  descending, `P1` first (Semantic Sort Fields in `docs/api-spec.md`), then the
-  current due date ascending, so that a past date comes before a date still
-  ahead. `sort_order=asc` reverses both keys: priority ascending, then the
-  current due date descending. In both directions a `null` priority sorts after
-  every priority and, within one priority, a `null` current due date after
+  and then, among Tickets of equal priority, `null` included, by the current
+  due date. With the default `sort_order=desc` it lists the most urgent
+  Tickets first: priority descending, `P1` first (Semantic Sort Fields in
+  `docs/api-spec.md`), then the current due date ascending, so that a past
+  date comes before a date still ahead. `sort_order=asc` reverses both keys:
+  priority ascending, then the current due date descending. In both
+  directions a `null` priority sorts after every priority and, within one
+  priority or among the Tickets without one, a `null` current due date after
   every date.
 
 Both values then apply the internal tie-breaker of Deterministic Pagination
-Ordering in `docs/api-spec.md`, in the direction of `sort_order`. The order and
-the projection of the rows use the response's one
-[evaluation instant](#evaluation-instant), so the order agrees with the
-`current_phase` and the due dates of every returned row.
+Ordering in `docs/api-spec.md`, in the direction of `sort_order`. The order
+uses the due dates and the Ticket `current_phase` that the rows project, at
+the response's one [evaluation instant](#evaluation-instant), so it agrees with
+every returned row. The OpenAPI description of `sort_by` MUST state the
+current due date of a `null` current phase with due dates, the direction of
+each key of `priority_then_current_due` under each `sort_order`, and that
+`null` sorts last for each key.
 
 ## Dimension Governance
 
@@ -453,8 +457,9 @@ correlated RR state, and Product `released_at`), persisted Product eligibility,
 and actionability. It is the read-only SLA milestone projection listed among the
 permitted observation boundaries in
 [package-model.md](../packages/package-model.md#design-rationale). The Ticket
-current phase and the `current_phase` filter observe these statuses together
-with the Ticket status and belong to the same projection. The projection never
+current phase, the `current_phase` filter, and the
+[current due date](#current-due-date) observe these statuses together with the
+Ticket status and belong to the same projection. The projection never
 writes, derives, or suppresses any dimension.
 
 ## Pure Resolution Functions
@@ -667,7 +672,8 @@ Tests MUST cover:
     due dates and `null` for `done` and without an SLA; `current_due_at` in
     both directions with `null` last; `priority_then_current_due` in both
     directions over every priority and `null`, with a past current due date
-    before a future one within one priority and `null` last at both levels;
+    before a future one within one priority, including among the Tickets
+    without a priority, and `null` last at both levels;
     deterministic tie-breaking across pages for both values; and agreement of
     both orders with the `current_phase` and due dates of the returned rows.
 
