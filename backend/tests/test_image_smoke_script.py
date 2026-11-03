@@ -266,6 +266,12 @@ def _project_python(tmp_path: Path) -> Path:
     return tmp_path / "project" / "bin" / "python"
 
 
+def _temporary_dir(tmp_path: Path) -> Path:
+    """The runner's TMPDIR, so its temporary project registry stays under
+    `tmp_path` even when a test makes the registry cleanup fail."""
+    return tmp_path / "tmp"
+
+
 def _prepare_bin(tmp_path: Path, *, docker: bool = True, uv: bool = True) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(parents=True)
@@ -280,6 +286,7 @@ def _prepare_bin(tmp_path: Path, *, docker: bool = True, uv: bool = True) -> Pat
     project_python = _project_python(tmp_path)
     project_python.parent.mkdir(parents=True)
     _write_executable(project_python, PYTHON_STUB)
+    _temporary_dir(tmp_path).mkdir()
     return bin_dir
 
 
@@ -301,6 +308,7 @@ def _run_script(
         "IMAGE_SMOKE_STATE_DIR": str(tmp_path),
         "IMAGE_SMOKE_STUB_PYTHON": str(_project_python(tmp_path)),
         "IMAGE_SMOKE_TERM_GRACE": "0.01",
+        "TMPDIR": str(_temporary_dir(tmp_path)),
     }
     env.update(env_overrides or {})
     script_path = SCRIPT_PATH
@@ -427,17 +435,13 @@ def test_runner_runs_supervisor_on_project_interpreter_not_host_python3(
 def test_runner_rejects_missing_project_interpreter_before_preflight(
     tmp_path: Path, overrides: dict[str, str], expected_status: int
 ) -> None:
-    temporary_dir = tmp_path / "tmp"
-    temporary_dir.mkdir()
-    result, calls = _run_script(
-        tmp_path, env_overrides={"TMPDIR": str(temporary_dir)} | overrides
-    )
+    result, calls = _run_script(tmp_path, env_overrides=overrides)
 
     assert result.returncode == expected_status
     assert "uv found no Python interpreter for the backend project" in result.stderr
     assert "cd backend && uv sync" in result.stderr
     assert [call.split()[0] for call in calls] == ["interpreter-lookup"]
-    assert list(temporary_dir.iterdir()) == []
+    assert list(_temporary_dir(tmp_path).iterdir()) == []
 
 
 @pytest.mark.unit
@@ -451,13 +455,10 @@ def test_runner_rejects_missing_project_interpreter_before_preflight(
 def test_runner_rejects_missing_tool_before_preflight(
     tmp_path: Path, missing: str
 ) -> None:
-    temporary_dir = tmp_path / "tmp"
-    temporary_dir.mkdir()
     result, calls = _run_script(
         tmp_path,
         uv=missing != "uv",
         runner_without_supervisor=missing == "supervisor",
-        env_overrides={"TMPDIR": str(temporary_dir)},
     )
 
     assert result.returncode == 1
@@ -467,7 +468,7 @@ def test_runner_rejects_missing_tool_before_preflight(
     }[missing]
     assert expected in result.stderr
     assert calls == []
-    assert list(temporary_dir.iterdir()) == []
+    assert list(_temporary_dir(tmp_path).iterdir()) == []
 
 
 @pytest.mark.unit
@@ -1215,6 +1216,12 @@ def test_teardown_is_supervised_and_timeout_fails_green_run(tmp_path: Path) -> N
     )
     assert "timeout=0.25" in teardown_call
     assert "phase=teardown exit=124" in result.stderr
+    # The registry removal (`teardown-registry`) timed out too, so the
+    # registry stays behind: in the test's TMPDIR, not in the host's /tmp.
+    leftovers = list(_temporary_dir(tmp_path).iterdir())
+    assert [path.name.startswith("sentinel-image-smoke.") for path in leftovers] == [
+        True
+    ]
 
 
 @pytest.mark.unit
@@ -1445,9 +1452,12 @@ def test_github_output_is_written_only_after_complete_success(tmp_path: Path) ->
 
 
 @pytest.mark.unit
-def test_green_path_emits_no_failure_diagnostics(tmp_path: Path) -> None:
+def test_green_path_emits_no_failure_diagnostics_and_removes_registry(
+    tmp_path: Path,
+) -> None:
     result, calls = _run_script(tmp_path, "--no-build")
 
     assert result.returncode == 0
     assert "Failure diagnostics" not in result.stdout
     assert not any("supervisor diagnostic-" in call for call in calls)
+    assert list(_temporary_dir(tmp_path).iterdir()) == []
