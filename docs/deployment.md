@@ -705,9 +705,9 @@ three complementary mechanisms:
   the lock file with their hashes as they are, without resolving them
   again, and fails on a package that it cannot audit or when the export
   fails. Resolving them again would install them
-  into an environment of the runner's interpreter, where the packages that
-  `pip` itself needs hide a locked package of the same version from the
-  audit.
+  into an environment of the interpreter that runs `pip-audit`, where the
+  packages that `pip` itself needs hide a locked package of the same version
+  from the audit.
   Other changes skip it, so a disclosure against an unchanged lockfile
   surfaces as an alert and a fix PR rather than as a failure of unrelated
   work, while a Release PR cannot pass CI with a known vulnerability in
