@@ -74,6 +74,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import PackageStatus, Role, TicketStatus
+from app.services.assignment_eligibility import AssigneeIneligibility
 from app.services.ticket_service import AssigneeNotEligibleError
 from app.services.user_service import RoleUpdateResult
 from tests.support.assignment_lifecycle_races import (
@@ -158,15 +159,29 @@ async def _role_loss_first(
     path: Path,
     *,
     error: type[Exception] | None = None,
+    check_error: Callable[[BaseException], None] | None = None,
 ) -> uuid.UUID | None:
     """`lifecycle_first()` with the real final VA-origin removal as B, which
     removes exactly the VA role. Returns the Ticket UUID of `path`, or
     `None` when it raised `error`."""
     ticket_id, removal = await lifecycle_first(
-        world, path, _role_loss(actors), error=error
+        world, path, _role_loss(actors), error=error, check_error=check_error
     )
     assert removal.removed_roles == [Role.VULNERABILITY_ANALYST]
     return ticket_id
+
+
+def _condition_is(
+    condition: AssigneeIneligibility,
+) -> Callable[[BaseException], None]:
+    """Assert that a rejected explicit assignment names `condition`
+    (ticket-service.md, `assign_ticket` step 5)."""
+
+    def check(error: BaseException) -> None:
+        assert isinstance(error, AssigneeNotEligibleError)
+        assert error.condition is condition
+
+    return check
 
 
 def _assert_role_lost(committed: CommittedRace, actors: Actors) -> None:
@@ -225,6 +240,7 @@ class TestExplicitAssignment:
             actors,
             assign_path(ticket, actors.target, assigner),
             error=AssigneeNotEligibleError,
+            check_error=_condition_is(AssigneeIneligibility.NO_TRIAGE_TICKET),
         )
 
         committed = await read_committed(world, actors, ticket.id)
@@ -552,6 +568,7 @@ class TestScopeLossWithRemainingTriage:
             actors,
             assign_path(ticket, actors.target, assigner),
             error=AssigneeNotEligibleError,
+            check_error=_condition_is(AssigneeIneligibility.CONFIDENTIAL),
         )
 
         committed = await read_committed(world, actors, ticket.id)

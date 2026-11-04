@@ -67,6 +67,7 @@ from app.services.ticket_convergence_registry import (
     pending_ticket_convergence_effects,
 )
 from app.services.ticket_deadlines import DueDates
+from app.services.ticket_mutations import reconcile_ticket_status
 from app.services.ticket_service import assemble_ticket_detail, set_confidentiality
 from app.services.ticket_visibility import TicketCaller, ticket_visibility_condition
 from tests.support.database import rollback_test_scope
@@ -529,6 +530,39 @@ class TestAssigneeEligibility:
         assert state[1] == assignee.id
         assert await ticket_events_by_id(db_session, ticket.id) == [
             _changed(actor, False, True)
+        ]
+
+    async def test_retained_assignee_is_sanitized_when_the_ticket_regresses(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        tree: TreeBuilder,
+        va_user: VAUser,
+    ) -> None:
+        """Step 7 retains the restricted analyst assignee of a `Resolved`
+        Ticket made confidential; assignment-eligibility sanitation
+        (ticket-mutations.md) clears it, with reason `confidential ticket`,
+        when the Ticket later regresses to `Analyzed`."""
+        actor = await va_user()
+        assignee = await va_user(roles=(Role.RESTRICTED_ANALYST,))
+        ticket = await ticket_factory(
+            status=TicketStatus.RESOLVED.value,
+            severity_manual=Severity.HIGH.value,
+            assignee_id=assignee.id,
+        )
+
+        locked = await _set(db_session, ticket.id, actor, True)
+        assert locked.assignee_id == assignee.id
+        await tree(locked, status=PackageStatus.AFFECTED)
+        await reconcile_ticket_status(locked, db_session, evaluation_date=EVAL)
+
+        state = await _state(db_session, ticket.id)
+        assert state is not None
+        assert state[:2] == (TicketStatus.ANALYZED.value, None)
+        assert await ticket_events_by_id(db_session, ticket.id) == [
+            _changed(actor, False, True),
+            _unassigned(assignee.username, "confidential ticket"),
+            EventRow("status_change", None, "Resolved", "Analyzed", None, None),
         ]
 
     async def test_declassification_never_changes_the_assignee(

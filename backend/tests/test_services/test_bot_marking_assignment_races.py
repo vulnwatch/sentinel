@@ -134,9 +134,10 @@ async def _marking_first(
     path: Path,
     *,
     error: type[Exception] | None = None,
+    check_error: Callable[[BaseException], None] | None = None,
 ) -> uuid.UUID | None:
     ticket_id, result = await lifecycle_first(
-        world, path, _marking(actors), error=error
+        world, path, _marking(actors), error=error, check_error=check_error
     )
     assert result.changed_fields == ["bot"]
     return ticket_id
@@ -157,6 +158,13 @@ async def _assert_marked(
     assert await _committed_bot(world, actors.target) is True
     assert committed.origins == {(Role.VULNERABILITY_ANALYST.value, "_manual")}
     assert committed.identity == [bot_changed(actors.admin, actors.target)]
+
+
+def _bot_condition(error: BaseException) -> None:
+    """The rejection names the `BOT` condition (ticket-service.md,
+    `assign_ticket` step 5)."""
+    assert isinstance(error, AssigneeNotEligibleError)
+    assert error.condition is AssigneeIneligibility.BOT
 
 
 def _cleared(actors: Actors, reason: str = BOT_ACCOUNT) -> EventRow:
@@ -203,6 +211,7 @@ class TestExplicitAssignment:
             actors,
             assign_path(ticket, actors.target, assigner),
             error=AssigneeNotEligibleError,
+            check_error=_bot_condition,
         )
 
         committed = await read_committed(world, actors, ticket.id)
@@ -498,30 +507,6 @@ class TestConcurrentEligibilityLosses:
         committed = await read_committed(world, actors, ticket.id)
         assert committed.events == [_cleared(actors, ROLE_REMOVED)]
         assert committed.unassignments == [ticket.id]
-
-
-@pytest.mark.integration
-class TestEligibilityConditionOfTheRejection:
-    async def test_marking_first_rejection_names_the_bot_condition(
-        self, world: RaceWorld
-    ) -> None:
-        """ticket-service.md, `assign_ticket` step 5: the waiter rejects
-        the committed bot account with the `BOT` condition."""
-        actors = await race_actors(world)
-        assigner = await other_va(world, "carol.va")
-        ticket = await world.ticket(cve_id=None, status=TicketStatus.NEW)
-        a = await world.open_session()
-        b = await world.open_session()
-
-        await mark_bot(b, actors.target, actors.admin)
-        task = world.start(a, assign_path(ticket, actors.target, assigner)(a))
-        await assert_lock_wait(task, waiter=a, blocked_by=b)
-        await b.commit()
-        with pytest.raises(AssigneeNotEligibleError) as raised:
-            await asyncio.wait_for(task, timeout=WAIT)
-        await a.rollback()
-
-        assert raised.value.condition is AssigneeIneligibility.BOT
 
 
 # ---------------------------------------------------------------------------

@@ -127,6 +127,7 @@ the same mapping as `tests.support.ticket_mutations.tree_for`)."""
 INACTIVE = "inactive assignee"
 BOT_ACCOUNT = "bot account"
 ROLE_REMOVED = "role removed"
+CONFIDENTIAL_TICKET = "confidential ticket"
 """The closed sanitation reasons (ticket-mutations.md, Assignment Eligibility
 Sanitization)."""
 
@@ -824,8 +825,9 @@ class TestFinalStatus:
             ("inactive", INACTIVE),
             ("bot", BOT_ACCOUNT),
             ("without-triage", ROLE_REMOVED),
+            ("restricted-on-confidential", CONFIDENTIAL_TICKET),
         ],
-        ids=["inactive", "bot", "without-triage"],
+        ids=["inactive", "bot", "without-triage", "restricted-on-confidential"],
     )
     @pytest.mark.parametrize("final", GATE_RESULTS, ids=str)
     @pytest.mark.parametrize("exit_", EXITS)
@@ -844,16 +846,27 @@ class TestFinalStatus:
         Sanitization: an ineligible actor (a bot account) keeps the
         pre-existing ineligible assignee through step 3; the
         reconciliation clears it for final `Analysis` or `Analyzed` and
-        retains it for `Resolved`. The full sequence: direct event, system
-        Product events in occurrence order, the sanitation `assignment`,
-        then the final `status_change`."""
+        retains it for `Resolved`. This includes a restricted analyst
+        retained on a Ticket made confidential while `Ignored` or
+        `Duplicated` (ticket-service.md, `set_confidentiality` step 7). The
+        full sequence: direct event, system Product events in occurrence
+        order, the sanitation `assignment`, then the final
+        `status_change`."""
         actor = await va_user(bot=True)
         assignee = await {
             "inactive": lambda: va_user(active=False),
             "bot": lambda: va_user(bot=True),
             "without-triage": lambda: va_user(roles=()),
+            "restricted-on-confidential": lambda: va_user(
+                roles=(Role.RESTRICTED_ANALYST,)
+            ),
         }[assignee_kind]()
-        ticket, target = await _source(ticket_factory, exit_, assignee_id=assignee.id)
+        ticket, target = await _source(
+            ticket_factory,
+            exit_,
+            assignee_id=assignee.id,
+            is_confidential=assignee_kind == "restricted-on-confidential",
+        )
         await tree(
             ticket,
             status=GATE_TRACK[final],

@@ -473,6 +473,52 @@ class TestFinalVaOriginLoss:
             analyzed.id: [unassigned],
         }
 
+    async def test_concurrent_removals_of_two_triage_roles_each_clear_their_share(
+        self, identity_world: IdentityWorld
+    ) -> None:
+        """testing-strategy.md, User Lifecycle and Management: concurrent
+        removal of the last role sources that grant `triage_ticket`
+        serializes the remaining-role evaluation. A removes
+        `vulnerability_analyst` from a VA and restricted analyst and clears
+        only the confidential Ticket; B removes `restricted_analyst`, waits
+        on the User, evaluates the committed remaining origins (none), and
+        clears the non-confidential Ticket. Each Ticket gets exactly one
+        `role removed` event (rbac.md, Business Rule 10)."""
+        actor_a = await _actor(identity_world)
+        actor_b = await _actor(identity_world)
+        target = await identity_world.identity_user(
+            manual=[Role.VULNERABILITY_ANALYST, Role.RESTRICTED_ANALYST]
+        )
+        public = await _assigned_ticket(identity_world, target)
+        confidential = await identity_world.ticket(
+            cve_id=None, assignee_id=target.id, is_confidential=True
+        )
+
+        race = await _race(
+            identity_world,
+            lambda s: remove_roles(s, target, [Role.VULNERABILITY_ANALYST], actor_a),
+            lambda s: remove_roles(s, target, [Role.RESTRICTED_ANALYST], actor_b),
+        )
+
+        assert race.winner.removed_roles == [Role.VULNERABILITY_ANALYST]
+        assert race.loser.removed_roles == [Role.RESTRICTED_ANALYST]
+        assert len([w for w in race.loser_writes if "UPDATE ticket " in w]) == 1
+        committed = await _committed(identity_world, target, (public, confidential))
+        assert committed.origins == set()
+        assert committed.identity == [
+            role_removed(actor_a, target, "vulnerability_analyst"),
+            role_removed(actor_b, target, "restricted_analyst"),
+        ]
+        assert committed.tickets == {
+            public.id: (TicketStatus.ANALYSIS, None),
+            confidential.id: (TicketStatus.ANALYSIS, None),
+        }
+        unassigned = unassigned_event(target.username, ROLE_REMOVED)
+        assert committed.ticket_events == {
+            public.id: [unassigned],
+            confidential.id: [unassigned],
+        }
+
     async def test_removal_first_then_addition_keeps_the_ticket_cleared(
         self, identity_world: IdentityWorld
     ) -> None:
