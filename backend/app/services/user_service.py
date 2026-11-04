@@ -47,6 +47,7 @@ from pydantic import MISSING
 from sqlalchemy import (
     ColumnElement,
     Select,
+    and_,
     delete,
     exists,
     func,
@@ -61,6 +62,7 @@ from sqlalchemy.orm.interfaces import LoaderOption
 
 from app.core.enums import (
     ACTIVE_TICKET_STATUSES,
+    AssignmentEligibility,
     IdentityAuditEventType,
     Role,
     SessionInvalidationReason,
@@ -78,7 +80,11 @@ from app.models.ticket import Ticket
 from app.models.user import User
 from app.models.user_role import UserRole
 from app.services.api_key_service import count_non_revoked_keys, revoke_all_user_keys
-from app.services.assignment_eligibility import assignee_ineligibility
+from app.services.assignment_eligibility import (
+    SCOPE_ALL_ROLES,
+    TRIAGE_TICKET_ROLES,
+    assignee_ineligibility,
+)
 from app.services.identity_audit_log import IdentityAuditLog
 from app.services.local_auth_service import clear_login_attempts
 from app.services.session_service import invalidate_user_sessions
@@ -447,6 +453,42 @@ def _user_sort_clauses(
     return [nullslast(column.desc()), User.id.desc()]
 
 
+def _holds_any_role(roles: frozenset[Role]) -> ColumnElement[bool]:
+    """`EXISTS` a `UserRole` row of the user, of any origin, whose role is
+    in `roles`; a role held from several origins never duplicates the
+    user row."""
+    return exists().where(
+        UserRole.user_id == User.id,
+        UserRole.role.in_(sorted(role.value for role in roles)),
+    )
+
+
+def _assignment_eligibility_condition(
+    values: list[AssignmentEligibility],
+) -> ColumnElement[bool]:
+    """The users whose assignment eligibility is one of `values` (OR).
+
+    The SQL form of `assignment_eligibility.assignment_eligibility()`
+    (`docs/features/identity/user-service.md`, `list_users()`): eligible
+    for a non-confidential Ticket means active, not a bot account, and a
+    role in `TRIAGE_TICKET_ROLES`; `ALL` additionally needs a role in
+    `SCOPE_ALL_ROLES`, which can be another row than the first. Access
+    grants and package maintainership are never consulted.
+    """
+    eligible = and_(
+        User.active.is_(True),
+        User.bot.is_(False),
+        _holds_any_role(TRIAGE_TICKET_ROLES),
+    )
+    scope_all = _holds_any_role(SCOPE_ALL_ROLES)
+    by_value: dict[AssignmentEligibility, ColumnElement[bool]] = {
+        AssignmentEligibility.ALL: and_(eligible, scope_all),
+        AssignmentEligibility.NON_CONFIDENTIAL: and_(eligible, ~scope_all),
+        AssignmentEligibility.NONE: ~eligible,
+    }
+    return or_(*(by_value[value] for value in dict.fromkeys(values)))
+
+
 async def list_users(
     session: AsyncSession,
     *,
@@ -455,6 +497,7 @@ async def list_users(
     active: bool | None = None,
     roles: list[Role] | None = None,
     has_role: bool | None = None,
+    assignment_eligibility: list[AssignmentEligibility] | None = None,
     page: int = 1,
     per_page: int = 20,
     sort_by: UserSortField = UserSortField.USERNAME,
@@ -469,8 +512,11 @@ async def list_users(
     least one of the given roles (OR, via an `EXISTS` subquery — a role
     held from multiple origins never duplicates the user row or the
     total); `has_role` additionally restricts to users with at least one
-    role (`True`) or none (`False`). All provided filter categories
-    combine with AND
+    role (`True`) or none (`False`); `assignment_eligibility`, when
+    non-empty, restricts to users whose assignment eligibility is one of
+    the given values (OR; `docs/features/identity/rbac.md`, Assignment
+    Eligibility Wire Format). All provided filter categories combine with
+    AND
     (`docs/features/identity/user-management.md`, List Users (Admin));
     the directory read (List Users) passes no `user_type` and never sorts
     by `created_at`. `page`/`per_page`/`sort_by`/`sort_order` have
@@ -514,6 +560,8 @@ async def list_users(
     if has_role is not None:
         role_exists = exists().where(UserRole.user_id == User.id)
         conditions.append(role_exists if has_role else ~role_exists)
+    if assignment_eligibility:
+        conditions.append(_assignment_eligibility_condition(assignment_eligibility))
 
     total = (
         await session.execute(select(func.count()).select_from(User).where(*conditions))

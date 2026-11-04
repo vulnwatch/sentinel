@@ -17,7 +17,13 @@ from uuid import uuid4
 import pytest
 from pydantic import MISSING, BaseModel, ValidationError
 
-from app.core.enums import Role, SortOrder, UserDirectorySortField, UserSortField
+from app.core.enums import (
+    AssignmentEligibility,
+    Role,
+    SortOrder,
+    UserDirectorySortField,
+    UserSortField,
+)
 from app.core.passwords import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
 from app.core.permissions import role_to_wire
 from app.schemas.common import PaginationMeta, RoleValue, UserReference
@@ -59,6 +65,7 @@ class TestUserDirectoryListQuery:
         assert query.active is None
         assert query.role == []
         assert query.has_role is None
+        assert query.assignment_eligibility == []
         assert query.page == 1
         assert query.per_page == 20
         assert query.sort_by is UserDirectorySortField.USERNAME
@@ -76,6 +83,12 @@ class TestUserDirectoryListQuery:
         with pytest.raises(ValidationError):
             UserDirectoryListQuery(search="j")
 
+    def test_assignment_eligibility_accepts_a_list_of_raw_strings(self) -> None:
+        """Untyped at the schema level so that the route handler ignores an
+        invalid value (docs/api-spec.md, Enum Filter Validation)."""
+        query = UserDirectoryListQuery(assignment_eligibility=["all", "not-a-value"])
+        assert query.assignment_eligibility == ["all", "not-a-value"]
+
 
 @pytest.mark.unit
 class TestUserListQuery:
@@ -86,6 +99,7 @@ class TestUserListQuery:
         assert query.active is None
         assert query.role == []
         assert query.has_role is None
+        assert query.assignment_eligibility == []
         assert query.page == 1
         assert query.per_page == 20
         assert query.sort_by is UserSortField.USERNAME
@@ -114,6 +128,10 @@ class TestUserListQuery:
     def test_role_accepts_a_list_of_raw_strings(self) -> None:
         query = UserListQuery(role=["admin", "not-a-real-role"])
         assert query.role == ["admin", "not-a-real-role"]
+
+    def test_assignment_eligibility_accepts_a_list_of_raw_strings(self) -> None:
+        query = UserListQuery(assignment_eligibility=["none", "all,none"])
+        assert query.assignment_eligibility == ["none", "all,none"]
 
     def test_page_below_one_is_rejected(self) -> None:
         with pytest.raises(ValidationError):
@@ -194,6 +212,7 @@ def _make_user_data_kwargs(**overrides: object) -> dict[str, object]:
         "external_id": None,
         "manager": None,
         "roles": [],
+        "assignment_eligibility": AssignmentEligibility.NONE,
         "last_login_at": None,
         "created_at": datetime(2026, 5, 1, tzinfo=UTC),
         "updated_at": datetime(2026, 5, 1, tzinfo=UTC),
@@ -211,6 +230,7 @@ def _make_directory_kwargs(**overrides: object) -> dict[str, object]:
         "active": True,
         "bot": False,
         "roles": ["admin"],
+        "assignment_eligibility": AssignmentEligibility.NONE,
     }
     defaults.update(overrides)
     return defaults
@@ -230,6 +250,7 @@ class TestUserDirectoryData:
             "active",
             "bot",
             "roles",
+            "assignment_eligibility",
         }
 
     def test_roles_are_plain_values(self) -> None:
@@ -333,6 +354,33 @@ class TestUserData:
         login = datetime(2026, 6, 1, 14, 22, tzinfo=UTC)
         data = UserData(**_make_user_data_kwargs(last_login_at=login))
         assert data.last_login_at == login
+
+    @pytest.mark.parametrize(
+        "model", [UserData, UserDirectoryData], ids=["profile", "directory"]
+    )
+    def test_assignment_eligibility_is_a_required_enum_field(
+        self, model: type[BaseModel]
+    ) -> None:
+        """rbac.md, Assignment Eligibility Wire Format: required, typed with
+        exactly the three wire values."""
+        field = model.model_fields["assignment_eligibility"]
+        assert field.is_required()
+        assert field.annotation is AssignmentEligibility
+        assert [value.value for value in AssignmentEligibility] == [
+            "all",
+            "non_confidential",
+            "none",
+        ]
+
+    def test_assignment_eligibility_rejects_an_unknown_value(self) -> None:
+        with pytest.raises(ValidationError):
+            UserData(**_make_user_data_kwargs(assignment_eligibility="confidential"))
+
+    def test_manager_has_no_assignment_eligibility(self) -> None:
+        """The `manager` object does not carry the field (rbac.md, Assignment
+        Eligibility Wire Format, Where it appears)."""
+        assert "assignment_eligibility" not in UserManagerData.model_fields
+        assert "assignment_eligibility" not in UserReference.model_fields
 
     def test_has_no_password_hash_field(self) -> None:
         assert "password_hash" not in UserData.model_fields

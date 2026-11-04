@@ -22,6 +22,11 @@ logging, or external call. Its inputs are exactly the user's `active` and
 Visibility (an explicit `TicketAccessGrant` or package maintainership) is
 deliberately not an input: it never confers eligibility.
 
+The user responses report the outcome of the predicate for one user as
+`assignment_eligibility()` (`docs/features/identity/rbac.md`, Assignment
+Eligibility Wire Format); the directory filter on that value builds its
+database condition from `TRIAGE_TICKET_ROLES` and `SCOPE_ALL_ROLES`.
+
 This module imports only Core, so `ticket_mutations` and `user_service`
 may both use it without either importing the other.
 """
@@ -30,9 +35,24 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from enum import StrEnum
+from typing import Final
 
-from app.core.enums import Capability, Role, Scope
+from app.core.enums import AssignmentEligibility, Capability, Role, Scope
 from app.core.permissions import get_capabilities, get_effective_scope
+
+TRIAGE_TICKET_ROLES: Final[frozenset[Role]] = frozenset(
+    role for role in Role if Capability.TRIAGE_TICKET in get_capabilities((role,))
+)
+"""The roles that grant `triage_ticket`. Capabilities are the union over
+the held roles, so a user holds `triage_ticket` exactly when one of their
+roles is in this set."""
+
+SCOPE_ALL_ROLES: Final[frozenset[Role]] = frozenset(
+    role for role in Role if get_effective_scope((role,)) is Scope.ALL
+)
+"""The roles whose scope is `all`. The effective scope is the least
+restrictive over the held roles, so it is `all` exactly when one of the
+user's roles is in this set."""
 
 
 class AssigneeIneligibility(StrEnum):
@@ -81,3 +101,31 @@ def assignee_ineligibility(
     if is_confidential and get_effective_scope(held) is not Scope.ALL:
         return AssigneeIneligibility.CONFIDENTIAL
     return None
+
+
+def assignment_eligibility(
+    *, active: bool, bot: bool, roles: Iterable[Role]
+) -> AssignmentEligibility:
+    """Report for which Tickets one user is eligible to be the assignee.
+
+    Q1: `active` and `bot` are the user's current values; `roles` are the
+    distinct or repeated `Role` values of every current role origin.
+
+    Q3: applies `assignee_ineligibility()` to a confidential and to a
+    non-confidential Ticket: `ALL` when the user is eligible for the
+    former, which implies the latter; otherwise `NON_CONFIDENTIAL` when
+    eligible for the latter; otherwise `NONE`
+    (`docs/features/identity/rbac.md`, Assignment Eligibility Wire
+    Format).
+    """
+    held = frozenset(roles)
+    for is_confidential, eligibility in (
+        (True, AssignmentEligibility.ALL),
+        (False, AssignmentEligibility.NON_CONFIDENTIAL),
+    ):
+        failing = assignee_ineligibility(
+            active=active, bot=bot, roles=held, is_confidential=is_confidential
+        )
+        if failing is None:
+            return eligibility
+    return AssignmentEligibility.NONE

@@ -27,6 +27,7 @@ from app.api.dependencies import (
 )
 from app.api.openapi import enum_filter_schema
 from app.core.enums import (
+    AssignmentEligibility,
     Capability,
     Role,
     SortOrder,
@@ -64,6 +65,9 @@ from app.schemas.user import (
     UserRolesUpdateRequest,
 )
 from app.services import user_service
+from app.services.assignment_eligibility import (
+    assignment_eligibility as derive_assignment_eligibility,
+)
 from app.services.local_auth_service import clear_login_attempts
 from app.services.session_service import purge_session_cache
 from app.services.user_service import (
@@ -85,6 +89,18 @@ _ROLE_FILTER_DESCRIPTION = (
 # The values that `_parse_role_filters` accepts (`role_from_wire`).
 _ROLE_FILTER_SCHEMA = enum_filter_schema(
     (role_to_wire(role) for role in Role), repeatable=True
+)
+
+_ASSIGNMENT_ELIGIBILITY_FILTER_DESCRIPTION = (
+    "One or more of 'all', 'non_confidential', 'none': the users whose "
+    "assignment_eligibility is one of the values. Repeatable; OR semantics. "
+    "The users eligible to be the assignee of a confidential Ticket are 'all'; "
+    "those of a non-confidential Ticket are 'all' and 'non_confidential'. "
+    "Invalid values are ignored; only invalid values yield an empty page."
+)
+# The values that `_parse_assignment_eligibility_filters` accepts.
+_ASSIGNMENT_ELIGIBILITY_FILTER_SCHEMA = enum_filter_schema(
+    AssignmentEligibility, repeatable=True
 )
 
 
@@ -126,6 +142,14 @@ def _user_directory_query(
         bool | None,
         Query(description="true for users with at least one role, false for none."),
     ] = None,
+    assignment_eligibility: Annotated[
+        list[str],
+        Query(
+            default_factory=list,
+            description=_ASSIGNMENT_ELIGIBILITY_FILTER_DESCRIPTION,
+            json_schema_extra=_ASSIGNMENT_ELIGIBILITY_FILTER_SCHEMA,
+        ),
+    ],
     page: Annotated[int, Query(ge=1, le=2_147_483_647, description="Page number.")] = 1,
     per_page: Annotated[
         int, Query(ge=1, le=100, description="Items per page; maximum 100.")
@@ -143,6 +167,7 @@ def _user_directory_query(
         active=active,
         role=role,
         has_role=has_role,
+        assignment_eligibility=assignment_eligibility,
         page=page,
         per_page=per_page,
         sort_by=sort_by,
@@ -186,6 +211,14 @@ def _user_list_query(
         bool | None,
         Query(description="true for users with at least one role, false for none."),
     ] = None,
+    assignment_eligibility: Annotated[
+        list[str],
+        Query(
+            default_factory=list,
+            description=_ASSIGNMENT_ELIGIBILITY_FILTER_DESCRIPTION,
+            json_schema_extra=_ASSIGNMENT_ELIGIBILITY_FILTER_SCHEMA,
+        ),
+    ],
     page: Annotated[int, Query(ge=1, le=2_147_483_647, description="Page number.")] = 1,
     per_page: Annotated[
         int, Query(ge=1, le=100, description="Items per page; maximum 100.")
@@ -206,6 +239,7 @@ def _user_list_query(
         active=active,
         role=role,
         has_role=has_role,
+        assignment_eligibility=assignment_eligibility,
         page=page,
         per_page=per_page,
         sort_by=sort_by,
@@ -255,9 +289,43 @@ def _parse_role_filters(raw: list[str]) -> tuple[bool, list[Role]]:
     return True, valid
 
 
+def _parse_assignment_eligibility_filters(
+    raw: list[str],
+) -> tuple[bool, list[AssignmentEligibility]]:
+    """Resolve the raw repeatable `assignment_eligibility` query values to
+    typed filters, with the same contract as `_parse_role_filters`:
+    `(True, [])` for no filter, `(True, [...])` with the valid subset, and
+    `(False, [])` when every provided value is invalid, which the caller
+    renders as an empty page (`docs/api-spec.md`, Enum Filter Validation).
+    """
+    if not raw:
+        return True, []
+    valid: list[AssignmentEligibility] = []
+    for value in raw:
+        try:
+            valid.append(AssignmentEligibility(value))
+        except ValueError:
+            continue
+    if not valid:
+        return False, []
+    return True, valid
+
+
 # ---------------------------------------------------------------------------
 # Response serialization
 # ---------------------------------------------------------------------------
+
+
+def _assignment_eligibility_of(user: User) -> AssignmentEligibility:
+    """The assignment eligibility of a user loaded with `roles`, derived
+    from the same `active`, `bot`, and role rows that the response renders
+    (`docs/features/identity/rbac.md`, Assignment Eligibility Wire
+    Format)."""
+    return derive_assignment_eligibility(
+        active=user.active,
+        bot=user.bot,
+        roles=(Role(user_role.role) for user_role in user.roles),
+    )
 
 
 def _serialize_directory_entry(user: User) -> UserDirectoryData:
@@ -276,6 +344,7 @@ def _serialize_directory_entry(user: User) -> UserDirectoryData:
         active=user.active,
         bot=user.bot,
         roles=sorted({role_to_wire(Role(user_role.role)) for user_role in user.roles}),
+        assignment_eligibility=_assignment_eligibility_of(user),
     )
 
 
@@ -333,6 +402,7 @@ def _serialize_user(user: User) -> UserData:
         external_id=user.external_id,
         manager=manager,
         roles=roles,
+        assignment_eligibility=_assignment_eligibility_of(user),
         last_login_at=user.last_login_at,
         created_at=user.created_at,
         updated_at=user.updated_at,
@@ -354,12 +424,14 @@ def _serialize_user(user: User) -> UserData:
     summary="List users",
     description=(
         "Returns a paginated user directory: each entry carries the user's "
-        "id, username, email, full name, active status, and role values. "
-        "Supports search across username, email, and full name; active "
-        "status; repeatable role (OR semantics); and has_role filters, plus "
-        "standard pagination and sorting. The complete user profile is "
-        "served by GET /api/v1/admin/users. Requires authentication (JWT "
-        "session or API key)."
+        "id, username, email, full name, active status, bot marker, role "
+        "values, and assignment eligibility (for which Tickets the user can "
+        "be the assignee). Supports search across username, email, and full "
+        "name; active status; repeatable role and assignment_eligibility "
+        "(OR semantics); and has_role filters, plus standard pagination and "
+        "sorting. The complete user profile is served by GET "
+        "/api/v1/admin/users. Requires authentication (JWT session or API "
+        "key)."
     ),
 )
 async def list_users(
@@ -373,7 +445,10 @@ async def list_users(
     `_principal` is unused by the response: it exists solely to require
     authentication (`Access: Authenticated`)."""
     roles_valid, roles = _parse_role_filters(query.role)
-    if not roles_valid:
+    eligibility_valid, eligibility = _parse_assignment_eligibility_filters(
+        query.assignment_eligibility
+    )
+    if not roles_valid or not eligibility_valid:
         return UserDirectoryListResponse(
             data=[],
             meta=PaginationMeta(total=0, page=query.page, per_page=query.per_page),
@@ -385,6 +460,7 @@ async def list_users(
         active=query.active,
         roles=roles,
         has_role=query.has_role,
+        assignment_eligibility=eligibility,
         page=query.page,
         per_page=query.per_page,
         sort_by=UserSortField(query.sort_by.value),
@@ -402,9 +478,11 @@ async def list_users(
     summary="Get my profile",
     description=(
         "Returns the concise profile of the currently authenticated user, "
-        "including current role values and the capabilities that those roles "
-        "grant. The capabilities are informational: every operation still "
-        "checks its own authorization. Requires authentication (JWT session "
+        "including current role values, the capabilities that those roles "
+        "grant, and the user's assignment eligibility (for which Tickets the "
+        "user can be the assignee). The capabilities and the assignment "
+        "eligibility are informational: every operation still checks its own "
+        "authorization and eligibility. Requires authentication (JWT session "
         "or API key)."
     ),
 )
@@ -414,10 +492,10 @@ async def get_current_user_profile(
     """Get current user — see
     `docs/features/identity/authentication.md` (Get Current User).
 
-    `roles` and `capabilities` are both rendered from the one role set
-    that the service returns, so the two fields always agree; resolving
-    capabilities through the static role definitions is response
-    formatting, not a database operation."""
+    `roles`, `capabilities`, and `assignment_eligibility` are all rendered
+    from the one role set that the service returns, so the fields always
+    agree; resolving capabilities and eligibility through the static role
+    definitions is response formatting, not a database operation."""
     roles = await user_service.get_user_roles(db, principal.user.id)
     return CurrentUserResponse(
         data=CurrentUserData(
@@ -429,6 +507,9 @@ async def get_current_user_profile(
             capabilities=sorted(get_capabilities(roles)),
             active=principal.user.active,
             bot=principal.user.bot,
+            assignment_eligibility=derive_assignment_eligibility(
+                active=principal.user.active, bot=principal.user.bot, roles=roles
+            ),
         )
     )
 
@@ -484,9 +565,9 @@ async def get_user(
     description=(
         "Returns a paginated list of complete user profiles. Supports search "
         "across username, email, and full name; local/external type; active "
-        "status; repeatable role (OR semantics); and has_role filters, plus "
-        "standard pagination and sorting. Requires the 'manage_users' "
-        "capability."
+        "status; repeatable role and assignment_eligibility (OR semantics); "
+        "and has_role filters, plus standard pagination and sorting. Requires "
+        "the 'manage_users' capability."
     ),
 )
 async def list_users_admin(
@@ -501,7 +582,10 @@ async def list_users_admin(
     `docs/features/identity/user-management.md` (List Users (Admin))."""
     type_valid, user_type = _parse_user_type(query.type)
     roles_valid, roles = _parse_role_filters(query.role)
-    if not type_valid or not roles_valid:
+    eligibility_valid, eligibility = _parse_assignment_eligibility_filters(
+        query.assignment_eligibility
+    )
+    if not type_valid or not roles_valid or not eligibility_valid:
         return UserListResponse(
             data=[],
             meta=PaginationMeta(total=0, page=query.page, per_page=query.per_page),
@@ -514,6 +598,7 @@ async def list_users_admin(
         active=query.active,
         roles=roles,
         has_role=query.has_role,
+        assignment_eligibility=eligibility,
         page=query.page,
         per_page=query.per_page,
         sort_by=query.sort_by,

@@ -16,8 +16,9 @@ shape) and do not duplicate that service-level coverage.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import secrets
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock
@@ -32,9 +33,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import dependencies
 from app.api.dependencies import SESSION_COOKIE_NAME
-from app.api.v1.users import _parse_role_filters, _parse_user_type
+from app.api.v1.users import (
+    _parse_assignment_eligibility_filters,
+    _parse_role_filters,
+    _parse_user_type,
+)
 from app.config import settings
-from app.core.enums import Role, SessionCreationReason, TicketStatus, UserType
+from app.core.enums import (
+    AssignmentEligibility,
+    Role,
+    SessionCreationReason,
+    TicketStatus,
+    UserType,
+)
 from app.core.exceptions import UserNotFoundError
 from app.core.jwt import issue_token
 from app.database import get_db
@@ -43,7 +54,10 @@ from app.models.api_key import ApiKey
 from app.models.identity_audit_event import IdentityAuditEvent
 from app.models.session import Session
 from app.models.ticket import Ticket
+from app.models.ticket_access_grant import TicketAccessGrant
 from app.models.ticket_audit_event import TicketAuditEvent
+from app.models.ticket_package import TicketPackage
+from app.models.ticket_package_maintainer import TicketPackageMaintainer
 from app.models.user import User
 from app.models.user_role import UserRole
 from app.services import api_key_service, user_service
@@ -209,6 +223,7 @@ _DIRECTORY_ENTRY_FIELDS = {
     "active",
     "bot",
     "roles",
+    "assignment_eligibility",
 }
 
 _COMPLETE_PROFILE_FIELDS = {
@@ -222,6 +237,7 @@ _COMPLETE_PROFILE_FIELDS = {
     "external_id",
     "manager",
     "roles",
+    "assignment_eligibility",
     "last_login_at",
     "created_at",
     "updated_at",
@@ -753,6 +769,7 @@ class TestGetUser:
             "active": True,
             "bot": False,
             "roles": ["admin", "vulnerability_analyst"],
+            "assignment_eligibility": "all",
         }
 
     async def test_administrator_caller_receives_the_directory_entry(
@@ -1443,6 +1460,7 @@ class TestGetCurrentUserProfile:
             "capabilities",
             "active",
             "bot",
+            "assignment_eligibility",
         }
 
     async def test_bot_account_reads_its_own_marker(
@@ -2993,6 +3011,1033 @@ class TestUnlockUserAdmin:
 
 
 # ---------------------------------------------------------------------------
+# Assignment eligibility in user responses
+# (`docs/features/identity/rbac.md`, Assignment Eligibility Wire Format)
+# ---------------------------------------------------------------------------
+
+_ELIGIBILITY_VALUES = ("all", "non_confidential", "none")
+
+_QueryParams = list[tuple[str, str | int | float | bool | None]]
+
+_WIRE_ROLE_COMBINATIONS: list[tuple[str, ...]] = [
+    (),
+    ("admin",),
+    ("vulnerability_analyst",),
+    ("restricted_analyst",),
+    ("admin", "vulnerability_analyst"),
+    ("admin", "restricted_analyst"),
+    ("restricted_analyst", "vulnerability_analyst"),
+    ("admin", "restricted_analyst", "vulnerability_analyst"),
+]
+
+
+def _expected_eligibility(*, active: bool, bot: bool, wire_roles: Iterable[str]) -> str:
+    """The value that rbac.md (Assignment Eligibility Wire Format) states
+    for the predefined roles, transcribed rather than derived from the
+    production mapping: `all` for an active non-bot holder of
+    `vulnerability_analyst` or of `restricted_analyst` together with
+    `admin`; `non_confidential` for `restricted_analyst` without a role
+    whose scope is `all`; `none` otherwise."""
+    held = set(wire_roles)
+    if not active or bot:
+        return "none"
+    if "vulnerability_analyst" in held or {"restricted_analyst", "admin"} <= held:
+        return "all"
+    if "restricted_analyst" in held:
+        return "non_confidential"
+    return "none"
+
+
+def _rendered_wire_roles(item: dict[str, Any]) -> set[str]:
+    """The role values of a directory entry (plain values) or of a
+    complete profile (role assignment objects)."""
+    return {role if isinstance(role, str) else role["role"] for role in item["roles"]}
+
+
+def _assert_eligibility_agrees_with_the_item(item: dict[str, Any]) -> None:
+    """The value derives from the `active`, `bot`, and `roles` of the same
+    representation."""
+    assert item["assignment_eligibility"] == _expected_eligibility(
+        active=item["active"], bot=item["bot"], wire_roles=_rendered_wire_roles(item)
+    ), item["username"]
+
+
+_ELIGIBILITY_TARGETS: dict[str, str] = {
+    "elig-va": "all",
+    "elig-ra": "non_confidential",
+    "elig-admin": "none",
+    "elig-admin-ra": "all",
+    "elig-norole": "none",
+    "elig-bot-va": "none",
+    "elig-bot-ra": "none",
+    "elig-inactive-va": "none",
+    "elig-inactive-ra": "none",
+    "elig-two-origins-ra": "non_confidential",
+    "elig-split-origins": "all",
+    "elig-ra-grant": "non_confidential",
+    "elig-ra-maintainer": "non_confidential",
+}
+"""The users of `_eligibility_targets` and their value as rbac.md states
+it."""
+
+
+async def _eligibility_targets(
+    user_factory: Callable[..., Awaitable[User]],
+    user_role_factory: Callable[..., Awaitable[UserRole]],
+    ticket_factory: Callable[..., Awaitable[Ticket]],
+    ticket_access_grant_factory: Callable[..., Awaitable[TicketAccessGrant]],
+    ticket_package_factory: Callable[..., Awaitable[TicketPackage]],
+    ticket_package_maintainer_factory: Callable[
+        ..., Awaitable[TicketPackageMaintainer]
+    ],
+) -> dict[str, User]:
+    """The users of `_ELIGIBILITY_TARGETS`, all matching `search=elig-`:
+    every value, bot accounts, inactive users, a role from two origins, a
+    role set split across a manual and an external origin, and analysts
+    with a grant or maintainership of a confidential Ticket. Full names are
+    distinct and not in username order, so that sorts are observable."""
+    va, ra, admin = (
+        Role.VULNERABILITY_ANALYST.value,
+        Role.RESTRICTED_ANALYST.value,
+        Role.ADMIN.value,
+    )
+    plans: dict[str, tuple[dict[str, Any], tuple[tuple[str, str], ...]]] = {
+        "elig-va": ({}, ((va, "_manual"),)),
+        "elig-ra": ({}, ((ra, "_manual"),)),
+        "elig-admin": ({}, ((admin, "_manual"),)),
+        "elig-admin-ra": ({}, ((admin, "_manual"), (ra, "_manual"))),
+        "elig-norole": ({}, ()),
+        "elig-bot-va": ({"bot": True}, ((va, "_manual"),)),
+        "elig-bot-ra": ({"bot": True}, ((ra, "_manual"),)),
+        "elig-inactive-va": ({"active": False}, ((va, "_manual"),)),
+        "elig-inactive-ra": ({"active": False}, ((ra, "_manual"),)),
+        "elig-two-origins-ra": (
+            {"external_id": uuid4(), "password_hash": None},
+            ((ra, "_manual"), (ra, "O Example Partners")),
+        ),
+        "elig-split-origins": (
+            {"external_id": uuid4(), "password_hash": None},
+            ((ra, "_manual"), (admin, "O Example Administrators")),
+        ),
+        "elig-ra-grant": ({}, ((ra, "_manual"),)),
+        "elig-ra-maintainer": ({}, ((ra, "_manual"),)),
+    }
+    users: dict[str, User] = {}
+    for index, (username, (overrides, origins)) in enumerate(plans.items()):
+        user = await user_factory(
+            username=username,
+            email=f"{username}@example.com",
+            full_name=f"Example {len(plans) - index:02d}",
+            **overrides,
+        )
+        for role, group_name in origins:
+            await user_role_factory(user_id=user.id, role=role, group_name=group_name)
+        users[username] = user
+    confidential = await ticket_factory(is_confidential=True)
+    await ticket_access_grant_factory(
+        ticket_id=confidential.id,
+        user_id=users["elig-ra-grant"].id,
+        granted_by_id=users["elig-va"].id,
+    )
+    package = await ticket_package_factory(ticket_id=confidential.id)
+    await ticket_package_maintainer_factory(
+        ticket_package_id=package.id, user_id=users["elig-ra-maintainer"].id
+    )
+    return users
+
+
+@pytest_asyncio.fixture
+async def eligibility_targets(
+    user_factory: Callable[..., Awaitable[User]],
+    user_role_factory: Callable[..., Awaitable[UserRole]],
+    ticket_factory: Callable[..., Awaitable[Ticket]],
+    ticket_access_grant_factory: Callable[..., Awaitable[TicketAccessGrant]],
+    ticket_package_factory: Callable[..., Awaitable[TicketPackage]],
+    ticket_package_maintainer_factory: Callable[
+        ..., Awaitable[TicketPackageMaintainer]
+    ],
+) -> dict[str, User]:
+    return await _eligibility_targets(
+        user_factory,
+        user_role_factory,
+        ticket_factory,
+        ticket_access_grant_factory,
+        ticket_package_factory,
+        ticket_package_maintainer_factory,
+    )
+
+
+def _targets_with(*values: str) -> set[str]:
+    return {name for name, value in _ELIGIBILITY_TARGETS.items() if value in values}
+
+
+@pytest.mark.unit
+class TestParseAssignmentEligibilityFilters:
+    def test_absent_is_valid_with_no_filter(self) -> None:
+        assert _parse_assignment_eligibility_filters([]) == (True, [])
+
+    def test_all_valid_values_are_kept(self) -> None:
+        assert _parse_assignment_eligibility_filters(
+            ["all", "non_confidential", "none"]
+        ) == (
+            True,
+            [
+                AssignmentEligibility.ALL,
+                AssignmentEligibility.NON_CONFIDENTIAL,
+                AssignmentEligibility.NONE,
+            ],
+        )
+
+    def test_mixed_valid_and_invalid_keeps_only_valid(self) -> None:
+        assert _parse_assignment_eligibility_filters(["confidential", "none"]) == (
+            True,
+            [AssignmentEligibility.NONE],
+        )
+
+    @pytest.mark.parametrize(
+        "raw",
+        [["bogus"], ["ALL"], ["all,non_confidential"], ["all, none", "None"]],
+        ids=["unknown", "uppercase", "comma-separated", "several-invalid"],
+    )
+    def test_all_invalid_is_rejected(self, raw: list[str]) -> None:
+        assert _parse_assignment_eligibility_filters(raw) == (False, [])
+
+
+@pytest.mark.e2e
+class TestAssignmentEligibilityOfCurrentUser:
+    """authentication.md (Get Current User): `assignment_eligibility` is
+    derived from the same roles as `roles` and `capabilities` and from the
+    caller's `active` and `bot`."""
+
+    @pytest.mark.parametrize(
+        "wire_roles",
+        _WIRE_ROLE_COMBINATIONS,
+        ids=lambda wire_roles: "+".join(wire_roles) or "no-roles",
+    )
+    @pytest.mark.parametrize("bot", [False, True], ids=["human", "bot"])
+    async def test_every_role_combination_for_a_human_and_a_bot_caller(
+        self,
+        authenticated_user_and_client: tuple[User, AsyncClient],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+        db_session: AsyncSession,
+        wire_roles: tuple[str, ...],
+        bot: bool,
+    ) -> None:
+        user, client = authenticated_user_and_client
+        user.bot = bot
+        for wire_role in wire_roles:
+            await user_role_factory(
+                user_id=user.id, role=_ROLE_OF_WIRE_VALUE[wire_role].value
+            )
+        await db_session.flush()
+
+        response = await client.get("/api/v1/users/me")
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["assignment_eligibility"] == _expected_eligibility(
+            active=True, bot=bot, wire_roles=wire_roles
+        )
+        _assert_eligibility_agrees_with_the_item(data)
+
+    @pytest.mark.parametrize(
+        ("wire_roles", "bot", "expected"),
+        [
+            (("vulnerability_analyst",), False, "all"),
+            (("restricted_analyst",), False, "non_confidential"),
+            (("vulnerability_analyst",), True, "none"),
+            (("admin",), False, "none"),
+            (("admin", "restricted_analyst"), False, "all"),
+        ],
+        ids=["va", "ra", "bot-va", "admin-only", "admin-ra"],
+    )
+    async def test_named_cases_of_the_specification(
+        self,
+        authenticated_user_and_client: tuple[User, AsyncClient],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+        db_session: AsyncSession,
+        wire_roles: tuple[str, ...],
+        bot: bool,
+        expected: str,
+    ) -> None:
+        user, client = authenticated_user_and_client
+        user.bot = bot
+        for wire_role in wire_roles:
+            await user_role_factory(
+                user_id=user.id, role=_ROLE_OF_WIRE_VALUE[wire_role].value
+            )
+        await db_session.flush()
+
+        response = await client.get("/api/v1/users/me")
+
+        assert response.json()["data"]["assignment_eligibility"] == expected
+
+    @pytest.mark.parametrize(
+        ("wire_roles", "expected"),
+        [
+            (("restricted_analyst",), "non_confidential"),
+            (("restricted_analyst", "admin"), "all"),
+        ],
+        ids=["ra", "admin-ra"],
+    )
+    async def test_jwt_session_and_api_key_return_the_same_value(
+        self,
+        authenticated_user_and_client: tuple[User, AsyncClient],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+        monkeypatch: pytest.MonkeyPatch,
+        wire_roles: tuple[str, ...],
+        expected: str,
+    ) -> None:
+        user, client = authenticated_user_and_client
+        for wire_role in wire_roles:
+            await user_role_factory(
+                user_id=user.id, role=_ROLE_OF_WIRE_VALUE[wire_role].value
+            )
+        token, digest = _make_api_key_credential()
+        await api_key_factory(user_id=user.id, key_hash=digest)
+        monkeypatch.setattr(
+            api_key_service, "update_last_used_at", AsyncMock(return_value=True)
+        )
+
+        session_response = await client.get("/api/v1/users/me")
+        # A non-empty Bearer value is final and never falls back to the
+        # session cookie, so a 200 proves that the API key authenticated.
+        api_key_response = await client.get(
+            "/api/v1/users/me", headers={"Authorization": f"Bearer {token}"}
+        )
+
+        assert session_response.status_code == 200
+        assert api_key_response.status_code == 200
+        assert session_response.json()["data"]["assignment_eligibility"] == expected
+        assert api_key_response.json()["data"] == session_response.json()["data"]
+
+    async def test_roles_from_several_origins_count_once(
+        self,
+        authenticated_user_and_client: tuple[User, AsyncClient],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        """`restricted_analyst` from a manual and an external origin, and
+        `admin` from a further external origin: the scope-all role of
+        another origin makes the value `all`."""
+        user, client = authenticated_user_and_client
+        await user_role_factory(user_id=user.id, role=Role.RESTRICTED_ANALYST.value)
+        await user_role_factory(
+            user_id=user.id,
+            role=Role.RESTRICTED_ANALYST.value,
+            group_name="O Example Partners",
+        )
+        await user_role_factory(
+            user_id=user.id,
+            role=Role.ADMIN.value,
+            group_name="O Example Administrators",
+        )
+
+        response = await client.get("/api/v1/users/me")
+
+        assert response.json()["data"]["assignment_eligibility"] == "all"
+
+    async def test_grant_and_maintainership_leave_the_value_unchanged(
+        self,
+        authenticated_user_and_client: tuple[User, AsyncClient],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+        ticket_factory: Callable[..., Awaitable[Ticket]],
+        ticket_access_grant_factory: Callable[..., Awaitable[TicketAccessGrant]],
+        ticket_package_factory: Callable[..., Awaitable[TicketPackage]],
+        ticket_package_maintainer_factory: Callable[
+            ..., Awaitable[TicketPackageMaintainer]
+        ],
+    ) -> None:
+        user, client = authenticated_user_and_client
+        await user_role_factory(user_id=user.id, role=Role.RESTRICTED_ANALYST.value)
+        before = (await client.get("/api/v1/users/me")).json()["data"]
+        confidential = await ticket_factory(is_confidential=True)
+        await ticket_access_grant_factory(ticket_id=confidential.id, user_id=user.id)
+        package = await ticket_package_factory(ticket_id=confidential.id)
+        await ticket_package_maintainer_factory(
+            ticket_package_id=package.id, user_id=user.id
+        )
+
+        after = (await client.get("/api/v1/users/me")).json()["data"]
+
+        assert before["assignment_eligibility"] == "non_confidential"
+        assert after["assignment_eligibility"] == "non_confidential"
+
+    async def test_change_is_reflected_on_the_next_request(
+        self,
+        authenticated_user_and_client: tuple[User, AsyncClient],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+        db_session: AsyncSession,
+    ) -> None:
+        """No stored or cached value: each request derives the value from
+        the current roles and bot marker."""
+        user, client = authenticated_user_and_client
+
+        async def current() -> str:
+            response = await client.get("/api/v1/users/me")
+            value: str = response.json()["data"]["assignment_eligibility"]
+            return value
+
+        observed = [await current()]
+        await user_role_factory(user_id=user.id, role=Role.RESTRICTED_ANALYST.value)
+        observed.append(await current())
+        analyst = await user_role_factory(
+            user_id=user.id, role=Role.VULNERABILITY_ANALYST.value
+        )
+        observed.append(await current())
+        user.bot = True
+        await db_session.flush()
+        observed.append(await current())
+        user.bot = False
+        await db_session.flush()
+        observed.append(await current())
+        await db_session.delete(analyst)
+        await db_session.flush()
+        observed.append(await current())
+
+        assert observed == [
+            "none",
+            "non_confidential",
+            "all",
+            "none",
+            "all",
+            "non_confidential",
+        ]
+
+
+_USER_READS = [
+    pytest.param("/api/v1/users", True, id="directory-list"),
+    pytest.param("/api/v1/users/{user}", False, id="directory-detail"),
+    pytest.param("/api/v1/admin/users", True, id="admin-list"),
+    pytest.param("/api/v1/admin/users/{user}", False, id="admin-detail"),
+]
+
+
+@pytest.mark.e2e
+class TestAssignmentEligibilityInUserReads:
+    @pytest.mark.parametrize(("path", "listed"), _USER_READS)
+    async def test_each_read_returns_the_value_of_every_user(
+        self,
+        admin_client: AsyncClient,
+        eligibility_targets: dict[str, User],
+        path: str,
+        listed: bool,
+    ) -> None:
+        """The directory entry and the complete profile carry the value,
+        derived from the same state as their `active`, `bot`, and `roles`;
+        a role from several origins, a grant, and maintainership leave it
+        unchanged."""
+        if listed:
+            response = await admin_client.get(
+                path, params={"search": "elig-", "per_page": 100}
+            )
+            assert response.status_code == 200
+            items = response.json()["data"]
+        else:
+            items = []
+            for user in eligibility_targets.values():
+                response = await admin_client.get(path.format(user=user.username))
+                assert response.status_code == 200
+                items.append(response.json()["data"])
+
+        assert {
+            item["username"]: item["assignment_eligibility"] for item in items
+        } == _ELIGIBILITY_TARGETS
+        for item in items:
+            _assert_eligibility_agrees_with_the_item(item)
+
+    async def test_role_less_caller_reads_the_value_in_the_directory(
+        self,
+        authenticated_client: AsyncClient,
+        eligibility_targets: dict[str, User],
+    ) -> None:
+        response = await authenticated_client.get("/api/v1/users/elig-split-origins")
+
+        assert response.status_code == 200
+        assert response.json()["data"]["assignment_eligibility"] == "all"
+
+    async def test_directory_entry_and_own_profile_agree(
+        self,
+        authenticated_user_and_client: tuple[User, AsyncClient],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        user, client = authenticated_user_and_client
+        await user_role_factory(user_id=user.id, role=Role.RESTRICTED_ANALYST.value)
+
+        own = (await client.get("/api/v1/users/me")).json()["data"]
+        entry = (await client.get(f"/api/v1/users/{user.id}")).json()["data"]
+
+        assert own["assignment_eligibility"] == "non_confidential"
+        assert entry["assignment_eligibility"] == own["assignment_eligibility"]
+
+
+@pytest.mark.e2e
+class TestAssignmentEligibilityInMutationResponses:
+    """Every administrator mutation response is the complete user profile;
+    it reports the value after the operation."""
+
+    async def test_bot_marking_reports_none_and_clearing_restores_the_value(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="eligbotpatch")
+        await user_role_factory(
+            user_id=target.id, role=Role.VULNERABILITY_ANALYST.value
+        )
+
+        marked = await client.patch(
+            f"/api/v1/admin/users/{target.id}", json={"bot": True}
+        )
+        cleared = await client.patch(
+            f"/api/v1/admin/users/{target.id}", json={"bot": False}
+        )
+
+        assert marked.status_code == 200
+        assert marked.json()["data"]["bot"] is True
+        assert marked.json()["data"]["assignment_eligibility"] == "none"
+        assert cleared.status_code == 200
+        assert cleared.json()["data"]["assignment_eligibility"] == "all"
+
+    async def test_removing_vulnerability_analyst_keeps_restricted_analyst_eligibility(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="eligroleremoval")
+        await user_role_factory(
+            user_id=target.id, role=Role.VULNERABILITY_ANALYST.value
+        )
+        await user_role_factory(user_id=target.id, role=Role.RESTRICTED_ANALYST.value)
+
+        response = await client.post(
+            f"/api/v1/admin/users/{target.id}/roles",
+            json={"remove": ["vulnerability_analyst"]},
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert _rendered_wire_roles(data) == {"restricted_analyst"}
+        assert data["assignment_eligibility"] == "non_confidential"
+
+    async def test_adding_vulnerability_analyst_reports_all(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="eligroleaddition")
+        await user_role_factory(user_id=target.id, role=Role.RESTRICTED_ANALYST.value)
+
+        response = await client.post(
+            f"/api/v1/admin/users/{target.username}/roles",
+            json={"add": ["vulnerability_analyst"]},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["assignment_eligibility"] == "all"
+
+    async def test_removing_one_of_several_origins_leaves_the_value_unchanged(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(
+            username="eligoriginremoval", external_id=uuid4(), password_hash=None
+        )
+        await user_role_factory(
+            user_id=target.id, role=Role.VULNERABILITY_ANALYST.value
+        )
+        await user_role_factory(
+            user_id=target.id,
+            role=Role.VULNERABILITY_ANALYST.value,
+            group_name="O Example Security",
+        )
+
+        response = await client.post(
+            f"/api/v1/admin/users/{target.id}/roles",
+            json={"remove": ["vulnerability_analyst"]},
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert [role["group_name"] for role in data["roles"]] == ["O Example Security"]
+        assert data["assignment_eligibility"] == "all"
+
+    async def test_deactivation_reports_none_and_reactivation_restores_the_value(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="eligdeactivation")
+        await user_role_factory(user_id=target.id, role=Role.RESTRICTED_ANALYST.value)
+
+        deactivated = await client.post(f"/api/v1/admin/users/{target.id}/deactivate")
+        reactivated = await client.post(f"/api/v1/admin/users/{target.id}/reactivate")
+
+        assert deactivated.status_code == 200
+        assert deactivated.json()["data"]["active"] is False
+        assert deactivated.json()["data"]["assignment_eligibility"] == "none"
+        assert reactivated.status_code == 200
+        assert reactivated.json()["data"]["assignment_eligibility"] == (
+            "non_confidential"
+        )
+
+    @pytest.mark.parametrize(
+        ("overrides", "expected"),
+        [
+            ({"roles": ["restricted_analyst"]}, "non_confidential"),
+            ({"roles": ["admin", "restricted_analyst"]}, "all"),
+            ({"roles": ["vulnerability_analyst"], "bot": True}, "none"),
+            ({}, "none"),
+        ],
+        ids=["ra", "admin-ra", "bot-va", "no-roles"],
+    )
+    async def test_creation_reports_the_value_of_the_new_user(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        overrides: dict[str, object],
+        expected: str,
+    ) -> None:
+        _admin, client = admin_user_and_client
+
+        response = await client.post(
+            "/api/v1/admin/users", json=_create_payload(**overrides)
+        )
+
+        assert response.status_code == 201
+        assert response.json()["data"]["assignment_eligibility"] == expected
+
+    async def test_committed_change_is_reflected_on_the_next_request(
+        self,
+        admin_commit_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        _admin, client = admin_commit_client
+        target = await user_factory(username="eligcommitted")
+        await user_role_factory(user_id=target.id, role=Role.RESTRICTED_ANALYST.value)
+        before = await client.get(f"/api/v1/users/{target.id}")
+
+        changed = await client.post(
+            f"/api/v1/admin/users/{target.id}/roles",
+            json={"add": ["vulnerability_analyst"]},
+        )
+        directory = await client.get(f"/api/v1/users/{target.id}")
+        profile = await client.get(f"/api/v1/admin/users/{target.id}")
+
+        assert before.json()["data"]["assignment_eligibility"] == "non_confidential"
+        assert changed.status_code == 200
+        assert directory.json()["data"]["assignment_eligibility"] == "all"
+        assert profile.json()["data"]["assignment_eligibility"] == "all"
+
+
+_USER_LISTS = [
+    pytest.param("/api/v1/users", id="directory"),
+    pytest.param("/api/v1/admin/users", id="admin"),
+]
+
+
+def _value_subsets() -> list[tuple[str, ...]]:
+    return [
+        subset
+        for size in range(1, len(_ELIGIBILITY_VALUES) + 1)
+        for subset in itertools.combinations(_ELIGIBILITY_VALUES, size)
+    ]
+
+
+async def _usernames(
+    client: AsyncClient, path: str, params: _QueryParams
+) -> tuple[list[str], int]:
+    response = await client.get(path, params=params)
+    assert response.status_code == 200
+    body = response.json()
+    return [item["username"] for item in body["data"]], body["meta"]["total"]
+
+
+@pytest.mark.e2e
+class TestAssignmentEligibilityFilter:
+    @pytest.mark.parametrize("path", _USER_LISTS)
+    @pytest.mark.parametrize(
+        ("values", "expected"),
+        [
+            (("all",), {"elig-va", "elig-admin-ra", "elig-split-origins"}),
+            (
+                ("all", "non_confidential"),
+                {
+                    "elig-va",
+                    "elig-admin-ra",
+                    "elig-split-origins",
+                    "elig-ra",
+                    "elig-two-origins-ra",
+                    "elig-ra-grant",
+                    "elig-ra-maintainer",
+                },
+            ),
+            (
+                ("none",),
+                {
+                    "elig-admin",
+                    "elig-norole",
+                    "elig-bot-va",
+                    "elig-bot-ra",
+                    "elig-inactive-va",
+                    "elig-inactive-ra",
+                },
+            ),
+        ],
+        ids=["confidential-assignees", "non-confidential-assignees", "none"],
+    )
+    async def test_documented_queries(
+        self,
+        admin_client: AsyncClient,
+        eligibility_targets: dict[str, User],
+        path: str,
+        values: tuple[str, ...],
+        expected: set[str],
+    ) -> None:
+        """user-management.md (List Users): the assignees of a confidential
+        Ticket are `?assignment_eligibility=all`, those of a non-confidential
+        Ticket `all` and `non_confidential`."""
+        params: _QueryParams = [("search", "elig-"), ("per_page", 100)]
+        params += [("assignment_eligibility", value) for value in values]
+
+        usernames, total = await _usernames(admin_client, path, params)
+
+        assert set(usernames) == expected
+        assert len(usernames) == len(set(usernames)) == total
+
+    @pytest.mark.parametrize("path", _USER_LISTS)
+    async def test_every_subset_selects_the_entries_carrying_one_of_the_values(
+        self,
+        admin_client: AsyncClient,
+        eligibility_targets: dict[str, User],
+        path: str,
+    ) -> None:
+        for subset in _value_subsets():
+            params: _QueryParams = [
+                ("search", "elig-"),
+                ("per_page", 100),
+            ]
+            params += [("assignment_eligibility", value) for value in subset]
+
+            response = await admin_client.get(path, params=params)
+
+            body = response.json()
+            assert {item["username"] for item in body["data"]} == _targets_with(
+                *subset
+            ), subset
+            assert all(
+                item["assignment_eligibility"] in subset for item in body["data"]
+            ), subset
+            assert body["meta"]["total"] == len(_targets_with(*subset)), subset
+
+    @pytest.mark.parametrize("path", _USER_LISTS)
+    @pytest.mark.parametrize(
+        ("params", "expected"),
+        [
+            (
+                [("search", "elig-ra"), ("assignment_eligibility", "non_confidential")],
+                {"elig-ra", "elig-ra-grant", "elig-ra-maintainer"},
+            ),
+            ([("search", "elig-ra"), ("assignment_eligibility", "all")], set()),
+            (
+                [
+                    ("search", "elig-"),
+                    ("active", "false"),
+                    ("assignment_eligibility", "none"),
+                ],
+                {"elig-inactive-va", "elig-inactive-ra"},
+            ),
+            (
+                [
+                    ("search", "elig-"),
+                    ("active", "true"),
+                    ("assignment_eligibility", "none"),
+                ],
+                {"elig-admin", "elig-norole", "elig-bot-va", "elig-bot-ra"},
+            ),
+            (
+                [
+                    ("search", "elig-"),
+                    ("role", "restricted_analyst"),
+                    ("assignment_eligibility", "all"),
+                ],
+                {"elig-admin-ra", "elig-split-origins"},
+            ),
+            (
+                [
+                    ("search", "elig-"),
+                    ("role", "admin"),
+                    ("role", "vulnerability_analyst"),
+                    ("assignment_eligibility", "none"),
+                ],
+                {"elig-admin", "elig-bot-va", "elig-inactive-va"},
+            ),
+            (
+                [
+                    ("search", "elig-"),
+                    ("has_role", "false"),
+                    ("assignment_eligibility", "none"),
+                ],
+                {"elig-norole"},
+            ),
+            (
+                [
+                    ("search", "elig-"),
+                    ("has_role", "false"),
+                    ("assignment_eligibility", "all"),
+                    ("assignment_eligibility", "non_confidential"),
+                ],
+                set(),
+            ),
+            (
+                [
+                    ("search", "elig-"),
+                    ("has_role", "true"),
+                    ("assignment_eligibility", "none"),
+                ],
+                {
+                    "elig-admin",
+                    "elig-bot-va",
+                    "elig-bot-ra",
+                    "elig-inactive-va",
+                    "elig-inactive-ra",
+                },
+            ),
+        ],
+        ids=[
+            "search",
+            "search-excludes",
+            "active-false",
+            "active-true",
+            "role",
+            "repeated-role",
+            "has-role-false",
+            "has-role-false-excludes",
+            "has-role-true",
+        ],
+    )
+    async def test_combines_with_the_other_filters_via_and(
+        self,
+        admin_client: AsyncClient,
+        eligibility_targets: dict[str, User],
+        path: str,
+        params: _QueryParams,
+        expected: set[str],
+    ) -> None:
+        usernames, total = await _usernames(admin_client, path, params)
+
+        assert set(usernames) == expected
+        assert total == len(expected)
+
+    @pytest.mark.parametrize(
+        ("type_value", "expected"),
+        [
+            ("external", {"elig-split-origins"}),
+            ("local", {"elig-va", "elig-admin-ra"}),
+        ],
+    )
+    async def test_admin_list_combines_with_the_type_filter(
+        self,
+        admin_client: AsyncClient,
+        eligibility_targets: dict[str, User],
+        type_value: str,
+        expected: set[str],
+    ) -> None:
+        usernames, total = await _usernames(
+            admin_client,
+            "/api/v1/admin/users",
+            [
+                ("search", "elig-"),
+                ("type", type_value),
+                ("assignment_eligibility", "all"),
+            ],
+        )
+
+        assert set(usernames) == expected
+        assert total == len(expected)
+
+    @pytest.mark.parametrize("path", _USER_LISTS)
+    async def test_pagination_reports_the_filtered_total(
+        self,
+        admin_client: AsyncClient,
+        eligibility_targets: dict[str, User],
+        path: str,
+    ) -> None:
+        filters: _QueryParams = [
+            ("search", "elig-"),
+            ("assignment_eligibility", "all"),
+            ("assignment_eligibility", "non_confidential"),
+        ]
+        expected = sorted(_targets_with("all", "non_confidential"))
+
+        collected: list[str] = []
+        for page in (1, 2, 3, 4, 5):
+            response = await admin_client.get(
+                path, params=[*filters, ("page", page), ("per_page", 2)]
+            )
+            body = response.json()
+            assert body["meta"] == {"total": len(expected), "page": page, "per_page": 2}
+            collected += [item["username"] for item in body["data"]]
+
+        assert len(expected) == 7
+        assert collected == expected
+
+    @pytest.mark.parametrize(
+        ("path", "sort_by"),
+        [
+            *(("/api/v1/users", field) for field in ("username", "full_name", "email")),
+            *(
+                ("/api/v1/admin/users", field)
+                for field in ("username", "full_name", "email", "created_at")
+            ),
+        ],
+    )
+    @pytest.mark.parametrize("sort_order", ["asc", "desc"])
+    async def test_sorts_the_filtered_entries_like_the_unfiltered_list(
+        self,
+        admin_client: AsyncClient,
+        eligibility_targets: dict[str, User],
+        path: str,
+        sort_by: str,
+        sort_order: str,
+    ) -> None:
+        sort: _QueryParams = [
+            ("search", "elig-"),
+            ("per_page", 100),
+            ("sort_by", sort_by),
+            ("sort_order", sort_order),
+        ]
+        everyone, _ = await _usernames(admin_client, path, sort)
+        expected = [name for name in everyone if name in _targets_with("none")]
+
+        usernames, total = await _usernames(
+            admin_client, path, [*sort, ("assignment_eligibility", "none")]
+        )
+
+        assert usernames == expected
+        assert total == len(expected)
+
+    @pytest.mark.parametrize("path", _USER_LISTS)
+    @pytest.mark.parametrize(
+        "invalid", ["bogus", "ALL", "all,non_confidential"], ids=str
+    )
+    async def test_invalid_value_beside_a_valid_one_is_ignored(
+        self,
+        admin_client: AsyncClient,
+        eligibility_targets: dict[str, User],
+        path: str,
+        invalid: str,
+    ) -> None:
+        usernames, total = await _usernames(
+            admin_client,
+            path,
+            [
+                ("search", "elig-"),
+                ("assignment_eligibility", invalid),
+                ("assignment_eligibility", "all"),
+            ],
+        )
+
+        assert set(usernames) == _targets_with("all")
+        assert total == len(_targets_with("all"))
+
+    @pytest.mark.parametrize("path", _USER_LISTS)
+    @pytest.mark.parametrize(
+        "values",
+        [["bogus"], ["all,non_confidential"], ["ALL", "None"]],
+        ids=["unknown", "comma-separated", "wrong-case"],
+    )
+    async def test_only_invalid_values_yield_an_empty_page(
+        self,
+        admin_client: AsyncClient,
+        eligibility_targets: dict[str, User],
+        path: str,
+        values: list[str],
+    ) -> None:
+        """docs/api-spec.md (Enum Filter Validation): a comma-separated
+        list is one invalid value, not two values."""
+        response = await admin_client.get(
+            path,
+            params=[("page", 2), ("per_page", 5)]
+            + [("assignment_eligibility", value) for value in values],
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "data": [],
+            "meta": {"total": 0, "page": 2, "per_page": 5},
+        }
+
+    async def test_role_less_caller_filters_the_directory(
+        self,
+        authenticated_user_and_client: tuple[User, AsyncClient],
+        eligibility_targets: dict[str, User],
+    ) -> None:
+        """The directory filter needs no capability; the role-less caller
+        is itself an entry with the value `none`."""
+        caller, client = authenticated_user_and_client
+
+        eligible, eligible_total = await _usernames(
+            client,
+            "/api/v1/users",
+            [("assignment_eligibility", "all"), ("per_page", 100)],
+        )
+        ineligible, _ = await _usernames(
+            client,
+            "/api/v1/users",
+            [("assignment_eligibility", "none"), ("per_page", 100)],
+        )
+
+        assert set(eligible) == _targets_with("all")
+        assert eligible_total == len(_targets_with("all"))
+        assert caller.username in ineligible
+        assert caller.username not in eligible
+
+    @pytest.mark.parametrize(
+        "role", [None, Role.VULNERABILITY_ANALYST, Role.RESTRICTED_ANALYST]
+    )
+    async def test_admin_list_still_requires_manage_users(
+        self,
+        authenticated_user_and_client: tuple[User, AsyncClient],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+        role: Role | None,
+    ) -> None:
+        user, client = authenticated_user_and_client
+        if role is not None:
+            await user_role_factory(user_id=user.id, role=role.value)
+
+        response = await client.get(
+            "/api/v1/admin/users", params={"assignment_eligibility": "all"}
+        )
+
+        assert response.status_code == 403
+        assert response.json() == {
+            "code": "AUTH_INSUFFICIENT_PERMISSION",
+            "detail": "Insufficient permissions",
+        }
+
+    @pytest.mark.parametrize("path", _USER_LISTS)
+    async def test_unauthenticated_filter_request_returns_401(
+        self, client: AsyncClient, path: str
+    ) -> None:
+        response = await client.get(path, params={"assignment_eligibility": "all"})
+
+        assert response.status_code == 401
+        assert response.json() == UNAUTHENTICATED
+
+
+# ---------------------------------------------------------------------------
 # OpenAPI surface — the ten admin user endpoints and the directory contract
 # ---------------------------------------------------------------------------
 
@@ -3007,18 +4052,25 @@ def _resolve_schema(document: dict[str, Any], schema: dict[str, Any]) -> dict[st
     return resolved
 
 
-def _success_item_properties(
+def _success_item_schema(
     document: dict[str, Any], path: str, *, listed: bool
-) -> set[str]:
-    """Property names of the `data` object (or of each `data` item) of a
-    GET operation's 200 response."""
+) -> dict[str, Any]:
+    """The schema of the `data` object (or of each `data` item) of a GET
+    operation's 200 response."""
     response = document["paths"][path]["get"]["responses"]["200"]
     envelope = _resolve_schema(
         document, response["content"]["application/json"]["schema"]
     )
     data = envelope["properties"]["data"]
-    item = _resolve_schema(document, data["items"] if listed else data)
-    return set(item["properties"])
+    return _resolve_schema(document, data["items"] if listed else data)
+
+
+def _success_item_properties(
+    document: dict[str, Any], path: str, *, listed: bool
+) -> set[str]:
+    """Property names of the `data` object (or of each `data` item) of a
+    GET operation's 200 response."""
+    return set(_success_item_schema(document, path, listed=listed)["properties"])
 
 
 @pytest.mark.unit
@@ -3091,6 +4143,7 @@ class TestUserDirectoryOpenAPISurface:
             "active",
             "role",
             "has_role",
+            "assignment_eligibility",
             "page",
             "per_page",
             "sort_by",
@@ -3141,3 +4194,92 @@ def test_user_representation_declares_bot_as_a_required_boolean(
     schema = fastapi_app.openapi()["components"]["schemas"][schema_name]
     assert schema["properties"]["bot"]["type"] == "boolean"
     assert "bot" in schema["required"]
+
+
+@pytest.mark.unit
+class TestAssignmentEligibilityOpenAPISurface:
+    """`docs/features/identity/rbac.md` (Assignment Eligibility Wire
+    Format, Response enum; Where it appears)."""
+
+    @pytest.mark.parametrize(
+        ("path", "listed"),
+        [
+            ("/api/v1/users/me", False),
+            ("/api/v1/users", True),
+            ("/api/v1/users/{user}", False),
+            ("/api/v1/admin/users", True),
+            ("/api/v1/admin/users/{user}", False),
+        ],
+    )
+    def test_field_is_a_required_enum_of_exactly_the_three_values(
+        self, path: str, listed: bool
+    ) -> None:
+        from app.main import app as fastapi_app
+
+        document = fastapi_app.openapi()
+        item = _success_item_schema(document, path, listed=listed)
+        field = _resolve_schema(document, item["properties"]["assignment_eligibility"])
+
+        assert "assignment_eligibility" in item["required"]
+        assert field["type"] == "string"
+        assert field["enum"] == list(_ELIGIBILITY_VALUES)
+
+    @pytest.mark.parametrize(
+        "schema_name", ["CurrentUserData", "UserDirectoryData", "UserData"]
+    )
+    def test_each_schema_declares_the_field(self, schema_name: str) -> None:
+        from app.main import app as fastapi_app
+
+        document = fastapi_app.openapi()
+        schema = document["components"]["schemas"][schema_name]
+        field = _resolve_schema(
+            document, schema["properties"]["assignment_eligibility"]
+        )
+
+        assert "assignment_eligibility" in schema["required"]
+        assert field["enum"] == list(_ELIGIBILITY_VALUES)
+
+    @pytest.mark.parametrize("path", ["/api/v1/users", "/api/v1/admin/users"])
+    def test_filter_is_an_optional_array_whose_items_carry_the_enum(
+        self, path: str
+    ) -> None:
+        from app.main import app as fastapi_app
+
+        document = fastapi_app.openapi()
+        parameters = {
+            parameter["name"]: parameter
+            for parameter in document["paths"][path]["get"]["parameters"]
+        }
+        parameter = parameters["assignment_eligibility"]
+        schema = _resolve_schema(document, parameter["schema"])
+        items = _resolve_schema(document, schema["items"])
+
+        assert parameter["in"] == "query"
+        assert parameter["required"] is False
+        assert schema["type"] == "array"
+        assert items["type"] == "string"
+        assert items["enum"] == list(_ELIGIBILITY_VALUES)
+
+    @pytest.mark.parametrize("schema_name", ["UserReference", "UserManagerData"])
+    def test_user_reference_and_manager_do_not_carry_the_field(
+        self, schema_name: str
+    ) -> None:
+        from app.main import app as fastapi_app
+
+        schema = fastapi_app.openapi()["components"]["schemas"][schema_name]
+
+        assert "assignment_eligibility" not in schema["properties"]
+        assert "assignment_eligibility" not in schema.get("required", [])
+
+    def test_profile_manager_is_the_manager_schema(self) -> None:
+        """Guards the test above: the `manager` of the complete profile is
+        the `UserManagerData` schema."""
+        from app.main import app as fastapi_app
+
+        document = fastapi_app.openapi()
+        manager = document["components"]["schemas"]["UserData"]["properties"]["manager"]
+        references = [
+            alternative.get("$ref") for alternative in manager.get("anyOf", [manager])
+        ]
+
+        assert "#/components/schemas/UserManagerData" in references

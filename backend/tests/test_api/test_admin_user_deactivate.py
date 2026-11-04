@@ -126,6 +126,7 @@ _PROFILE_FIELDS = {
     "external_id",
     "manager",
     "roles",
+    "assignment_eligibility",
     "last_login_at",
     "created_at",
     "updated_at",
@@ -548,6 +549,9 @@ class TestEffectiveDeactivation:
         assert data["username"] == "bob.va"
         assert data["full_name"] == "Bob Example"
         assert data["active"] is False
+        # rbac.md, Assignment Eligibility Wire Format: the value after the
+        # deactivation, although the user keeps `vulnerability_analyst`.
+        assert data["assignment_eligibility"] == "none"
         assert data["source"] == "local"
         assert data["external_id"] is None
         assert data["manager"] == {

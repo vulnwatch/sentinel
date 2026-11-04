@@ -17,8 +17,9 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
-from app.core.enums import Capability
+from app.core.enums import AssignmentEligibility, Capability
 from app.schemas.auth import (
     CurrentUserData,
     CurrentUserResponse,
@@ -96,6 +97,7 @@ class TestCurrentUserData:
             "capabilities": [Capability.MANAGE_USERS],
             "active": True,
             "bot": False,
+            "assignment_eligibility": AssignmentEligibility.NONE,
         }
         defaults.update(overrides)
         return CurrentUserData(**defaults)
@@ -112,6 +114,29 @@ class TestCurrentUserData:
         data = self._make(roles=["admin", "restricted_analyst"])
         assert data.roles == ["admin", "restricted_analyst"]
 
+    @pytest.mark.parametrize("value", ["all", "non_confidential", "none"])
+    def test_assignment_eligibility_accepts_each_wire_value(self, value: str) -> None:
+        """rbac.md, Assignment Eligibility Wire Format."""
+        data = self._make(assignment_eligibility=value)
+        assert data.assignment_eligibility == AssignmentEligibility(value)
+
+    def test_assignment_eligibility_rejects_an_unknown_value(self) -> None:
+        with pytest.raises(ValidationError):
+            self._make(assignment_eligibility="confidential")
+
+    def test_assignment_eligibility_is_required(self) -> None:
+        with pytest.raises(ValidationError):
+            CurrentUserData(
+                id=uuid4(),
+                username="jdoe",
+                email="jdoe@example.com",
+                full_name=None,
+                roles=[],
+                capabilities=[],
+                active=True,
+                bot=False,
+            )  # type: ignore[call-arg]
+
     def test_has_no_full_profile_only_fields(self) -> None:
         """Structural guarantee: the concise current-user schema must
         never carry `source`, `external_id`, `manager`, or role
@@ -127,6 +152,7 @@ class TestCurrentUserData:
             "capabilities",
             "active",
             "bot",
+            "assignment_eligibility",
         }
 
 
@@ -142,6 +168,7 @@ class TestCurrentUserResponse:
             capabilities=[Capability.MANAGE_USERS],
             active=True,
             bot=False,
+            assignment_eligibility=AssignmentEligibility.NONE,
         )
         response = CurrentUserResponse(data=data)
         assert response.data.username == "jdoe"

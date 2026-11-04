@@ -69,6 +69,23 @@ class Scope(StrEnum):
     NON_CONFIDENTIAL = "non_confidential"
 
 
+class AssignmentEligibility(StrEnum):
+    """For which Tickets a user is eligible to be the assignee.
+
+    Category B — classification (Python Enum only, never stored in the
+    database; derived per request from the user's active status, bot
+    marker, and roles). The values are the wire values. See
+    `docs/features/identity/rbac.md` (Assignment Eligibility Wire Format).
+    """
+
+    ALL = "all"
+    """Eligible to be the assignee of every Ticket."""
+    NON_CONFIDENTIAL = "non_confidential"
+    """Eligible to be the assignee of every non-confidential Ticket only."""
+    NONE = "none"
+    """Eligible to be the assignee of no Ticket."""
+
+
 class HealthCheckStatus(StrEnum):
     """Result value of a single readiness dependency check.
 
