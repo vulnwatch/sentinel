@@ -631,8 +631,35 @@ async def _resolve_fallback_run_timeout(db: AsyncSession, fetcher_name: str) -> 
     return run_timeout if run_timeout is not None else _DEFAULT_RUN_TIMEOUT
 
 
-def _read_due_times(celery_app: Celery, names: list[str]) -> dict[str, datetime | None]:
-    """Synchronous batch read of each `name`'s RedBeat `due_at`.
+def _next_run_at(entry: RedBeatSchedulerEntry, now: datetime) -> datetime:
+    """The first occurrence of `entry`'s schedule after its
+    `last_run_at`, or `now` for an entry that has none.
+
+    See `docs/features/platform/fetcher-infrastructure.md` ("`next_run_at`
+    Calculation"). The result never depends on the request time, so a
+    past occurrence that Beat has not dispatched stays in the past.
+    `entry.due_at` is not used: it adds the time remaining from the
+    current instant to `last_run_at` (see
+    https://github.com/sibson/redbeat/issues/210). Celery's
+    `remaining_estimate()` measures from the schedule's clock, so the
+    clock is pinned to `last_run_at`; `entry` must be a freshly decoded
+    entry used for this read only, because its schedule keeps that
+    clock.
+    """
+    last_run_at: datetime | None = entry.last_run_at
+    if last_run_at is None:
+        return now
+    schedule = entry.schedule
+    schedule.nowfun = lambda: last_run_at
+    next_run: datetime = last_run_at + schedule.remaining_estimate(last_run_at)
+    return next_run
+
+
+def _read_next_run_times(
+    celery_app: Celery, names: list[str], now: datetime
+) -> dict[str, datetime | None]:
+    """Synchronous batch read of each `name`'s next run from its RedBeat
+    entry (see `_next_run_at`).
 
     Uses `fetcher_entry_key()` + `RedBeatSchedulerEntry.from_key()`
     exclusively — no raw Redis key is ever constructed (see
@@ -652,12 +679,12 @@ def _read_due_times(celery_app: Celery, names: list[str]) -> dict[str, datetime 
         except KeyError:
             result[name] = None
             continue
-        result[name] = entry.due_at
+        result[name] = _next_run_at(entry, now)
     return result
 
 
 async def _resolve_next_run_times(
-    celery_app: Celery, names: list[str]
+    celery_app: Celery, names: list[str], now: datetime
 ) -> dict[str, datetime | None]:
     """Resolve `next_run_at` for every enabled, registered fetcher in
     `names`, offloading the synchronous RedBeat/Redis client to a
@@ -671,7 +698,7 @@ async def _resolve_next_run_times(
     if not names:
         return {}
     try:
-        return await asyncio.to_thread(_read_due_times, celery_app, names)
+        return await asyncio.to_thread(_read_next_run_times, celery_app, names, now)
     except RedisError as exc:
         logger.warning(
             "fetcher_redbeat_next_run_unavailable", error_type=type(exc).__name__
@@ -797,7 +824,7 @@ async def list_fetchers(
         and (configs_by_name.get(name) is None or configs_by_name[name].enabled)
     ]
     next_run_by_name = await _resolve_next_run_times(
-        celery_app, enabled_registered_names
+        celery_app, enabled_registered_names, now
     )
 
     items: list[FetcherListItem] = []

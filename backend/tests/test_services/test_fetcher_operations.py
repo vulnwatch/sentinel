@@ -6,8 +6,8 @@ Service, `list_fetchers`, `list_fetcher_runs`, `get_fetcher_run`,
 `get_fetcher_timeline`, Disabled Period Derivation) for the contract
 under test.
 
-Pure calculation helpers (`_count_recognized_settings`) are unit tests
-(no DB, no Redis). Staleness evaluation (`is_run_stale()`) is owned by
+Pure calculation helpers (`_count_recognized_settings`, `_next_run_at`)
+are unit tests (no DB, no Redis). Staleness evaluation (`is_run_stale()`) is owned by
 `app.services.fetcher_execution` and tested in
 `test_fetcher_execution.py` — this module only tests that its own
 read functions (`list_fetchers`, `list_fetcher_runs`, `get_fetcher_run`)
@@ -63,6 +63,7 @@ from app.services.fetcher_operations import (
     FetcherSettingUnknownError,
     UpdateConfigPayload,
     _count_recognized_settings,
+    _next_run_at,
     get_fetcher_config,
     get_fetcher_run,
     get_fetcher_timeline,
@@ -229,6 +230,38 @@ def _ops_log_records(caplog: pytest.LogCaptureFixture) -> list[Any]:
     ]
 
 
+_LAST_RUN_AT: Final = datetime(2026, 11, 4, 18, 3, 1, tzinfo=UTC)
+"""A RedBeat `last_run_at` written by a Beat start, with no dispatch since."""
+
+
+def _in_memory_entry(
+    cron: str, *, last_run_at: datetime | None, clock: datetime
+) -> RedBeatSchedulerEntry:
+    """A RedBeat entry that is built in memory and never saved, whose
+    schedule's clock reads `clock`, the request time of a frozen-clock
+    test.
+
+    RedBeat reads its configuration when an entry is constructed but
+    opens no Redis connection; `redbeat_redis_url` is set only so that
+    RedBeat does not warn about its `broker_url` fallback.
+    """
+    app = Celery("test_ops_next_run_at", set_as_current=False)
+    app.conf.update(
+        timezone="UTC",
+        enable_utc=True,
+        redbeat_redis_url="redis://redis.invalid:6379/0",
+    )
+    entry = RedBeatSchedulerEntry(
+        name=_NoSettingsFetcher.name,
+        task="run_fetcher",
+        schedule=crontab.from_string(cron),
+        app=app,
+    )
+    entry.schedule.nowfun = lambda: clock
+    entry.last_run_at = last_run_at
+    return entry
+
+
 # ---------------------------------------------------------------------------
 # Pure calculation unit tests
 # ---------------------------------------------------------------------------
@@ -247,6 +280,77 @@ class TestCountRecognizedSettings:
 
     def test_empty_custom_settings_is_zero(self) -> None:
         assert _count_recognized_settings(_WithSettingsFetcher, {}) == 0
+
+
+@pytest.mark.unit
+class TestNextRunAt:
+    """`_next_run_at` with the schedule's clock frozen at the request
+    time — see `docs/features/platform/fetcher-infrastructure.md`
+    ("`next_run_at` Calculation")."""
+
+    @pytest.mark.parametrize(
+        ("cron", "last_run_at", "request_time", "expected"),
+        [
+            pytest.param(
+                "0 */3 * * *",
+                _LAST_RUN_AT,
+                datetime(2026, 11, 4, 19, 56, 54, tzinfo=UTC),
+                datetime(2026, 11, 4, 21, 0, tzinfo=UTC),
+                id="request_long_after_last_run",
+            ),
+            pytest.param(
+                "0 */3 * * *",
+                _LAST_RUN_AT,
+                datetime(2026, 11, 4, 19, 57, 54, tzinfo=UTC),
+                datetime(2026, 11, 4, 21, 0, tzinfo=UTC),
+                id="request_a_minute_later",
+            ),
+            pytest.param(
+                "0 1 * * *",
+                _LAST_RUN_AT,
+                datetime(2026, 11, 4, 19, 56, 54, tzinfo=UTC),
+                datetime(2026, 11, 5, 1, 0, tzinfo=UTC),
+                id="daily_schedule_crosses_midnight",
+            ),
+            pytest.param(
+                "0 */3 * * *",
+                datetime(2026, 11, 4, 21, 0, 0, 300000, tzinfo=UTC),
+                datetime(2026, 11, 4, 21, 5, tzinfo=UTC),
+                datetime(2026, 11, 5, 0, 0, tzinfo=UTC),
+                id="dispatched_occurrence_moves_to_the_next",
+            ),
+            pytest.param(
+                "0 */3 * * *",
+                _LAST_RUN_AT,
+                datetime(2026, 11, 6, 10, 0, tzinfo=UTC),
+                datetime(2026, 11, 4, 21, 0, tzinfo=UTC),
+                id="missed_occurrence_stays_in_the_past",
+            ),
+            pytest.param(
+                "*/15 * * * *",
+                datetime(2026, 11, 4, 10, 20, tzinfo=UTC),
+                datetime(2026, 11, 5, 9, 0, tzinfo=UTC),
+                datetime(2026, 11, 4, 10, 30, tzinfo=UTC),
+                id="missed_sub_hourly_occurrence_on_a_later_day_is_the_first",
+            ),
+        ],
+    )
+    def test_any_request_time_returns_first_occurrence_after_last_run(
+        self,
+        cron: str,
+        last_run_at: datetime,
+        request_time: datetime,
+        expected: datetime,
+    ) -> None:
+        entry = _in_memory_entry(cron, last_run_at=last_run_at, clock=request_time)
+
+        assert _next_run_at(entry, request_time) == expected
+
+    def test_entry_without_last_run_at_is_due_at_request_time(self) -> None:
+        request_time = datetime(2026, 11, 4, 19, 56, 54, tzinfo=UTC)
+        entry = _in_memory_entry("0 */3 * * *", last_run_at=None, clock=request_time)
+
+        assert _next_run_at(entry, request_time) == request_time
 
 
 # ---------------------------------------------------------------------------
@@ -574,12 +678,15 @@ class TestListFetchersLastRun:
 
 @pytest.mark.integration
 class TestListFetchersNextRunAt:
-    async def test_reads_due_at_from_existing_redbeat_entry(
+    async def test_reads_next_occurrence_after_last_run_from_redbeat_entry(
         self,
         db_session: AsyncSession,
         celery_test_app: Celery,
         fetcher_config_factory: FetcherConfigFactory,
     ) -> None:
+        """The stored `last_run_at` (a Beat start at 18:03:01, no dispatch
+        since) yields the next 03:00 occurrence exactly, however long ago
+        the entry was written."""
         _register(_NoSettingsFetcher)
         await fetcher_config_factory(fetcher_name=_NoSettingsFetcher.name, enabled=True)
         entry = RedBeatSchedulerEntry(
@@ -594,24 +701,13 @@ class TestListFetchersNextRunAt:
             app=celery_test_app,
         )
         entry.save()
-        entry.reschedule(datetime.now(UTC))
-        expected_due_at = RedBeatSchedulerEntry.from_key(
-            RedBeatSchedulerEntry.generate_key(
-                celery_test_app, _NoSettingsFetcher.name
-            ),
-            app=celery_test_app,
-        ).due_at
+        entry.reschedule(_LAST_RUN_AT)
 
         items = await list_fetchers(db_session, celery_app=celery_test_app)
 
-        # `due_at` is recomputed relative to wall-clock time at read time
-        # (see redbeat's `RedBeatSchedulerEntry.due_at`), so two separate
-        # reads a few milliseconds apart legitimately differ by a similar
-        # margin — assert near-equality rather than exact equality.
-        assert items[0].next_run_at is not None
-        assert abs((items[0].next_run_at - expected_due_at).total_seconds()) < 5
+        assert items[0].next_run_at == datetime(2026, 11, 5, 3, 0, tzinfo=UTC)
 
-    async def test_reads_due_at_before_redbeat_config_initialized(
+    async def test_reads_next_run_before_redbeat_config_initialized(
         self,
         db_session: AsyncSession,
         celery_test_app: Celery,
@@ -635,10 +731,7 @@ class TestListFetchersNextRunAt:
             app=celery_test_app,
         )
         entry.save()
-        entry.reschedule(datetime.now(UTC))
-        expected_due_at = RedBeatSchedulerEntry.from_key(
-            entry.key, app=celery_test_app
-        ).due_at
+        entry.reschedule(_LAST_RUN_AT)
         assert not hasattr(uninitialized_celery_test_app, "redbeat_conf")
 
         items = await list_fetchers(
@@ -646,9 +739,7 @@ class TestListFetchersNextRunAt:
             celery_app=uninitialized_celery_test_app,
         )
 
-        # Near-equality for the same reason as the test above.
-        assert items[0].next_run_at is not None
-        assert abs((items[0].next_run_at - expected_due_at).total_seconds()) < 5
+        assert items[0].next_run_at == datetime(2026, 11, 5, 3, 0, tzinfo=UTC)
 
     async def test_no_entry_is_null(
         self,
@@ -736,7 +827,7 @@ class TestListFetchersNextRunAt:
             raise RedisError(sensitive_message)
 
         monkeypatch.setattr(
-            fetcher_operations_module, "_read_due_times", _raise_redis_error
+            fetcher_operations_module, "_read_next_run_times", _raise_redis_error
         )
 
         with caplog.at_level("WARNING", logger="app.services.fetcher_operations"):
@@ -766,14 +857,14 @@ class TestListFetchersNextRunAt:
         release_reader = threading.Event()
 
         def _blocking_read(
-            _celery_app: Celery, names: list[str]
+            _celery_app: Celery, names: list[str], _now: datetime
         ) -> dict[str, datetime | None]:
             reader_started.set()
             release_reader.wait(timeout=5)
             return dict.fromkeys(names, None)
 
         monkeypatch.setattr(
-            fetcher_operations_module, "_read_due_times", _blocking_read
+            fetcher_operations_module, "_read_next_run_times", _blocking_read
         )
 
         ticks = 0
@@ -796,7 +887,7 @@ class TestListFetchersNextRunAt:
     def test_redbeat_client_has_bounded_socket_timeouts(
         self, celery_test_app: Celery
     ) -> None:
-        """The RedBeat Redis client (the same singleton `_read_due_times`
+        """The RedBeat Redis client (the same singleton `_read_next_run_times`
         reads through) carries explicit socket timeouts, so a hung
         (blackholed/firewalled) connection raises `RedisError` within a
         bounded time instead of blocking the worker thread indefinitely
