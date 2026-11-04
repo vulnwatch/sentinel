@@ -1011,9 +1011,9 @@ the filters (`docs/api-spec.md`, Enum Filter Validation).
 another property of a Ticket would make some users eligible for only part of
 the Tickets that one of the values describes; reporting a new value in that
 situation is a semantic change to existing behavior and therefore breaking
-(`docs/api-spec.md`, Response Enums). A new role, by contrast, obtains its value from its capabilities and
-scope with no change to the values (Business Rule 10, Design note —
-eligibility from capability and scope).
+(`docs/api-spec.md`, Response Enums). A new role, by contrast, obtains its
+value from its capabilities and scope with no change to the values (Business
+Rule 10, Design note — eligibility from capability and scope).
 
 > **Design note — outcome, not inputs**: a client that offers the assignees
 > of a Ticket, or offers the authenticated user an assignment, needs the

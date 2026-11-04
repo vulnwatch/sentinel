@@ -885,12 +885,11 @@ caller capability.
 > source, the external identity provider's identifier, the manager, the
 > origin of each role (the granting external group, the assigning
 > administrator, and the assignment time), the record timestamps, and the
-> last login. The directory
-> therefore omits them, and it filters, searches, and sorts only on the fields
-> that its entry returns, so a query cannot reveal a value that the response
-> withholds. The omitted fields remain part of the User record. Adding a field
-> to the directory entry later is an additive change; removing one is breaking
-> (`docs/api-spec.md`, Versioning).
+> last login. The directory therefore omits them, and it filters, searches,
+> and sorts only on the fields that its entry returns, so a query cannot
+> reveal a value that the response withholds. The omitted fields remain part
+> of the User record. Adding a field to the directory entry later is an
+> additive change; removing one is breaking (`docs/api-spec.md`, Versioning).
 
 ### Directory API endpoints
 
