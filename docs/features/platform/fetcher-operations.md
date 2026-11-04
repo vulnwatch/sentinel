@@ -917,8 +917,9 @@ distinction.
 - `default_schedule`: the schedule defined in code. `null` for
   deregistered fetchers.
 - `next_run_at`: the next scheduled execution, calculated from the
-  RedBeat entry's schedule and `last_run_at`. A value in the past means
-  that Beat has not dispatched that execution (Beat stopped or stalled).
+  RedBeat entry's schedule and `last_run_at`. A value that stays in the
+  past means that Beat has not dispatched that execution (Beat stopped or
+  stalled).
   `null` if the fetcher is disabled or deregistered, has no RedBeat
   entry, or Redis is unavailable. See
   `docs/features/platform/fetcher-infrastructure.md` (Celery Beat

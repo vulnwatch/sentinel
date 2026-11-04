@@ -2536,7 +2536,10 @@ Propagation):
      not restarted since a new fetcher was deployed), the PATCH
      propagation creates it. This avoids a gap where a PATCH succeeds in
      PostgreSQL but has no effect on scheduling because Beat hasn't
-     reconciled yet
+     reconciled yet. As in Startup Reconciliation step 2, the write then
+     reschedules the entry to the write instant: `save()` alone keeps an
+     existing entry's `last_run_at`, so the updated schedule would
+     otherwise be evaluated from an earlier `last_run_at`
 
 The PostgreSQL commit happens BEFORE the redbeat write. This ensures that
 even if the redbeat write fails, the source of truth (PostgreSQL) is
@@ -2600,9 +2603,10 @@ calculated by the `list_fetchers` service function at request time (see
    entry, and every Sentinel write reschedules the entry to the write
    instant (see Startup Reconciliation step 2 and Runtime Propagation),
    so that occurrence is the next scheduled execution:
-   - The value depends only on the schedule and `last_run_at`, never on
-     the request time: every request returns the same instant until Beat
-     dispatches the occurrence or Sentinel rewrites the entry.
+   - For an entry with `last_run_at`, the value depends only on the
+     schedule and `last_run_at`, never on the request time: every request
+     returns the same instant until Beat dispatches the occurrence or
+     Sentinel rewrites the entry.
    - If the occurrence has passed without a dispatch (Beat stopped or
      stalled), `next_run_at` is that past instant. A past value that does
      not advance therefore signals that Beat is not dispatching. The next

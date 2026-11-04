@@ -6,8 +6,8 @@ Service, `list_fetchers`, `list_fetcher_runs`, `get_fetcher_run`,
 `get_fetcher_timeline`, Disabled Period Derivation) for the contract
 under test.
 
-Pure calculation helpers (`_count_recognized_settings`) are unit tests
-(no DB, no Redis). Staleness evaluation (`is_run_stale()`) is owned by
+Pure calculation helpers (`_count_recognized_settings`, `_next_run_at`)
+are unit tests (no DB, no Redis). Staleness evaluation (`is_run_stale()`) is owned by
 `app.services.fetcher_execution` and tested in
 `test_fetcher_execution.py` — this module only tests that its own
 read functions (`list_fetchers`, `list_fetcher_runs`, `get_fetcher_run`)
