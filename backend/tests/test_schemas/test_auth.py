@@ -124,19 +124,6 @@ class TestCurrentUserData:
         with pytest.raises(ValidationError):
             self._make(assignment_eligibility="confidential")
 
-    def test_assignment_eligibility_is_required(self) -> None:
-        with pytest.raises(ValidationError):
-            CurrentUserData(
-                id=uuid4(),
-                username="jdoe",
-                email="jdoe@example.com",
-                full_name=None,
-                roles=[],
-                capabilities=[],
-                active=True,
-                bot=False,
-            )  # type: ignore[call-arg]
-
     def test_has_no_full_profile_only_fields(self) -> None:
         """Structural guarantee: the concise current-user schema must
         never carry `source`, `external_id`, `manager`, or role

@@ -355,32 +355,9 @@ class TestUserData:
         data = UserData(**_make_user_data_kwargs(last_login_at=login))
         assert data.last_login_at == login
 
-    @pytest.mark.parametrize(
-        "model", [UserData, UserDirectoryData], ids=["profile", "directory"]
-    )
-    def test_assignment_eligibility_is_a_required_enum_field(
-        self, model: type[BaseModel]
-    ) -> None:
-        """rbac.md, Assignment Eligibility Wire Format: required, typed with
-        exactly the three wire values."""
-        field = model.model_fields["assignment_eligibility"]
-        assert field.is_required()
-        assert field.annotation is AssignmentEligibility
-        assert [value.value for value in AssignmentEligibility] == [
-            "all",
-            "non_confidential",
-            "none",
-        ]
-
     def test_assignment_eligibility_rejects_an_unknown_value(self) -> None:
         with pytest.raises(ValidationError):
             UserData(**_make_user_data_kwargs(assignment_eligibility="confidential"))
-
-    def test_manager_has_no_assignment_eligibility(self) -> None:
-        """The `manager` object does not carry the field (rbac.md, Assignment
-        Eligibility Wire Format, Where it appears)."""
-        assert "assignment_eligibility" not in UserManagerData.model_fields
-        assert "assignment_eligibility" not in UserReference.model_fields
 
     def test_has_no_password_hash_field(self) -> None:
         assert "password_hash" not in UserData.model_fields

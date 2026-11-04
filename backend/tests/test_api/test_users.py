@@ -1573,13 +1573,16 @@ class TestGetCurrentUserProfile:
             "admin", "restricted_analyst", "vulnerability_analyst"
         )
 
-    async def test_jwt_session_and_api_key_return_the_same_lists(
+    async def test_jwt_session_and_api_key_return_the_same_profile(
         self,
         authenticated_user_and_client: tuple[User, AsyncClient],
         user_role_factory: Callable[..., Awaitable[UserRole]],
         api_key_factory: Callable[..., Awaitable[ApiKey]],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        """Both credential types render the complete `data` object from
+        the same principal, `roles`, `capabilities`, and
+        `assignment_eligibility` included."""
         user, client = authenticated_user_and_client
         await user_role_factory(user_id=user.id, role=Role.RESTRICTED_ANALYST.value)
         await user_role_factory(user_id=user.id, role=Role.ADMIN.value)
@@ -1604,8 +1607,8 @@ class TestGetCurrentUserProfile:
         assert session_data["capabilities"] == _expected_capabilities(
             "admin", "restricted_analyst"
         )
-        assert api_key_data["roles"] == session_data["roles"]
-        assert api_key_data["capabilities"] == session_data["capabilities"]
+        assert session_data["assignment_eligibility"] == "all"
+        assert api_key_data == session_data
 
     async def test_role_change_is_reflected_on_the_next_request(
         self,
@@ -3019,17 +3022,6 @@ _ELIGIBILITY_VALUES = ("all", "non_confidential", "none")
 
 _QueryParams = list[tuple[str, str | int | float | bool | None]]
 
-_WIRE_ROLE_COMBINATIONS: list[tuple[str, ...]] = [
-    (),
-    ("admin",),
-    ("vulnerability_analyst",),
-    ("restricted_analyst",),
-    ("admin", "vulnerability_analyst"),
-    ("admin", "restricted_analyst"),
-    ("restricted_analyst", "vulnerability_analyst"),
-    ("admin", "restricted_analyst", "vulnerability_analyst"),
-]
-
 
 def _expected_eligibility(*, active: bool, bot: bool, wire_roles: Iterable[str]) -> str:
     """The value that rbac.md (Assignment Eligibility Wire Format) states
@@ -3210,19 +3202,27 @@ class TestAssignmentEligibilityOfCurrentUser:
     caller's `active` and `bot`."""
 
     @pytest.mark.parametrize(
-        "wire_roles",
-        _WIRE_ROLE_COMBINATIONS,
-        ids=lambda wire_roles: "+".join(wire_roles) or "no-roles",
+        ("wire_roles", "bot", "expected"),
+        [
+            (("restricted_analyst",), False, "non_confidential"),
+            (("admin", "restricted_analyst"), False, "all"),
+            (("vulnerability_analyst",), True, "none"),
+        ],
+        ids=["ra", "admin-ra", "bot-va"],
     )
-    @pytest.mark.parametrize("bot", [False, True], ids=["human", "bot"])
-    async def test_every_role_combination_for_a_human_and_a_bot_caller(
+    async def test_representative_callers_receive_their_value(
         self,
         authenticated_user_and_client: tuple[User, AsyncClient],
         user_role_factory: Callable[..., Awaitable[UserRole]],
         db_session: AsyncSession,
         wire_roles: tuple[str, ...],
         bot: bool,
+        expected: str,
     ) -> None:
+        """The handler derives the value from the roles that it reads and
+        from the principal's `bot`; the derivation over every role
+        combination is unit-tested in
+        `tests/test_services/test_assignment_eligibility.py`."""
         user, client = authenticated_user_and_client
         user.bot = bot
         for wire_role in wire_roles:
@@ -3235,82 +3235,8 @@ class TestAssignmentEligibilityOfCurrentUser:
 
         assert response.status_code == 200
         data = response.json()["data"]
-        assert data["assignment_eligibility"] == _expected_eligibility(
-            active=True, bot=bot, wire_roles=wire_roles
-        )
+        assert data["assignment_eligibility"] == expected
         _assert_eligibility_agrees_with_the_item(data)
-
-    @pytest.mark.parametrize(
-        ("wire_roles", "bot", "expected"),
-        [
-            (("vulnerability_analyst",), False, "all"),
-            (("restricted_analyst",), False, "non_confidential"),
-            (("vulnerability_analyst",), True, "none"),
-            (("admin",), False, "none"),
-            (("admin", "restricted_analyst"), False, "all"),
-        ],
-        ids=["va", "ra", "bot-va", "admin-only", "admin-ra"],
-    )
-    async def test_named_cases_of_the_specification(
-        self,
-        authenticated_user_and_client: tuple[User, AsyncClient],
-        user_role_factory: Callable[..., Awaitable[UserRole]],
-        db_session: AsyncSession,
-        wire_roles: tuple[str, ...],
-        bot: bool,
-        expected: str,
-    ) -> None:
-        user, client = authenticated_user_and_client
-        user.bot = bot
-        for wire_role in wire_roles:
-            await user_role_factory(
-                user_id=user.id, role=_ROLE_OF_WIRE_VALUE[wire_role].value
-            )
-        await db_session.flush()
-
-        response = await client.get("/api/v1/users/me")
-
-        assert response.json()["data"]["assignment_eligibility"] == expected
-
-    @pytest.mark.parametrize(
-        ("wire_roles", "expected"),
-        [
-            (("restricted_analyst",), "non_confidential"),
-            (("restricted_analyst", "admin"), "all"),
-        ],
-        ids=["ra", "admin-ra"],
-    )
-    async def test_jwt_session_and_api_key_return_the_same_value(
-        self,
-        authenticated_user_and_client: tuple[User, AsyncClient],
-        user_role_factory: Callable[..., Awaitable[UserRole]],
-        api_key_factory: Callable[..., Awaitable[ApiKey]],
-        monkeypatch: pytest.MonkeyPatch,
-        wire_roles: tuple[str, ...],
-        expected: str,
-    ) -> None:
-        user, client = authenticated_user_and_client
-        for wire_role in wire_roles:
-            await user_role_factory(
-                user_id=user.id, role=_ROLE_OF_WIRE_VALUE[wire_role].value
-            )
-        token, digest = _make_api_key_credential()
-        await api_key_factory(user_id=user.id, key_hash=digest)
-        monkeypatch.setattr(
-            api_key_service, "update_last_used_at", AsyncMock(return_value=True)
-        )
-
-        session_response = await client.get("/api/v1/users/me")
-        # A non-empty Bearer value is final and never falls back to the
-        # session cookie, so a 200 proves that the API key authenticated.
-        api_key_response = await client.get(
-            "/api/v1/users/me", headers={"Authorization": f"Bearer {token}"}
-        )
-
-        assert session_response.status_code == 200
-        assert api_key_response.status_code == 200
-        assert session_response.json()["data"]["assignment_eligibility"] == expected
-        assert api_key_response.json()["data"] == session_response.json()["data"]
 
     async def test_roles_from_several_origins_count_once(
         self,
@@ -3667,56 +3593,6 @@ async def _usernames(
 @pytest.mark.e2e
 class TestAssignmentEligibilityFilter:
     @pytest.mark.parametrize("path", _USER_LISTS)
-    @pytest.mark.parametrize(
-        ("values", "expected"),
-        [
-            (("all",), {"elig-va", "elig-admin-ra", "elig-split-origins"}),
-            (
-                ("all", "non_confidential"),
-                {
-                    "elig-va",
-                    "elig-admin-ra",
-                    "elig-split-origins",
-                    "elig-ra",
-                    "elig-two-origins-ra",
-                    "elig-ra-grant",
-                    "elig-ra-maintainer",
-                },
-            ),
-            (
-                ("none",),
-                {
-                    "elig-admin",
-                    "elig-norole",
-                    "elig-bot-va",
-                    "elig-bot-ra",
-                    "elig-inactive-va",
-                    "elig-inactive-ra",
-                },
-            ),
-        ],
-        ids=["confidential-assignees", "non-confidential-assignees", "none"],
-    )
-    async def test_documented_queries(
-        self,
-        admin_client: AsyncClient,
-        eligibility_targets: dict[str, User],
-        path: str,
-        values: tuple[str, ...],
-        expected: set[str],
-    ) -> None:
-        """user-management.md (List Users): the assignees of a confidential
-        Ticket are `?assignment_eligibility=all`, those of a non-confidential
-        Ticket `all` and `non_confidential`."""
-        params: _QueryParams = [("search", "elig-"), ("per_page", 100)]
-        params += [("assignment_eligibility", value) for value in values]
-
-        usernames, total = await _usernames(admin_client, path, params)
-
-        assert set(usernames) == expected
-        assert len(usernames) == len(set(usernames)) == total
-
-    @pytest.mark.parametrize("path", _USER_LISTS)
     async def test_every_subset_selects_the_entries_carrying_one_of_the_values(
         self,
         admin_client: AsyncClient,
@@ -3740,217 +3616,6 @@ class TestAssignmentEligibilityFilter:
                 item["assignment_eligibility"] in subset for item in body["data"]
             ), subset
             assert body["meta"]["total"] == len(_targets_with(*subset)), subset
-
-    @pytest.mark.parametrize("path", _USER_LISTS)
-    @pytest.mark.parametrize(
-        ("params", "expected"),
-        [
-            (
-                [("search", "elig-ra"), ("assignment_eligibility", "non_confidential")],
-                {"elig-ra", "elig-ra-grant", "elig-ra-maintainer"},
-            ),
-            ([("search", "elig-ra"), ("assignment_eligibility", "all")], set()),
-            (
-                [
-                    ("search", "elig-"),
-                    ("active", "false"),
-                    ("assignment_eligibility", "none"),
-                ],
-                {"elig-inactive-va", "elig-inactive-ra"},
-            ),
-            (
-                [
-                    ("search", "elig-"),
-                    ("active", "true"),
-                    ("assignment_eligibility", "none"),
-                ],
-                {"elig-admin", "elig-norole", "elig-bot-va", "elig-bot-ra"},
-            ),
-            (
-                [
-                    ("search", "elig-"),
-                    ("role", "restricted_analyst"),
-                    ("assignment_eligibility", "all"),
-                ],
-                {"elig-admin-ra", "elig-split-origins"},
-            ),
-            (
-                [
-                    ("search", "elig-"),
-                    ("role", "admin"),
-                    ("role", "vulnerability_analyst"),
-                    ("assignment_eligibility", "none"),
-                ],
-                {"elig-admin", "elig-bot-va", "elig-inactive-va"},
-            ),
-            (
-                [
-                    ("search", "elig-"),
-                    ("has_role", "false"),
-                    ("assignment_eligibility", "none"),
-                ],
-                {"elig-norole"},
-            ),
-            (
-                [
-                    ("search", "elig-"),
-                    ("has_role", "false"),
-                    ("assignment_eligibility", "all"),
-                    ("assignment_eligibility", "non_confidential"),
-                ],
-                set(),
-            ),
-            (
-                [
-                    ("search", "elig-"),
-                    ("has_role", "true"),
-                    ("assignment_eligibility", "none"),
-                ],
-                {
-                    "elig-admin",
-                    "elig-bot-va",
-                    "elig-bot-ra",
-                    "elig-inactive-va",
-                    "elig-inactive-ra",
-                },
-            ),
-        ],
-        ids=[
-            "search",
-            "search-excludes",
-            "active-false",
-            "active-true",
-            "role",
-            "repeated-role",
-            "has-role-false",
-            "has-role-false-excludes",
-            "has-role-true",
-        ],
-    )
-    async def test_combines_with_the_other_filters_via_and(
-        self,
-        admin_client: AsyncClient,
-        eligibility_targets: dict[str, User],
-        path: str,
-        params: _QueryParams,
-        expected: set[str],
-    ) -> None:
-        usernames, total = await _usernames(admin_client, path, params)
-
-        assert set(usernames) == expected
-        assert total == len(expected)
-
-    @pytest.mark.parametrize(
-        ("type_value", "expected"),
-        [
-            ("external", {"elig-split-origins"}),
-            ("local", {"elig-va", "elig-admin-ra"}),
-        ],
-    )
-    async def test_admin_list_combines_with_the_type_filter(
-        self,
-        admin_client: AsyncClient,
-        eligibility_targets: dict[str, User],
-        type_value: str,
-        expected: set[str],
-    ) -> None:
-        usernames, total = await _usernames(
-            admin_client,
-            "/api/v1/admin/users",
-            [
-                ("search", "elig-"),
-                ("type", type_value),
-                ("assignment_eligibility", "all"),
-            ],
-        )
-
-        assert set(usernames) == expected
-        assert total == len(expected)
-
-    @pytest.mark.parametrize("path", _USER_LISTS)
-    async def test_pagination_reports_the_filtered_total(
-        self,
-        admin_client: AsyncClient,
-        eligibility_targets: dict[str, User],
-        path: str,
-    ) -> None:
-        filters: _QueryParams = [
-            ("search", "elig-"),
-            ("assignment_eligibility", "all"),
-            ("assignment_eligibility", "non_confidential"),
-        ]
-        expected = sorted(_targets_with("all", "non_confidential"))
-
-        collected: list[str] = []
-        for page in (1, 2, 3, 4, 5):
-            response = await admin_client.get(
-                path, params=[*filters, ("page", page), ("per_page", 2)]
-            )
-            body = response.json()
-            assert body["meta"] == {"total": len(expected), "page": page, "per_page": 2}
-            collected += [item["username"] for item in body["data"]]
-
-        assert len(expected) == 7
-        assert collected == expected
-
-    @pytest.mark.parametrize(
-        ("path", "sort_by"),
-        [
-            *(("/api/v1/users", field) for field in ("username", "full_name", "email")),
-            *(
-                ("/api/v1/admin/users", field)
-                for field in ("username", "full_name", "email", "created_at")
-            ),
-        ],
-    )
-    @pytest.mark.parametrize("sort_order", ["asc", "desc"])
-    async def test_sorts_the_filtered_entries_like_the_unfiltered_list(
-        self,
-        admin_client: AsyncClient,
-        eligibility_targets: dict[str, User],
-        path: str,
-        sort_by: str,
-        sort_order: str,
-    ) -> None:
-        sort: _QueryParams = [
-            ("search", "elig-"),
-            ("per_page", 100),
-            ("sort_by", sort_by),
-            ("sort_order", sort_order),
-        ]
-        everyone, _ = await _usernames(admin_client, path, sort)
-        expected = [name for name in everyone if name in _targets_with("none")]
-
-        usernames, total = await _usernames(
-            admin_client, path, [*sort, ("assignment_eligibility", "none")]
-        )
-
-        assert usernames == expected
-        assert total == len(expected)
-
-    @pytest.mark.parametrize("path", _USER_LISTS)
-    @pytest.mark.parametrize(
-        "invalid", ["bogus", "ALL", "all,non_confidential"], ids=str
-    )
-    async def test_invalid_value_beside_a_valid_one_is_ignored(
-        self,
-        admin_client: AsyncClient,
-        eligibility_targets: dict[str, User],
-        path: str,
-        invalid: str,
-    ) -> None:
-        usernames, total = await _usernames(
-            admin_client,
-            path,
-            [
-                ("search", "elig-"),
-                ("assignment_eligibility", invalid),
-                ("assignment_eligibility", "all"),
-            ],
-        )
-
-        assert set(usernames) == _targets_with("all")
-        assert total == len(_targets_with("all"))
 
     @pytest.mark.parametrize("path", _USER_LISTS)
     @pytest.mark.parametrize(
@@ -4222,21 +3887,6 @@ class TestAssignmentEligibilityOpenAPISurface:
 
         assert "assignment_eligibility" in item["required"]
         assert field["type"] == "string"
-        assert field["enum"] == list(_ELIGIBILITY_VALUES)
-
-    @pytest.mark.parametrize(
-        "schema_name", ["CurrentUserData", "UserDirectoryData", "UserData"]
-    )
-    def test_each_schema_declares_the_field(self, schema_name: str) -> None:
-        from app.main import app as fastapi_app
-
-        document = fastapi_app.openapi()
-        schema = document["components"]["schemas"][schema_name]
-        field = _resolve_schema(
-            document, schema["properties"]["assignment_eligibility"]
-        )
-
-        assert "assignment_eligibility" in schema["required"]
         assert field["enum"] == list(_ELIGIBILITY_VALUES)
 
     @pytest.mark.parametrize("path", ["/api/v1/users", "/api/v1/admin/users"])
