@@ -880,14 +880,12 @@ caller capability.
 > assignee of a Ticket, `docs/features/identity/rbac.md`, Business Rule 10,
 > which it selects through their assignment eligibility), an access-grant
 > picker (a search by name, username, or email), and Ticket filters, need a
-> user's identity, email, role values, and assignment eligibility. The
-> assignment eligibility derives from the active status, bot marker, and role
-> values that the entry returns, so it reveals nothing that they do not
-> already reveal. The other fields of
-> the profile serve only user administration: the authentication source, the
-> external identity provider's identifier, the manager, the origin of each
-> role (the granting external group, the assigning administrator, and the
-> assignment time), the record timestamps, and the last login. The directory
+> user's identity, email, role values, and assignment eligibility. The other
+> fields of the profile serve only user administration: the authentication
+> source, the external identity provider's identifier, the manager, the
+> origin of each role (the granting external group, the assigning
+> administrator, and the assignment time), the record timestamps, and the
+> last login. The directory
 > therefore omits them, and it filters, searches, and sorts only on the fields
 > that its entry returns, so a query cannot reveal a value that the response
 > withholds. The omitted fields remain part of the User record. Adding a field
@@ -939,12 +937,12 @@ Filters of different kinds combine with AND semantics (e.g., `role=admin`
 and `active=true` together return only active administrators); repeated
 values of the same filter combine with OR semantics as stated above.
 
-The `assignment_eligibility` filter evaluates `rbac.md` Business Rule 10 in
-the query that selects the page, from each user's current `active`, `bot`,
-and roles of every origin, which are the inputs of the field of the returned
-entry. It therefore selects the users whose entry carries one of the
-specified values, and `meta.total` counts exactly them. Combined with
-`search`, it narrows the eligible users to those that match a search term.
+For one database state, the `assignment_eligibility` filter selects exactly
+the users whose entry carries one of the specified values, and `meta.total`
+counts exactly them. A change committed while a request is processed can make
+one entry differ from the filter or from `meta.total`, as for every other
+filter; the value is informational (`rbac.md`, Assignment Eligibility Wire
+Format).
 
 The directory declares neither the authentication-type filter nor sorting by
 creation time, because its entry returns neither value; List Users (Admin)

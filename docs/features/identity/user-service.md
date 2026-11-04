@@ -268,15 +268,19 @@ The assignment-eligibility filter is a set of assignment-eligibility values
 (`docs/features/identity/rbac.md`, Assignment Eligibility Wire Format); a
 non-empty set restricts the page and `total` to the users whose value is one
 of them. The condition evaluates the Derivation of that section in the
-database statement: `User.active`, `User.bot`, and whether any `UserRole` row
-of the user, of any origin, has a role that grants `triage_ticket` or whose
-scope is `all`, with the role sets taken from the static role definitions.
-It consults no `TicketAccessGrant` or package maintainership, and a role held
-from several origins never duplicates the user row or the total. The value
-that a response renders for each returned user derives from that user's
-loaded `active`, `bot`, and roles through the same implementation of Business
-Rule 10 that the assignment paths apply, so the filter and the field cannot
-diverge for a given state.
+database statement from `User.active`, `User.bot`, and two independent tests
+over the user's `UserRole` rows of every origin: whether any row has a role
+that grants `triage_ticket`, and whether any row has a role whose scope is
+`all`. The two rows can differ, as for a user who holds `restricted_analyst`
+and `admin`, and the role sets of both tests come from the static role
+definitions. The condition consults no `TicketAccessGrant` or package
+maintainership, and a role held from several origins never duplicates the
+user row or the total. The value that a response renders for each returned
+user derives from that user's loaded `active`, `bot`, and roles through the
+implementation of Business Rule 10 that the assignment paths apply. For every
+database state, the condition and that derivation MUST agree; a test proves it
+(`docs/features/platform/testing-strategy.md`, User Lifecycle and
+Management).
 
 #### `get_user(session, identifier)`
 

@@ -4077,10 +4077,10 @@ or identity audit validation are affected, tests MUST cover:
   that the assignment paths apply agree. `all` never returns a user with scope
   `non_confidential`, and neither `all` nor `non_confidential` returns a bot
   account, an inactive user, or a user without `triage_ticket`
-- the filter combines with `search`, `active`, `role`, `has_role`,
-  pagination, and every sort field, and `meta.total` counts exactly the
-  filtered users; an invalid value is ignored, and only invalid values yield
-  an empty page with `meta.total = 0`
+- the filter combines with `search`, `active`, `role`, `has_role`, and, on
+  the administrator list, `type`, with pagination, and with every sort field,
+  and `meta.total` counts exactly the filtered users; an invalid value is
+  ignored, and only invalid values yield an empty page with `meta.total = 0`
 - the OpenAPI document declares `assignment_eligibility` as a required
   property whose schema is an `enum` of exactly `all`, `non_confidential`,
   and `none` in the current-user, directory-entry, and complete-profile

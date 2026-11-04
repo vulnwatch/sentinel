@@ -1007,12 +1007,11 @@ in Responses) and the `manager` of the complete user profile do not carry it.
 the `enum` of every `assignment_eligibility` field, which is required, and of
 the filters (`docs/api-spec.md`, Enum Filter Validation).
 
-**Changes**: the three values describe every user. A change of Business
-Rule 10 that made eligibility depend on another property of a Ticket would
-make some users eligible for only part of the Tickets that one of the values
-describes; reporting a new value in that situation is a semantic change to
-existing behavior and therefore breaking (`docs/api-spec.md`, Response
-Enums). A new role, by contrast, obtains its value from its capabilities and
+**Changes**: a change of Business Rule 10 that made eligibility depend on
+another property of a Ticket would make some users eligible for only part of
+the Tickets that one of the values describes; reporting a new value in that
+situation is a semantic change to existing behavior and therefore breaking
+(`docs/api-spec.md`, Response Enums). A new role, by contrast, obtains its value from its capabilities and
 scope with no change to the values (Business Rule 10, Design note —
 eligibility from capability and scope).
 
