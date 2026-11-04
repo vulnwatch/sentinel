@@ -1896,7 +1896,7 @@ class TestPackages:
         }
 
     def test_sntl_11_lists_more_than_ten_package_names(self, loaded: Loaded) -> None:
-        """`SNTL-11` holds 12 packages, more than a client lists at once, with
+        """`SNTL-11` holds 12 packages, more than ten besides its first, with
         `fictional-curl` first (tickets.md, TicketSummary)."""
 
         async def reader(db: AsyncSession) -> tuple[str, ...]:

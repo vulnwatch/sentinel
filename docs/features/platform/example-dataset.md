@@ -719,10 +719,11 @@ A Product is eligible unless the table states otherwise
 15 SP4` is in Reactive Support, and the SUSE score of `CVE-2099-0016` is below
 the threshold of `Server LTSS 15 SP5`.
 
-`SNTL-11` has 12 packages, more than a client lists at once, so that a client
-can show a long list of package names; `fictional-curl` comes first in its
-`package_names` (`docs/features/tickets/tickets.md`, TicketSummary). Its
-further packages have no maintainer, so they change no maintainer workbench.
+`SNTL-11` has 12 packages, more than ten besides its first, so that a client
+can show a Ticket with a long list of package names; `fictional-curl` comes
+first in its `package_names` (`docs/features/tickets/tickets.md`,
+TicketSummary). Its further packages have no maintainer, so they change no
+maintainer workbench.
 
 `SNTL-12` has several packages, with different maintainers, and a package with
 two maintainers. The maintainer workbenches

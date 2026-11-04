@@ -542,8 +542,8 @@ _SNTL_11_MORE_PACKAGES: Final = (
     "fictional-sqlite",
     "fictional-xz",
 )
-"""The packages that `SNTL-11` holds after `fictional-curl`, so that it has
-more than a client lists at once (Packages, Tracks, and Maintainers)."""
+"""The packages that `SNTL-11` holds after `fictional-curl`, more than ten
+besides its first (Packages, Tracks, and Maintainers)."""
 
 _PACKAGES: Final = {
     package.name: package
