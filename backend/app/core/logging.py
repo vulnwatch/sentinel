@@ -23,12 +23,11 @@ import structlog
 
 # Third-party loggers captured via the stdlib bridge. Explicitly reset
 # to NOTSET + propagate=True so they defer to the root logger's level
-# and handler uniformly — no per-logger overrides, no conditional pins.
-# NOTE: both "sqlalchemy" (the parent) and "sqlalchemy.engine" (the
-# child that actually gates SQL statement/parameter echoing) must be
-# reset: SQLAlchemy's own `log.py` pins the parent "sqlalchemy" logger
-# to WARNING at import time, which would otherwise cap the effective
-# level of "sqlalchemy.engine" regardless of the root logger's level.
+# and handler — no configurable per-logger overrides. The one exception
+# is the "sqlalchemy" parent, which then receives the level described at
+# `_SQLALCHEMY_LOGGER`. NOTE: "sqlalchemy.engine" (the child that
+# actually gates SQL statement/parameter echoing) is reset as well, so
+# that it inherits the parent's level.
 _THIRD_PARTY_LOGGERS = (
     "uvicorn",
     "uvicorn.error",
@@ -39,6 +38,17 @@ _THIRD_PARTY_LOGGERS = (
     "httpcore",
     "celery",
 )
+
+# SQLAlchemy uses logger levels as echo switches, not as severities: at
+# INFO, "sqlalchemy.engine" logs every SQL statement and transaction
+# boundary and the ORM and pool loggers report mapper configuration and
+# connection lifecycle; DEBUG adds result rows. This parent of the
+# hierarchy therefore emits only WARNING and above at LOG_LEVEL=INFO and
+# follows LOG_LEVEL at every other level (logging.md, SQLAlchemy Echo).
+# The level is explicit, so SQLAlchemy's import-time default (WARNING,
+# applied only when the parent has no level) never takes effect,
+# whichever of the two runs first.
+_SQLALCHEMY_LOGGER = "sqlalchemy"
 
 # Shared processors applied to every log record regardless of origin:
 # both structlog-originated calls (via `structlog.configure`) and
@@ -281,6 +291,9 @@ def configure_logging(
         third_party_logger.handlers.clear()
         third_party_logger.setLevel(logging.NOTSET)
         third_party_logger.propagate = True
+    logging.getLogger(_SQLALCHEMY_LOGGER).setLevel(
+        logging.WARNING if level == logging.INFO else level
+    )
 
 
 def configure_cli_logging(settings: LoggingSettings) -> None:
