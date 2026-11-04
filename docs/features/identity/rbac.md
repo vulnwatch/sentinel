@@ -145,7 +145,9 @@ Design notes:
 - Capabilities and scope derive from roles only. The bot marker of a user
   (`docs/features/identity/user-management.md`, Bot Accounts) is not an
   authorization input: a bot account holds exactly the capabilities and scope
-  of its roles
+  of its roles. The marker is an input of assignment eligibility only
+  (Business Rule 10), which decides who can own the work on a Ticket, not
+  what a user can do or see
 
 > **Design note — VA role granularity**: the VA role intentionally bundles
 > triage, assessment, and package management into a single role. Sentinel
@@ -290,14 +292,17 @@ no response to a caller that the operation does not already admit.
 | View fetcher error tracebacks | `manage_fetchers` |
 
 > **Assignment target constraint**: the `triage_ticket` capability allows
-> performing assignment operations, but the target user MUST hold the
-> `vulnerability_analyst` role **and be active**. Assigning to a user
-> without this role is rejected with 400 Bad Request; assigning to an inactive
-> user is rejected with 409 Conflict. This is a business rule (who can own a ticket), not a
-> capability check (who can invoke the endpoint). Assignment paths acquire a
-> shared lock on the target User before any Ticket lock so this eligibility is
-> stable against concurrent deactivation or final VA-origin loss. See Business
-> Rule 10.
+> performing assignment operations, but the target user MUST be eligible to
+> be the assignee of the Ticket (Business Rule 10): active, not a bot
+> account, holding `triage_ticket`, and with effective scope `all` when the
+> Ticket is confidential. Assigning to an inactive user is rejected with 409
+> Conflict; assigning to any other ineligible user is rejected with 400 Bad
+> Request. This is a business rule (who can own a ticket), not a capability
+> check (who can invoke the endpoint). Assignment paths acquire a shared lock
+> on the target User before any Ticket lock so the user's part of this
+> eligibility is stable against concurrent deactivation, role-origin removal,
+> or bot marking, and read the Ticket's confidentiality under the Ticket
+> lock. See Business Rule 10.
 
 ### Authenticated Operations
 
@@ -403,8 +408,8 @@ Note that visibility alone does not imply write access. An authenticated
 user with no roles who receives a `TicketAccessGrant` can see the ticket
 but cannot modify it — they have no capabilities. A `restricted_analyst`
 with a grant can both see and modify the ticket because they have
-capabilities like `triage_ticket` and `manage_packages`. The two checks
-are independent:
+capabilities like `triage_ticket` and `manage_packages`, but cannot be its
+assignee (Business Rule 10). The two checks are independent:
 
 - **Scope** (+ grant/maintainership) determines: *can you see this ticket?*
 - **Capability** determines: *can you perform this operation?*
@@ -818,48 +823,95 @@ here with the required authorization level and a link to the owning spec.
      external user to admin via `sentinel manage-user update --username
      <username> --add-role admin` and deactivate the bootstrap account.
    For restricted analyst accounts, see Business Rule 14
-10. **Assignment target constraint**: only users holding the
-    `vulnerability_analyst` role can be assigned as ticket owners. The
-    `triage_ticket` capability controls who can *perform* the assignment;
-    the VA role controls who can *be the target*. This constraint is
-    enforced at two levels:
-    - **Prospective** (assignment time): attempting to assign a ticket to
-       a user without the VA role, or to an inactive user, is rejected
-       with the existing target-specific error. Auto-assignment, creation, and
-       embedded assignment skip the assignment when the locked-current actor is
-       ineligible. Every path locks the prospective assignee User before its
-       CVE/Ticket roots
-    - **Retroactive** (role removal): if a user loses the
-      `vulnerability_analyst` role entirely (no remaining `UserRole`
-      records from any origin), all their active ticket assignments (New,
-      Analysis, Analyzed) are automatically unassigned, with one system
-      `assignment` `TicketAuditEvent` per effective clear. Ticket status is not
-       changed and reconciliation is not invoked. See
-       `docs/features/identity/user-service.md`,
-       `_unassign_tickets_on_va_role_loss()`
-      Removing only one of multiple VA origins does not trigger unassignment.
-      Adding an origin after final loss does not restore a prior assignment.
-      The active manual-role and deactivation concurrency outcomes are owned by
-      `user-service.md` (Assignment concurrent with deactivation or active
-      manual role loss).
+10. **Assignment eligibility**: a user can be the assignee of a Ticket
+    exactly when all of the following hold:
+    - the user is active;
+    - the user is not a bot account (`bot = false`;
+      `docs/features/identity/user-management.md`, Bot Accounts);
+    - the user's roles grant the `triage_ticket` capability; and
+    - the Ticket is not confidential, or the user's effective scope is
+      `all`.
+
+    The `triage_ticket` capability controls who can *perform* an assignment;
+    this rule controls who can *be the assignee*, the user who owns the work
+    on the Ticket. Capabilities and effective scope are resolved from the
+    user's current roles of every origin (Predefined Roles; Role Origins and
+    Coexistence). With the predefined roles, an active non-bot user holding
+    `vulnerability_analyst` can be the assignee of every Ticket; one holding
+    `restricted_analyst` without a role whose scope is `all`, of every
+    non-confidential Ticket; and one holding only `admin`, or no role, of no
+    Ticket. Visibility does not make a user eligible: an explicit
+    `TicketAccessGrant` or package maintainership lets a user whose
+    effective scope is `non_confidential` see a confidential Ticket, and
+    work on it with the capabilities of their roles, but never be its
+    assignee. The rule is enforced at two levels:
+    - **Prospective** (assignment time): every path that can make a user the
+      assignee locks that User `FOR SHARE` before its CVE and Ticket roots,
+      which stabilizes `active`, `bot`, and the role origins, and evaluates
+      the confidentiality term from the locked-current Ticket, or, for
+      manual creation, from the confidentiality requested for the new
+      Ticket. Explicit assignment rejects an inactive target with
+      `TICKET_ASSIGNEE_INACTIVE` and every other ineligible target with
+      `TICKET_ASSIGNEE_NOT_ELIGIBLE`. Manual creation, auto-assignment, and
+      embedded assignment skip the assignment when the locked-current actor
+      is ineligible
+    - **Retroactive** (eligibility loss): a change that makes the current
+      assignee of a Ticket in `New`, `Analysis`, or `Analyzed` ineligible
+      clears that assignment, with one system `assignment`
+      `TicketAuditEvent` per effective clear. Ticket status is not changed
+      and reconciliation is not invoked. The identity changes are
+      deactivation, a role-origin removal that leaves the user ineligible
+      for the Ticket, and setting the bot marker
+      (`docs/features/identity/user-service.md`); the Ticket change is making
+      the Ticket confidential (`docs/features/tickets/ticket-service.md`,
+      `set_confidentiality`).
+      For example, removing `vulnerability_analyst` from a user who keeps
+      `restricted_analyst` clears only that user's confidential Tickets,
+      while removing one of several origins of the same role clears
+      nothing. A Ticket in `Resolved`, `Ignored`, or `Duplicated` retains
+      its assignee; assignment-eligibility sanitation clears an ineligible
+      assignee when the Ticket later returns to `Analysis` or `Analyzed`
+      (`docs/features/tickets/ticket-mutations.md`). Adding a role,
+      clearing the bot marker, reactivation, and declassification restore
+      no prior assignment. The concurrency outcomes are owned by
+      `user-service.md` (Assignment concurrent with eligibility loss) and
+      `ticket-service.md` (`set_confidentiality`)
+
+    > **Design note — eligibility from capability and scope**: the rule
+    > names no role. An assignee owns the work on a Ticket, so it needs the
+    > capability of Ticket work and default visibility of that Ticket, which
+    > `triage_ticket` and the effective scope already express; a new role
+    > therefore obtains assignment eligibility from its capabilities and
+    > scope, with no change to this rule. The bot marker excludes
+    > automation, which performs Ticket work but owns none, so that its
+    > operations neither take Tickets out of the unassigned queue nor move
+    > them out of `New`. Per-Ticket visibility does not count: a grant is
+    > revocable at any time and deleted by declassification, and
+    > maintainership follows package exclusion, so tying ownership to
+    > either would make every such change an unassignment. If a future role
+    > must perform triage without being an assignee, `triage_ticket` is
+    > split (Design note — capability granularity).
 11. **Auto-assignment**: when a user modifies an unassigned ticket, the
     ticket is auto-assigned to the acting user **only if** the locked-current
-    acting user is active and holds the `vulnerability_analyst` role. If the
-    acting user is inactive or holds only
-    `restricted_analyst` (or any other non-VA role), auto-assignment is
-    skipped — the operation proceeds but the ticket remains unassigned
-    for a vulnerability analyst to claim
+    acting user is eligible to be its assignee (Business Rule 10).
+    Otherwise auto-assignment is skipped — the operation proceeds but the
+    ticket remains unassigned for an eligible user to claim. A bot account
+    therefore never becomes an assignee, and neither does a user whose
+    effective scope is `non_confidential` working on a confidential Ticket
+    through a grant or maintainership. A `New` Ticket that only ineligible
+    users work on stays `New` (`docs/features/tickets/tickets.md`,
+    Architectural Invariant)
 12. **Status transitions with embedded assignment**: the reopen and
-    revert-duplicate flows embed a reassignment step: an active acting user
-    holding the `vulnerability_analyst` role becomes the assignee even when
-    the ticket is already assigned. The ignore and mark-as-duplicate flows
-    apply only the auto-assignment of Business Rule 11, so they assign the
-    acting user only to an unassigned ticket. When an inactive user or a
-    user without the `vulnerability_analyst` role performs any of these
-    operations (they have `triage_ticket` capability to do so), the
-    assignment step is skipped — the ticket retains its current assignee.
-    If the ticket was unassigned, it remains unassigned. Non-VA users can
-    trigger status transitions but are never assigned as ticket owners
+    revert-duplicate flows embed a reassignment step: an acting user who is
+    eligible to be the assignee of the locked-current Ticket (Business
+    Rule 10) becomes the assignee even when the ticket is already assigned.
+    The ignore and mark-as-duplicate flows apply only the auto-assignment of
+    Business Rule 11, so they assign the acting user only to an unassigned
+    ticket. When an ineligible user performs any of these operations (they
+    have `triage_ticket` capability to do so), the assignment step is
+    skipped — the ticket retains its current assignee. If the ticket was
+    unassigned, it remains unassigned. Ineligible users can trigger status
+    transitions but are never assigned as ticket owners
 13. **Confidential ticket creation**: the `is_confidential` field in
     `POST /api/v1/tickets` requires the `manage_confidentiality` capability
     in addition to `create_ticket`. A user with only `create_ticket` (e.g.,
@@ -872,10 +924,14 @@ here with the required authorization level and a link to the owning spec.
     (This is a field-level capability check — see the † note under the
     Endpoint Permission Map and `docs/api-spec.md` § What belongs in an
     endpoint error table › Conditional authorization.)
-14. **Restricted analyst account setup**: restricted analyst accounts
-    are local users created via CLI with the `restricted_analyst` role. An
-    account that an automation operates is also marked as a bot account
-    (`docs/features/identity/user-management.md`, Bot Accounts):
+14. **Restricted analyst accounts**: the `restricted_analyst` role serves
+    people who work on Tickets without access to embargoed data, for example
+    the members of an external group mapped to it (Role Origins and
+    Coexistence), and automation accounts. An account that an automation
+    operates is a local user created via CLI with the `restricted_analyst`
+    role and marked as a bot account
+    (`docs/features/identity/user-management.md`, Bot Accounts), which
+    excludes it from assignment (Business Rule 10):
 
     ```
     sentinel manage-user create --username mybot --email mybot@example.com --role restricted_analyst --bot
@@ -996,12 +1052,14 @@ A user can acquire a role from two independent sources (origins):
   membership during external sync. Managed exclusively by the sync process
   — cannot be removed **per-user** via the API (only via role mapping deletion or external sync reconciliation). Manual role operations
   never insert, delete, or mutate these rows; the rows are only observed for
-  effective-role evaluation, the self-Admin guard, and final VA-origin loss.
+  effective-role evaluation, the self-Admin guard, and assignment
+  eligibility.
   See `docs/features/identity/identity-provisioning.md`.
 
 External groups can be mapped to `restricted_analyst` via `RoleMapping`. This
 is a valid use case — for example, users who should perform ticket
-operations but must not access embargoed (confidential) data. The admin
+operations but must not access embargoed (confidential) data. Such users can
+be the assignee of non-confidential Tickets (Business Rule 10). The admin
 is responsible for ensuring the mapping is intentional.
 
 ### Coexistence Rules

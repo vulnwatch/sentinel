@@ -883,7 +883,7 @@ Error codes are grouped by prefix:
 |--------|--------|----------|
 | `VALIDATION_*` | Input validation | `VALIDATION_ERROR` |
 | `AUTH_*` | Authentication and authorization | `AUTH_NOT_AUTHENTICATED`, `AUTH_INSUFFICIENT_PERMISSION`, `AUTH_API_KEY_NOT_FOUND`, `AUTH_API_KEY_NAME_CONFLICT`, `AUTH_API_KEY_NAME_INVALID`, `AUTH_API_KEY_INVALID_EXPIRY`, `AUTH_SESSION_REQUIRED`, `AUTH_INVALID_CREDENTIALS`, `AUTH_ACCOUNT_LOCKED`, `AUTH_LOGOUT_NOT_APPLICABLE`, `AUTH_CROSS_ORIGIN_REJECTED`; reserved: `AUTH_SSO_FAILED`, `AUTH_SSO_USER_NOT_FOUND`, `AUTH_SSO_USER_INACTIVE`, `AUTH_SSO_STATE_INVALID`, `AUTH_SSO_DISABLED` |
-| `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_INVALID_TRANSITION`, `TICKET_NOT_MUTABLE`, `TICKET_NOT_CONFIDENTIAL`, `TICKET_DUPLICATE_TARGET_DUPLICATED`, `TICKET_DUPLICATE_CONCURRENT_MODIFICATION`, `TICKET_SELF_DUPLICATE`, `TICKET_CVE_CONFLICT`, `TICKET_CVE_ALREADY_SET`, `TICKET_SEVERITY_DERIVED`, `TICKET_ASSIGNEE_NOT_VA`, `TICKET_ASSIGNEE_INACTIVE`, `TICKET_ASSIGNEE_NOT_CALLER` |
+| `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_INVALID_TRANSITION`, `TICKET_NOT_MUTABLE`, `TICKET_NOT_CONFIDENTIAL`, `TICKET_DUPLICATE_TARGET_DUPLICATED`, `TICKET_DUPLICATE_CONCURRENT_MODIFICATION`, `TICKET_SELF_DUPLICATE`, `TICKET_CVE_CONFLICT`, `TICKET_CVE_ALREADY_SET`, `TICKET_SEVERITY_DERIVED`, `TICKET_ASSIGNEE_NOT_ELIGIBLE`, `TICKET_ASSIGNEE_INACTIVE`, `TICKET_ASSIGNEE_NOT_CALLER` |
 | `CVE_*` | CVE operations | `CVE_NOT_FOUND`, `CVE_FETCH_FAILED`, `CVE_INVALID_SOURCE`, `CVE_INVALID_FORMAT` |
 | `CVSS_*` | CVSS assessment and default-version operations | `CVSS_INVALID_VECTOR`, `CVSS_ASSESSMENT_NOT_FOUND`, `CVSS_RECALC_ALREADY_IN_PROGRESS`, `CVSS_PREVIEW_TIMEOUT` |
 | `RESOURCE_*` | Generic resource errors | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_NOT_EDITABLE` |
@@ -1392,8 +1392,9 @@ update). The `full_name` field is nullable — it is returned as `null` when
 the user has no display name set, with no substitution of `username` or any
 other fallback value. The `bot` field is `true` for a bot account, an
 account that an automation operates instead of a person, and lets a client
-present its actions differently; it has no effect on authorization or
-business rules (`docs/features/identity/user-management.md`, Bot Accounts).
+present its actions differently; it has no effect on authorization, and a bot
+account is never eligible to be a Ticket assignee
+(`docs/features/identity/user-management.md`, Bot Accounts).
 A user reference that identifies who performed a recorded action is the same
 for every caller that can read the response; it is never masked or
 anonymized according to the caller (`docs/features/identity/rbac.md`, Actor

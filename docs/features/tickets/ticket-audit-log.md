@@ -82,9 +82,10 @@ event type.
   even when a user initiated the containing workflow. Derived system events
   include CVSS-derived severity, automatic Product eligibility, gate-derived
   status, assignment-eligibility sanitation, duplicate-dependent repointing, and
-  package maintainership acquisition. The `vulnerability_analyst` role is named
-  only where role membership itself controls assignment eligibility or
-  auto-assignment.
+  package maintainership acquisition. Assignment eligibility, which controls
+  assignment and auto-assignment, is defined once in
+  `docs/features/identity/rbac.md` (Business Rule 10); this contract names no
+  role.
 - `product_released` is created only for an effective NULL-to-timestamp
   Product release mutation. No-match, malformed or retracted advisory,
   repository failure, duplicate evidence, and idempotent or concurrent no-op
@@ -189,8 +190,10 @@ event type.
   `TicketAccessGrant` creates no `access_grant_removed` event; that type is
   reserved for an effective manual revoke. User deactivation and reactivation
   retain grants and create no grant event. A later `false` to `true` transition
-  does not recreate deleted grants and creates only its own
-  `confidentiality_changed` event. Neither direction modifies the Coordinated
+  does not recreate deleted grants and creates no grant event; besides its own
+  `confidentiality_changed` event it creates only the system `assignment` of an
+  ineligible assignee that it clears (see the matrix below). Neither direction
+  modifies the Coordinated
   Release Date or creates a `coordinated_release_changed` event.
 - `coordinated_release_changed` is created only when the stored CRD changes. An
   unchanged value, including the same instant supplied with a different UTC
@@ -230,21 +233,35 @@ illustrative phrase or pass arbitrary text into a Ticket audit comment.
 
 System unassignment selects `{reason}` from this closed vocabulary:
 
-- `user deactivated`;
-- `vulnerability_analyst role removed`;
-- `vulnerability_analyst role removed by external sync`;
-- `vulnerability_analyst role removed after role mapping deletion`; or
-- `inactive assignee`.
+| Reason | Used by |
+|---|---|
+| `user deactivated` | Deactivation (`user_service.deactivate_user()`) |
+| `bot account` | A change of the bot marker to `true` (`user_service.update_user()`); assignee eligibility observation |
+| `role removed` | Manual role-origin removal (`user_service.update_roles()`); assignee eligibility observation |
+| `role removed by external sync` | Deferred external role synchronization (`user_service.sync_role_mapping()`) |
+| `role removed after role mapping deletion` | Deferred role mapping deletion (`user_service.delete_role_mapping_roles()`) |
+| `confidential ticket` | Assignee eligibility observation |
+| `inactive assignee` | Assignee eligibility observation |
 
-The two sanitation reasons have deterministic precedence: when the current
-assignee is both inactive and without any VA origin, use `inactive assignee`.
-`vulnerability_analyst role removed` is used when the User is still active but
-has no VA origin. Identity-owned deactivation and final-role-loss batches use
-their applicable lifecycle reason from the same closed vocabulary; external
-workflows use the more specific external variant. In the
-sanitation path, `vulnerability_analyst role removed` describes the observed
-absence of a current origin under this closed vocabulary; it does not assert
-that audit history proves the User previously held one.
+The assignee eligibility observation (`ticket-mutations.md`, Assignment
+Eligibility Sanitization) serves both reconciliation sanitation and
+`ticket_service.set_confidentiality()`. It names the first condition of
+assignment eligibility (`docs/features/identity/rbac.md`, Business Rule 10)
+that the current assignee fails, in this deterministic precedence:
+`inactive assignee` (the User is inactive), then `bot account` (the User is a
+bot account), then `role removed` (no current role origin grants
+`triage_ticket`), then `confidential ticket` (the Ticket is confidential and
+the User's effective scope is not `all`). The confidentiality transition
+therefore uses `confidential ticket` when the assignee fails no other
+condition. In the observation,
+`role removed` and `bot account` describe the observed current state under
+this closed vocabulary; they do not assert that audit history proves an
+earlier role or marker change.
+
+Identity-owned batches use the lifecycle reason of the change that they apply
+for every Ticket that they clear: deactivation `user deactivated`, bot marking
+`bot account`, and a role-origin removal `role removed`, or the more specific
+external variant for an external workflow.
 
 The username and source label are event-time snapshots. Audit reads never join
 current operational data to reconstruct them.
@@ -262,7 +279,7 @@ an intentional no-event contract, not missing audit coverage.
 | Direct assignment or reassignment | One `assignment`; optional system `New → Analysis`; optional final gate event | Acting user for assignment, system for derived status | `ticket_service`; target User then Ticket |
 | Self-unassignment | One `assignment` with `new_value = NULL`; no status or other event | Acting user | `ticket_service`; Ticket |
 | Auto-assignment during an effective mutation | One `assignment`; system `New → Analysis` when applicable | Acting user for assignment, system for promotion | Owning mutation service; stabilized acting User then optional CVE then Ticket |
-| User deactivation, final VA-role loss, or assignment-eligibility sanitation | One `assignment` per effectively cleared non-NULL assignee | System | `user_service`: User `FOR NO KEY UPDATE` then ordered Ticket locks; reconciliation sanitation: existing Ticket lock plus a fresh unlocked User/role observation |
+| User deactivation, bot marking, role-origin removal that leaves the assignee ineligible, or assignment-eligibility sanitation | One `assignment` per effectively cleared non-NULL assignee | System | `user_service`: User `FOR NO KEY UPDATE` then ordered Ticket locks; reconciliation sanitation: existing Ticket lock plus a fresh unlocked User/role observation |
 | Ignore, mark duplicate, reopen, or revert duplicate | Direct `status_change`, `duplicate_set`, or `duplicate_removed` as applicable; one `duplicate_target_changed` per repointed dependent; derived Product, sanitation, and final status events retain their normal contracts | Acting user for the direct ignore, duplicate-set, or duplicate-remove decision; reopen's resulting gate status and all other derived consequences use system | `ticket_service`; Ticket, ordered multi-Ticket, or locked dependent roots as specified there |
 | CVE association and rejection/revert | `cve_associated`; applicable derived severity/Product/status events; rejection uses one `status_change`. A rejected orphan records creation/association, then CVSS events, then `New -> Ignored` | Acting user for association; system for derived changes and rejection/revert status | manual `ticket_service`: User then CVE then Ticket; system `cve_service`: CVE then Ticket |
 | Manual severity | One `severity_changed`, optional system `priority_changed`, plus ordinary assignment/status consequences | Acting user for severity; system for derived status | `ticket_mutations`; acting User then Ticket |
@@ -277,7 +294,7 @@ an intentional no-event contract, not missing audit coverage.
 | Product release confirmation | One `product_released`; optional final status | System | `package_service`; Ticket lock after external I/O |
 | Product eligibility or override ownership change | One `product_eligibility_changed` per changed occurrence; optional final status | Acting user for direct override; system for automatic changes | direct override uses acting User then Ticket; system `package_service` uses Ticket; the narrow CVSS-chain exception uses User then CVE then Ticket for manual work or CVE then Ticket for system work |
 | Direct package, track, or Product exclusion/restoration | Exactly one corresponding direct event; ordinary assignment/status events remain separate | Acting user | `package_service`; acting User then Ticket |
-| Confidentiality toggle or manual access grant/revoke | One `confidentiality_changed`, `access_grant_added`, or `access_grant_removed`. Effective `true` to `false` deletes all grants atomically but produces only `confidentiality_changed` | Acting user | `ticket_service`; target User then Ticket for grant/revoke, Ticket for confidentiality |
+| Confidentiality toggle or manual access grant/revoke | One `confidentiality_changed`, `access_grant_added`, or `access_grant_removed`. Effective `true` to `false` deletes all grants atomically but produces only `confidentiality_changed`. Effective `false` to `true` that clears an ineligible assignee of a `New`, `Analysis`, or `Analyzed` Ticket adds one system `assignment` after `confidentiality_changed` | Acting user for the direct event; system for the assignment clear | `ticket_service`; target User then Ticket for grant/revoke, Ticket plus a fresh unlocked User/role observation for confidentiality |
 | Coordinated Release Date set, change, or clear | One `coordinated_release_changed`; no assignment, reconciliation, or status event | Acting user | `ticket_service`; Ticket |
 | User deactivation or reactivation with retained Ticket grants | None for grants; ordinary identity and Ticket-unassignment events remain unchanged | N/A for grant state | `user_service`; User root and its documented side effects |
 | Manual reference create/update/delete | One direct event, or one event per changed PATCH field | Acting user | `reference_service`; parent Ticket lock |
@@ -306,7 +323,9 @@ Product, and automatic priority events follow the inputs that caused them, with
 automatic `priority_changed` after the severity and Product events. Assignment-eligibility
 sanitation then follows every gate-input mutation, and the final gate-derived
 `status_change` is last. Ticket creation is the exception only in that
-`ticket_created` remains the first event in the new Ticket's history. Within one
+`ticket_created` remains the first event in the new Ticket's history. The
+system `assignment` of a confidentiality transition follows its
+`confidentiality_changed`. Within one
 package-tree invocation, ascending-`User.id` `package_maintainer_added` events
 precede the invocation-level `package_added` event.
 
@@ -330,10 +349,11 @@ then Ticket, deterministically ordered multiple Tickets, and assignment-capable
 User then optional CVE then ordered Tickets. A multi-User identity batch locks
 every User by UUID before the union of Ticket candidates by UUID. A username
 that the owning contract reads through a documented unlocked User observation
-under the Ticket lock (assignment-eligibility sanitation, the previous
-assignee replaced by `auto_assign_actor(force=True)` or by explicit
-`assign_ticket()`, or the caller cleared by `unassign_ticket()`) is the
-event-time value of that observation. The central audit contract does not
+under the Ticket lock (assignment-eligibility sanitation, the assignee cleared
+by `set_confidentiality()`, the previous assignee replaced by
+`auto_assign_actor(force=True)` or by explicit `assign_ticket()`, or the
+caller cleared by `unassign_ticket()`) is the event-time value of that
+observation. The central audit contract does not
 require every operation to route through `ticket_mutations` or acquire a
 Ticket lock first.
 
@@ -673,15 +693,21 @@ required event sequence or explicit no-event outcome. For audited mutations:
     assignment-eligibility sanitation follows all gate-input mutations, and any
     final gate status event is last. External and default-version system chains
     never auto-assign an actor, but may create the system sanitation event when
-    their final result is `Analysis` or `Analyzed`. Sanitation covers inactive,
-    active-without-VA, and both-invalid precedence
+    their final result is `Analysis` or `Analyzed`. Sanitation covers each
+    reason alone (inactive, bot account, no role granting `triage_ticket`,
+    and scope `non_confidential` on a confidential Ticket) and the precedence
+    of every combination
 19. Identity-driven unassignment selects every assigned Ticket before status
-    locking, clears only locked-current `New`, `Analysis`, or `Analyzed`, and
-    preserves `Resolved`, `Ignored`, and `Duplicated`. Rejected, stale,
-    already-cleared, inactive-status, repeated, concurrent-loser, and rolled-back
-    outcomes create no event. Effective events use the stabilized username,
-    exact closed reason, `new_value = NULL`, and `detail = NULL` in Ticket UUID
-    order
+    locking, without a status or confidentiality filter, clears only
+    locked-current `New`, `Analysis`, or `Analyzed` assignments that the
+    change makes ineligible, and preserves `Resolved`, `Ignored`, and
+    `Duplicated`. Rejected, stale, already-cleared, still-eligible,
+    inactive-status, repeated, concurrent-loser, and rolled-back outcomes
+    create no event. Effective events use the stabilized username, exact
+    closed reason, `new_value = NULL`, and `detail = NULL` in Ticket UUID
+    order. The confidentiality transition creates its event after
+    `confidentiality_changed` with the observed username and reason
+    `confidential ticket` when the assignee fails no other condition
 20. Automatic eligibility tests assert exact actor, reason, cardinality, and
     no-event behavior for unchanged, override-skipped, manual-zone-deferred or
     skipped, rejected, not-found, concurrent no-op, and rollback outcomes;

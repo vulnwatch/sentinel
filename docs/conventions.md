@@ -982,16 +982,30 @@ Every user-attributed path that can set `Ticket.assignee_id` to a User
 acquires `FOR SHARE` on that prospective assignee User before its CVE or Ticket
 root. It retains that lock through assignment eligibility validation and the
 Ticket mutation. Assignment paths may therefore proceed concurrently toward
-the same User. A User lifecycle or role-origin mutation that can make an
-eligible User ineligible acquires `FOR NO KEY UPDATE` on the User before
-changing `User.active` or the effective `vulnerability_analyst` origins. These
+the same User. A User lifecycle, profile, or role-origin mutation that can make
+an eligible User ineligible acquires `FOR NO KEY UPDATE` on the User before
+changing `User.active`, `User.bot`, or the User's role origins (assignment
+eligibility, `docs/features/identity/rbac.md`, Business Rule 10). These
 lock modes conflict with one another, so assignment and eligibility loss have
 one stable serialization point, while ordinary foreign-key `FOR KEY SHARE`
-validation remains compatible. A mutation that can only make a User eligible,
+validation remains compatible. Such a mutation that also locks the User's
+Tickets acquires them before it writes a User column with a unique index, such
+as `username` or `email`: that write takes a row lock that conflicts with the
+foreign-key validation of a transaction holding one of those Tickets. A
+mutation that can only make a User eligible,
 such as reactivation, may retain its owning specification's same or stronger
 User lock. A user-attributed path that only clears the caller's own
 assignment, such as self-unassignment, makes no User an assignee and acquires
 no User root.
+
+The confidentiality of a Ticket is the one eligibility input that is Ticket
+state. Assignment paths evaluate it from the locked-current Ticket. A
+confidentiality change that makes the current assignee ineligible acquires no
+User root: it observes the assignee without a lock under the Ticket lock,
+while every identity mutation above decides each of the User's assigned
+Tickets from its locked-current state. The resulting outcomes are owned by
+`docs/features/identity/user-service.md` (Assignment concurrent with
+eligibility loss).
 
 The active contract currently applies this role-origin rule to manual role
 mutation. Deferred external-provisioning and `RoleMapping` workflows must

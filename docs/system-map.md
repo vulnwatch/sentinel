@@ -516,7 +516,7 @@ Reading the diagram:
   and excludes the others from the page and the total.
 
 User-attributed creation or mutation paths that may assign first stabilize the
-acting User's active VA eligibility. System ingestion does not assign and omits
+acting User's assignment eligibility. System ingestion does not assign and omits
 that User root; its database order remains CVE then Ticket.
 
 ### Package and Release Tracking
@@ -678,11 +678,16 @@ Delivery status
 (`PENDING`/`IN_PROGRESS`/`RELEASED`) is tracked independently for workflow
 visibility but is not a gate condition.
 
-Assignment is serialized separately from Ticket status. Assignment-capable
-paths lock the prospective User before optional CVE and Ticket roots;
-deactivation and active manual final-VA-origin loss lock the same User
-incompatibly and then clear active-status assignments in Ticket UUID order.
-Reconciliation defensively clears an inactive or non-VA assignee when its final
+Assignment is serialized separately from Ticket status. Only a user eligible
+to be the assignee can own a Ticket: active, not a bot account, holding
+`triage_ticket`, and with scope `all` for a confidential Ticket
+([features/identity/rbac.md](features/identity/rbac.md), Business Rule 10).
+Assignment-capable paths lock the prospective User before optional CVE and
+Ticket roots; deactivation, bot marking, and an active manual role-origin
+removal lock the same User incompatibly and then clear the active-status
+assignments that they make ineligible in Ticket UUID order. Making a Ticket
+confidential clears an ineligible active-status assignee under the Ticket lock.
+Reconciliation defensively clears an ineligible assignee when its final
 gate result is `Analysis` or `Analyzed`, while `Resolved` preserves the current
 assignee. The current assignee can also clear their own assignment under the
 Ticket lock alone, without a status change.

@@ -75,7 +75,8 @@ Each operation's own contract fixes whether it takes an actor:
   `set_severity_manual()` are user-attributed and require
   `acting_user_id: UUID`, the authenticated user performing the action. An
   effective mutation auto-assigns an unassigned Ticket to that user when the
-  user is active and holds the `vulnerability_analyst` role
+  user is eligible to be its assignee (`docs/features/identity/rbac.md`,
+  Business Rule 10)
 - `upsert_external_cvss_batch()`, `recalculate_cvss_chain()`,
   `reconcile_ticket_status()`, and `refresh_priority_auto()` take no actor
   and never auto-assign. A user-attributed composition that calls one (for
@@ -199,8 +200,8 @@ current reality (gate conditions + data freshness).
 - May transition ticket status (forward or backward) based on gate
   evaluation
 - May null `assignee_id` and create an `assignment` audit event if the
-  current assignee is inactive or no longer holds any
-  `vulnerability_analyst` origin (assignment-eligibility sanitation)
+  current assignee is no longer eligible to be the assignee of the Ticket
+  (assignment-eligibility sanitation)
 - May register one transaction-local Ticket convergence effect after any
   manual-zone exit or a `Resolved` gate regression, whose consumption
   publishes the package-tree and fetcher catch-up workflow
@@ -320,36 +321,47 @@ the lifecycle phase or actionability result.
 
 As behavior step 3, after determining the ticket's natural status via gate
 evaluation and before any final status audit event, if the resulting status is
-`Analysis` or `Analyzed` and `assignee_id` is non-NULL, read the assignee's
-current `User.active` value and whether any current `UserRole` origin grants
-`vulnerability_analyst`. This is a fresh PostgreSQL observation made while the
-caller already holds the Ticket lock; it does not acquire a User row lock or
-read audit history.
+`Analysis` or `Analyzed` and `assignee_id` is non-NULL, check whether the
+assignee is still eligible to be the assignee of the Ticket
+(`docs/features/identity/rbac.md`, Business Rule 10).
 
-1. If the User is inactive, choose exact reason `inactive assignee`.
-2. Otherwise, if no VA origin exists, choose exact reason
-   `vulnerability_analyst role removed`.
-3. Select the reason using the canonical precedence in
-   `ticket-audit-log.md`. If neither condition is true, preserve the assignee
-   and create no event.
+The **assignee eligibility observation** reads the assignee's current
+`User.active` and `User.bot` values, username, and every current `UserRole`
+origin in a fresh PostgreSQL observation made while the caller already holds
+the Ticket lock, resolves the capabilities and effective scope of those
+origins, and takes `is_confidential` from the locked Ticket. It does not
+acquire a User row lock or read audit history. `ticket_service`'s
+`set_confidentiality()` uses the same observation and reason selection.
+
+1. Determine the failing conditions of the rule:
+   - the User is inactive: reason `inactive assignee`;
+   - the User is a bot account: reason `bot account`;
+   - no current origin grants `triage_ticket`: reason `role removed`;
+   - the Ticket is confidential and the User's effective scope is not
+     `all`: reason `confidential ticket`.
+2. If no condition fails, preserve the assignee and create no event.
+3. Otherwise select the reason of the first failing condition, in the
+   canonical precedence of `ticket-audit-log.md`, which is the order above.
 4. For an ineligible assignee, set `assignee_id = NULL` and create exactly one
    system `assignment` event with `old_value = username`, `new_value = NULL`,
    exact `comment = "Unassigned from {username}: {reason}"`, and
    `detail = NULL`.
 5. Emit a warning-level log identifying only User and Ticket UUIDs plus the
-   closed reason, indicating that the identity-owned lifecycle batch should
-   ordinarily have handled the clear.
+   closed reason, indicating that the identity-owned lifecycle batch or the
+   confidentiality transition should ordinarily have handled the clear.
 
 If the resulting status is `Resolved`, no assignee check is performed. This
-includes a manual-zone exit that evaluates directly to `Resolved`: an inactive
-or non-VA assignee is retained. `reconcile_ticket_status()` is not invoked for
+includes a manual-zone exit that evaluates directly to `Resolved`: an
+ineligible assignee is retained. `reconcile_ticket_status()` is not invoked for
 a Ticket that remains `Ignored` or `Duplicated`.
 
-This mechanism complements the identity-owned deactivation and final-role-loss
-batches by enforcing current eligibility when a preserved inactive-status
-assignment later returns to `Analysis` or `Analyzed`, and by sanitizing
-anomalous current data. It is not the primary serialization mechanism for a
-concurrent assignment race. Unassignment does not change the ticket's status.
+This mechanism complements the identity-owned eligibility-loss batches and the
+confidentiality transition, which clear only `New`, `Analysis`, and
+`Analyzed` assignments, by enforcing current eligibility when a preserved
+`Resolved`, `Ignored`, or `Duplicated` assignment later returns to `Analysis`
+or `Analyzed`, and by sanitizing anomalous current data. It is not the
+primary serialization mechanism for a concurrent assignment race. Unassignment
+does not change the ticket's status.
 
 > **Invariant**: ticket status reflects work state, not staffing state.
 > A ticket in `Analysis`, `Analyzed`, or `Resolved` status may have
@@ -449,10 +461,14 @@ through the assignment decision and Ticket mutation. It then follows the
 ordinary CVE-then-Ticket or Ticket-only order. `auto_assign_actor()` receives
 that stabilized User and performs no query or lock on it after the Ticket lock;
 its only User read is the unlocked previous-assignee username observation of a
-`force = True` replacement (see `auto_assign_actor()` step 6). System paths and
-paths that cannot assign acquire no User lock, including self-unassignment
+`force = True` replacement (see `auto_assign_actor()` step 6). The
+confidentiality term of assignment eligibility is Ticket state, so every such
+path evaluates it from the locked-current Ticket. System paths and paths that
+cannot assign acquire no User lock, including self-unassignment
 (`ticket_service.unassign_ticket()`), which only clears the caller's own
-assignment.
+assignment, and `ticket_service.set_confidentiality()`, which can only clear
+an assignee who is not eligible for the now-confidential Ticket and reads that
+assignee through the unlocked assignee eligibility observation.
 
 ### Single-ticket scope
 
@@ -704,10 +720,10 @@ status, and every audit event.
 | Associated Ticket status | Manual SUSE upsert/delete | Trusted external batch | Effective Ticket-scoped outcome |
 |---|---|---|---|
 | No Ticket | Allowed | Not reachable: ingestion creates or loads the unique Ticket before invoking the batch | Manual result is `not_applicable`; CVE-owned state only |
-| `New` | Allowed; effective mutation may auto-assign the VA | Allowed; never assigns | `immediate`; an unassigned `New` remains outside gate reconciliation unless manual auto-assignment first moves it to `Analysis` |
-| `Analysis` | Allowed; effective mutation may auto-assign the VA | Allowed; never assigns | `immediate` eligibility and at most one final reconciliation |
-| `Analyzed` | Allowed; effective mutation may auto-assign the VA | Allowed; never assigns | `immediate` eligibility and at most one final reconciliation |
-| `Resolved` | Allowed; effective mutation may auto-assign the VA | Allowed; never assigns | `immediate` eligibility and at most one final reconciliation; ordinary regression to `Analyzed` or `Analysis` is allowed |
+| `New` | Allowed; effective mutation may auto-assign an eligible actor | Allowed; never assigns | `immediate`; an unassigned `New` remains outside gate reconciliation unless manual auto-assignment first moves it to `Analysis` |
+| `Analysis` | Allowed; effective mutation may auto-assign an eligible actor | Allowed; never assigns | `immediate` eligibility and at most one final reconciliation |
+| `Analyzed` | Allowed; effective mutation may auto-assign an eligible actor | Allowed; never assigns | `immediate` eligibility and at most one final reconciliation |
+| `Resolved` | Allowed; effective mutation may auto-assign an eligible actor | Allowed; never assigns | `immediate` eligibility and at most one final reconciliation; ordinary regression to `Analyzed` or `Analysis` is allowed |
 | `Ignored` | Reject with `TicketNotMutableError`; no result | Allowed; never assigns | External CVE-owned state and direct audit only; Product/gate effects wait for explicit exit |
 | `Duplicated` | Reject with `TicketNotMutableError`; no result | Allowed; never assigns | External CVE-owned state and direct audit only; Product/gate effects wait for explicit exit |
 
@@ -770,11 +786,11 @@ new one is created. External-provider assessments never use this boundary.
    data. Derive the exact version, canonical vector, decimal score, and
    version-specific assessment severity. Parsing failure raises
    `InvalidCVSSVectorError` before database access.
-2. Acquire `FOR SHARE` on the acting User and stabilize current active/VA
-   eligibility, then load the CVE with `FOR NO KEY UPDATE`. If the User is no
-   longer eligible, the effective CVSS mutation continues but its assignment
-   step is skipped. If the CVE does not exist, return the CVE-path
-   `CVE_NOT_FOUND` outcome.
+2. Acquire `FOR SHARE` on the acting User and stabilize its assignment
+   eligibility, then load the CVE with `FOR NO KEY UPDATE`. If the User is not
+   eligible for the locked-current Ticket, the effective CVSS mutation
+   continues but its assignment step is skipped. If the CVE does not exist,
+   return the CVE-path `CVE_NOT_FOUND` outcome.
 3. Load the Ticket associated with that locked CVE, if any, with `FOR UPDATE`.
    This makes concurrent association compose in `CVE` then `Ticket` order.
 4. Revalidate CVE accessibility from the locked CVE and its
@@ -987,10 +1003,11 @@ callers to resolve the assessment ID.
 1. Validate caller/provider authority and the accepted version using only input
    data. External caller categories and external providers raise `ValueError`;
    they cannot use this deletion boundary.
-2. Acquire `FOR SHARE` on the acting User and stabilize current active/VA
+2. Acquire `FOR SHARE` on the acting User and stabilize its assignment
    eligibility; then load the CVE with `FOR NO KEY UPDATE` and its associated
-   Ticket, if any, with `FOR UPDATE`. An ineligible User does not block an
-   otherwise effective delete but makes its assignment step a skip. A missing
+   Ticket, if any, with `FOR UPDATE`. A User that is not eligible for the
+   locked-current Ticket does not block an otherwise effective delete but
+   makes its assignment step a skip. A missing
    CVE produces the consumer CVE-path `CVE_NOT_FOUND` outcome.
 3. Revalidate consumer CVE accessibility from the locked CVE and its
    locked-current associated Ticket. Denial produces `CVE_NOT_FOUND` before
@@ -1250,13 +1267,15 @@ manual creation, and `cve_service.upsert_cve()`.
 
 ## Auto-Assignment Rule
 
-When an active user with the `vulnerability_analyst` role performs any modifying
-operation on a ticket with `assignee_id = NULL`, the ticket is
+When a user who is eligible to be the assignee of a ticket
+(`docs/features/identity/rbac.md`, Business Rule 10) performs any modifying
+operation on it while `assignee_id = NULL`, the ticket is
 automatically assigned to the acting user. A `TicketAuditEvent` with
 `event_type = assignment` is created atomically in the same transaction
-as the modifying operation. If the acting user is inactive or does not hold the
-`vulnerability_analyst` role (e.g., a `restricted_analyst`),
-auto-assignment is skipped — the ticket remains unassigned.
+as the modifying operation. If the acting user is not eligible — inactive, a
+bot account, without `triage_ticket`, or without effective scope `all` on a
+confidential ticket — auto-assignment is skipped and the ticket remains
+unassigned.
 
 After the assignment, if the ticket was in `New` status,
 `auto_assign_actor()` explicitly sets `status = Analysis` and creates a
@@ -1270,16 +1289,16 @@ an explicit status (e.g., `ignore_ticket` → `Ignored`,
 `mark_as_duplicate` → `Duplicated`): `auto_assign_actor` sets `Analysis`,
 the caller then sets the explicit status. The audit trail records two
 `status_change` events — `New → Analysis` and `Analysis → Ignored` (or
-`Duplicated`). This is correct and intentional: the VA claimed the ticket
-before choosing to act on it explicitly.
+`Duplicated`). This is correct and intentional: the acting user claimed the
+ticket before choosing to act on it explicitly.
 
 This rule is enforced via the shared helper `auto_assign_actor()`
 (see below), which is called by all modules that modify tickets under
 a `FOR UPDATE` lock (`ticket_mutations`, `package_service`,
 `ticket_service`).
 
-This rule does not apply to system operations (`acting_user is None`),
-inactive users, or users without the `vulnerability_analyst` role.
+This rule does not apply to system operations (`acting_user is None`) or to
+users who are not eligible to be the assignee of the ticket.
 Manual reference create, update, and delete also do not call this helper: they
 change supplementary editorial metadata without assignment, gate
 reconciliation, status change, or manual-zone exit.
@@ -1305,7 +1324,7 @@ async def auto_assign_actor(
     db: AsyncSession,
     force: bool = False,
 ) -> bool:
-    """Assign ticket to acting user if user is active and holds the VA role.
+    """Assign ticket to acting user if that user is eligible to be its assignee.
 
     When force=False (default): assigns only if ticket is currently
     unassigned. Used by all gate-relevant mutations as step 2.
@@ -1321,7 +1340,7 @@ async def auto_assign_actor(
 
     Preconditions: caller MUST hold FOR SHARE on a non-None acting_user before
     FOR UPDATE on the ticket row, must have resolved that locked User's current
-    VA-origin membership before the Ticket lock, and must still hold both locks.
+    role origins before the Ticket lock, and must still hold both locks.
     """
 ```
 
@@ -1330,13 +1349,15 @@ async def auto_assign_actor(
 1. If `acting_user is None` → return False (system action)
 2. If not `force` and `ticket.assignee_id is not None` → return False
    (already assigned)
-3. Use the caller's locked-current active value and VA-origin membership. If
-   the locked User is inactive or has no current VA role origin, return False.
-   A pre-lock in-memory role collection is not authoritative; the caller loads
-   or refreshes membership while holding the User lock and before acquiring the
-   Ticket lock. The helper performs no User query or lock while holding the
-   Ticket lock, except the unlocked previous-assignee username observation in
-   step 6
+3. Evaluate assignment eligibility (`docs/features/identity/rbac.md`,
+   Business Rule 10) from the caller's locked-current `active` value, `bot`
+   marker, and role origins, and from the locked-current
+   `ticket.is_confidential`. If the User is not eligible for the ticket,
+   return False. A pre-lock in-memory role collection is not authoritative;
+   the caller loads or refreshes the origins while holding the User lock and
+   before acquiring the Ticket lock. The helper performs no User query or
+   lock while holding the Ticket lock, except the unlocked previous-assignee
+   username observation in step 6
 4. If `ticket.assignee_id == acting_user.id` → return False (assignment
    unchanged, no audit event)
 5. Set `ticket.assignee_id = acting_user.id`
@@ -1437,8 +1458,8 @@ and status reconciliation). The test must cover:
   fallback including CVE-less Tickets, and proof that EOL, exclusion,
   affectedness, delivery, and severity-cascade winners are not inputs
 - **Manual SUSE assignment**: an effective manual create, update, or delete
-  assigns an unassigned Ticket only when the actor is active and holds the VA
-  role, after
+  assigns an unassigned Ticket only when the actor is eligible to be its
+  assignee, after
   no-op/not-found classification; `New` produces assignment then system
   `New → Analysis`; the external batch and default-version recalculation never
   assign
@@ -1562,8 +1583,8 @@ transaction. Individual candidate skips occur only before this boundary.
   status propagation, exclusion, and derived actionability
 - `docs/features/packages/product-lifecycle-transitions.md` — AIMAAS
   threshold changes triggering eligibility mutations
-- `docs/features/identity/user-service.md` — deactivation and final-role-loss
-  bulk unassignment (complementary to assignment-eligibility sanitation)
+- `docs/features/identity/user-service.md` — identity-driven bulk
+  unassignment (complementary to assignment-eligibility sanitation)
 - `docs/conventions.md` — Transaction and Locking (generic pessimistic
   locking pattern)
 - `docs/features/tickets/ticket-service.md` — Ticket lifecycle operations,
@@ -1576,8 +1597,9 @@ transaction. Individual candidate skips occur only before this boundary.
   preview and all-CVE runner invoking `recalculate_cvss_chain()`
 - `docs/features/platform/fetcher-infrastructure.md` — `catch_up()`
   per-ticket catch-up method contract
-- `docs/features/identity/rbac.md` — canonical Ticket visibility predicate and
-  capability/visibility orthogonality
+- `docs/features/identity/rbac.md` — canonical Ticket visibility predicate,
+  capability/visibility orthogonality, and assignment eligibility (Business
+  Rule 10)
 - `docs/features/tickets/ticket-priority.md` — Ticket priority resolution,
   `refresh_priority_auto()`, and refresh points
 - `docs/api-spec.md` — general API conventions and scoped accessibility

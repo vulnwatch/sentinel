@@ -435,7 +435,8 @@ as that person's actions: the owner's account is not a bot account.
 An administrator creates a dedicated local user such as
 `security-scanner` and marks it as a bot account
 (`docs/features/identity/user-management.md`, Bot Accounts), so that clients
-present its actions as automated. An operator authenticates as that user and
+present its actions as automated and its Ticket work never makes it a Ticket
+assignee. An operator authenticates as that user and
 creates an API key through the self-service endpoint. The automation then has
 its own roles and attribution. Administrators still cannot create its key on
 its behalf.

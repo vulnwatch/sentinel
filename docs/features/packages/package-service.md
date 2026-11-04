@@ -61,8 +61,8 @@ User-facing mutation operations accept an `acting_user_id: UUID | None`
 parameter where both user and system callers are supported:
 
 - `UUID` — action performed by an authorized acting user (enables
-  auto-assignment on unassigned tickets only when that user holds the
-  `vulnerability_analyst` role)
+  auto-assignment on unassigned tickets only when that user is eligible to be
+  their assignee, `docs/features/identity/rbac.md`, Business Rule 10)
 - `None` — system action (release detection, product lifecycle
   transitions). Auto-assignment does not apply
 
@@ -139,25 +139,25 @@ duration of an external HTTP call.
 
 ## Auto-Assignment Rule
 
-When an active VA performs any modifying operation on a ticket with
-`assignee_id = NULL`, the ticket is automatically assigned to the
-acting VA. This is enforced via the shared helper
+When a user eligible to be the assignee of a ticket performs any modifying
+operation on it while `assignee_id = NULL`, the ticket is automatically
+assigned to the acting user. This is enforced via the shared helper
 `ticket_mutations.auto_assign_actor()`.
 
 The narrow exception is a package-resolution invocation whose only database
 change is creation of system-derived `TicketPackageMaintainer` associations.
 That invocation does not call `auto_assign_actor()` because maintainership is
-authorization/work-routing metadata rather than a VA package-tree decision. If
-the same invocation also creates any package-tree record, the normal
-auto-assignment rule applies.
+authorization/work-routing metadata rather than a user's package-tree
+decision. If the same invocation also creates any package-tree record, the
+normal auto-assignment rule applies.
 
 **Module-level rule**: auto-assignment is always applied by the function
 that acquires the `FOR UPDATE` lock, never by orchestration wrappers. Before
 that Ticket lock, a user-attributed function capable of assignment acquires
-`FOR SHARE` on the acting User and stabilizes active VA eligibility. An
-ineligible actor leaves the ordinary package mutation available but skips
-assignment. System-only and association-only maintainership paths acquire no
-assignment User lock.
+`FOR SHARE` on the acting User and stabilizes its assignment eligibility. An
+actor ineligible for the locked-current Ticket leaves the ordinary package
+mutation available but skips assignment. System-only and association-only
+maintainership paths acquire no assignment User lock.
 For example, `add_package_to_ticket` does NOT apply auto-assignment — it
 delegates to `add_package_records()`, which calls `auto_assign_actor` after
 acquiring the lock only when package-tree state changes.
@@ -253,8 +253,8 @@ scope.
 **Behavior**:
 
 1. For a user-attributed call, acquire `FOR SHARE` on the acting User and
-   stabilize active VA eligibility. Then acquire `FOR UPDATE` on `ticket_id`.
-   A system call begins with the Ticket lock.
+   stabilize its assignment eligibility. Then acquire `FOR UPDATE` on
+   `ticket_id`. A system call begins with the Ticket lock.
 2. For a consumer caller, evaluate canonical Ticket accessibility against the
    locked-current Ticket. Missing and inaccessible both raise
    `TicketNotFoundError`.
@@ -541,7 +541,7 @@ request-resolved effective scope through the module-level caller boundary.
 
 If `eligible` is `bool` (override):
 
-1. Acquire `FOR SHARE` on the acting User, stabilize active VA eligibility,
+1. Acquire `FOR SHARE` on the acting User, stabilize its assignment eligibility,
    then acquire `FOR UPDATE` on the declared Ticket row
 2. Evaluate canonical locked-current Ticket accessibility for the consumer;
    missing and inaccessible both raise `TicketNotFoundError`
@@ -561,7 +561,7 @@ If `eligible` is `bool` (override):
 
 If `eligible` is `None` (reset to automatic):
 
-1. Acquire `FOR SHARE` on the acting User, stabilize active VA eligibility,
+1. Acquire `FOR SHARE` on the acting User, stabilize its assignment eligibility,
    then acquire `FOR UPDATE` on the declared Ticket row
 2. Evaluate canonical locked-current Ticket accessibility for the consumer;
    missing and inaccessible both raise `TicketNotFoundError`
@@ -853,7 +853,7 @@ remain implementation choices as long as they preserve this contract.
 **Behavior**:
 
 1. For a user-attributed invocation that can create package-tree state, acquire
-   `FOR SHARE` on the acting User and stabilize active VA eligibility. Then
+   `FOR SHARE` on the acting User and stabilize its assignment eligibility. Then
    acquire `FOR UPDATE` on the Ticket row. A system invocation has no User root
 2. For a consumer caller, evaluate canonical Ticket accessibility against the
    locked-current state. Missing and inaccessible both raise
@@ -967,8 +967,8 @@ implementation choice.
 1. Validate `acting_user_id` before any database operation. `None` raises
    `ValueError`; exclusion and restoration have no system caller.
 2. Resolve one `evaluation_date`, acquire `FOR SHARE` on the acting User and
-   stabilize active VA eligibility, then acquire `FOR UPDATE` on the declared
-   Ticket.
+   stabilize its assignment eligibility, then acquire `FOR UPDATE` on the
+   declared Ticket.
 3. Evaluate canonical locked-current Ticket accessibility. Missing and
    inaccessible both raise `TicketNotFoundError`.
 4. Call `ensure_ticket_operable(ticket)`.
@@ -2028,7 +2028,9 @@ transitions. The test must cover:
   excluded ancestor, parents with no actionable descendants, ancestor restore
   with directly excluded descendants, and deterministic reason precedence
 - **Auto-assignment**: mutations on unassigned tickets trigger assignment
-  to the locked-current active acting VA; every direct-mutation no-op occurs before assignment,
+  to the locked-current acting user only when that user is eligible to be the
+  assignee (a bot account or a restricted analyst on a confidential Ticket is
+  not); every direct-mutation no-op occurs before assignment,
   audit, Ticket reconciliation, and post-commit effects
 - **Nested ownership validation**: every package, track, and Product occurrence
   mutation validates the complete declared path under the Ticket lock; test a

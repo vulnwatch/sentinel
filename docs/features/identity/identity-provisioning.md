@@ -40,7 +40,7 @@ and implemented when this specification is activated.
 | `full_name` | Display name | — |
 | `email` | Primary email | Normalized to lowercase |
 | `active` | Active/inactive status | Drives deactivation side effects |
-| `bot` | Account type (to be defined) | Bot marker (`user-management.md`, Bot Accounts); see Open questions. `false` until the mapping is defined |
+| `bot` | Account type (to be defined) | Bot marker (`user-management.md`, Bot Accounts), an input of assignment eligibility; see Open questions. `false` until the mapping is defined |
 | `manager_id` | Manager's username/uid | Resolved to User FK |
 | Group memberships | Group names/displayNames | Used for role mapping derivation |
 
@@ -241,10 +241,11 @@ Response (**200**):
    `UserRole` records tagged with this mapping's `(role, group_name)`
    and returns `affected_users_count`. If the acting admin would lose
    their only source of admin role, the service raises
-   `SelfRoleRemovalError`. If the deleted mapping removes a user's final
-   `vulnerability_analyst` origin, the derived Ticket unassignment is
+   `SelfRoleRemovalError`. If the deleted mapping leaves a user ineligible
+   to be the assignee of an assigned active-status Ticket
+   (`rbac.md`, Business Rule 10), the derived Ticket unassignment is
    system-attributed and uses exact reason
-   `vulnerability_analyst role removed after role mapping deletion`
+   `role removed after role mapping deletion`
 3. Delete the `RoleMapping` record
 4. Create `IdentityAuditEvent` with
    `event_type = role_mapping_deleted` via
@@ -286,8 +287,11 @@ transaction contract defines concurrency among mapping CRUD and synchronization.
 That contract must stabilize the complete set of Users whose external
 `UserRole` origins can change, acquire the required User locks in ascending UUID
 order before changing any origin or acquiring any Ticket lock, and evaluate
-effective final `vulnerability_analyst` loss for exactly the Users whose origins
-were changed. The corresponding role mutation, derived Ticket unassignment,
+the assignment eligibility left by the change (`rbac.md`, Business Rule 10)
+for exactly the Users whose origins were changed. The same requirement
+applies to a provider change of the bot marker to `true`, which unassigns the
+User like a manual one (`user-service.md`, `update_user()`). The
+corresponding role mutation, derived Ticket unassignment,
 `role_added` or `role_removed` events, and applicable Ticket `assignment` events
 must commit or roll back atomically.
 
@@ -336,7 +340,10 @@ Provider.
   SUSEID sends service accounts, and if so how it designates them and how
   that designation maps to `User.bot` (`user-management.md`, Bot Accounts).
   Until this is defined, provisioning creates external users with
-  `bot = false` and never changes it
+  `bot = false` and never changes it. The answer gates activation: a bot
+  account is never the assignee of a Ticket (`rbac.md`, Business Rule 10),
+  so an external service account provisioned with `bot = false` and a role
+  that grants `triage_ticket` would be assignable
 
 ## Bootstrap Sequence (External Provisioning)
 

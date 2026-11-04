@@ -3091,8 +3091,10 @@ visibility predicate.
   exactly one acting-user `confidentiality_changed` event with no
   `access_grant_removed` events. Inject grant-deletion, audit, database, and
   flush failures and assert complete rollback of the flag, grants, and event.
-- After declassification, `false` to `true` creates only its own
-  `confidentiality_changed` event and does not recreate manual grants. Persisted
+- After declassification, `false` to `true` creates its own
+  `confidentiality_changed` event, no grant event, and, only when it clears an
+  ineligible assignee of a `New`, `Analysis`, or `Analyzed` Ticket, one system
+  `assignment` event; it does not recreate manual grants. Persisted
   `TicketPackageMaintainer` rows remain unchanged throughout; after
   reclassification an active associated user qualifies through an included
   package, while an excluded package remains non-qualifying until restored.
@@ -3929,24 +3931,55 @@ or identity audit validation are affected, tests MUST cover:
   with deactivation, and with login Session creation, and performs no bcrypt
   or Redis work while locked. A Session creation that loses to a committed
   reset creates no Session and records no `last_login_at`
-- concurrent removal of the final vulnerability-analyst role sources proves
-  that `update_roles` serializes the remaining-role check and performs ticket
-  unassignment and audit exactly once
+- concurrent removal of the last role sources that grant `triage_ticket`
+  proves that `update_roles` serializes the remaining-role evaluation and
+  performs ticket unassignment and audit exactly once
+- assignment eligibility (`docs/features/identity/rbac.md`, Business
+  Rule 10) is one predicate in every path: an active non-bot restricted
+  analyst is assignable to non-confidential Tickets only; a bot account is
+  never assignable, whatever its roles; a user holding `admin` and
+  `restricted_analyst` is assignable to confidential Tickets; an `admin`-only
+  or role-less user is never assignable; and a grant or maintainership never
+  makes a user with scope `non_confidential` assignable to a confidential
+  Ticket. Explicit assignment maps an inactive target to `409
+  TICKET_ASSIGNEE_INACTIVE` before any other ineligible target to `400
+  TICKET_ASSIGNEE_NOT_ELIGIBLE`
 - every assignment-capable Ticket, CVSS, and package path acquires User `FOR
-  SHARE` before CVE/Ticket locks. Independent sessions cover assignment-first
-  and deactivation/final-role-loss-first commit orders: the former is cleared by
-  the lifecycle batch, explicit assignment in the latter raises the existing
-  target error, and create/auto/embedded assignment skips without an event
-- identity unassignment selects assigned Tickets without a status prefilter,
-  locks them by UUID, clears locked-current `New`, `Analysis`, and `Analyzed`,
-  and preserves `Resolved`, `Ignored`, and `Duplicated`. Cover anomalous assigned
-  `New`, stale candidates, reassignment winners, repeated calls, exact reason
-  payloads, and complete rollback after audit/flush failure
-- reconciliation sanitation covers an inactive assignee, an active assignee
-  with no VA origin, and both conditions with `inactive assignee` precedence for
-  final `Analysis` and `Analyzed`; `Resolved` preserves the assignee. It performs
-  no User lock acquisition after the Ticket lock and creates no event for an
-  eligible, already-cleared, stale, losing, or rolled-back outcome
+  SHARE` before CVE/Ticket locks and evaluates confidentiality from the
+  locked-current Ticket. Independent sessions cover assignment-first and
+  eligibility-loss-first commit orders for deactivation, role removal, and
+  bot marking: the former is cleared by the lifecycle batch, explicit
+  assignment in the latter raises its target error, and
+  create/auto/embedded assignment skips without an event
+- identity unassignment selects assigned Tickets without a status or
+  confidentiality prefilter, locks them by UUID, clears locked-current `New`,
+  `Analysis`, and `Analyzed` assignments that the change makes ineligible, and
+  preserves `Resolved`, `Ignored`, and `Duplicated`. Removing
+  `vulnerability_analyst` while `restricted_analyst` remains clears only the
+  confidential Tickets; removing every role that grants `triage_ticket`, and
+  setting `bot = true`, clear every active-status assignment; removing one of
+  several origins, adding a role, and setting `bot = false` clear and restore
+  nothing. Cover anomalous assigned `New`, stale candidates, reassignment
+  winners, repeated calls, exact reason payloads, and complete rollback after
+  audit/flush failure
+- `update_user()` locks the User `FOR NO KEY UPDATE`; a change of `bot` to
+  `true` together with an `email` change completes without deadlock while
+  another transaction holds one of the User's Tickets and writes it again,
+  which revalidates its `assignee_id` foreign key to the User, and
+  its Ticket `assignment` events, which record the username before the
+  update, precede the call's field-change events
+- `set_confidentiality(true)` races with role removal and bot marking of the
+  assignee in both commit orders, with independent sessions, and no committed
+  active-status confidential Ticket keeps an assignee with scope
+  `non_confidential` or a bot assignee
+- reconciliation sanitation covers each failing condition alone (inactive,
+  bot account, no role granting `triage_ticket`, scope `non_confidential` on a
+  confidential Ticket) and the reason precedence of every combination for
+  final `Analysis` and `Analyzed`, including a Ticket made confidential while
+  `Resolved`, `Ignored`, or `Duplicated`; `Resolved` preserves the assignee.
+  It performs no User lock acquisition after the Ticket lock and creates no
+  event for an eligible, already-cleared, stale, losing, or rolled-back
+  outcome
 - `POST /api/v1/admin/users` returns 201 with no secret fields, enforces
   `manage_users`, covers unauthenticated 401, unauthorized 403, duplicate 409,
   validation/policy 422, initial roles, and atomic audit persistence
@@ -4003,9 +4036,19 @@ or identity audit validation are affected, tests MUST cover:
   entry, the complete profile and its `manager`, and `GET /api/v1/users/me`;
   the OpenAPI document declares `bot` as a required boolean of each of these
   schemas
-- the marker has no authorization or business-rule effect: a bot account
-  passes and fails exactly the capability checks of its roles, and a bot
-  account holding `vulnerability_analyst` is assignable
+- the marker has no authorization effect: a bot account passes and fails
+  exactly the capability checks of its roles, including a bot caller that
+  holds `triage_ticket` assigning a Ticket to an eligible user. Its only
+  business-rule effect is assignment eligibility: a bot account holding
+  `vulnerability_analyst` is neither assigned explicitly (`400
+  TICKET_ASSIGNEE_NOT_ELIGIBLE`) nor auto-assigned, nor assigned at creation
+  or by reopen and revert-duplicate, and a `New` Ticket that it works on
+  stays `New`
+- an effective change of the marker to `true` unassigns the account from
+  every `New`, `Analysis`, and `Analyzed` Ticket with one system
+  `assignment` event each (reason `bot account`), retains `Resolved`,
+  `Ignored`, and `Duplicated` assignments, and rolls back with the
+  `bot_changed` event; a change to `false` restores nothing
 - `manage-user list` renders the `BOT` column and `manage-user show` the
   `Bot:` line as `yes` or `no`
 
@@ -4024,8 +4067,9 @@ or identity audit validation are affected, tests MUST cover:
   role inserts the manual row and reports it in `added_roles`; removing that
   manual row while the external origin remains deletes only the manual row
   and reports it in `removed_roles`
-- removing one of multiple `vulnerability_analyst` origins, including a manual
-  row whose role remains effective through an external origin, creates zero
+- removing one of multiple origins of a role, including a manual row whose
+  role remains effective through an external origin, and removing a role
+  whose capabilities and scope a remaining role also grants, create zero
   Ticket mutation and zero `TicketAuditEvent`
 - self-removal with a missing manual Admin row is a no-op; self-removal with
   another Admin origin present succeeds; self-removal of the final Admin
@@ -4061,15 +4105,16 @@ or identity audit validation are affected, tests MUST cover:
   self-Admin guard applies only when actor and target are the same User — and
   can leave zero Admins; no global minimum is enforced and CLI recovery
   remains available
-- a final manual `vulnerability_analyst` removal concurrent with a manual VA
-  addition produces a stable outcome from lock order, with no duplicate
-  unassignment or audit event
-- final VA-origin removal concurrent with assignment retains the documented
-  outcomes: an assignment that commits first is cleared by the lifecycle
-  batch, while an explicit assignment that commits after the removal observes
-  the ineligible User and raises its existing target error; create,
-  auto-assignment, and embedded assignment skip without an event
-- a manual role addition after a final VA-origin loss does not restore any
+- a manual role removal that makes the user ineligible, concurrent with a
+  manual addition of the same role, produces a stable outcome from lock
+  order, with no duplicate unassignment or audit event
+- a role removal that makes the user ineligible, concurrent with
+  assignment, retains the documented outcomes: an assignment that commits
+  first is cleared by the lifecycle batch, while an explicit assignment that
+  commits after the removal observes the ineligible User and raises
+  `AssigneeNotEligibleError`; create, auto-assignment, and embedded assignment
+  skip without an event
+- a manual role addition after a role removal does not restore any
   previously cleared assignment
 
 **Manual role mutation API (`POST /api/v1/admin/users/{user}/roles`):**
@@ -4257,7 +4302,7 @@ or identity audit validation are affected, tests MUST cover:
   login failure
 - deactivation concurrent with manual role mutation follows the documented
   User-lock serialization and creates no duplicate Ticket event
-- the existing assignment/deactivation, final-VA-loss, and
+- the existing assignment/deactivation, role-removal, bot-marking, and
   grant-creation/deactivation races keep their coverage and assert no
   regression
 

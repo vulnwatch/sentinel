@@ -84,9 +84,12 @@ these fields. The only legitimate consumer of `update_user()` for external
 users is the sync process itself (`acting_user_id = None`).
 
 For local users (`external_id IS NULL`), administrators set `bot` at creation
-and change it through `update_user()`. The marker is descriptive only and no
-operation in this service decides anything on it (see
-`docs/features/identity/user-management.md`, Bot Accounts).
+and change it through `update_user()`. The marker is an input of assignment
+eligibility only (`docs/features/identity/rbac.md`, Business Rule 10):
+`update_user()` unassigns the user from their active-status Tickets when it
+becomes `true`, and no operation in this service reads it except to evaluate
+assignment eligibility (see `docs/features/identity/user-management.md`, Bot
+Accounts).
 
 Fields managed by dedicated operations have their own ownership rules:
 
@@ -430,14 +433,18 @@ shared logic used by multiple public operations.
 
 #### `_unassign_active_tickets(db, user, reason) -> None`
 
-This Category A helper accepts `db: AsyncSession`, the target `user: User`, and
-`reason: Literal["user deactivated", "vulnerability_analyst role removed",
-"vulnerability_analyst role removed by external sync",
-"vulnerability_analyst role removed after role mapping deletion"]`. The
-reconciliation-only `inactive assignee` reason is not accepted. The caller must
-already hold `FOR NO KEY UPDATE` on `user`. The locked User's `id` and username
-are the authoritative target and audit snapshot. No role or active-status guard
-applies inside this helper. A valid invocation returns `None`.
+This Category A helper clears every active-status assignment of a User that a
+lifecycle change makes ineligible for every Ticket. It accepts
+`db: AsyncSession`, the target `user: User`, and
+`reason: Literal["user deactivated", "bot account"]`: `deactivate_user()`
+passes `user deactivated` and `update_user()` passes `bot account`. The
+reasons of the other system unassignment paths are not accepted. The caller
+must already hold `FOR NO KEY UPDATE` on `user`. The locked User's `id` and
+username are the authoritative target and audit snapshot. No role, `active`,
+or bot-marker guard applies inside this helper: the caller
+invokes it only for a change after which the User is eligible for no Ticket
+(`docs/features/identity/rbac.md`, Business Rule 10). A valid invocation
+returns `None`.
 
 **Behavior**:
 
@@ -473,40 +480,56 @@ exceptions propagate unchanged. Any escaping exception or caller rollback
 rolls back every clear and event in the complete caller-owned identity
 workflow.
 
-#### `_unassign_tickets_on_va_role_loss(db, user, reason) -> None`
+#### `_unassign_ineligible_tickets(db, user, reason) -> None`
 
-This Category A helper accepts `db: AsyncSession`, a `user: User` already locked
-`FOR NO KEY UPDATE` by the caller, and
-`reason: Literal["vulnerability_analyst role removed",
-"vulnerability_analyst role removed by external sync",
-"vulnerability_analyst role removed after role mapping deletion"]`. The caller
-invokes it only after applying the intended `UserRole` deletions in the same
-transaction. It returns `None` and does not acquire or upgrade the User lock.
+This Category A helper clears the active-status assignments that a role-origin
+removal leaves ineligible. It accepts `db: AsyncSession`, a `user: User`
+already locked `FOR NO KEY UPDATE` by the caller, and
+`reason: Literal["role removed", "role removed by external sync",
+"role removed after role mapping deletion"]`. The caller invokes it only after
+applying the intended `UserRole` deletions in the same transaction. It returns
+`None` and does not acquire or upgrade the User lock.
 
-1. Query whether any transaction-visible `UserRole` remains for `user.id` and
-   `vulnerability_analyst`, across every `group_name` origin.
-2. If at least one origin remains, return without changing a Ticket or creating
-   an event.
-3. If none remains, delegate to `_unassign_active_tickets(db, user, reason)`.
+1. Resolve the User's side of assignment eligibility
+   (`docs/features/identity/rbac.md`, Business Rule 10) from the locked
+   User's `active` and `bot` values and the capabilities and effective scope
+   of every transaction-visible `UserRole` origin.
+2. If the User is active, not a bot account, holds `triage_ticket`, and has
+   effective scope `all`, it is eligible for every Ticket: return without
+   changing a Ticket or creating an event.
+3. Otherwise select and lock every Ticket assigned to the User exactly as
+   `_unassign_active_tickets()` step 1 does, without filtering by status or
+   by confidentiality, and revalidate each locked-current candidate as in its
+   step 2.
+4. Preserve a candidate, with no event, when its assignee is no longer the
+   User, its status is `Resolved`, `Ignored`, or `Duplicated`, or the User
+   is eligible for its locked-current state: a User with `triage_ticket` and
+   effective scope `non_confidential` remains eligible for a Ticket whose
+   locked-current `is_confidential` is `false`. Clear every other candidate,
+   and create its event, as in `_unassign_active_tickets()` steps 3–5.
 
-Removing only one of multiple origins is therefore an idempotent no-op for
-Ticket state. Re-invocation after effective final loss delegates safely and
-finds no active assignment to clear. An invalid reason raises `ValueError`
-before Ticket mutation. Database, lock-timeout, cancellation, delegated audit,
-and flush exceptions propagate unchanged and roll back the caller-owned role,
-Ticket, and audit transaction.
+Removing only one of multiple origins of a role, or a role whose capabilities
+and scope another remaining role also grants, is therefore an idempotent no-op
+for Ticket state. Selecting candidates without a confidentiality filter and
+deciding from the locked-current Ticket keeps the outcome correct when
+`ticket_service.set_confidentiality()` changes a candidate concurrently (see
+Concurrency Considerations). Re-invocation finds no remaining ineligible
+active-status assignment to clear. An invalid reason raises `ValueError`
+before Ticket mutation. Database, lock-timeout, cancellation, audit, and flush
+exceptions propagate unchanged and roll back the caller-owned role, Ticket,
+and audit transaction.
 
 For a multi-User role-origin batch, the orchestrator first locks every affected
 User `FOR NO KEY UPDATE` in ascending UUID order, applies and revalidates the
-role changes, selects the unfiltered union of Tickets assigned to Users with
-effective final loss, and locks that union in ascending Ticket UUID order. It
-then applies `_unassign_active_tickets()`'s locked-current status, assignment,
-audit, and no-op rules over that union in the same Ticket order. The internal
-batch/helper composition is an implementation choice; it may not reacquire
-locks in an order that changes this guarantee. It must not alternate one User
-and that User's Tickets before locking the next User. Deferred mapping workflows
-must also satisfy the activation gate in `identity-provisioning.md` before using
-this composition.
+role changes, selects the unfiltered union of Tickets assigned to Users that
+are no longer eligible for every Ticket, and locks that union in ascending
+Ticket UUID order. It then applies this helper's locked-current eligibility,
+status, assignment, audit, and no-op rules over that union in the same Ticket
+order. The internal batch/helper composition is an implementation choice; it
+may not reacquire locks in an order that changes this guarantee. It must not
+alternate one User and that User's Tickets before locking the next User.
+Deferred mapping workflows must also satisfy the activation gate in
+`identity-provisioning.md` before using this composition.
 
 ### `create_user()`
 
@@ -635,9 +658,13 @@ operations with their own business rules.
 
 **Behavior**:
 
-1. Acquire a `FOR UPDATE` lock on the User row by ID. If not found, raise
-   `UserNotFoundError`. The locked row is the authoritative source for guards,
-   old audit values, and no-op detection
+1. Acquire a `FOR NO KEY UPDATE` lock on the User row by ID. If not found,
+   raise `UserNotFoundError`. The locked row is the authoritative source for
+   guards, old audit values, and no-op detection. A change of `bot` to `true`
+   requires this mode, which conflicts with the `FOR SHARE` lock of every
+   assignment path while remaining compatible with foreign-key
+   `FOR KEY SHARE` validation (`docs/conventions.md`, Cross-Domain Root Lock
+   Order)
 2. If `user.external_id IS NOT NULL` and `acting_user_id` is not None:
    raise `ExternalUserFieldReadOnlyError`. Identity fields and the bot marker
    of external users are managed exclusively by external sync (see External
@@ -684,6 +711,19 @@ operations with their own business rules.
    `email`. If no provided field differs, this is a no-op: no UPDATE is
    issued, no audit event is created, `changed_fields` is empty, and the
    result's `user` is the locked row loaded in step 1.
+
+   When the effective changes include `bot` from `false` to `true`, call
+   `_unassign_active_tickets(db, user, "bot account")` after classifying
+   the changes and before assigning any requested value to the User: a bot
+   account is eligible for no Ticket (`docs/features/identity/rbac.md`,
+   Business Rule 10). The helper's queries would otherwise flush pending User
+   changes; it must lock the User's Tickets while the User row is still
+   unwritten, because an update of `username` or `email`, columns with a
+   unique index, takes a row lock that conflicts with the foreign-key
+   validation of a transaction that holds one of those Tickets
+   (`docs/conventions.md`, Cross-Domain Root Lock Order). Its events
+   therefore record the username before this update. A change of `bot` to
+   `false` unassigns nothing and restores no assignment.
 7. For each changed field other than `synced_at`, create an
    `IdentityAuditEvent` via `IdentityAuditLog.log_event()`:
    `username_changed`, `email_changed`, `full_name_changed`, `bot_changed`,
@@ -708,7 +748,9 @@ waiting caller observes the committed values and its result describes only
 its own effective changes. Locks are not acquired on unrelated users.
 Normalized email UNIQUE constraints remain authoritative for concurrent
 updates of two different users; a loser receives `UserConflictError` and
-rolls back its mutation and audit events.
+rolls back its mutation and audit events. A change of `bot` to `true`
+serializes with assignment and confidentiality changes as described in
+Assignment concurrent with eligibility loss.
 
 **Re-invocation**: conditionally idempotent. Fields whose normalized requested
 value already equals stored state are no-ops and create no audit event; only
@@ -716,7 +758,10 @@ effective field changes are persisted and audited, and `changed_fields`
 reports exactly those effective changes. A fully no-op re-invocation returns
 an empty `changed_fields`.
 
-**TicketAuditEvent**: none
+**TicketAuditEvent**: for an effective change of `bot` to `true`, one system
+`assignment` event per cleared Ticket, with reason `bot account`, created by
+`_unassign_active_tickets()` before the identity events of step 7. Otherwise
+none
 
 **IdentityAuditEvent**: one per changed field other than `synced_at`
 (`username_changed`, `email_changed`, `full_name_changed`, `bot_changed`,
@@ -730,8 +775,8 @@ Adds or removes manual (`group_name = '_manual'`) role assignments for a
 user. The operation never inserts, deletes, or mutates a row with any other
 `group_name`: external role origins are owned by `sync_role_mapping()` and
 `delete_role_mapping_roles()` and remain unchanged. External origins still
-participate in effective-role evaluation, the self-Admin guard, and final VA
-origin loss.
+participate in effective-role evaluation, the self-Admin guard, and assignment
+eligibility.
 
 Callers pass role values rather than `(role, group_name)` pairs; the
 `_manual` origin is implicit.
@@ -806,7 +851,7 @@ Callers pass role values rather than `(role, group_name)` pairs; the
 
    Rows with `group_name != '_manual'` are never candidates for change. They
    are observed only to evaluate effective role membership, effective
-   self-Admin status, and final VA-origin loss
+   self-Admin status, and assignment eligibility
 4. Apply the self-removal guard against the classified effective deletions
    (Business Rule 2). A rejection raises before any mutation, audit event, or
    Ticket change
@@ -815,14 +860,15 @@ Callers pass role values rather than `(role, group_name)` pairs; the
    `assigned_by = acting_user_id`
 6. Delete the matching `_manual` rows for the effective deletions in
    ascending role wire-format order
-7. If `vulnerability_analyst` is among the effective deletions, call
-   `_unassign_tickets_on_va_role_loss(db, user,
-   "vulnerability_analyst role removed")`.
+7. If there is at least one effective deletion, call
+   `_unassign_ineligible_tickets(db, user, "role removed")`.
    **Ordering invariant**: this step MUST execute after step 6's deletion,
-   because `_unassign_tickets_on_va_role_loss()` checks for *remaining* VA
-   origins — if the deleted row were still visible, the check would always
-   find it and never trigger unassignment. A manual deletion whose role
-   remains effective through an external origin changes no Ticket
+   because `_unassign_ineligible_tickets()` evaluates the *remaining*
+   origins — if a deleted row were still visible, the evaluation would
+   still find its capabilities and scope and never trigger unassignment. A
+   manual deletion whose role remains effective through an external origin,
+   or whose capabilities and scope another remaining role grants, changes no
+   Ticket. Effective insertions alone never call the helper
 8. Create Identity audit events for every effective `_manual` insertion and
    deletion via `IdentityAuditLog.log_event()`, in this order:
    - one `role_added` per effective insertion, in ascending wire-format
@@ -837,7 +883,7 @@ Callers pass role values rather than `(role, group_name)` pairs; the
    row, a missing `_manual` row, or a concurrent loser that observes the
    requested state
 9. Flush every `UserRole` mutation and Identity event.
-   `_unassign_tickets_on_va_role_loss()` flushes its own Ticket clears and
+   `_unassign_ineligible_tickets()` flushes its own Ticket clears and
    TicketAuditEvents in the same caller-owned transaction
 10. Return `RoleUpdateResult(user, added_roles, removed_roles)`:
     - `user` is the updated User with profile, manager, and role assignments
@@ -880,9 +926,7 @@ mutations for one User serialize deterministically:
 **Re-invocation**: conditionally idempotent. Repeating a successful
 invocation observes the already-reached state and returns a
 `RoleUpdateResult` with empty `added_roles` and `removed_roles`; it creates
-no `UserRole` row, no Identity event, and no Ticket mutation. Re-invoking
-after an effective final VA-origin loss delegates safely and finds no active
-assignment to clear.
+no `UserRole` row, no Identity event, and no Ticket mutation.
 
 **Exceptions**: `UserNotFoundError` (unknown target User),
 `SelfRoleRemovalError` (effective final Admin origin loss), database and
@@ -893,12 +937,15 @@ propagate as database errors; the complete caller-owned transaction rolls
 back, including `UserRole` rows, Identity events, Ticket clears, and Ticket
 events.
 
-**TicketAuditEvent**: if the effective deletions remove the user's final
-`vulnerability_analyst` origin — no remaining `UserRole` row for that role
-from any `group_name` — one `assignment` event per unassigned active ticket,
-with reason `vulnerability_analyst role removed`. Removing one of multiple VA
-origins, or a manual row whose role remains effective through an external
-origin, creates none. See `_unassign_tickets_on_va_role_loss()` and
+**TicketAuditEvent**: one system `assignment` event, with reason
+`role removed`, per active-status Ticket assigned to the user for which the
+user is ineligible after the deletions, evaluated with the remaining origins
+of every `group_name` (`docs/features/identity/rbac.md`, Business Rule 10):
+every such Ticket when no remaining role grants `triage_ticket`, and only the
+confidential ones when `triage_ticket` remains but no remaining role has
+scope `all`. A deletion after which the user remains eligible for every
+Ticket creates none. See
+`_unassign_ineligible_tickets()` and
 `docs/features/tickets/ticket-audit-log.md`.
 
 **IdentityAuditEvent**: one `role_added` per effective `_manual` insertion
@@ -945,10 +992,9 @@ this function has no callers.
    system-assigned regardless of the initiator)
 5. Delete all `UserRole` records where `user_id` is in `to_remove`,
    `role` matches, and `group_name` matches
-6. VA role loss check: if `role` is `vulnerability_analyst` and
-   `to_remove` is non-empty, apply
-   `_unassign_tickets_on_va_role_loss()` with reason
-   `vulnerability_analyst role removed by external sync` to every User whose
+6. Eligibility loss check: if `to_remove` is non-empty, apply
+   `_unassign_ineligible_tickets()` with reason
+   `role removed by external sync` to every User whose
    removal is effective. The complete affected-set stabilization, lock, and
    same-mapping concurrency contract is deferred to
    `identity-provisioning.md`; this function must not be activated until that
@@ -974,11 +1020,9 @@ the same no-op outcome through the affected-set stabilization and locking
 that this function's deferred activation contract requires (see
 `identity-provisioning.md`) and create no duplicate audit event.
 
-**TicketAuditEvent**: if `role` is `vulnerability_analyst` and removing
-it causes any user to lose the role entirely (no remaining `UserRole`
-records from any origin), one `assignment` event per unassigned active
-ticket per affected user. See `_unassign_tickets_on_va_role_loss()`.
-Otherwise, none.
+**TicketAuditEvent**: one `assignment` event per active-status Ticket for
+which a removal leaves an affected user ineligible, as for `update_roles()`.
+See `_unassign_ineligible_tickets()`. Otherwise, none.
 
 **IdentityAuditEvent**: `role_added` / `role_removed` per effective change,
 with `user_id = acting_user_id` and mapping detail. See
@@ -1011,9 +1055,8 @@ Used when a role mapping is deleted via
    Assign admin via another mapping or manually before retrying."
    No `UserRole` records are removed — the operation is atomic
 3. Delete all matching `UserRole` records
-4. VA role loss check: if `role` is `vulnerability_analyst`, apply
-   `_unassign_tickets_on_va_role_loss()` with reason
-   `vulnerability_analyst role removed after role mapping deletion` to every
+4. Eligibility loss check: apply `_unassign_ineligible_tickets()` with
+   reason `role removed after role mapping deletion` to every
    User whose removal is effective. The complete affected-set stabilization,
    lock, and CRUD/sync concurrency contract is deferred to
    `identity-provisioning.md`; this function must not be activated until that
@@ -1026,11 +1069,9 @@ Used when a role mapping is deleted via
    `IdentityAuditLog.log_event()`
 6. Return `affected_users_count`
 
-**TicketAuditEvent**: if `role` is `vulnerability_analyst` and removing
-it causes any user to lose the role entirely (no remaining `UserRole`
-records from any origin), one `assignment` event per unassigned active
-ticket per affected user. See `_unassign_tickets_on_va_role_loss()`.
-Otherwise, none.
+**TicketAuditEvent**: one `assignment` event per active-status Ticket for
+which the removal leaves an affected user ineligible, as for
+`update_roles()`. See `_unassign_ineligible_tickets()`. Otherwise, none.
 
 **IdentityAuditEvent**: `role_removed` per affected user. See
 `docs/features/identity/identity-audit-log.md`.
@@ -1191,10 +1232,10 @@ no mutation and no audit event. A concurrent loser behaves identically.
 - **deactivation / manual role mutation**: both serialize on the User lock.
   The first to commit performs any Ticket unassignment; the second finds no
   assigned tickets or an already-inactive User and creates no duplicate
-  `assignment` event (see Concurrent role removal and deactivation).
+  `assignment` event (see Concurrent eligibility losses).
 - **deactivation / Ticket assignment**: inherited unchanged from the stable
   assignment-eligibility contract (see Assignment concurrent with
-  deactivation or active manual role loss).
+  eligibility loss).
 - **deactivation / access-grant creation**: inherited unchanged; deactivation
   retains every grant row (see Access grant concurrent with user lifecycle or
   rename).
@@ -1458,17 +1499,19 @@ Rules) ensures that:
 
 `update_roles()` always executes within the caller-owned transaction. Every
 effective `_manual` `UserRole` insertion or deletion, its Identity event, and
-— when the final `vulnerability_analyst` origin is lost — the derived Ticket
-unassignment and TicketAuditEvents commit or roll back as one unit. A
-validation, insertion, or flush failure in either audit trail rolls back the
-complete role and Ticket workflow. `sync_role_mapping()` and
-`delete_role_mapping_roles()` keep the same all-or-nothing requirement when
-removing the `vulnerability_analyst` role and additionally inherit the
+— when a deletion leaves the user ineligible for an assigned active-status
+Ticket — the derived Ticket unassignment and TicketAuditEvents commit or roll
+back as one unit. A validation, insertion, or flush failure in either audit
+trail rolls back the complete role and Ticket workflow.
+`sync_role_mapping()` and `delete_role_mapping_roles()` keep the same
+all-or-nothing requirement when removing a role and additionally inherit the
 activation gate in `identity-provisioning.md`.
 
 `create_user`, `update_user`, and `reactivate_user` use the same contract:
 their identity audit events are mandatory side effects and therefore must be
-atomic with their lifecycle writes.
+atomic with their lifecycle writes. For `update_user`, the Ticket unassignment
+of a change of `bot` to `true` and its TicketAuditEvents belong to the same
+unit.
 
 For deactivation, the caller-provided identity reason and the canonical Ticket
 unassignment reason are deliberately independent. Every required identity and
@@ -1518,27 +1561,30 @@ requests on the same User. Manual mutations never touch a row whose
    propagates as a database error and rolls back the complete caller-owned
    transaction
 
-The User lock is additionally authoritative for effective VA eligibility and
-for effective Admin status in active manual role mutation. It serializes
-manual origin changes with assignment and deactivation, so final VA-origin
-loss and the self-Admin guard are evaluated from the locked-current origin
-set. Deferred external-origin mutations are governed by the activation gate
-in `identity-provisioning.md`.
+The User lock is additionally authoritative for the role-derived inputs of
+assignment eligibility and for effective Admin status in active manual role
+mutation. It serializes manual origin changes with assignment and
+deactivation, so the eligibility left by a removal and the self-Admin guard
+are evaluated from the locked-current origin set. Deferred external-origin
+mutations are governed by the activation gate in
+`identity-provisioning.md`.
 
-### Concurrent role removal and deactivation
+### Concurrent eligibility losses
 
-If `update_roles()` removes the VA role and `deactivate_user()` runs
-concurrently for the same user, both may attempt ticket unassignment.
-Conflicting pessimistic row locks on the User row in both operations serialize
-them (both use `FOR NO KEY UPDATE`). The first to commit performs the
-unassignment; the second finds
-no assigned tickets (or finds the user already inactive) and is a no-op. No
-duplicate TicketAuditEvents are created.
+If two of `update_roles()` removing a role, `update_user()` setting `bot` to
+`true`, and `deactivate_user()` run concurrently for the same user, each may
+attempt ticket unassignment. Conflicting pessimistic row locks on the User
+row serialize them (`FOR NO KEY UPDATE` in each operation). The first to
+commit performs the unassignment of the Tickets it makes ineligible; the
+second finds those Tickets no longer assigned to the user, or the user already
+inactive or a bot account, and clears only what its own change makes
+ineligible among the remaining assignments. No duplicate TicketAuditEvents
+are created.
 
-Independent-session tests for active manual role mutation and deactivation
-cover the User-then-ascending-Ticket lock order,
+Independent-session tests for active manual role mutation, bot marking, and
+deactivation cover the User-then-ascending-Ticket lock order,
 locked-current predicate revalidation, and one system `assignment` event per
-effective unassignment. They assert the exact four identity-owned reason values,
+effective unassignment. They assert the exact identity-owned reason values,
 `detail = NULL`, no event for an already-cleared or no-longer-active candidate,
 and complete rollback of identity and Ticket changes after an audit failure.
 
@@ -1582,26 +1628,52 @@ superseded. Password hashing, bcrypt verification, and Redis I/O remain
 outside the User lock, and the local login workflow is the only caller that
 supplies a credential snapshot.
 
-### Assignment concurrent with deactivation or active manual role loss
+### Assignment concurrent with eligibility loss
 
 Every assignment-capable path acquires `FOR SHARE` on its prospective assignee
-User before any CVE or Ticket root and validates eligibility from that locked
-state. Deactivation and active manual VA role-origin mutation use conflicting
-`FOR NO KEY UPDATE` on the same User. The outcomes are therefore stable:
+User before any CVE or Ticket root, validates the User's side of eligibility
+from that locked state, and evaluates the Ticket's confidentiality under the
+Ticket lock (`docs/features/identity/rbac.md`, Business Rule 10).
+Deactivation, active manual role-origin mutation, and a change of `bot` to
+`true` use conflicting `FOR NO KEY UPDATE` on the same User. The outcomes are
+therefore stable:
 
 - if assignment obtains the User lock first, the lifecycle transaction waits;
-  after assignment commits, it observes and clears that assignment when the
-  Ticket is in `New`, `Analysis`, or `Analyzed`;
-- if deactivation or effective final VA-role loss obtains the User lock first,
-  assignment waits and then observes the committed ineligible User. Explicit
-  assignment raises its existing inactive or non-VA exception. Manual creation,
-  auto-assignment, and embedded/forced assignment skip assignment and continue
+  after assignment commits, it observes that assignment and clears it when the
+  Ticket is in `New`, `Analysis`, or `Analyzed` and the change makes the User
+  ineligible for it;
+- if the eligibility-losing change obtains the User lock first, assignment
+  waits and then observes the committed User. Explicit assignment to a User
+  that is now ineligible for the Ticket raises `AssigneeInactiveError` or
+  `AssigneeNotEligibleError`. Manual creation, auto-assignment, and
+  embedded/forced assignment skip assignment for such a User and continue
   with their ordinary non-assignment behavior; and
 - rejected, skipped, stale, losing, repeated, and rolled-back outcomes create no
   assignment event.
 
+`ticket_service.set_confidentiality()` can also make the current assignee
+ineligible, but it locks only the Ticket: it observes the assignee's `active`,
+`bot`, and role origins without a lock after acquiring the Ticket lock
+(`docs/features/tickets/ticket-service.md`, `set_confidentiality`). Because
+every identity batch above selects the User's assigned Tickets without a
+confidentiality filter and decides from the locked-current Ticket, both
+orders are safe:
+
+- if `set_confidentiality()` locks the Ticket first, its observation precedes
+  the commit of a concurrent identity change and may still see the User as
+  eligible; the identity batch then waits for the Ticket, observes the
+  committed confidential Ticket, and clears an assignment that its own change
+  makes ineligible;
+- if the identity batch locks the Ticket first, `set_confidentiality()` waits,
+  then observes the committed User and clears an assignee that is ineligible
+  for the confidential Ticket.
+
+An observation made while a role addition for the assignee is still
+uncommitted sees the User without that role and clears the assignment; the
+later addition restores nothing.
+
 No committed active-status Ticket can retain an assignee made ineligible by one
-of these serialized lifecycle changes. Reconciliation sanitation remains a
+of these serialized changes. Reconciliation sanitation remains a
 defensive current-state invariant check for Tickets that return from an inactive
 status or for anomalous data; it is not the primary repair for this race. No
 periodic task, recovery state, or audit-derived repair is introduced.
@@ -1695,7 +1767,7 @@ synchronization, which have no such boundary in front of the service.
 | `docs/features/identity/rbac.md` | Admin API endpoints delegate to `update_roles`, `deactivate_user`, `reactivate_user` |
 | `docs/features/identity/user-management.md` | CLI commands resolve their target through `get_user_by_username` and delegate to `create_user`, `update_user`, `update_roles`, `deactivate_user`, `reactivate_user` |
 | `docs/features/identity/local-authentication.md` | Defines password management. `create_user` accepts an optional password. CLI `set-password` and admin endpoint delegate to `reset_password` |
-| `docs/features/tickets/ticket-audit-log.md` | `deactivate_user` creates TicketAuditEvents per the `assignment` event type contract |
+| `docs/features/tickets/ticket-audit-log.md` | `deactivate_user`, `update_user` (bot marker), and the role-removing operations create TicketAuditEvents per the `assignment` event type contract |
 | `docs/features/identity/identity-audit-log.md` | All identity mutations create IdentityAuditEvents per the event type contract |
 | `docs/features/platform/audit-trail-infrastructure.md` | BaseAuditLog, AuditEventMixin, naming conventions |
 | `docs/data-model.md` | User and UserRole table definitions |
