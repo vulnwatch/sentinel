@@ -396,6 +396,7 @@ class TestNoOpRequests:
             "external_id",
             "manager",
             "roles",
+            "assignment_eligibility",
             "last_login_at",
             "created_at",
             "updated_at",
@@ -403,6 +404,7 @@ class TestNoOpRequests:
         assert data["id"] == str(target.id)
         assert data["username"] == "rolesnooptarget"
         assert data["full_name"] == "Dana Example"
+        assert data["assignment_eligibility"] == "all"
         assert _profile_roles(response.json()) == [
             ("vulnerability_analyst", "_manual", None)
         ]

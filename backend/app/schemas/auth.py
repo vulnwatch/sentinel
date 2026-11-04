@@ -18,7 +18,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.core.enums import Capability
+from app.core.enums import AssignmentEligibility, Capability
 from app.schemas.common import RoleValue
 
 
@@ -55,7 +55,10 @@ class CurrentUserData(BaseModel):
     wire-sorted union of the capabilities of those roles (see `rbac.md`,
     Capability Wire Format). Both are typed with their value sets, so
     the OpenAPI document publishes each as an `enum`. `capabilities` is
-    informational and grants nothing."""
+    informational and grants nothing. `assignment_eligibility` states for
+    which Tickets the user is eligible to be the assignee (`rbac.md`,
+    Assignment Eligibility Wire Format); it is derived from the same
+    roles and the user's `active` and `bot`, and is informational too."""
 
     id: UUID
     username: str
@@ -65,6 +68,7 @@ class CurrentUserData(BaseModel):
     capabilities: list[Capability]
     active: bool
     bot: bool
+    assignment_eligibility: AssignmentEligibility
 
 
 class CurrentUserResponse(BaseModel):

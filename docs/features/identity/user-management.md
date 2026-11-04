@@ -45,9 +45,12 @@ assignment eligibility, the marker changes no authorization, capability,
 scope, role, authentication method, session, API key, audit attribution, or
 other business rule: Sentinel treats a bot account exactly like every other
 account with the same origin, roles, and state. No other operation decides
-anything on the marker, and no list filters or sorts on it. Clients also use
-it to present the actions of bot accounts differently from those of people,
-for example in a Ticket audit log.
+anything on the marker, and no list filters or sorts on it directly: the
+`assignment_eligibility` filter of List Users and List Users (Admin) selects
+users by the outcome of Business Rule 10, for which every bot account has
+the value `none`. Clients also use the marker to present the
+actions of bot accounts differently from those of people, for example in a
+Ticket audit log.
 
 Who sets the marker follows the origin of the user (see External User Data
 Ownership in `docs/features/identity/user-service.md`):
@@ -80,9 +83,11 @@ User). The `manage-user list` and `manage-user show` commands display it.
 > value is breaking (`docs/api-spec.md`, Response Enums), and it would be
 > confused with the authentication source (`local` or `external`). Neither
 > List Users nor List Users (Admin) declares a `bot` filter: a client that
-> excludes bot accounts, such as an assignment picker, reads the `bot` field
-> of each entry, and bot accounts are few; adding the filter later is
-> additive (`docs/api-spec.md`, Versioning).
+> lists the users who can be the assignee of a Ticket, such as an assignment
+> picker, uses the `assignment_eligibility` filter, which excludes bot
+> accounts together with every other ineligible user, and a client that only
+> presents bot accounts differently reads the `bot` field of each entry;
+> adding a `bot` filter later is additive (`docs/api-spec.md`, Versioning).
 
 ## CLI Commands
 
@@ -857,7 +862,7 @@ The API exposes user records to two audiences:
 - **The user directory** (List Users and Get User under Directory API
   endpoints) is accessible to every authenticated user (read-only) and
   returns the directory entry: a user's identity, email, active status, bot
-  marker, and role values.
+  marker, role values, and assignment eligibility.
 - **The complete user profile** is returned only by the administrator API: its
   list and detail reads (List Users (Admin) and Get User (Admin)) and the
   responses of the administrator mutation operations.
@@ -872,18 +877,19 @@ caller capability.
 > authentication (`docs/features/identity/rbac.md`, Access Levels), so the
 > directory serves every user account, role-less readers included. Its
 > consumers, such as an assignment picker (the users eligible to be the
-> assignee of a Ticket, `docs/features/identity/rbac.md`, Business Rule 10), an
-> access-grant picker (a search by name, username, or email), and Ticket
-> filters, need a user's identity, email, and role values. The other fields of
-> the profile serve only user administration: the authentication source, the
-> external identity provider's identifier, the manager, the origin of each
-> role (the granting external group, the assigning administrator, and the
-> assignment time), the record timestamps, and the last login. The directory
-> therefore omits them, and it filters, searches, and sorts only on the fields
-> that its entry returns, so a query cannot reveal a value that the response
-> withholds. The omitted fields remain part of the User record. Adding a field
-> to the directory entry later is an additive change; removing one is breaking
-> (`docs/api-spec.md`, Versioning).
+> assignee of a Ticket, `docs/features/identity/rbac.md`, Business Rule 10,
+> which it selects through their assignment eligibility), an access-grant
+> picker (a search by name, username, or email), and Ticket filters, need a
+> user's identity, email, role values, and assignment eligibility. The other
+> fields of the profile serve only user administration: the authentication
+> source, the external identity provider's identifier, the manager, the
+> origin of each role (the granting external group, the assigning
+> administrator, and the assignment time), the record timestamps, and the
+> last login. The directory therefore omits them, and it filters, searches,
+> and sorts only on the fields that its entry returns, so a query cannot
+> reveal a value that the response withholds. The omitted fields remain part
+> of the User record. Adding a field to the directory entry later is an
+> additive change; removing one is breaking (`docs/api-spec.md`, Versioning).
 
 ### Directory API endpoints
 
@@ -913,6 +919,13 @@ Query parameters:
   roles (e.g., `?role=admin&role=vulnerability_analyst`)
 - `has_role` (boolean, optional): `true` to return only users with at
   least one role, `false` for users with no roles
+- `assignment_eligibility` (enum, repeatable, optional): filter by
+  assignment eligibility (`all`, `non_confidential`, `none`; `rbac.md`,
+  Assignment Eligibility Wire Format). Multiple values use OR semantics —
+  returns users whose `assignment_eligibility` is one of the specified
+  values. The users eligible to be the assignee of a confidential Ticket are
+  `?assignment_eligibility=all`, and those of a non-confidential Ticket
+  `?assignment_eligibility=all&assignment_eligibility=non_confidential`
 - Standard pagination (`page`, `per_page`) and sorting (`sort_by`,
   `sort_order`). Valid `sort_by` fields: `username` (default),
   `full_name`, `email`
@@ -922,6 +935,13 @@ Default `sort_order` is `asc`, producing alphabetical username ordering.
 Filters of different kinds combine with AND semantics (e.g., `role=admin`
 and `active=true` together return only active administrators); repeated
 values of the same filter combine with OR semantics as stated above.
+
+For one database state, the `assignment_eligibility` filter selects exactly
+the users whose entry carries one of the specified values, and `meta.total`
+counts exactly them. A change committed while a request is processed can make
+one entry differ from the filter or from `meta.total`, as for every other
+filter; the value is informational (`rbac.md`, Assignment Eligibility Wire
+Format).
 
 The directory declares neither the authentication-type filter nor sorting by
 creation time, because its entry returns neither value; List Users (Admin)
@@ -955,7 +975,8 @@ The route delegates UUID-or-username resolution and relationship loading to
     "full_name": "string | null",
     "active": true,
     "bot": false,
-    "roles": ["admin", "vulnerability_analyst"]
+    "roles": ["admin", "vulnerability_analyst"],
+    "assignment_eligibility": "all"
   }
 }
 ```
@@ -968,12 +989,18 @@ Field notes:
   it at presentation time
 - `bot`: `true` for a bot account, `false` otherwise (see Bot Accounts).
   It has no effect on authorization; a bot account is never eligible to be
-  the assignee of a Ticket
+  the assignee of a Ticket, so its `assignment_eligibility` is `none`
 - `roles`: the distinct role values that the user currently holds from any
   origin, manual or external; a role held from several origins appears once,
   and a user without roles has an empty array. Values use the wire format and
   the order of `rbac.md` (Role Wire Format, Deterministic ordering). The
   origin of each role is part of the complete user profile only
+- `assignment_eligibility`: for which Tickets the user is eligible to be the
+  assignee: `all`, `non_confidential`, or `none` (`rbac.md`, Business
+  Rule 10; Assignment Eligibility Wire Format). It derives from the `active`,
+  `bot`, and `roles` of the same entry, so the fields always agree. It is
+  informational: it grants nothing, and an assignment decides eligibility
+  when it is requested
 
 The directory entry has the same fields as the authenticated caller's own
 profile (`docs/features/identity/authentication.md`, Get Current User),
@@ -1027,6 +1054,9 @@ Query parameters:
   roles (e.g., `?role=admin&role=vulnerability_analyst`)
 - `has_role` (boolean, optional): `true` to return only users with at
   least one role, `false` for users with no roles
+- `assignment_eligibility` (enum, repeatable, optional): filter by
+  assignment eligibility, with the values and semantics of the directory
+  filter (List Users above)
 - Standard pagination (`page`, `per_page`) and sorting (`sort_by`,
   `sort_order`). Valid `sort_by` fields: `username` (default),
   `full_name`, `email`, `created_at`
@@ -1090,6 +1120,7 @@ The route delegates UUID-or-username resolution and relationship loading to
         "created_at": "ISO8601"
       }
     ],
+    "assignment_eligibility": "none",
     "last_login_at": "ISO8601 | null",
     "created_at": "ISO8601",
     "updated_at": "ISO8601"
@@ -1104,6 +1135,12 @@ Field notes:
 - `full_name`: nullable, with the same semantics as in the directory entry
   (Get User above)
 - `bot`: the bot marker, with the same semantics as in the directory entry
+- `assignment_eligibility`: the assignment eligibility, with the same
+  semantics as in the directory entry; it derives from the `active`, `bot`,
+  and `roles` of the same profile. A response of an administrator mutation
+  therefore reports the value after the operation, for example `none` after
+  an update that sets `bot` to `true`. The example above is `none` because
+  its only role is `admin`
 - `manager`: resolved manager object or `null`. `manager.full_name`
   follows the same nullability as above, and `manager.bot` is the manager's
   own bot marker
@@ -1744,9 +1781,12 @@ handling is required.
   operates, which their usernames often reveal already, and it grants
   nothing; the ongoing requests of such an account use API keys
   (`docs/features/identity/rbac.md`, Business Rule 14), which the
-  per-username lockout does not affect. The fields that serve only user
-  administration are never part of the directory (see Access Level
-  Requirements)
+  per-username lockout does not affect. The assignment eligibility, and the
+  filter on it, add no disclosure: the value derives from the active status,
+  bot marker, and role values of the same entry and from the published role
+  definitions (`docs/features/identity/rbac.md`, Predefined Roles), and it
+  grants nothing. The fields that serve only user administration are never
+  part of the directory (see Access Level Requirements)
 - **Password policy**: minimum 16 characters, no complexity rules.
   Length is the primary defense (see
   `docs/features/identity/local-authentication.md`)

@@ -877,6 +877,10 @@ here with the required authorization level and a link to the owning spec.
       `user-service.md` (Assignment concurrent with eligibility loss) and
       `ticket-service.md` (`set_confidentiality`)
 
+    The API reports the outcome of this rule for each user, without its
+    inputs, as the user's assignment eligibility (Assignment Eligibility
+    Wire Format).
+
     > **Design note — eligibility from capability and scope**: the rule
     > names no role. An assignee owns the work on a Ticket, so it needs the
     > capability of Ticket work and default visibility of that Ticket, which
@@ -943,6 +947,83 @@ here with the required authorization level and a link to the owning spec.
     API keys exclusively for ongoing operations. Rotation means creating a
     replacement key and revoking the old key; see
     `docs/features/identity/api-key-management.md`.
+
+## Assignment Eligibility Wire Format
+
+The assignment eligibility of a user states for which Tickets the user is
+eligible to be the assignee under Business Rule 10. Its values are:
+
+| Value | Meaning |
+|---|---|
+| `all` | The user is eligible to be the assignee of every Ticket |
+| `non_confidential` | The user is eligible to be the assignee of every non-confidential Ticket and of no confidential Ticket |
+| `none` | The user is eligible to be the assignee of no Ticket |
+
+**Derivation**: the value applies Business Rule 10 to the user's current
+`active`, `bot`, and roles of every origin:
+
+1. `none` when the user is inactive, is a bot account, or holds no role
+   that grants `triage_ticket`;
+2. otherwise `all` when the user's effective scope is `all`;
+3. otherwise `non_confidential`.
+
+The three values cover every outcome of the rule. Its only Ticket input is
+confidentiality, and eligibility for a confidential Ticket requires every
+condition of eligibility for a non-confidential one, so a user who is
+eligible for one confidential Ticket is eligible for every Ticket. With the
+predefined roles, the value is `all` for an active non-bot user who holds
+`vulnerability_analyst`, or `restricted_analyst` together with `admin`;
+`non_confidential` for one who holds `restricted_analyst` without a role whose
+scope is `all`; and `none` for one who holds only `admin` or no role, and for
+every inactive user and every bot account, whatever their roles. An explicit
+`TicketAccessGrant` and package maintainership do not change the value,
+because they never confer eligibility.
+
+**Current, never stored**: a response derives the value while it processes
+the request, from the same `active`, `bot`, and roles that it renders, so the
+value always agrees with the `active`, `bot`, and `roles` of the same
+representation. No column or cache stores it. A committed change of the
+user's active status, bot marker, or roles is therefore reflected by the next
+request that reads the user.
+
+**Informational**: like the `capabilities` of the authenticated user
+(`docs/features/identity/authentication.md`, Get Current User), the value
+grants, changes, and replaces nothing. Every assignment path still decides
+eligibility under its own locks (Business Rule 10, Prospective), so a value
+read earlier can be out of date: an explicit assignment can return `409
+TICKET_ASSIGNEE_INACTIVE` or `400 TICKET_ASSIGNEE_NOT_ELIGIBLE` for a user
+whose value admitted the Ticket, or succeed for one whose value did not.
+
+**Where it appears**: the `assignment_eligibility` field of the
+authenticated user's own profile (`docs/features/identity/authentication.md`,
+Get Current User), of the user directory entry, and of the complete user
+profile (`docs/features/identity/user-management.md`, Get User and Get User
+(Admin)), and the `assignment_eligibility` filter of List Users and List
+Users (Admin). The user reference object (`docs/api-spec.md`, User References
+in Responses) and the `manager` of the complete user profile do not carry it.
+
+**Response enum**: the three values form a response enum
+(`docs/api-spec.md`, Response Enums). The OpenAPI document publishes them as
+the `enum` of every `assignment_eligibility` field, which is required, and of
+the filters (`docs/api-spec.md`, Enum Filter Validation).
+
+**Changes**: a change of Business Rule 10 that made eligibility depend on
+another property of a Ticket would make some users eligible for only part of
+the Tickets that one of the values describes; reporting a new value in that
+situation is a semantic change to existing behavior and therefore breaking
+(`docs/api-spec.md`, Response Enums). A new role, by contrast, obtains its
+value from its capabilities and scope with no change to the values (Business
+Rule 10, Design note — eligibility from capability and scope).
+
+> **Design note — outcome, not inputs**: a client that offers the assignees
+> of a Ticket, or offers the authenticated user an assignment, needs the
+> outcome of Business Rule 10. Deriving it from role values would copy the
+> role definitions and a rule that names no role, and would break with a new
+> role; deriving it from capabilities would still lack the effective scope.
+> The value states the outcome instead and reveals nothing that a reader of
+> the representation cannot already derive from its `active`, `bot`, and
+> `roles` and from Predefined Roles. The effective scope itself remains
+> unstated; stating it in a response later is an additive change.
 
 ## Implementation Details
 

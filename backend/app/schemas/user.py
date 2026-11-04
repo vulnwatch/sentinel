@@ -15,7 +15,13 @@ from uuid import UUID
 from email_validator import EmailNotValidError, validate_email
 from pydantic import MISSING, BaseModel, Field, field_validator, model_validator
 
-from app.core.enums import SortOrder, UserDirectorySortField, UserSortField, UserType
+from app.core.enums import (
+    AssignmentEligibility,
+    SortOrder,
+    UserDirectorySortField,
+    UserSortField,
+    UserType,
+)
 from app.core.passwords import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
 from app.core.usernames import RESERVED_USERNAMES, USERNAME_PATTERN
 from app.schemas.common import PaginationMeta, RoleValue, UserReference
@@ -47,17 +53,19 @@ class UserDirectoryListQuery(BaseModel):
 
     The directory filters, searches, and sorts only on fields its entry
     returns, so it declares no `type` filter and no `created_at` sort.
-    `role` is intentionally `list[str]`, not a typed enum list: an
-    invalid value must be silently ignored (`docs/api-spec.md`, Enum
-    Filter Validation) rather than raise the schema-validation `422` a
-    typed enum field would. The route handler parses it against `Role`
-    and publishes the role values as the parameter's `enum`.
+    `role` and `assignment_eligibility` are intentionally `list[str]`, not
+    typed enum lists: an invalid value must be silently ignored
+    (`docs/api-spec.md`, Enum Filter Validation) rather than raise the
+    schema-validation `422` a typed enum field would. The route handler
+    parses them against `Role` and `AssignmentEligibility` and publishes
+    their values as the parameters' `enum`.
     """
 
     search: str | None = Field(default=None, min_length=2)
     active: bool | None = None
     role: list[str] = Field(default_factory=list)
     has_role: bool | None = None
+    assignment_eligibility: list[str] = Field(default_factory=list)
     page: int = Field(default=1, ge=1, le=2_147_483_647)
     per_page: int = Field(default=20, ge=1, le=100)
     sort_by: UserDirectorySortField = UserDirectorySortField.USERNAME
@@ -68,12 +76,13 @@ class UserListQuery(BaseModel):
     """Query parameters for `GET /api/v1/admin/users`
     (`user-management.md`, List Users (Admin)).
 
-    `type` and `role` are intentionally `str | None` / `list[str]`, not
-    typed enums: an invalid value must be silently ignored and produce
-    an empty result (`docs/api-spec.md`, Enum Filter Validation) rather
-    than the schema-validation `422` a typed enum field would raise. The
-    route handler parses them against `UserType`/`Role` itself and
-    publishes their values as the parameters' `enum`.
+    `type`, `role`, and `assignment_eligibility` are intentionally
+    `str | None` / `list[str]`, not typed enums: an invalid value must be
+    silently ignored and produce an empty result (`docs/api-spec.md`, Enum
+    Filter Validation) rather than the schema-validation `422` a typed
+    enum field would raise. The route handler parses them against
+    `UserType`/`Role`/`AssignmentEligibility` itself and publishes their
+    values as the parameters' `enum`.
     """
 
     search: str | None = Field(default=None, min_length=2)
@@ -81,6 +90,7 @@ class UserListQuery(BaseModel):
     active: bool | None = None
     role: list[str] = Field(default_factory=list)
     has_role: bool | None = None
+    assignment_eligibility: list[str] = Field(default_factory=list)
     page: int = Field(default=1, ge=1, le=2_147_483_647)
     per_page: int = Field(default=20, ge=1, le=100)
     sort_by: UserSortField = UserSortField.USERNAME
@@ -96,7 +106,9 @@ class UserDirectoryData(BaseModel):
     complete user profile (`UserData`) returns. `roles` is the
     distinct, alphabetically wire-sorted set of current role values
     (`rbac.md`, Role Wire Format, Deterministic ordering); `full_name`
-    is returned `null` verbatim with no fallback substitution."""
+    is returned `null` verbatim with no fallback substitution.
+    `assignment_eligibility` is derived from the entry's `active`, `bot`,
+    and `roles` (`rbac.md`, Assignment Eligibility Wire Format)."""
 
     id: UUID
     username: str
@@ -105,6 +117,7 @@ class UserDirectoryData(BaseModel):
     active: bool
     bot: bool
     roles: list[RoleValue]
+    assignment_eligibility: AssignmentEligibility
 
 
 class UserDirectoryResponse(BaseModel):
@@ -151,7 +164,10 @@ class UserData(BaseModel):
     mutation endpoints (`user-management.md`, Get User (Admin)).
     `full_name` and `manager.full_name` are nullable — the API returns
     `null` verbatim with no fallback substitution. `source` is `local` or
-    `external`. `last_login_at` is `null` until the user's first login."""
+    `external`. `assignment_eligibility` is derived from the profile's
+    `active`, `bot`, and the roles of every origin in `roles` (`rbac.md`,
+    Assignment Eligibility Wire Format). `last_login_at` is `null` until
+    the user's first login."""
 
     id: UUID
     username: str
@@ -163,6 +179,7 @@ class UserData(BaseModel):
     external_id: UUID | None
     manager: UserManagerData | None
     roles: list[UserRoleAssignmentData]
+    assignment_eligibility: AssignmentEligibility
     last_login_at: datetime | None
     created_at: datetime
     updated_at: datetime
