@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.17.0](https://github.com/vulnwatch/sentinel/compare/v0.16.0...v0.17.0) (2026-11-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* TICKET_ASSIGNEE_NOT_VA is removed; a bot target holding vulnerability_analyst is rejected with 400 TICKET_ASSIGNEE_NOT_ELIGIBLE; restricted analysts are assigned to non-confidential Tickets by every path; making a Ticket confidential, marking a bot account, and removing a role unassign ineligible assignees; the vulnerability_analyst role removed unassignment reasons are renamed.
+
+### Features
+
+* expose assignment eligibility and filter users by it ([#1194](https://github.com/vulnwatch/sentinel/issues/1194)) ([69fe3e6](https://github.com/vulnwatch/sentinel/commit/69fe3e61649ef3e00c391d3220d4028590e56151))
+* let restricted analysts own Tickets and exclude bot assignees ([#1192](https://github.com/vulnwatch/sentinel/issues/1192)) ([5cf7cd2](https://github.com/vulnwatch/sentinel/commit/5cf7cd238eb18711f0a4c3bfb7222561824ffe87))
+* let the assignee unassign themselves from a Ticket ([#1187](https://github.com/vulnwatch/sentinel/issues/1187)) ([7877205](https://github.com/vulnwatch/sentinel/commit/78772054ce866d28f7aa2ca856f1ad5975d12edc)), closes [#1185](https://github.com/vulnwatch/sentinel/issues/1185)
+
 ## [0.16.0](https://github.com/vulnwatch/sentinel/compare/v0.15.0...v0.16.0) (2026-11-03)
 
 
