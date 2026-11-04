@@ -205,16 +205,13 @@ class TestIgnore:
         assert recorder.selects_from("ticket_audit_event") == []
 
     @pytest.mark.parametrize(
-        ("active", "roles", "scope"),
+        ("active", "roles", "bot", "scope"),
         [
             pytest.param(
-                True,
-                (Role.RESTRICTED_ANALYST,),
-                Scope.NON_CONFIDENTIAL,
-                id="restricted-analyst",
+                True, (Role.VULNERABILITY_ANALYST,), True, Scope.ALL, id="bot-va"
             ),
             pytest.param(
-                False, (Role.VULNERABILITY_ANALYST,), Scope.ALL, id="inactive-va"
+                False, (Role.VULNERABILITY_ANALYST,), False, Scope.ALL, id="inactive-va"
             ),
         ],
     )
@@ -225,12 +222,14 @@ class TestIgnore:
         va_user: VAUser,
         active: bool,
         roles: tuple[Role, ...],
+        bot: bool,
         scope: Scope,
     ) -> None:
-        """tickets.md, Status Transitions (note after the matrix): a
-        non-VA actor cannot be assigned and records the direct
-        `New -> Ignored`; the Ticket stays unassigned."""
-        actor = await va_user(active=active, roles=roles)
+        """tickets.md, Status Transitions (note after the matrix): an actor
+        that is not eligible to be the assignee (rbac.md, Business Rule 10)
+        cannot be assigned and records the direct `New -> Ignored`; the
+        Ticket stays unassigned."""
+        actor = await va_user(active=active, roles=roles, bot=bot)
         ticket = await ticket_factory(status=TicketStatus.NEW.value)
 
         await _ignore(db_session, ticket.id, actor, scope=scope)

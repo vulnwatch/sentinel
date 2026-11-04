@@ -63,13 +63,14 @@ from app.models.ticket_access_grant import TicketAccessGrant
 from app.models.ticket_package_product import TicketPackageProduct
 from app.models.user import User
 from app.services import ticket_mutations, ticket_service
+from app.services.assignment_eligibility import AssigneeIneligibility
 from app.services.ticket_audit_log import TicketAuditLog
 from app.services.ticket_convergence_registry import (
     pending_ticket_convergence_effects,
 )
 from app.services.ticket_service import (
     AssigneeInactiveError,
-    AssigneeNotVAError,
+    AssigneeNotEligibleError,
     assign_ticket,
 )
 from app.services.ticket_visibility import TicketCaller
@@ -162,24 +163,18 @@ class _Spy:
         monkeypatch.setattr(ticket_service, name, _wrapper)
 
 
-TARGET_KINDS = ["absent", "inactive", "non-va"]
-"""One target per rejected result of step 5 (the inactive-and-non-VA
-precedence is proven once, by `test_ineligible_target_is_rejected_inactive_first`)."""
+TARGET_KINDS = ["absent", "inactive", "bot"]
+"""One target per rejected result of step 5 (the condition precedence is
+proven once, by `test_ineligible_target_is_rejected_inactive_first`)."""
 
 
 async def _target(kind: str, va_user: VAUser) -> str:
     """The raw UUID identifier of a target of the given kind: an active VA
-    (`eligible`), no User (`absent`), or an inactive and/or non-VA User."""
+    (`eligible`), no User (`absent`), an inactive VA, or an active VA that is
+    a bot account (`bot`, not eligible: rbac.md, Business Rule 10)."""
     if kind == "absent":
         return str(uuid.uuid7())
-    user = await va_user(
-        active=not kind.startswith("inactive"),
-        roles=(
-            (Role.RESTRICTED_ANALYST,)
-            if kind.endswith("non-va")
-            else (Role.VULNERABILITY_ANALYST,)
-        ),
-    )
+    user = await va_user(active=kind != "inactive", bot=kind == "bot")
     return str(user.id)
 
 
@@ -192,14 +187,15 @@ async def _assert_rejected(
     target: str,
     actor: User,
     scope: Scope = Scope.ALL,
-) -> None:
+) -> BaseException:
     """Call the service and assert the zero-side-effect contract of a
     rejected call: the expected error, no write, no reconciliation, no
-    registered convergence effect, the Ticket unchanged, and no event."""
+    registered convergence effect, the Ticket unchanged, and no event.
+    Returns the raised exception."""
     reconcile = _Spy(monkeypatch, "reconcile_ticket_status")
     before = await _state(db, ticket_id)
 
-    with StatementRecorder(db) as recorder, pytest.raises(error_type):
+    with StatementRecorder(db) as recorder, pytest.raises(error_type) as raised:
         await _assign(db, ticket_id, target, actor, scope=scope)
 
     assert recorder.writes() == []
@@ -207,6 +203,7 @@ async def _assert_rejected(
     assert pending_ticket_convergence_effects(db) == ()
     assert await _state(db, ticket_id) == before
     assert await ticket_events_by_id(db, ticket_id) == []
+    return raised.value
 
 
 # ---------------------------------------------------------------------------
@@ -529,25 +526,65 @@ class TestGuardPrecedence:
         )
 
     @pytest.mark.parametrize(
-        ("active", "roles", "error_type"),
+        ("active", "roles", "bot", "confidential", "condition"),
         [
             pytest.param(
                 False,
                 (Role.VULNERABILITY_ANALYST,),
-                AssigneeInactiveError,
+                False,
+                False,
+                None,
                 id="inactive-va",
             ),
             pytest.param(
                 False,
                 (Role.RESTRICTED_ANALYST,),
-                AssigneeInactiveError,
-                id="inactive-precedes-non-va",
+                True,
+                True,
+                None,
+                id="inactive-precedes-every-other-condition",
             ),
-            pytest.param(False, (), AssigneeInactiveError, id="inactive-no-roles"),
+            pytest.param(False, (), False, False, None, id="inactive-no-roles"),
             pytest.param(
-                True, (Role.RESTRICTED_ANALYST,), AssigneeNotVAError, id="non-va"
+                True,
+                (Role.VULNERABILITY_ANALYST,),
+                True,
+                False,
+                AssigneeIneligibility.BOT,
+                id="bot-va",
             ),
-            pytest.param(True, (), AssigneeNotVAError, id="no-roles"),
+            pytest.param(
+                True,
+                (),
+                True,
+                True,
+                AssigneeIneligibility.BOT,
+                id="bot-precedes-triage-and-confidentiality",
+            ),
+            pytest.param(
+                True,
+                (),
+                False,
+                False,
+                AssigneeIneligibility.NO_TRIAGE_TICKET,
+                id="no-roles",
+            ),
+            pytest.param(
+                True,
+                (Role.ADMIN,),
+                False,
+                True,
+                AssigneeIneligibility.NO_TRIAGE_TICKET,
+                id="admin-only-precedes-confidentiality",
+            ),
+            pytest.param(
+                True,
+                (Role.RESTRICTED_ANALYST,),
+                False,
+                True,
+                AssigneeIneligibility.CONFIDENTIAL,
+                id="restricted-on-confidential",
+            ),
         ],
     )
     async def test_ineligible_target_is_rejected_inactive_first(
@@ -558,20 +595,108 @@ class TestGuardPrecedence:
         monkeypatch: pytest.MonkeyPatch,
         active: bool,
         roles: tuple[Role, ...],
-        error_type: type[Exception],
+        bot: bool,
+        confidential: bool,
+        condition: AssigneeIneligibility | None,
     ) -> None:
+        """Step 5 (rbac.md, Business Rule 10): an inactive target raises
+        `AssigneeInactiveError` before any other condition; every other
+        ineligible target raises `AssigneeNotEligibleError` carrying the
+        first failing condition in the order bot account, no
+        `triage_ticket`, confidential without scope `all`."""
         actor = await va_user()
-        target = await va_user(active=active, roles=roles)
-        ticket = await cveless(ticket_factory, status=TicketStatus.NEW, severity=None)
+        target = await va_user(active=active, roles=roles, bot=bot)
+        ticket = await cveless(
+            ticket_factory,
+            status=TicketStatus.NEW,
+            severity=None,
+            is_confidential=confidential,
+        )
 
-        await _assert_rejected(
+        error = await _assert_rejected(
             db_session,
             monkeypatch,
-            error_type,
+            AssigneeInactiveError if condition is None else AssigneeNotEligibleError,
             ticket_id=ticket.id,
             target=str(target.id),
             actor=actor,
         )
+
+        if condition is not None:
+            assert isinstance(error, AssigneeNotEligibleError)
+            assert error.condition is condition
+
+    async def test_grant_does_not_make_a_restricted_target_eligible(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        ticket_access_grant_factory: Callable[..., Awaitable[TicketAccessGrant]],
+        va_user: VAUser,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """rbac.md, Business Rule 10: a restricted analyst that sees the
+        confidential Ticket through an explicit grant is still not
+        eligible to be its assignee."""
+        actor = await va_user()
+        target = await va_user(roles=(Role.RESTRICTED_ANALYST,))
+        ticket = await cveless(
+            ticket_factory, status=TicketStatus.NEW, severity=None, is_confidential=True
+        )
+        await ticket_access_grant_factory(ticket_id=ticket.id, user_id=target.id)
+
+        error = await _assert_rejected(
+            db_session,
+            monkeypatch,
+            AssigneeNotEligibleError,
+            ticket_id=ticket.id,
+            target=target.username,
+            actor=actor,
+        )
+
+        assert isinstance(error, AssigneeNotEligibleError)
+        assert error.condition is AssigneeIneligibility.CONFIDENTIAL
+
+    @pytest.mark.parametrize(
+        ("roles", "confidential"),
+        [
+            pytest.param((Role.RESTRICTED_ANALYST,), False, id="restricted-on-public"),
+            pytest.param(
+                (Role.ADMIN, Role.RESTRICTED_ANALYST),
+                True,
+                id="admin-and-restricted-on-confidential",
+            ),
+            pytest.param((Role.VULNERABILITY_ANALYST,), True, id="va-on-confidential"),
+        ],
+    )
+    async def test_eligibility_comes_from_capability_and_scope(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+        roles: tuple[Role, ...],
+        confidential: bool,
+    ) -> None:
+        """rbac.md, Business Rule 10: a non-bot restricted analyst is
+        assigned to a non-confidential Ticket exactly as a vulnerability
+        analyst is, including `New -> Analysis`; a role whose scope is
+        `all` makes a restricted analyst eligible for a confidential
+        Ticket."""
+        actor = await va_user()
+        target = await va_user(roles=roles)
+        ticket = await cveless(
+            ticket_factory,
+            status=TicketStatus.NEW,
+            severity=None,
+            is_confidential=confidential,
+        )
+
+        await _assign(db_session, ticket.id, str(target.id), actor)
+
+        assert await _state(db_session, ticket.id) == (TicketStatus.ANALYSIS, target.id)
+        assert await ticket_events(db_session, ticket) == [
+            _assignment(actor, None, target),
+            PROMOTION,
+        ]
 
     async def test_caller_mismatch_raises_before_any_statement(
         self, db_session: AsyncSession, ticket_factory: TicketFactory, va_user: VAUser

@@ -98,6 +98,7 @@ from tests.support.product_eligibility import occurrence_path, only_occurrence
 from tests.support.suse_cvss_races import CommittedWorld, SessionStatementRecorder
 from tests.support.ticket_mutations import (
     EVAL,
+    EventRow,
     Prod,
     StatementRecorder,
     TicketFactory,
@@ -367,8 +368,11 @@ def _branches() -> list[Any]:
 class TestVisibilityBranches:
     """rbac.md, Scope and Confidential Ticket Visibility: each branch is
     independently sufficient for the locked-current check. The operation
-    changes only the target marker and records one acting-user event; the
-    restricted analyst is not assigned."""
+    changes only the target marker and records one acting-user event. The
+    restricted analyst is auto-assigned only on the non-confidential
+    Ticket: on a confidential one, neither a grant, nor maintainership,
+    nor a request-resolved scope `all` makes a role-derived scope
+    `non_confidential` eligible (rbac.md, Business Rule 10)."""
 
     @pytest.mark.parametrize(("branch", "level", "direction"), _branches())
     async def test_each_branch_permits_the_operation(
@@ -411,10 +415,16 @@ class TestVisibilityBranches:
         assert await markers(db_session, occurrence) == with_target(
             before, level, MARKER_NOW if direction is Direction.EXCLUDE else None
         )
+        assigned = branch == "non-confidential"
+        claim = EventRow("assignment", actor.id, None, actor.username, None, None)
         assert await ticket_events(db_session, ticket) == [
-            await marker_event(db_session, level, direction, occurrence, actor)
+            *([claim] if assigned else []),
+            await marker_event(db_session, level, direction, occurrence, actor),
         ]
-        assert await ticket_state(db_session, ticket) == (TicketStatus.ANALYSIS, None)
+        assert await ticket_state(db_session, ticket) == (
+            TicketStatus.ANALYSIS,
+            actor.id if assigned else None,
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -340,11 +340,28 @@ class TestAutoAssignActor:
         assert await ticket_events(db_session, ticket) == []
 
     @pytest.mark.parametrize(
-        ("active", "roles"),
+        ("active", "roles", "bot", "confidential"),
         [
-            pytest.param(False, (Role.VULNERABILITY_ANALYST,), id="inactive-va"),
-            pytest.param(True, (Role.RESTRICTED_ANALYST,), id="restricted-analyst"),
-            pytest.param(True, (), id="no-role"),
+            pytest.param(
+                False, (Role.VULNERABILITY_ANALYST,), False, False, id="inactive-va"
+            ),
+            pytest.param(True, (Role.VULNERABILITY_ANALYST,), True, False, id="bot-va"),
+            pytest.param(
+                True,
+                (Role.ADMIN, Role.VULNERABILITY_ANALYST),
+                True,
+                True,
+                id="bot-va-admin-confidential",
+            ),
+            pytest.param(True, (), False, False, id="no-role"),
+            pytest.param(True, (Role.ADMIN,), False, False, id="admin-only"),
+            pytest.param(
+                True,
+                (Role.RESTRICTED_ANALYST,),
+                False,
+                True,
+                id="restricted-on-confidential",
+            ),
         ],
     )
     async def test_ineligible_actor_is_skipped(
@@ -354,11 +371,18 @@ class TestAutoAssignActor:
         va_user: VAUser,
         active: bool,
         roles: tuple[Role, ...],
+        bot: bool,
+        confidential: bool,
     ) -> None:
+        """rbac.md, Business Rule 10: inactive, a bot account whatever its
+        roles, without `triage_ticket`, or without scope `all` on a
+        confidential Ticket."""
         actor = await stabilize_acting_user(
-            db_session, (await va_user(active=active, roles=roles)).id
+            db_session, (await va_user(active=active, roles=roles, bot=bot)).id
         )
-        ticket = await cveless(ticket_factory, status=TicketStatus.NEW)
+        ticket = await cveless(
+            ticket_factory, status=TicketStatus.NEW, is_confidential=confidential
+        )
 
         assert await auto_assign_actor(ticket, actor, db_session) is False
         assert await auto_assign_actor(ticket, actor, db_session, force=True) is False
@@ -366,6 +390,67 @@ class TestAutoAssignActor:
         assert ticket.assignee_id is None
         assert ticket.status == TicketStatus.NEW
         assert await ticket_events(db_session, ticket) == []
+
+    async def test_grant_does_not_make_a_restricted_analyst_eligible(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        ticket_access_grant_factory: Callable[..., Awaitable[Any]],
+        va_user: VAUser,
+    ) -> None:
+        """rbac.md, Business Rule 10: visibility through an explicit
+        `TicketAccessGrant` lets a restricted analyst work on a
+        confidential Ticket but never makes it the assignee."""
+        user = await va_user(roles=(Role.RESTRICTED_ANALYST,))
+        ticket = await cveless(
+            ticket_factory, status=TicketStatus.NEW, is_confidential=True
+        )
+        await ticket_access_grant_factory(ticket_id=ticket.id, user_id=user.id)
+        actor = await stabilize_acting_user(db_session, user.id)
+
+        assert await auto_assign_actor(ticket, actor, db_session) is False
+
+        assert ticket.assignee_id is None
+        assert ticket.status == TicketStatus.NEW
+        assert await ticket_events(db_session, ticket) == []
+
+    @pytest.mark.parametrize(
+        ("roles", "confidential"),
+        [
+            pytest.param((Role.RESTRICTED_ANALYST,), False, id="restricted-on-public"),
+            pytest.param(
+                (Role.ADMIN, Role.RESTRICTED_ANALYST),
+                True,
+                id="admin-and-restricted-on-confidential",
+            ),
+            pytest.param((Role.VULNERABILITY_ANALYST,), True, id="va-on-confidential"),
+        ],
+    )
+    async def test_eligibility_comes_from_capability_and_scope(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+        roles: tuple[Role, ...],
+        confidential: bool,
+    ) -> None:
+        """rbac.md, Business Rule 10: `triage_ticket` plus, for a
+        confidential Ticket, effective scope `all` from any role. A
+        restricted analyst moves an unassigned `New` Ticket to `Analysis`
+        exactly as a vulnerability analyst does."""
+        actor = await stabilize_acting_user(db_session, (await va_user(roles=roles)).id)
+        ticket = await cveless(
+            ticket_factory, status=TicketStatus.NEW, is_confidential=confidential
+        )
+
+        assert await auto_assign_actor(ticket, actor, db_session) is True
+
+        assert ticket.assignee_id == actor.id
+        assert ticket.status == TicketStatus.ANALYSIS
+        assert await ticket_events(db_session, ticket) == [
+            EventRow("assignment", actor.id, None, actor.username, None, None),
+            status_event("New", "Analysis"),
+        ]
 
     async def test_unchanged_assignee_with_force_is_a_no_op(
         self,
@@ -1118,22 +1203,61 @@ class TestTransitions:
 # ---------------------------------------------------------------------------
 
 
+def _expected_reason(
+    *, active: bool, bot: bool, triage: bool, confidential: bool
+) -> str | None:
+    """The reason transcribed from ticket-audit-log.md (Canonical Automatic
+    Comment Vocabulary): the first failing condition in the order
+    inactive, bot account, no `triage_ticket`, confidential without scope
+    `all` (the `triage_ticket` holder is a restricted analyst)."""
+    if not active:
+        return "inactive assignee"
+    if bot:
+        return "bot account"
+    if not triage:
+        return "role removed"
+    if confidential:
+        return "confidential ticket"
+    return None
+
+
+_INELIGIBLE_ASSIGNEES = [
+    pytest.param(
+        active,
+        bot,
+        triage,
+        confidential,
+        reason,
+        id="-".join(
+            name
+            for name, failing in (
+                ("inactive", not active),
+                ("bot", bot),
+                ("without-triage", not triage),
+                ("confidential", confidential),
+            )
+            if failing
+        ),
+    )
+    for active in (True, False)
+    for bot in (False, True)
+    for triage in (True, False)
+    for confidential in (False, True)
+    if (
+        reason := _expected_reason(
+            active=active, bot=bot, triage=triage, confidential=confidential
+        )
+    )
+    is not None
+]
+"""Every combination of failing conditions (15 of the 16 combinations; the
+remaining one is eligible)."""
+
+
 @pytest.mark.integration
 class TestAssignmentSanitation:
     @pytest.mark.parametrize(
-        ("active", "roles", "reason"),
-        [
-            pytest.param(
-                False, (Role.VULNERABILITY_ANALYST,), "inactive assignee", id="inactive"
-            ),
-            pytest.param(
-                True,
-                (Role.RESTRICTED_ANALYST,),
-                "vulnerability_analyst role removed",
-                id="active-without-va",
-            ),
-            pytest.param(False, (), "inactive assignee", id="both-invalid-precedence"),
-        ],
+        ("active", "bot", "triage", "confidential", "reason"), _INELIGIBLE_ASSIGNEES
     )
     @pytest.mark.parametrize("result", [TicketStatus.ANALYSIS, TicketStatus.ANALYZED])
     async def test_ineligible_assignee_is_unassigned(
@@ -1144,12 +1268,26 @@ class TestAssignmentSanitation:
         va_user: VAUser,
         caplog: pytest.LogCaptureFixture,
         active: bool,
-        roles: tuple[Role, ...],
+        bot: bool,
+        triage: bool,
+        confidential: bool,
         reason: str,
         result: TicketStatus,
     ) -> None:
-        assignee = await va_user(active=active, roles=roles)
-        ticket = await cveless(ticket_factory, status=result, assignee_id=assignee.id)
+        """ticket-mutations.md, Assignment Eligibility Sanitization: every
+        failing condition alone and every combination, with the reason of
+        the first failing condition in the canonical precedence."""
+        assignee = await va_user(
+            active=active,
+            roles=(Role.RESTRICTED_ANALYST,) if triage else (),
+            bot=bot,
+        )
+        ticket = await cveless(
+            ticket_factory,
+            status=result,
+            assignee_id=assignee.id,
+            is_confidential=confidential,
+        )
         await tree_for(result, ticket, tree)
 
         with caplog.at_level("WARNING"):
@@ -1168,16 +1306,34 @@ class TestAssignmentSanitation:
         }
         assert assignee.username not in str(records[0])
 
+    @pytest.mark.parametrize(
+        ("roles", "confidential"),
+        [
+            pytest.param(
+                (Role.RESTRICTED_ANALYST, Role.VULNERABILITY_ANALYST),
+                True,
+                id="restricted-and-va-on-confidential",
+            ),
+            pytest.param((Role.RESTRICTED_ANALYST,), False, id="restricted-on-public"),
+            pytest.param(
+                (Role.ADMIN, Role.RESTRICTED_ANALYST),
+                True,
+                id="admin-and-restricted-on-confidential",
+            ),
+        ],
+    )
     async def test_eligible_assignee_is_preserved(
         self,
         db_session: AsyncSession,
         ticket_factory: TicketFactory,
         va_user: VAUser,
+        roles: tuple[Role, ...],
+        confidential: bool,
     ) -> None:
-        assignee = await va_user(
-            roles=(Role.RESTRICTED_ANALYST, Role.VULNERABILITY_ANALYST)
+        assignee = await va_user(roles=roles)
+        ticket = await cveless(
+            ticket_factory, assignee_id=assignee.id, is_confidential=confidential
         )
-        ticket = await cveless(ticket_factory, assignee_id=assignee.id)
 
         assert await _reconcile(db_session, ticket) is TicketStatus.ANALYSIS
 
@@ -1303,7 +1459,7 @@ class TestPreviousStatus:
         await _reconcile(db_session, ticket, previous_status=TicketStatus.DUPLICATED)
 
         assert await ticket_events(db_session, ticket) == [
-            unassigned_event(assignee.username, "vulnerability_analyst role removed"),
+            unassigned_event(assignee.username, "role removed"),
             status_event("Duplicated", "Analysis"),
         ]
 

@@ -6,11 +6,13 @@ Consumers:
 - `tests/test_services/test_va_role_loss_assignment_races.py` (the real
   final manual VA-origin loss, `update_roles()`);
 - `tests/test_services/test_deactivation_assignment_races.py` (the real
-  `deactivate_user()`).
+  `deactivate_user()`);
+- `tests/test_services/test_bot_marking_assignment_races.py` (the real
+  `update_user()` changing `bot` to `true`).
 
 Owning specifications: docs/features/identity/user-service.md
-(Concurrency Considerations: Assignment concurrent with deactivation or
-active manual role loss) and docs/features/platform/testing-strategy.md
+(Concurrency Considerations: Assignment concurrent with eligibility loss)
+and docs/features/platform/testing-strategy.md
 (User Lifecycle and Management: every assignment-capable path acquires User
 `FOR SHARE` before CVE/Ticket locks; Concurrency Testing, Lock-Wait
 Observation).
@@ -264,13 +266,15 @@ async def lifecycle_first[R](
     writer: Callable[[AsyncSession], Awaitable[R]],
     *,
     error: type[Exception] | None = None,
+    check_error: Callable[[BaseException], None] | None = None,
 ) -> tuple[uuid.UUID | None, R]:
     """B's real lifecycle `writer` runs first and stays uncommitted (holding
     the User `FOR NO KEY UPDATE`); it finds nothing to clear. A runs `path`
     and is proven to wait on B at its User `FOR SHARE`, before any CVE or
     Ticket statement; B commits, then A completes and commits. With
-    `error`, A must raise it with no write and roll back. Returns the Ticket
-    UUID of `path` (`None` when it raised) and the writer's result."""
+    `error`, A must raise it with no write and roll back; `check_error`, if
+    given, then inspects the raised exception. Returns the Ticket UUID of
+    `path` (`None` when it raised) and the writer's result."""
     a = await world.open_session()
     b = await world.open_session()
 
@@ -286,9 +290,11 @@ async def lifecycle_first[R](
         assert [s for s in waiting if ROOT_STATEMENT.search(s)] == []
         await b.commit()
         if error is not None:
-            with pytest.raises(error):
+            with pytest.raises(error) as raised:
                 await asyncio.wait_for(task, timeout=WAIT)
             assert recorder.writes() == []
+            if check_error is not None:
+                check_error(raised.value)
             await a.rollback()
             return None, result
         ticket_id: uuid.UUID = await asyncio.wait_for(task, timeout=WAIT)

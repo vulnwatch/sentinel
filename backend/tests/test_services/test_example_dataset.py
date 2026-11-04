@@ -399,7 +399,9 @@ TICKETS: Final[
     17: ("CVE-2099-0017", IGNORED, "bwilson", False, MEDIUM),
     18: ("CVE-2099-0018", ANALYSIS, "asmith", True, CRITICAL),
     19: ("CVE-2099-0019", ANALYSIS, "bwilson", True, HIGH),
-    20: ("CVE-2099-0020", NEW, None, False, MEDIUM),
+    # `cwhite`, a non-bot restricted analyst, is eligible to be the assignee
+    # of the non-confidential Ticket it creates (rbac.md, Business Rule 10).
+    20: ("CVE-2099-0020", ANALYSIS, "cwhite", False, MEDIUM),
     21: (None, ANALYSIS, "asmith", False, HIGH),
     22: (None, DUPLICATED, "bwilson", False, None),
     23: ("CVE-2099-0021", NEW, None, False, LOW),
@@ -736,6 +738,7 @@ ATTRIBUTED_TICKET_EVENTS: Final = frozenset(
         (18, "ticket_created", "asmith"),
         (19, "ticket_created", "bwilson"),
         (20, "ticket_created", "cwhite"),
+        (20, "assignment", "cwhite"),
         (21, "ticket_created", "asmith"),
         (22, "ticket_created", "bwilson"),
         (18, "coordinated_release_changed", "asmith"),

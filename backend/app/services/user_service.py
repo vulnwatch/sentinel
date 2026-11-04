@@ -5,8 +5,10 @@ this module implements. `create_user()`, `update_user()`, and
 `reactivate_user()` are the ticket-independent core of the centralized user
 lifecycle service. `reset_password()` and `unlock_user()` provide password
 reset and lockout-counter clearing. `update_roles()` owns manual
-(`_manual`) role mutation, with the identity-owned Ticket unassignment
-helpers it composes on final `vulnerability_analyst` origin loss.
+(`_manual`) role mutation, with the identity-owned Ticket unassignment of
+every assignment that a role removal leaves ineligible
+(`docs/features/identity/rbac.md`, Business Rule 10); `update_user()`
+likewise unassigns a User that becomes a bot account.
 `deactivate_user()` revokes API keys, invalidates Sessions, marks the User
 inactive, and unassigns active Tickets in one caller-owned transaction;
 `get_deactivation_impact()` is its read-only advisory preview. The bulk
@@ -33,6 +35,7 @@ acquire no lock.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Final, Literal
@@ -75,6 +78,7 @@ from app.models.ticket import Ticket
 from app.models.user import User
 from app.models.user_role import UserRole
 from app.services.api_key_service import count_non_revoked_keys, revoke_all_user_keys
+from app.services.assignment_eligibility import assignee_ineligibility
 from app.services.identity_audit_log import IdentityAuditLog
 from app.services.local_auth_service import clear_login_attempts
 from app.services.session_service import invalidate_user_sessions
@@ -114,28 +118,24 @@ _MANUAL_GROUP: Final = "_manual"
 
 # Identity-owned system unassignment reasons (user-service.md, Private
 # Helpers; ticket-audit-log.md, Canonical Automatic Comment Vocabulary).
-# The reconciliation-only `inactive assignee` reason is deliberately absent.
-UnassignmentReason = Literal[
-    "user deactivated",
-    "vulnerability_analyst role removed",
-    "vulnerability_analyst role removed by external sync",
-    "vulnerability_analyst role removed after role mapping deletion",
+# The reasons of the assignee eligibility observation (`inactive assignee`,
+# `confidential ticket`) are deliberately absent.
+LifecycleUnassignmentReason = Literal["user deactivated", "bot account"]
+RoleRemovalReason = Literal[
+    "role removed",
+    "role removed by external sync",
+    "role removed after role mapping deletion",
 ]
-VARoleLossReason = Literal[
-    "vulnerability_analyst role removed",
-    "vulnerability_analyst role removed by external sync",
-    "vulnerability_analyst role removed after role mapping deletion",
-]
-_VA_ROLE_LOSS_REASONS: Final[frozenset[str]] = frozenset(
+_LIFECYCLE_UNASSIGNMENT_REASONS: Final[frozenset[str]] = frozenset(
+    {"user deactivated", "bot account"}
+)
+_ROLE_REMOVAL_REASONS: Final[frozenset[str]] = frozenset(
     {
-        "vulnerability_analyst role removed",
-        "vulnerability_analyst role removed by external sync",
-        "vulnerability_analyst role removed after role mapping deletion",
+        "role removed",
+        "role removed by external sync",
+        "role removed after role mapping deletion",
     }
 )
-_UNASSIGNMENT_REASONS: Final[frozenset[str]] = _VA_ROLE_LOSS_REASONS | {
-    "user deactivated"
-}
 
 
 class UserServiceError(ServiceError):
@@ -1026,10 +1026,13 @@ async def update_user(
     sequential pre-check and, when concurrently lost, via the UNIQUE
     constraints below).
 
-    Q3: acquires `SELECT ... FOR UPDATE` on the target `User` as the first
-    database operation (`populate_existing=True` refreshes any stale
-    identity-map state after waiting for the lock). Evaluates the guards
-    above against the locked row. For each of `username`/`email`/
+    Q3: acquires `SELECT ... FOR NO KEY UPDATE` on the target `User` as the
+    first database operation (`populate_existing=True` refreshes any stale
+    identity-map state after waiting for the lock). The mode conflicts with
+    the `FOR SHARE` of every assignment path while staying compatible with
+    foreign-key `FOR KEY SHARE` validation (`docs/conventions.md`,
+    Cross-Domain Root Lock Order). Evaluates the guards above against the
+    locked row. For each of `username`/`email`/
     `full_name`/`bot`/`manager_id`/`synced_at` whose requested value differs from
     the current stored value (using the normalized value for `username` and
     `email`), stages the change; a requested value equal to the current one is
@@ -1039,7 +1042,16 @@ async def update_user(
     (see Inactive User Management Principle). If no field was staged, this is
     a total no-op: returns `UserUpdateResult` with an empty `changed_fields`
     and the unchanged locked row (with `roles`/`manager` eagerly loaded)
-    without issuing an UPDATE. Otherwise flushes every staged field inside a
+    without issuing an UPDATE. When `bot` changes from `false` to `true`,
+    unassigns the User from every `New`, `Analysis`, and `Analyzed` Ticket
+    (`_unassign_active_tickets(..., "bot account")`: a bot account is
+    eligible for no Ticket, rbac.md, Business Rule 10) while the User row
+    is still unwritten, so the Ticket locks precede the row lock that a
+    `username` or `email` write takes, which would conflict with the
+    foreign-key validation of a transaction holding one of those Tickets;
+    the Ticket events therefore record the pre-update username. A change
+    to `false` unassigns and restores nothing. Then flushes every staged
+    field inside a
     `SAVEPOINT`, so a concurrent same-value winner's `IntegrityError` on the
     username or email UNIQUE constraint is translated to `UserConflictError`.
     Then creates one `username_changed`/`email_changed`/`full_name_changed`/
@@ -1058,7 +1070,9 @@ async def update_user(
     Q4: creates one event per effectively changed field among
     `username_changed`, `email_changed`, `full_name_changed`, `bot_changed`,
     `manager_changed`; zero events when every field is a no-op or omitted.
-    `synced_at` never produces an audit event.
+    `synced_at` never produces an audit event. A change of `bot` to `true`
+    first creates one system Ticket `assignment` event (reason
+    `bot account`) per cleared Ticket.
 
     Q5: conditionally idempotent. A request whose normalized values already
     match the stored state (or that omits every field) is a no-op and
@@ -1077,7 +1091,7 @@ async def update_user(
     result = await session.execute(
         select(User)
         .where(User.id == user_id)
-        .with_for_update()
+        .with_for_update(key_share=True)
         .execution_options(populate_existing=True)
     )
     user = result.scalar_one_or_none()
@@ -1148,6 +1162,15 @@ async def update_user(
             user=await _load_user_profile(session, user.id),
             changed_fields=[],
         )
+
+    # A bot account is eligible for no Ticket. Its Tickets are locked and
+    # cleared while `user` is still clean, before any staged value is
+    # assigned below: a `username` or `email` write takes a row lock that
+    # conflicts with the foreign-key validation of a transaction holding
+    # one of those Tickets (`docs/conventions.md`, Cross-Domain Root Lock
+    # Order).
+    if pending_bot is True:
+        await _unassign_active_tickets(session, user, "bot account")
 
     # Phase 2 — apply every staged mutation and build the audit payload
     # together, inside the SAVEPOINT-protected block, so a concurrent
@@ -1263,47 +1286,44 @@ async def update_user(
     )
 
 
-async def _unassign_active_tickets(
-    db: AsyncSession, user: User, reason: UnassignmentReason
+async def _clear_assigned_tickets(
+    db: AsyncSession,
+    user: User,
+    reason: str,
+    *,
+    retains: Callable[[Ticket], bool],
 ) -> None:
-    """Clear the User's active-status Ticket assignments.
+    """Clear the User's active-status Ticket assignments that `retains`
+    does not keep.
 
-    Category A helper (user-service.md, Private Helpers,
-    `_unassign_active_tickets()`).
+    Category A core of `_unassign_active_tickets()` and
+    `_unassign_ineligible_tickets()` (user-service.md, Private Helpers,
+    `_unassign_active_tickets()` steps 1-5).
 
     Q1: `user` is already locked `FOR NO KEY UPDATE` by the caller; its `id`
-    and `username` are the authoritative target and audit snapshot. `reason`
-    is one of the four identity-owned unassignment reasons.
+    and `username` are the authoritative target and audit snapshot.
+    `reason` is a validated identity-owned reason. `retains` decides, from
+    a locked-current candidate, whether the User remains eligible for it.
 
-    Q2: the caller holds the User lock. This helper never acquires or
-    upgrades it, and applies no role or active-status guard.
+    Q2: the caller holds the User lock. This core never acquires or
+    upgrades it.
 
     Q3: selects the IDs of every Ticket whose current `assignee_id` is the
-    User, without a status prefilter, then locks exactly those Tickets
-    `FOR UPDATE` in ascending UUID order and revalidates each from the
-    locked-current row. The candidate set can only shrink after selection:
-    every path that could assign a Ticket to this User holds the User
-    `FOR SHARE`, which conflicts with the caller's lock. A Ticket no longer
-    assigned to the User, or in `Resolved`, `Ignored`, or `Duplicated`, is
-    preserved without an event. A Ticket in `New`, `Analysis`, or `Analyzed`
-    still assigned to the User gets `assignee_id = NULL` only. Flushes;
-    never changes status, reconciles, assigns a replacement, commits, or
-    rolls back.
+    User, without a status or confidentiality prefilter, then locks
+    exactly those Tickets `FOR UPDATE` in ascending UUID order and
+    revalidates each from the locked-current row. The candidate set can
+    only shrink after selection: every path that could assign a Ticket to
+    this User holds the User `FOR SHARE`, which conflicts with the
+    caller's lock. A Ticket no longer assigned to the User, in `Resolved`,
+    `Ignored`, or `Duplicated`, or kept by `retains`, is preserved without
+    an event. Every other candidate gets `assignee_id = NULL` only.
+    Flushes; never changes status, reconciles, assigns a replacement,
+    commits, or rolls back.
 
     Q4: one system `assignment` event per effective clear, in Ticket UUID
     order: `old_value` = the locked username, `new_value = NULL`,
     `comment = "Unassigned from {username}: {reason}"`, `detail = NULL`.
-
-    Q5: conditionally idempotent; already-cleared, reassigned, and
-    inactive-status candidates create no event.
-
-    Q6: raises `ValueError` for any other `reason` before any query.
-    Database, lock-timeout, cancellation, audit, and flush exceptions
-    propagate unchanged.
     """
-    if reason not in _UNASSIGNMENT_REASONS:
-        raise ValueError("reason is not an identity-owned unassignment reason.")
-
     candidate_ids = list(
         (
             await db.execute(
@@ -1333,6 +1353,8 @@ async def _unassign_active_tickets(
     for ticket in locked:
         if ticket.assignee_id != user.id or ticket.status not in ACTIVE_TICKET_STATUSES:
             continue
+        if retains(ticket):
+            continue
         ticket.assignee_id = None
         await TicketAuditLog.log_event(
             db,
@@ -1346,45 +1368,110 @@ async def _unassign_active_tickets(
     await db.flush()
 
 
-async def _unassign_tickets_on_va_role_loss(
-    db: AsyncSession, user: User, reason: VARoleLossReason
+async def _unassign_active_tickets(
+    db: AsyncSession, user: User, reason: LifecycleUnassignmentReason
 ) -> None:
-    """Unassign the User's active Tickets when no VA origin remains.
+    """Clear every active-status Ticket assignment of the User.
 
     Category A helper (user-service.md, Private Helpers,
-    `_unassign_tickets_on_va_role_loss()`).
+    `_unassign_active_tickets()`).
+
+    Q1: `user` is already locked `FOR NO KEY UPDATE` by the caller; its `id`
+    and `username` are the authoritative target and audit snapshot.
+    `reason` is `user deactivated` (`deactivate_user()`) or `bot account`
+    (`update_user()` on a change of `bot` to `true`): the caller invokes it
+    only for a change after which the User is eligible for no Ticket
+    (rbac.md, Business Rule 10).
+
+    Q2: the caller holds the User lock. This helper never acquires or
+    upgrades it, and applies no role, `active`, or bot-marker guard.
+
+    Q3: the shared selection, ordered Ticket locking, and locked-current
+    revalidation of `_clear_assigned_tickets()`: every Ticket in `New`,
+    `Analysis`, or `Analyzed` still assigned to the User is cleared;
+    `Resolved`, `Ignored`, `Duplicated`, and no-longer-assigned candidates
+    are preserved without an event.
+
+    Q4: one system `assignment` event per effective clear, in Ticket UUID
+    order.
+
+    Q5: conditionally idempotent; already-cleared, reassigned, and
+    inactive-status candidates create no event.
+
+    Q6: raises `ValueError` for any other `reason` before any query.
+    Database, lock-timeout, cancellation, audit, and flush exceptions
+    propagate unchanged.
+    """
+    if reason not in _LIFECYCLE_UNASSIGNMENT_REASONS:
+        raise ValueError("reason is not a lifecycle unassignment reason.")
+    await _clear_assigned_tickets(db, user, reason, retains=lambda _ticket: False)
+
+
+async def _unassign_ineligible_tickets(
+    db: AsyncSession, user: User, reason: RoleRemovalReason
+) -> None:
+    """Clear the active-status assignments that a role-origin removal
+    leaves ineligible.
+
+    Category A helper (user-service.md, Private Helpers,
+    `_unassign_ineligible_tickets()`).
 
     Q1: `user` is already locked `FOR NO KEY UPDATE` by the caller, which
     has applied its `UserRole` deletions in this transaction. `reason` is
-    one of the three role-loss reasons.
+    one of the three role-removal reasons.
 
-    Q3: when any transaction-visible `vulnerability_analyst` `UserRole`
-    remains for the User, from any `group_name`, returns without effect;
-    otherwise delegates to `_unassign_active_tickets()`. Never acquires or
-    upgrades the User lock.
+    Q2: never acquires or upgrades the User lock.
 
-    Q5: idempotent; a re-invocation after final loss finds no active
-    assignment to clear.
+    Q3: resolves the User's side of assignment eligibility (rbac.md,
+    Business Rule 10) from the locked `active` and `bot` values and every
+    transaction-visible `UserRole` origin. A User eligible for every Ticket
+    (active, not a bot account, holding `triage_ticket`, effective scope
+    `all`) returns without a Ticket query. Otherwise applies
+    `_clear_assigned_tickets()`, which keeps every locked-current
+    candidate for which the User remains eligible: with `triage_ticket`
+    and effective scope `non_confidential`, a Ticket whose
+    `is_confidential` is `false`.
+
+    Q4: one system `assignment` event per effective clear, in Ticket UUID
+    order.
+
+    Q5: idempotent; removing one of several origins of a role, or a role
+    whose capabilities and scope a remaining role also grants, changes no
+    Ticket, and a re-invocation finds nothing left to clear.
 
     Q6: raises `ValueError` for any other `reason` before any query.
-    Database and delegated exceptions propagate unchanged.
+    Database, lock-timeout, cancellation, audit, and flush exceptions
+    propagate unchanged.
     """
-    if reason not in _VA_ROLE_LOSS_REASONS:
-        raise ValueError("reason is not a vulnerability_analyst role-loss reason.")
+    if reason not in _ROLE_REMOVAL_REASONS:
+        raise ValueError("reason is not a role-removal unassignment reason.")
 
-    remaining = (
-        await db.execute(
-            select(
-                exists().where(
-                    UserRole.user_id == user.id,
-                    UserRole.role == Role.VULNERABILITY_ANALYST.value,
-                )
+    roles = frozenset(
+        Role(value)
+        for value in (
+            await db.execute(select(UserRole.role).where(UserRole.user_id == user.id))
+        ).scalars()
+    )
+
+    def eligible(*, is_confidential: bool) -> bool:
+        return (
+            assignee_ineligibility(
+                active=user.active,
+                bot=user.bot,
+                roles=roles,
+                is_confidential=is_confidential,
             )
+            is None
         )
-    ).scalar_one()
-    if remaining:
+
+    if eligible(is_confidential=True):
         return
-    await _unassign_active_tickets(db, user, reason)
+    await _clear_assigned_tickets(
+        db,
+        user,
+        reason,
+        retains=lambda ticket: eligible(is_confidential=ticket.is_confidential),
+    )
 
 
 async def update_roles(
@@ -1415,17 +1502,19 @@ async def update_roles(
     deletion a resolved removal with one. Rows of any other `group_name` are
     only observed. Applies the self-Admin guard, inserts the `_manual` rows
     (`assigned_by = acting_user_id`), then deletes the `_manual` rows, each
-    in ascending wire-format order. After the deletions, an effective
-    `vulnerability_analyst` deletion calls
-    `_unassign_tickets_on_va_role_loss()`, which unassigns active Tickets
-    only when no VA origin remains. Then creates the Identity events and
-    flushes. A UNIQUE violation from a non-conforming writer propagates.
+    in ascending wire-format order. After the deletions, any effective
+    deletion calls `_unassign_ineligible_tickets()`, which unassigns
+    exactly the active-status Tickets for which the remaining origins no
+    longer make the User eligible (rbac.md, Business Rule 10). Then
+    creates the Identity events and flushes. A UNIQUE violation from a
+    non-conforming writer propagates.
 
     Q4: one `role_added` per effective insertion, then one `role_removed`
     per effective deletion, each group in wire-format order, with
     `user_id = acting_user_id`, the wire-format role as `new_value` or
-    `old_value`, and `detail = NULL`. Final VA-origin loss additionally
-    creates the system `assignment` events of the helper.
+    `old_value`, and `detail = NULL`. An eligibility-losing deletion
+    additionally creates the system `assignment` events of the helper
+    (reason `role removed`).
 
     Q5: conditionally idempotent; a repeated invocation returns empty
     result lists and creates no row, event, or Ticket change.
@@ -1509,10 +1598,8 @@ async def update_roles(
             )
         )
 
-    if Role.VULNERABILITY_ANALYST in deletions:
-        await _unassign_tickets_on_va_role_loss(
-            session, user, "vulnerability_analyst role removed"
-        )
+    if deletions:
+        await _unassign_ineligible_tickets(session, user, "role removed")
 
     for role in insertions:
         await IdentityAuditLog.log_event(

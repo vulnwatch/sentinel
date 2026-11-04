@@ -67,6 +67,7 @@ from app.services.ticket_convergence_registry import (
     pending_ticket_convergence_effects,
 )
 from app.services.ticket_deadlines import DueDates
+from app.services.ticket_mutations import reconcile_ticket_status
 from app.services.ticket_service import assemble_ticket_detail, set_confidentiality
 from app.services.ticket_visibility import TicketCaller, ticket_visibility_condition
 from tests.support.database import rollback_test_scope
@@ -401,6 +402,293 @@ class TestEffectiveTransition:
             _changed(actor, True, False),
             _changed(actor, False, True),
         ]
+
+
+# ---------------------------------------------------------------------------
+# Assignment eligibility (ticket-service.md, `set_confidentiality` step 7;
+# Architectural Test Requirement 14)
+# ---------------------------------------------------------------------------
+
+ACTIVE_STATUSES = [TicketStatus.NEW, TicketStatus.ANALYSIS, TicketStatus.ANALYZED]
+
+
+def _unassigned(username: str, reason: str) -> EventRow:
+    """The system unassignment of the confidentiality transition
+    (ticket-audit-log.md, Canonical Automatic Comment Vocabulary)."""
+    return EventRow(
+        "assignment",
+        None,
+        username,
+        None,
+        f"Unassigned from {username}: {reason}",
+        None,
+    )
+
+
+@pytest.mark.integration
+class TestAssigneeEligibility:
+    @pytest.mark.parametrize("visibility", ["none", "grant", "maintainer"])
+    @pytest.mark.parametrize("status", ACTIVE_STATUSES, ids=str)
+    async def test_classification_clears_an_assignee_without_scope_all(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        ticket_access_grant_factory: GrantFactory,
+        ticket_package_factory: PackageFactory,
+        ticket_package_maintainer_factory: MaintainerFactory,
+        va_user: VAUser,
+        status: TicketStatus,
+        visibility: str,
+    ) -> None:
+        """Step 7 (rbac.md, Business Rule 10): `false` to `true` in `New`,
+        `Analysis`, or `Analyzed` clears a restricted analyst assignee,
+        including one that keeps seeing the Ticket through a grant or
+        maintainership, with one system `assignment` event after
+        `confidentiality_changed` (reason `confidential ticket`) and no
+        status change. The grant and maintainer rows are retained."""
+        actor = await va_user()
+        assignee = await va_user(roles=(Role.RESTRICTED_ANALYST,))
+        ticket = await ticket_factory(status=status.value, assignee_id=assignee.id)
+        if visibility == "grant":
+            await ticket_access_grant_factory(ticket_id=ticket.id, user_id=assignee.id)
+        elif visibility == "maintainer":
+            package = await ticket_package_factory(ticket_id=ticket.id)
+            await ticket_package_maintainer_factory(
+                ticket_package_id=package.id, user_id=assignee.id
+            )
+
+        result = await _set(db_session, ticket.id, actor, True)
+
+        assert result.assignee_id is None
+        state = await _state(db_session, ticket.id)
+        assert state is not None
+        assert state[:2] == (status.value, None)
+        assert state[3] is True
+        assert await ticket_events_by_id(db_session, ticket.id) == [
+            _changed(actor, False, True),
+            _unassigned(assignee.username, "confidential ticket"),
+        ]
+        assert await _visible(db_session, ticket.id, assignee) is (visibility != "none")
+        assert pending_ticket_convergence_effects(db_session) == ()
+
+    @pytest.mark.parametrize(
+        "roles",
+        [
+            pytest.param((Role.VULNERABILITY_ANALYST,), id="va"),
+            pytest.param(
+                (Role.ADMIN, Role.RESTRICTED_ANALYST), id="admin-and-restricted"
+            ),
+        ],
+    )
+    async def test_classification_retains_an_assignee_with_scope_all(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+        roles: tuple[Role, ...],
+    ) -> None:
+        actor = await va_user()
+        assignee = await va_user(roles=roles)
+        ticket = await ticket_factory(
+            status=TicketStatus.ANALYSIS.value, assignee_id=assignee.id
+        )
+
+        await _set(db_session, ticket.id, actor, True)
+
+        state = await _state(db_session, ticket.id)
+        assert state is not None
+        assert state[1] == assignee.id
+        assert await ticket_events_by_id(db_session, ticket.id) == [
+            _changed(actor, False, True)
+        ]
+
+    @pytest.mark.parametrize(
+        "status",
+        [TicketStatus.RESOLVED, TicketStatus.IGNORED, TicketStatus.DUPLICATED],
+        ids=str,
+    )
+    async def test_classification_retains_every_assignee_outside_active_statuses(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+        status: TicketStatus,
+    ) -> None:
+        """Step 7: a `Resolved`, `Ignored`, or `Duplicated` Ticket retains
+        its assignee; reconciliation sanitation clears it if the Ticket
+        later returns to `Analysis` or `Analyzed`."""
+        actor = await va_user()
+        assignee = await va_user(roles=(Role.RESTRICTED_ANALYST,))
+        ticket = await ticket_factory(status=status.value, assignee_id=assignee.id)
+
+        with StatementRecorder(db_session) as recorder:
+            await _set(db_session, ticket.id, actor, True)
+
+        assert [s for s in recorder.statements if 'FROM "user"' in s] == []
+        state = await _state(db_session, ticket.id)
+        assert state is not None
+        assert state[1] == assignee.id
+        assert await ticket_events_by_id(db_session, ticket.id) == [
+            _changed(actor, False, True)
+        ]
+
+    async def test_retained_assignee_is_sanitized_when_the_ticket_regresses(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        tree: TreeBuilder,
+        va_user: VAUser,
+    ) -> None:
+        """Step 7 retains the restricted analyst assignee of a `Resolved`
+        Ticket made confidential; assignment-eligibility sanitation
+        (ticket-mutations.md) clears it, with reason `confidential ticket`,
+        when the Ticket later regresses to `Analyzed`."""
+        actor = await va_user()
+        assignee = await va_user(roles=(Role.RESTRICTED_ANALYST,))
+        ticket = await ticket_factory(
+            status=TicketStatus.RESOLVED.value,
+            severity_manual=Severity.HIGH.value,
+            assignee_id=assignee.id,
+        )
+
+        locked = await _set(db_session, ticket.id, actor, True)
+        assert locked.assignee_id == assignee.id
+        await tree(locked, status=PackageStatus.AFFECTED)
+        await reconcile_ticket_status(locked, db_session, evaluation_date=EVAL)
+
+        state = await _state(db_session, ticket.id)
+        assert state is not None
+        assert state[:2] == (TicketStatus.ANALYZED.value, None)
+        assert await ticket_events_by_id(db_session, ticket.id) == [
+            _changed(actor, False, True),
+            _unassigned(assignee.username, "confidential ticket"),
+            EventRow("status_change", None, "Resolved", "Analyzed", None, None),
+        ]
+
+    async def test_declassification_never_changes_the_assignee(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+    ) -> None:
+        """Step 7: a `true` to `false` transition never changes the
+        assignee, even an ineligible one."""
+        actor = await va_user()
+        assignee = await va_user(bot=True)
+        ticket = await ticket_factory(
+            status=TicketStatus.ANALYSIS.value,
+            assignee_id=assignee.id,
+            is_confidential=True,
+        )
+
+        await _set(db_session, ticket.id, actor, False)
+
+        state = await _state(db_session, ticket.id)
+        assert state is not None
+        assert state[1] == assignee.id
+        assert await ticket_events_by_id(db_session, ticket.id) == [
+            _changed(actor, True, False)
+        ]
+
+    @pytest.mark.parametrize(
+        ("active", "roles", "bot", "reason"),
+        [
+            pytest.param(
+                False,
+                (Role.RESTRICTED_ANALYST,),
+                True,
+                "inactive assignee",
+                id="inactive-first",
+            ),
+            pytest.param(
+                True, (Role.RESTRICTED_ANALYST,), True, "bot account", id="bot-second"
+            ),
+            pytest.param(True, (), False, "role removed", id="without-triage-third"),
+        ],
+    )
+    async def test_reason_follows_the_canonical_precedence(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+        active: bool,
+        roles: tuple[Role, ...],
+        bot: bool,
+        reason: str,
+    ) -> None:
+        """Step 7 uses the reason selection of the assignee eligibility
+        observation (ticket-audit-log.md: inactive, bot account, no
+        `triage_ticket`, then `confidential ticket`) for an anomalously
+        retained ineligible assignee."""
+        actor = await va_user()
+        assignee = await va_user(active=active, roles=roles, bot=bot)
+        ticket = await ticket_factory(
+            status=TicketStatus.ANALYZED.value, assignee_id=assignee.id
+        )
+
+        await _set(db_session, ticket.id, actor, True)
+
+        assert await ticket_events_by_id(db_session, ticket.id) == [
+            _changed(actor, False, True),
+            _unassigned(assignee.username, reason),
+        ]
+
+    async def test_assignee_is_observed_once_without_a_user_lock(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+    ) -> None:
+        """Locking: the Ticket `FOR UPDATE` is the only lock; step 7 reads
+        the assignee through one unlocked observation under it and reads
+        no audit history."""
+        actor = await va_user()
+        assignee = await va_user(roles=(Role.RESTRICTED_ANALYST,))
+        ticket = await ticket_factory(
+            status=TicketStatus.ANALYSIS.value, assignee_id=assignee.id
+        )
+
+        with StatementRecorder(db_session) as recorder:
+            await _set(db_session, ticket.id, actor, True)
+
+        statements = recorder.statements
+        assert recorder.row_locks() == [statements[0]]
+        assert "FROM ticket" in statements[0]
+        assert len([s for s in statements if 'FROM "user"' in s]) == 1
+        assert recorder.selects_from("ticket_audit_event") == []
+
+    async def test_assignment_event_failure_rolls_back_flag_and_clear(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Transaction and rollback: a failure of the `assignment` event
+        rolls back the flag, the clear, and `confidentiality_changed`."""
+        actor = await va_user()
+        assignee = await va_user(roles=(Role.RESTRICTED_ANALYST,))
+        ticket = await ticket_factory(
+            status=TicketStatus.ANALYSIS.value, assignee_id=assignee.id
+        )
+        ticket_id, assignee_id = ticket.id, assignee.id
+        original_log = TicketAuditLog.log_event
+
+        async def failing_log(*args: Any, **kwargs: Any) -> None:
+            if kwargs["event_type"] is TicketAuditEventType.ASSIGNMENT:
+                raise RuntimeError("injected audit failure")
+            await original_log(*args, **kwargs)
+
+        async with rollback_test_scope(db_session):
+            monkeypatch.setattr(TicketAuditLog, "log_event", failing_log)
+            with pytest.raises(RuntimeError, match="injected audit failure"):
+                await _set(db_session, ticket_id, actor, True)
+        monkeypatch.undo()
+
+        state = await _state(db_session, ticket_id)
+        assert state is not None
+        assert (state[1], state[3]) == (assignee_id, False)
+        assert await ticket_events_by_id(db_session, ticket_id) == []
 
 
 # ---------------------------------------------------------------------------

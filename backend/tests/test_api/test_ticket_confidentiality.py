@@ -629,6 +629,48 @@ class TestSetConfidentiality:
             EventRow("confidentiality_changed", va_user.id, "false", "true", None, None)
         ]
 
+    async def test_classification_unassigns_a_restricted_analyst_assignee(
+        self,
+        authenticated_client: AsyncClient,
+        va_user: User,
+        db_session: AsyncSession,
+        ticket_factory: Factory,
+        user_factory: Factory,
+        user_role_factory: Factory,
+    ) -> None:
+        """tickets.md, Set Confidentiality: making an `analysis` Ticket
+        confidential clears an assignee without scope `all`; the status is
+        unchanged and the response shows `assignee: null`, with one system
+        `assignment` event after `confidentiality_changed`."""
+        assignee: User = await user_factory(username="carol.ra")
+        await user_role_factory(user_id=assignee.id, role=Role.RESTRICTED_ANALYST.value)
+        target: Ticket = await ticket_factory(
+            status=TicketStatus.ANALYSIS.value, assignee_id=assignee.id
+        )
+
+        response = await authenticated_client.patch(
+            CONFIDENTIALITY.url(target), json={"is_confidential": True}
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert (data["is_confidential"], data["status"]) == (True, "analysis")
+        assert data["assignee"] is None
+        assert (await _state(db_session, target.id))["assignee_id"] is None
+        assert await ticket_events_by_id(db_session, target.id) == [
+            EventRow(
+                "confidentiality_changed", va_user.id, "false", "true", None, None
+            ),
+            EventRow(
+                "assignment",
+                None,
+                "carol.ra",
+                None,
+                "Unassigned from carol.ra: confidential ticket",
+                None,
+            ),
+        ]
+
     @pytest.mark.parametrize("value", [True, False])
     async def test_same_value_returns_the_unchanged_detail_without_event(
         self,

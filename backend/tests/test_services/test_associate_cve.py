@@ -730,11 +730,11 @@ class TestEventOrder:
         )
 
     @pytest.mark.parametrize(
-        ("active", "roles"),
+        ("active", "roles", "bot"),
         [
-            pytest.param(True, (Role.RESTRICTED_ANALYST,), id="restricted-analyst"),
-            pytest.param(False, (Role.VULNERABILITY_ANALYST,), id="inactive-va"),
-            pytest.param(True, (), id="no-role"),
+            pytest.param(True, (Role.VULNERABILITY_ANALYST,), True, id="bot-va"),
+            pytest.param(False, (Role.VULNERABILITY_ANALYST,), False, id="inactive-va"),
+            pytest.param(True, (), False, id="no-role"),
         ],
     )
     async def test_ineligible_actor_associates_without_assignment_and_new_stays_new(
@@ -746,8 +746,9 @@ class TestEventOrder:
         tree: TreeBuilder,
         active: bool,
         roles: tuple[Role, ...],
+        bot: bool,
     ) -> None:
-        actor = await va_user(active=active, roles=roles)
+        actor = await va_user(active=active, roles=roles, bot=bot)
         cve = await cve_with(SUSE_CRITICAL, severity=None)
         ticket = await cveless(ticket_factory, status=TicketStatus.NEW, severity=None)
         # The gates would be satisfied, but reconciliation skips `New`.
@@ -776,12 +777,7 @@ class TestEventOrder:
             pytest.param(
                 False, (Role.VULNERABILITY_ANALYST,), "inactive assignee", id="inactive"
             ),
-            pytest.param(
-                True,
-                (Role.RESTRICTED_ANALYST,),
-                "vulnerability_analyst role removed",
-                id="active-without-va",
-            ),
+            pytest.param(True, (), "role removed", id="active-without-triage"),
         ],
     )
     @pytest.mark.parametrize("result", [TicketStatus.ANALYSIS, TicketStatus.ANALYZED])
@@ -835,7 +831,7 @@ class TestEventOrder:
             pytest.param(
                 TicketStatus.NEW,
                 PackageStatus.NOT_AFFECTED,
-                "restricted",
+                "bot",
                 TicketStatus.NEW,
                 id="new",
             ),
@@ -874,11 +870,9 @@ class TestEventOrder:
         actor_kind: str,
         final_status: TicketStatus,
     ) -> None:
-        actor = await va_user(
-            roles=(Role.RESTRICTED_ANALYST,)
-            if actor_kind == "restricted"
-            else (Role.VULNERABILITY_ANALYST,)
-        )
+        # A bot account is never auto-assigned, so the `New` Ticket stays
+        # `New` (rbac.md, Business Rule 10).
+        actor = await va_user(bot=actor_kind == "bot")
         owner = None if status is TicketStatus.NEW else await va_user()
         cve = await cve_with(SUSE_CRITICAL, severity=None)
         ticket = await cveless(
@@ -1513,7 +1507,7 @@ class TestAccessibleAssociation:
 
 @pytest.mark.integration
 class TestRejectedCVE:
-    @pytest.mark.parametrize("kind", ["active-va", "restricted-analyst"])
+    @pytest.mark.parametrize("kind", ["active-va", "restricted-analyst", "bot-va"])
     async def test_rejected_cve_gets_no_automatic_rejection_effect(
         self,
         db_session: AsyncSession,
@@ -1524,13 +1518,14 @@ class TestRejectedCVE:
         va_user: VAUser,
         kind: str,
     ) -> None:
-        assigned = kind == "active-va"
+        assigned = kind != "bot-va"
         actor = await va_user(
             roles=(
-                (Role.VULNERABILITY_ANALYST,)
-                if assigned
-                else (Role.RESTRICTED_ANALYST,)
-            )
+                (Role.RESTRICTED_ANALYST,)
+                if kind == "restricted-analyst"
+                else (Role.VULNERABILITY_ANALYST,)
+            ),
+            bot=kind == "bot-va",
         )
         cve: CVE = await cve_factory(
             cve_state="REJECTED",

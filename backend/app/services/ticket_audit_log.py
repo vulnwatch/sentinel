@@ -108,9 +108,11 @@ PACKAGE_ADDED_AUTOMATIC_COMMENTS: Final = frozenset(
 UNASSIGNMENT_REASONS: Final = frozenset(
     {
         "user deactivated",
-        "vulnerability_analyst role removed",
-        "vulnerability_analyst role removed by external sync",
-        "vulnerability_analyst role removed after role mapping deletion",
+        "bot account",
+        "role removed",
+        "role removed by external sync",
+        "role removed after role mapping deletion",
+        "confidential ticket",
         "inactive assignee",
     }
 )

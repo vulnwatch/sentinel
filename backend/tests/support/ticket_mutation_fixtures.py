@@ -47,12 +47,16 @@ def va_user(
     user_factory: UserFactory,
     user_role_factory: Callable[..., Awaitable[UserRole]],
 ) -> VAUser:
-    """Create a User holding the given roles (default: one VA origin)."""
+    """Create a User holding the given roles (default: one VA origin),
+    optionally marked as a bot account."""
 
     async def _create(
-        *, active: bool = True, roles: tuple[Role, ...] = (Role.VULNERABILITY_ANALYST,)
+        *,
+        active: bool = True,
+        roles: tuple[Role, ...] = (Role.VULNERABILITY_ANALYST,),
+        bot: bool = False,
     ) -> User:
-        user = await user_factory(active=active)
+        user = await user_factory(active=active, bot=bot)
         for index, role in enumerate(roles):
             await user_role_factory(
                 user_id=user.id, role=role.value, group_name=f"_origin{index}"

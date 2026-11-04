@@ -569,7 +569,7 @@ class TestCapability:
             pytest.param([], 403, None, None, id="no-roles"),
             pytest.param([Role.ADMIN], 403, None, None, id="admin"),
             pytest.param([Role.VULNERABILITY_ANALYST], 200, "analysis", True, id="va"),
-            pytest.param([Role.RESTRICTED_ANALYST], 200, "new", False, id="ra"),
+            pytest.param([Role.RESTRICTED_ANALYST], 200, "analysis", True, id="ra"),
             pytest.param(
                 [Role.VULNERABILITY_ANALYST, Role.ADMIN],
                 200,
@@ -580,8 +580,8 @@ class TestCapability:
             pytest.param(
                 [Role.RESTRICTED_ANALYST, Role.ADMIN],
                 200,
-                "new",
-                False,
+                "analysis",
+                True,
                 id="ra-admin",
             ),
         ],
@@ -600,8 +600,10 @@ class TestCapability:
     ) -> None:
         """`vulnerability_analyst` and `restricted_analyst` hold
         `triage_ticket` (rbac.md, Predefined Roles); `admin` does not
-        inherit it. Only an active VA is auto-assigned (tickets.md,
-        Auto-Assignment on Unassigned Tickets)."""
+        inherit it. Every holder is an active non-bot user eligible to be
+        the assignee of the non-confidential Ticket, so it is auto-assigned
+        (rbac.md, Business Rule 10; tickets.md, Auto-Assignment on
+        Unassigned Tickets)."""
         for index, role in enumerate(roles):
             await user_role_factory(
                 user_id=authenticated_user.id,
@@ -1622,17 +1624,21 @@ class TestAssociateCve:
         assert await ticket_events_by_id(db_session, world.ticket_id) == expected
         assert await _api_events(authenticated_client, world.locator) == expected
 
-    async def test_non_va_holder_associates_without_assignment(
+    async def test_ineligible_holder_associates_without_assignment(
         self,
         authenticated_client: AsyncClient,
-        ra_user: User,
+        va_user: User,
         db_session: AsyncSession,
         composed: Callable[..., Awaitable[_Composed]],
     ) -> None:
-        """A `restricted_analyst` holds `triage_ticket` but is not a VA: the
-        Ticket stays `New` and unassigned, `New` is outside the gate zone, so
-        no assignment, promotion, or gate event exists (tickets.md,
-        Auto-Assignment on Unassigned Tickets; Automatic Status Evaluation)."""
+        """A bot account holding `vulnerability_analyst` holds
+        `triage_ticket` but is not eligible to be an assignee (rbac.md,
+        Business Rule 10): the Ticket stays `New` and unassigned, `New` is
+        outside the gate zone, so no assignment, promotion, or gate event
+        exists (tickets.md, Auto-Assignment on Unassigned Tickets; Automatic
+        Status Evaluation; Architectural Invariant)."""
+        va_user.bot = True
+        await db_session.flush()
         world = await composed()
         subject_rows = await _subject_rows(db_session, world.ticket_id)
 
@@ -1655,7 +1661,7 @@ class TestAssociateCve:
             (False, False),
             (True, False),
         ]
-        expected = _composed_events(ra_user, world, subject_rows, assigned=False)
+        expected = _composed_events(va_user, world, subject_rows, assigned=False)
         assert await ticket_events_by_id(db_session, world.ticket_id) == expected
         assert await _api_events(authenticated_client, world.locator) == expected
 

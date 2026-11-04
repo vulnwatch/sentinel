@@ -125,7 +125,9 @@ GATE_TRACK = {
 the same mapping as `tests.support.ticket_mutations.tree_for`)."""
 
 INACTIVE = "inactive assignee"
-VA_REMOVED = "vulnerability_analyst role removed"
+BOT_ACCOUNT = "bot account"
+ROLE_REMOVED = "role removed"
+CONFIDENTIAL_TICKET = "confidential ticket"
 """The closed sanitation reasons (ticket-mutations.md, Assignment Eligibility
 Sanitization)."""
 
@@ -422,44 +424,57 @@ class TestAssignment:
             "unassigned",
             "replaces-other",
             "already-assignee",
-            "non-va-actor",
+            "restricted-actor",
+            "restricted-actor-on-confidential-with-grant",
+            "bot-va-actor",
             "inactive-va-actor",
         ],
     )
     @pytest.mark.parametrize("exit_", EXITS)
-    async def test_active_va_actor_becomes_the_assignee_otherwise_unchanged(
+    async def test_eligible_actor_becomes_the_assignee_otherwise_unchanged(
         self,
         db_session: AsyncSession,
         ticket_factory: TicketFactory,
+        ticket_access_grant_factory: Callable[..., Awaitable[Any]],
         va_user: VAUser,
         exit_: str,
         case: str,
     ) -> None:
         """ticket-service.md, `reopen_from_ignored()` / `revert_duplicate()`
-        step 3: an active VA actor becomes the assignee, replacing a
+        step 3: an actor eligible to be the assignee of the locked-current
+        Ticket (rbac.md, Business Rule 10), a restricted analyst on a
+        non-confidential Ticket included, becomes the assignee, replacing a
         different one (`old_value` its username); an actor that already is
-        the assignee, a non-VA actor, and an inactive VA actor leave the
-        assignee unchanged without an `assignment` event. The final result
-        is the `Analysis` floor (no package) with an eligible assignee."""
+        the assignee, a restricted analyst on a confidential Ticket that it
+        sees through a grant, a bot account, and an inactive VA actor leave
+        the assignee unchanged without an `assignment` event. The final
+        result is the `Analysis` floor (no package) with an eligible
+        assignee."""
         owner = await va_user()
         scope = Scope.ALL
-        if case == "non-va-actor":
+        if case.startswith("restricted-actor"):
             actor = await va_user(roles=(Role.RESTRICTED_ANALYST,))
             scope = Scope.NON_CONFIDENTIAL
+        elif case == "bot-va-actor":
+            actor = await va_user(bot=True)
         elif case == "inactive-va-actor":
             actor = await va_user(active=False)
         else:
             actor = await va_user()
+        confidential = case == "restricted-actor-on-confidential-with-grant"
         previous = {"unassigned": None, "already-assignee": actor}.get(case, owner)
         ticket, target = await _source(
             ticket_factory,
             exit_,
             assignee_id=previous.id if previous is not None else None,
+            is_confidential=confidential,
         )
+        if confidential:
+            await ticket_access_grant_factory(ticket_id=ticket.id, user_id=actor.id)
 
         await _exit(db_session, exit_, ticket.id, actor, scope=scope)
 
-        claimed = case in ("unassigned", "replaces-other")
+        claimed = case in ("unassigned", "replaces-other", "restricted-actor")
         expected = actor if claimed else previous
         assert expected is not None
         assert await _state(db_session, ticket.id) == (
@@ -806,8 +821,13 @@ class TestFinalStatus:
 
     @pytest.mark.parametrize(
         ("assignee_kind", "reason"),
-        [("inactive", INACTIVE), ("non-va", VA_REMOVED)],
-        ids=["inactive", "non-va"],
+        [
+            ("inactive", INACTIVE),
+            ("bot", BOT_ACCOUNT),
+            ("without-triage", ROLE_REMOVED),
+            ("restricted-on-confidential", CONFIDENTIAL_TICKET),
+        ],
+        ids=["inactive", "bot", "without-triage", "restricted-on-confidential"],
     )
     @pytest.mark.parametrize("final", GATE_RESULTS, ids=str)
     @pytest.mark.parametrize("exit_", EXITS)
@@ -823,17 +843,30 @@ class TestFinalStatus:
         reason: str,
     ) -> None:
         """ATR 11 and ticket-mutations.md, Assignment Eligibility
-        Sanitization: a non-VA actor keeps the pre-existing ineligible
-        assignee through step 3; the reconciliation clears it for final
-        `Analysis` or `Analyzed` and retains it for `Resolved`. The full
-        sequence: direct event, system Product events in occurrence order,
-        the sanitation `assignment`, then the final `status_change`."""
-        actor = await va_user(roles=(Role.RESTRICTED_ANALYST,))
-        if assignee_kind == "inactive":
-            assignee = await va_user(active=False)
-        else:
-            assignee = await va_user(roles=(Role.RESTRICTED_ANALYST,))
-        ticket, target = await _source(ticket_factory, exit_, assignee_id=assignee.id)
+        Sanitization: an ineligible actor (a bot account) keeps the
+        pre-existing ineligible assignee through step 3; the
+        reconciliation clears it for final `Analysis` or `Analyzed` and
+        retains it for `Resolved`. This includes a restricted analyst
+        retained on a Ticket made confidential while `Ignored` or
+        `Duplicated` (ticket-service.md, `set_confidentiality` step 7). The
+        full sequence: direct event, system Product events in occurrence
+        order, the sanitation `assignment`, then the final
+        `status_change`."""
+        actor = await va_user(bot=True)
+        assignee = await {
+            "inactive": lambda: va_user(active=False),
+            "bot": lambda: va_user(bot=True),
+            "without-triage": lambda: va_user(roles=()),
+            "restricted-on-confidential": lambda: va_user(
+                roles=(Role.RESTRICTED_ANALYST,)
+            ),
+        }[assignee_kind]()
+        ticket, target = await _source(
+            ticket_factory,
+            exit_,
+            assignee_id=assignee.id,
+            is_confidential=assignee_kind == "restricted-on-confidential",
+        )
         await tree(
             ticket,
             status=GATE_TRACK[final],
@@ -841,7 +874,7 @@ class TestFinalStatus:
         )
         detail = await _reactivation_subjects(db_session, ticket.id)
 
-        await _exit(db_session, exit_, ticket.id, actor, scope=Scope.NON_CONFIDENTIAL)
+        await _exit(db_session, exit_, ticket.id, actor)
 
         cleared = final is not TicketStatus.RESOLVED
         assert await _state(db_session, ticket.id) == (
@@ -953,10 +986,12 @@ class TestRevert:
         assert before[sibling.id] == (TicketStatus.DUPLICATED, target.id, None)
         for other_id in others:
             assert await ticket_events_by_id(db_session, other_id) == []
+        # The non-bot restricted analyst is eligible for the
+        # non-confidential source and claims it (rbac.md, Business Rule 12).
         assert await _state(db_session, ticket.id) == (
             TicketStatus.ANALYSIS,
             None,
-            None,
+            actor.id,
         )
 
 

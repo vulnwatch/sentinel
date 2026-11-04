@@ -84,9 +84,11 @@ _AUTOMATIC_PACKAGE_COMMENTS = (
 )
 _UNASSIGNMENT_REASONS = (
     "user deactivated",
-    "vulnerability_analyst role removed",
-    "vulnerability_analyst role removed by external sync",
-    "vulnerability_analyst role removed after role mapping deletion",
+    "bot account",
+    "role removed",
+    "role removed by external sync",
+    "role removed after role mapping deletion",
+    "confidential ticket",
     "inactive assignee",
 )
 _EXPECTED_SOURCE_LABELS = {
@@ -842,6 +844,8 @@ class TestAssignmentComment:
             None,
             "Unassigned from other.analyst: user deactivated",
             f"Unassigned from {_USERNAME}: role changed",
+            # The reasons that the closed vocabulary replaced (#1186).
+            f"Unassigned from {_USERNAME}: vulnerability_analyst role removed",
             f"Unassigned from {_USERNAME}: user deactivated.",
             f"unassigned from {_USERNAME}: user deactivated",
         ],

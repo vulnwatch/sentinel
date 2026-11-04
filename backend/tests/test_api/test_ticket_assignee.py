@@ -73,9 +73,15 @@ _ASSIGNEE_INACTIVE = {
     "code": "TICKET_ASSIGNEE_INACTIVE",
     "detail": "Assignee is inactive.",
 }
-_ASSIGNEE_NOT_VA = {
-    "code": "TICKET_ASSIGNEE_NOT_VA",
-    "detail": "Assignee must hold the vulnerability_analyst role.",
+_NOT_ELIGIBLE = "TICKET_ASSIGNEE_NOT_ELIGIBLE"
+_ASSIGNEE_IS_BOT = {"code": _NOT_ELIGIBLE, "detail": "Assignee is a bot account."}
+_ASSIGNEE_WITHOUT_TRIAGE = {
+    "code": _NOT_ELIGIBLE,
+    "detail": "Assignee lacks the triage_ticket capability.",
+}
+_ASSIGNEE_NOT_CONFIDENTIAL = {
+    "code": _NOT_ELIGIBLE,
+    "detail": "Assignee cannot be assigned a confidential Ticket.",
 }
 _ASSIGNEE_NOT_CALLER = {
     "code": "TICKET_ASSIGNEE_NOT_CALLER",
@@ -130,10 +136,14 @@ async def ra_user(authenticated_user: User, user_role_factory: Factory) -> User:
 def target_user(
     user_factory: Factory, user_role_factory: Factory
 ) -> Callable[..., Awaitable[User]]:
-    """Create a prospective assignee with the given role and activity."""
+    """Create a prospective assignee with the given role, activity, and bot
+    marker."""
 
     async def _create(
-        *, role: Role | None = Role.VULNERABILITY_ANALYST, active: bool = True
+        *,
+        role: Role | None = Role.VULNERABILITY_ANALYST,
+        active: bool = True,
+        bot: bool = False,
     ) -> User:
         suffix = uuid.uuid4().hex[:8]
         user: User = await user_factory(
@@ -141,6 +151,7 @@ def target_user(
             email=f"dave.va.{suffix}@example.com",
             full_name="Dave Analyst",
             active=active,
+            bot=bot,
         )
         if role is not None:
             await user_role_factory(user_id=user.id, role=role.value)
@@ -428,7 +439,7 @@ class TestUserIdentifierResolution:
                 assignee.id,
             )
 
-    async def test_bot_accounts_assign_and_are_assigned_like_any_other_account(
+    async def test_bot_caller_assigns_an_eligible_user(
         self,
         authenticated_client: AsyncClient,
         va_user: User,
@@ -436,13 +447,11 @@ class TestUserIdentifierResolution:
         ticket_factory: Factory,
         target_user: TargetUser,
     ) -> None:
-        """user-management.md (Bot Accounts): the marker changes no
-        capability check and no assignment eligibility. A bot caller holding
-        `vulnerability_analyst` assigns a bot assignee holding it, and the
-        assignee reference carries the marker."""
+        """user-management.md (Bot Accounts): the marker has no
+        authorization effect. A bot caller holding `triage_ticket` assigns
+        an eligible user like any other caller."""
         assignee = await target_user()
         va_user.bot = True
-        assignee.bot = True
         await db_session.flush()
         ticket: Ticket = await ticket_factory()
 
@@ -454,7 +463,64 @@ class TestUserIdentifierResolution:
         body = response.json()["data"]
         assert body["status"] == "analysis"
         assert body["assignee"] == user_reference(assignee)
-        assert body["assignee"]["bot"] is True
+        assert body["assignee"]["bot"] is False
+
+    @pytest.mark.parametrize(
+        "confidential", [False, True], ids=["public", "confidential"]
+    )
+    async def test_bot_target_is_never_assignable_whatever_its_roles(
+        self,
+        authenticated_client: AsyncClient,
+        va_user: User,
+        db_session: AsyncSession,
+        ticket_factory: Factory,
+        target_user: TargetUser,
+        confidential: bool,
+    ) -> None:
+        """rbac.md, Business Rule 10: a bot account holding
+        `vulnerability_analyst` is not eligible; the request that earlier
+        releases accepted is rejected with no effect."""
+        assignee = await target_user(bot=True)
+        ticket: Ticket = await ticket_factory(is_confidential=confidential)
+        before = await ticket_row(db_session, ticket.id)
+
+        response = await authenticated_client.patch(
+            _url(ticket), json={"user_id": assignee.username}
+        )
+
+        assert response.status_code == 400
+        assert response.json() == _ASSIGNEE_IS_BOT
+        assert await ticket_row(db_session, ticket.id) == before
+        assert await event_count(db_session, ticket.id) == 0
+
+    async def test_restricted_analyst_is_assigned_to_a_non_confidential_ticket(
+        self,
+        authenticated_client: AsyncClient,
+        va_user: User,
+        db_session: AsyncSession,
+        ticket_factory: Factory,
+        target_user: TargetUser,
+    ) -> None:
+        """rbac.md, Business Rule 10: an active non-bot restricted analyst
+        holds `triage_ticket`, so it is assigned to a non-confidential
+        Ticket exactly as a vulnerability analyst is, including
+        `new` -> `analysis`."""
+        assignee = await target_user(role=Role.RESTRICTED_ANALYST)
+        ticket: Ticket = await ticket_factory()
+
+        response = await authenticated_client.patch(
+            _url(ticket), json={"user_id": assignee.username}
+        )
+
+        assert response.status_code == 200
+        body = response.json()["data"]
+        assert body["status"] == "analysis"
+        assert body["assignee"] == user_reference(assignee)
+        state = await ticket_row(db_session, ticket.id)
+        assert (state["status"], state["assignee_id"]) == (
+            TicketStatus.ANALYSIS.value,
+            assignee.id,
+        )
 
     async def test_bot_caller_without_triage_ticket_gets_the_generic_403(
         self,
@@ -567,7 +633,26 @@ class TestErrorMappings:
                 TicketStatus.NEW, "inactive", 409, _ASSIGNEE_INACTIVE, id="inactive"
             ),
             pytest.param(
-                TicketStatus.NEW, "non-va", 400, _ASSIGNEE_NOT_VA, id="not-va"
+                TicketStatus.NEW,
+                "inactive-bot",
+                409,
+                _ASSIGNEE_INACTIVE,
+                id="inactive-before-not-eligible",
+            ),
+            pytest.param(TicketStatus.NEW, "bot", 400, _ASSIGNEE_IS_BOT, id="bot"),
+            pytest.param(
+                TicketStatus.NEW,
+                "admin-only",
+                400,
+                _ASSIGNEE_WITHOUT_TRIAGE,
+                id="without-triage-ticket",
+            ),
+            pytest.param(
+                TicketStatus.NEW,
+                "restricted-on-confidential",
+                400,
+                _ASSIGNEE_NOT_CONFIDENTIAL,
+                id="restricted-on-confidential",
             ),
         ],
     )
@@ -583,13 +668,21 @@ class TestErrorMappings:
         expected_status: int,
         expected: dict[str, str],
     ) -> None:
-        target: Ticket = await ticket_factory(status=status.value)
+        target: Ticket = await ticket_factory(
+            status=status.value,
+            is_confidential=target_kind == "restricted-on-confidential",
+        )
         if target_kind == "absent":
             identifier = str(uuid.uuid7())
-        elif target_kind == "inactive":
-            identifier = str((await target_user(active=False)).id)
         else:
-            identifier = str((await target_user(role=Role.RESTRICTED_ANALYST)).id)
+            kinds: dict[str, dict[str, Any]] = {
+                "inactive": {"active": False},
+                "inactive-bot": {"active": False, "bot": True},
+                "bot": {"bot": True},
+                "admin-only": {"role": Role.ADMIN},
+                "restricted-on-confidential": {"role": Role.RESTRICTED_ANALYST},
+            }
+            identifier = str((await target_user(**kinds[target_kind])).id)
         before = await ticket_row(db_session, target.id)
 
         response = await authenticated_client.patch(
@@ -864,7 +957,8 @@ class TestOpenApiContract:
         assert self._ref_name(responses["200"]["content"]) == "TicketDetailResponse"
         for code in ("400", "404", "409"):
             assert self._ref_name(responses[code]["content"]) == "ErrorResponse"
-        assert "TICKET_ASSIGNEE_NOT_VA" in responses["400"]["description"]
+        assert "TICKET_ASSIGNEE_NOT_ELIGIBLE" in responses["400"]["description"]
+        assert "TICKET_ASSIGNEE_NOT_VA" not in str(responses)
         assert "TICKET_NOT_FOUND" in responses["404"]["description"]
         assert "USER_NOT_FOUND" in responses["404"]["description"]
         assert "TICKET_ASSIGNEE_INACTIVE" in responses["409"]["description"]

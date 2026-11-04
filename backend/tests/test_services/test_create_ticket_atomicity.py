@@ -366,7 +366,11 @@ class TestCreationRace:
         assert await _tickets_for(world.session, cve_id) == [created.id]
         events = await ticket_events_by_id(world.session, created.id)
         await world.session.commit()
-        assert events == creation_events(creator_id=second.id, cve_id=cve_id)
+        # A non-bot restricted analyst is eligible to be the assignee of the
+        # non-confidential Ticket it creates (rbac.md, Business Rule 10).
+        assert events == creation_events(
+            creator_id=second.id, assignee_username=second.username, cve_id=cve_id
+        )
 
     async def test_creator_lock_blocks_deactivation_until_commit(
         self, world: _CreationWorld

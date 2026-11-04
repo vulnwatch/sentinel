@@ -94,7 +94,7 @@ T9 = Decimal("9.0")
 T99 = Decimal("9.9")
 
 INACTIVE = "inactive assignee"
-ROLE_REMOVED = "vulnerability_analyst role removed"
+ROLE_REMOVED = "role removed"
 """The exact sanitation reasons (ticket-mutations.md, Assignment
 Eligibility Sanitization)."""
 
@@ -548,14 +548,15 @@ class TestSanitation:
         reason: str | None,
     ) -> None:
         """The reconciliation that the gate-input change triggers clears an
-        inactive or non-VA assignee for an `Analysis` or `Analyzed` result,
+        inactive assignee or one without `triage_ticket` (an `admin`-only
+        user) for an `Analysis` or `Analyzed` result,
         with one system `assignment` event after the priority event and
         before the final `status_change`; a `Resolved` result retains the
         assignee without an event."""
         if ineligibility == "inactive":
             assignee = await h.world.analyst(active=False)
         else:
-            assignee = await h.world.user(role=Role.RESTRICTED_ANALYST)
+            assignee = await h.world.user(role=Role.ADMIN)
         cve, ticket = await _stale(
             h, TicketStatus.ANALYSIS, track_status, assignee=assignee
         )

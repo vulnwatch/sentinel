@@ -88,6 +88,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased, joinedload, selectinload
 
 from app.core.enums import (
+    ACTIVE_TICKET_STATUSES,
     CurrentPhase,
     CVESourceType,
     MilestonePhase,
@@ -154,15 +155,17 @@ from app.services.ticket_deadlines import (
     resolve_ticket_current_phase,
 )
 from app.services.ticket_mutations import (
+    AssigneeIneligibility,
     CVSSChainMode,
     auto_assign_actor,
+    clear_ineligible_assignee,
     ensure_ticket_operable,
-    is_stabilized_vulnerability_analyst,
     lock_accessible_ticket,
     recalculate_cvss_chain,
     reconcile_ticket_status,
     refresh_priority_auto,
     stabilize_acting_user,
+    stabilized_ineligibility,
 )
 from app.services.ticket_severity import (
     resolved_severity_expression,
@@ -1217,12 +1220,32 @@ class TicketCVEAlreadySetError(TicketServiceError):
         super().__init__("Ticket already has a CVE associated.")
 
 
-class AssigneeNotVAError(TicketServiceError):
-    """The assignment target lacks the `vulnerability_analyst` role. Maps
-    to `400 TICKET_ASSIGNEE_NOT_VA`. The message is static."""
+class AssigneeNotEligibleError(TicketServiceError):
+    """The active assignment target is not eligible to be the assignee of
+    the Ticket (rbac.md, Business Rule 10): a bot account, without
+    `triage_ticket`, or without effective scope `all` for a confidential
+    Ticket. Maps to `400 TICKET_ASSIGNEE_NOT_ELIGIBLE`.
 
-    def __init__(self) -> None:
-        super().__init__("Assignee must hold the vulnerability_analyst role.")
+    Carries the first failing `condition`, never `INACTIVE` (which raises
+    `AssigneeInactiveError`), from which the API selects a
+    condition-specific `detail`. The message is static per condition and
+    never echoes request input."""
+
+    _MESSAGES: Final = {
+        AssigneeIneligibility.BOT: "Assignee is a bot account.",
+        AssigneeIneligibility.NO_TRIAGE_TICKET: (
+            "Assignee lacks the triage_ticket capability."
+        ),
+        AssigneeIneligibility.CONFIDENTIAL: (
+            "Assignee cannot be assigned a confidential Ticket."
+        ),
+    }
+
+    def __init__(self, condition: AssigneeIneligibility) -> None:
+        if condition is AssigneeIneligibility.INACTIVE:
+            raise ValueError("an inactive target raises AssigneeInactiveError.")
+        self.condition = condition
+        super().__init__(self._MESSAGES[condition])
 
 
 class AssigneeInactiveError(TicketServiceError):
@@ -1388,12 +1411,14 @@ async def create_ticket(
     `FOR NO KEY UPDATE` through the lock-aware `ensure_cve_exists()`. A
     system creation has no User root. The new Ticket is transaction-owned.
 
-    Q3: (1) manual: stabilizes the creator and reads active VA
-    eligibility from the locked row. (2) With a CVE: resolves it (a
-    placeholder is created if absent) under the CVE lock, then reads the
-    existing association under that lock, before any INSERT. (3)-(4)
-    Inserts the Ticket with its initial fields: `Analysis` assigned to an
-    active VA creator, otherwise `New` unassigned. (5)-(9) Creates, in
+    Q3: (1) manual: stabilizes the creator and reads from the locked row
+    whether it is eligible to be the assignee of the new Ticket (rbac.md,
+    Business Rule 10), with the requested `is_confidential` as the
+    Ticket's confidentiality. (2) With a CVE: resolves it (a placeholder
+    is created if absent) under the CVE lock, then reads the existing
+    association under that lock, before any INSERT. (3)-(4) Inserts the
+    Ticket with its initial fields: `Analysis` assigned to an eligible
+    creator, otherwise `New` unassigned. (5)-(9) Creates, in
     order, `ticket_created` (exact canonical comment), optional
     `assignment`, optional `severity_changed` (`NULL -> label`), optional
     `coordinated_release_changed` (`NULL -> UTC ISO 8601`), and optional
@@ -1452,8 +1477,8 @@ async def create_ticket(
     assignee = (
         acting_user
         if acting_user is not None
-        and acting_user.active
-        and is_stabilized_vulnerability_analyst(acting_user)
+        and stabilized_ineligibility(acting_user, is_confidential=is_confidential)
+        is None
         else None
     )
     ticket = Ticket(
@@ -1646,9 +1671,9 @@ class _TargetLockPurpose(StrEnum):
     """Why a target User is locked, which fixes the lock mode and loads.
 
     - `ASSIGNMENT` (`assign_ticket()`): `FOR SHARE`, with the role origins
-      loaded under the lock for the active-VA eligibility decision
-      (ticket-service.md, Concurrency control; `docs/conventions.md`,
-      Cross-Domain Root Lock Order).
+      loaded under the lock for the user's side of the assignment
+      eligibility decision (ticket-service.md, Concurrency control;
+      `docs/conventions.md`, Cross-Domain Root Lock Order).
     - `ACCESS_GRANT` (`grant_access()`, `revoke_access()`): `FOR NO KEY
       UPDATE`, stabilizing the target's ID, username, and active state
       against deactivation, reactivation, and rename without conflicting
@@ -1701,10 +1726,10 @@ async def assign_ticket(
     caller: TicketCaller,
     evaluation_date: date | None = None,
 ) -> Ticket:
-    """Assign or reassign a Ticket to an active vulnerability analyst.
+    """Assign or reassign a Ticket to a user eligible to be its assignee.
 
     Category A lifecycle operation (ticket-service.md, `assign_ticket`;
-    tickets.md, Reassignment, Assign Ticket).
+    tickets.md, Reassignment, Assign Ticket; rbac.md, Business Rule 10).
 
     Q1: `ticket_id` is the internal Ticket UUID (the API resolves the
     public `SNTL-{n}` locator first). `assignee` is the target User's
@@ -1723,8 +1748,10 @@ async def assign_ticket(
     Q3: (1) resolves and locks the target; (2)-(3) locks the Ticket and
     revalidates accessibility from locked-current state; (4)
     `ensure_ticket_operable()`; (5) reports the deferred target result
-    from the locked row: absent, then inactive, then without any VA
-    origin; (6) an unchanged assignee is a no-op with no write, event, or
+    from the locked row and the locked-current confidentiality: absent,
+    then inactive, then not eligible (a bot account, without
+    `triage_ticket`, or without effective scope `all` for a confidential
+    Ticket); (6) an unchanged assignee is a no-op with no write, event, or
     reconciliation; (7)-(8) sets the assignee and creates one
     `assignment` event attributed to the acting user (`old_value` the
     previous assignee's username from one unlocked observation or `NULL`,
@@ -1743,8 +1770,9 @@ async def assign_ticket(
     a missing or inaccessible Ticket before any target result;
     `TicketNotMutableError` for `Ignored` or `Duplicated`;
     `UserNotFoundError`, `AssigneeInactiveError`, then
-    `AssigneeNotVAError`. Audit, database, flush, and reconciliation
-    exceptions propagate and roll back the caller's transaction.
+    `AssigneeNotEligibleError` carrying the first failing condition.
+    Audit, database, flush, and reconciliation exceptions propagate and
+    roll back the caller's transaction.
     """
     if caller.user_id != acting_user_id:
         raise ValueError("caller must identify the acting user.")
@@ -1758,10 +1786,11 @@ async def assign_ticket(
     ensure_ticket_operable(ticket)
     if target is None:
         raise UserNotFoundError()
-    if not target.active:
+    condition = stabilized_ineligibility(target, is_confidential=ticket.is_confidential)
+    if condition is AssigneeIneligibility.INACTIVE:
         raise AssigneeInactiveError()
-    if not is_stabilized_vulnerability_analyst(target):
-        raise AssigneeNotVAError()
+    if condition is not None:
+        raise AssigneeNotEligibleError(condition)
     if ticket.assignee_id == target.id:
         return ticket
 
@@ -2003,7 +2032,8 @@ async def ignore_ticket(
     `ensure_ticket_operable()` rejects `Ignored` and `Duplicated` before
     (5) the source-status guard, which accepts only `New` and `Analysis`
     (the ordering is contractual); (6) `auto_assign_actor()` with the
-    stabilized User, so a VA actor on an unassigned `New` Ticket records
+    stabilized User, so an actor eligible to be the assignee of an
+    unassigned `New` Ticket records
     `assignment` and the system `New → Analysis` first; (7)-(8) sets
     `Ignored` and creates one `status_change` attributed to the acting
     user from the status after any auto-assignment (`comment NULL`).
@@ -2370,9 +2400,10 @@ async def reopen_from_ignored(
 
     Q3: (1) revalidates accessibility from locked-current state before
     the exact `Ignored` check; (2) preserves the source status and
-    resolves the date; (3) `auto_assign_actor(force=True)`: an active VA
-    actor becomes the assignee (replacing a different one), otherwise the
-    assignee is unchanged; (4) sets the `Analysis` floor and completes
+    resolves the date; (3) `auto_assign_actor(force=True)`: an actor
+    eligible to be the assignee of the locked-current Ticket becomes the
+    assignee (replacing a different one), otherwise the assignee is
+    unchanged; (4) sets the `Analysis` floor and completes
     the exit (`_complete_manual_zone_exit()`). Events: optional acting-user
     `assignment`, system Product events, optional sanitation `assignment`,
     then one system `status_change` from `Ignored` to the final status;
@@ -2425,7 +2456,7 @@ async def reopen_from_ignored_as_system(
 
     Q3: identical to the consumer form from the exact `Ignored` check on,
     with no actor: the current assignee is retained (the final
-    reconciliation sanitizes an inactive or non-VA assignee only for
+    reconciliation sanitizes an ineligible assignee only for
     `Analysis` or `Analyzed`), and the same Product, sanitation, and
     final system `status_change` events and convergence registration
     follow.
@@ -2650,7 +2681,8 @@ async def set_confidentiality(
     Category A visibility-only consumer mutation (ticket-service.md,
     `set_confidentiality`; tickets.md, Set Confidentiality, Confidential
     Tickets > Audit Trail; rbac.md, Scope and Confidential Ticket
-    Visibility).
+    Visibility, Business Rule 10), which can also clear an assignee that
+    the transition makes ineligible.
 
     Q1: `ticket_id` is the internal Ticket UUID (the API resolves the
     public `SNTL-{n}` locator first). `is_confidential` is the requested
@@ -2661,8 +2693,11 @@ async def set_confidentiality(
 
     Q2: the caller has verified `manage_confidentiality` and owns the
     transaction. Locks only the Ticket `FOR UPDATE` (no User lock: the
-    operation never assigns). Does not call `ensure_ticket_operable()`:
-    valid in every Ticket status, including `Ignored` and `Duplicated`.
+    operation never makes a User the assignee; an identity change racing
+    the step-7 observation is decided by the identity batch under this
+    Ticket lock, user-service.md, Assignment concurrent with eligibility
+    loss). Does not call `ensure_ticket_operable()`: valid in every
+    Ticket status, including `Ignored` and `Duplicated`.
 
     Q3: (2) revalidates accessibility from locked-current state; (3) a
     request equal to the locked-current flag is a no-op with no write or
@@ -2672,10 +2707,18 @@ async def set_confidentiality(
     `access_grant_removed` event (`false` to `true` performs no grant
     query and recreates nothing); (6) creates one acting-user
     `confidentiality_changed` (`"true"`/`"false"`, `comment` and `detail`
-    `NULL`), which (7) flushes the flag, deletions, and event. Never
-    modifies `coordinated_release_at` or `TicketPackageMaintainer` rows,
-    assigns, reconciles, registers a post-commit effect, performs
-    external I/O, reads audit history, or commits.
+    `NULL`); (7) for an effective `false` to `true` transition of a
+    `New`, `Analysis`, or `Analyzed` Ticket, clears an assignee that is
+    not eligible for the confidential Ticket through the unlocked
+    assignee eligibility observation (`clear_ineligible_assignee()`),
+    with one system `assignment` event after `confidentiality_changed`
+    (reason ordinarily `confidential ticket`) and no status change; a
+    `Resolved`, `Ignored`, or `Duplicated` Ticket and a `true` to `false`
+    transition keep their assignee; (8) the flag, deletions, clear, and
+    events are flushed. Never modifies `coordinated_release_at` or
+    `TicketPackageMaintainer` rows, assigns, reconciles, registers a
+    post-commit effect, performs external I/O, reads audit history, or
+    commits.
 
     Q4: returns the locked Ticket in its post-mutation state.
 
@@ -2684,8 +2727,9 @@ async def set_confidentiality(
     Q6: raises `ValueError` before any database operation when `caller`
     does not identify `acting_user_id`, and `TicketNotFoundError` for a
     missing or inaccessible Ticket before any other decision. Grant
-    deletion, audit, database, and flush exceptions propagate and roll
-    back the flag, every deletion, and the event together.
+    deletion, assignment clear, audit, database, and flush exceptions
+    propagate and roll back the flag, every deletion, the clear, and the
+    events together.
     """
     if caller.user_id != acting_user_id:
         raise ValueError("caller must identify the acting user.")
@@ -2708,6 +2752,8 @@ async def set_confidentiality(
         old_value=_bool_value(old_value),
         new_value=_bool_value(is_confidential),
     )
+    if is_confidential and ticket.status in ACTIVE_TICKET_STATUSES:
+        await clear_ineligible_assignee(db, ticket)
     return ticket
 
 

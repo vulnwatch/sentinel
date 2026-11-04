@@ -847,13 +847,16 @@ class TestGateTransitions:
 # ---------------------------------------------------------------------------
 
 INELIGIBLE_ACTORS = pytest.mark.parametrize(
-    ("active", "roles"),
+    ("active", "roles", "bot"),
     [
-        pytest.param(True, (Role.RESTRICTED_ANALYST,), id="restricted-analyst"),
-        pytest.param(True, (Role.ADMIN,), id="admin-only"),
-        pytest.param(False, (Role.VULNERABILITY_ANALYST,), id="inactive-va"),
+        pytest.param(True, (Role.VULNERABILITY_ANALYST,), True, id="bot-va"),
+        pytest.param(True, (Role.ADMIN,), False, id="admin-only"),
+        pytest.param(False, (Role.VULNERABILITY_ANALYST,), False, id="inactive-va"),
     ],
 )
+"""Actors that are not eligible to be the assignee (rbac.md, Business
+Rule 10): a bot account whatever its roles, a user without
+`triage_ticket`, and an inactive user."""
 
 
 @pytest.mark.integration
@@ -915,13 +918,14 @@ class TestAutoAssignment:
         tree: TreeBuilder,
         active: bool,
         roles: tuple[Role, ...],
+        bot: bool,
         level: Level,
         direction: Direction,
     ) -> None:
         """The operation succeeds; the unassigned `New` Ticket is outside
         the gate zone (ticket-mutations.md, `reconcile_ticket_status()` step
         1) and stays `New`."""
-        actor = await va_user(active=active, roles=roles)
+        actor = await va_user(active=active, roles=roles, bot=bot)
         ticket = await cveless(ticket_factory, status=TicketStatus.NEW)
         occurrence = await gate_world(db_session, tree, ticket, level, direction)
         before = await markers(db_session, occurrence)
