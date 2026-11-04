@@ -2645,7 +2645,7 @@ Setting `LOG_LEVEL=DEBUG` causes third-party loggers (notably
 rows, HTTP connection traces including response headers. It also logs
 every SQL statement (without bound parameters), which SQLAlchemy does
 not log at the default `INFO` level; their volume can push every other
-event out of a log that the platform rotates by size within minutes
+event out of a size-rotated log within minutes
 (`docs/features/platform/logging.md`, SQLAlchemy Echo). Full request
 URLs are logged by `httpx` already at `INFO`. See
 `docs/features/platform/logging.md` (Secrets and PII Discipline) for the

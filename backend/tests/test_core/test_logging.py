@@ -277,7 +277,9 @@ class TestConfigureLoggingLevel:
         for name in _SQLALCHEMY_CHILD_LOGGERS:
             assert logging.getLogger(name).getEffectiveLevel() == expected
 
-    def test_at_info_only_sqlalchemy_warnings_are_emitted(self) -> None:
+    def test_at_info_sqlalchemy_info_is_dropped_and_other_records_emitted(
+        self,
+    ) -> None:
         stream = _FakeStream(isatty=False)
         configure_logging(_settings(log_level="INFO"), stream=stream)
 

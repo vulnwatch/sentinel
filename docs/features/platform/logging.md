@@ -327,13 +327,13 @@ SQLAlchemy uses logger levels as echo switches rather than as
 severities. At `INFO`, `sqlalchemy.engine` logs every SQL statement, a
 second record for its parameters, and every transaction boundary, and
 the ORM and connection pool loggers report mapper configuration and
-connection lifecycle; `DEBUG` adds result rows. This is high-volume
-per-item detail in the sense of Log Levels: it grows with database work,
-and a single API read can log a statement of tens of kilobytes. At
-`INFO` it would make up almost the whole log, and on a platform that
-rotates the log by size (see `docs/deployment.md`, Log Aggregation) it
-would push the lifecycle and security events out of the log within
-minutes.
+connection lifecycle, including connection invalidation and its reason;
+`DEBUG` adds result rows. This is high-volume per-item detail in the
+sense of Log Levels: it grows with database work, and a single API read
+can log a statement of tens of kilobytes. At `INFO` it would make up
+almost the whole log, and on a platform that rotates the log by size
+(see `docs/deployment.md`, Log Aggregation) it would push the lifecycle
+and security events out of the log within minutes.
 
 The pipeline therefore sets the level of the `sqlalchemy` parent logger
 from `LOG_LEVEL`; its child loggers have no level of their own and defer
@@ -355,8 +355,7 @@ SQL statements are therefore logged only at `LOG_LEVEL=DEBUG`, together
 with the rest of the `DEBUG` output. No setting shows statements at a
 lower level: statement echo is a time-bounded diagnostic, governed by
 the `LOG_LEVEL=DEBUG` operational note above, and no operational
-procedure requires it at another level. A per-logger variable, as
-described above, can be added without breaking changes if one does.
+procedure requires it at another level.
 
 ### Scope of this pipeline
 

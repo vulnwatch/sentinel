@@ -46,8 +46,8 @@ _THIRD_PARTY_LOGGERS = (
 # hierarchy therefore emits only WARNING and above at LOG_LEVEL=INFO and
 # follows LOG_LEVEL at every other level (logging.md, SQLAlchemy Echo).
 # The level is explicit, so SQLAlchemy's import-time default (WARNING,
-# applied only when the parent has no level) never takes effect,
-# whichever of the two runs first.
+# applied only when the parent has no level) is replaced, or never
+# applied, whichever of the two runs first.
 _SQLALCHEMY_LOGGER = "sqlalchemy"
 
 # Shared processors applied to every log record regardless of origin:
