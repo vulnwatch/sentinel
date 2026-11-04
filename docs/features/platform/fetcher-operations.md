@@ -142,7 +142,10 @@ application whose configured RedBeat schedule is read to resolve
    `items_failed`, `items_created`, and `items_updated`. These are persisted
    finalization values, so an active run projects zero for all four counters.
 5. For each registered and enabled fetcher, attempt to read `next_run_at`
-   from the RedBeat entry's `due_at` attribute. On any `RedisError`, set
+   from the RedBeat entry: the first occurrence of the entry's schedule
+   after its `last_run_at` (see
+   `docs/features/platform/fetcher-infrastructure.md`, "`next_run_at`
+   Calculation", for every case). On any `RedisError`, set
    `next_run_at = null` for all fetchers and log WARNING (single attempt,
    no per-fetcher retry).
 6. Sort the merged list by `fetcher_name` ascending (alphabetical).
@@ -913,8 +916,11 @@ distinction.
   `FetcherConfig`. `null` for deregistered fetchers.
 - `default_schedule`: the schedule defined in code. `null` for
   deregistered fetchers.
-- `next_run_at`: calculated from the RedBeat entry's `due_at`. `null` if
-  the fetcher is disabled, deregistered, or Redis is unavailable. See
+- `next_run_at`: the next scheduled execution, calculated from the
+  RedBeat entry's schedule and `last_run_at`. A value in the past means
+  that Beat has not dispatched that execution (Beat stopped or stalled).
+  `null` if the fetcher is disabled or deregistered, has no RedBeat
+  entry, or Redis is unavailable. See
   `docs/features/platform/fetcher-infrastructure.md` (Celery Beat
   Schedule Synchronization — `next_run_at` Calculation).
 - `custom_settings_count`: number of persisted custom setting keys

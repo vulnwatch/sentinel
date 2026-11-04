@@ -2594,9 +2594,28 @@ The `next_run_at` field in the `GET /api/v1/fetchers` response is
 calculated by the `list_fetchers` service function at request time (see
 `docs/features/platform/fetcher-operations.md`, `list_fetchers`):
 
-1. For each registered and enabled fetcher: read the redbeat entry's
-   `due_at` attribute (the timestamp of the next scheduled execution,
-   maintained by redbeat automatically)
+1. For each registered and enabled fetcher: read the redbeat entry and
+   return the first occurrence of its schedule after the entry's
+   `last_run_at`. Redbeat sets `last_run_at` when Beat dispatches the
+   entry, and every Sentinel write reschedules the entry to the write
+   instant (see Startup Reconciliation step 2 and Runtime Propagation),
+   so that occurrence is the next scheduled execution:
+   - The value depends only on the schedule and `last_run_at`, never on
+     the request time: every request returns the same instant until Beat
+     dispatches the occurrence or Sentinel rewrites the entry.
+   - If the occurrence has passed without a dispatch (Beat stopped or
+     stalled), `next_run_at` is that past instant. A past value that does
+     not advance therefore signals that Beat is not dispatching. The next
+     Beat start reschedules the entry, which moves `next_run_at` to the
+     first occurrence after that start.
+   - An entry without `last_run_at`, which only direct Redis manipulation
+     can produce (see "Direct Redis Manipulation"), is due immediately
+     for Beat: `next_run_at` is the request time.
+   - The entry's `due_at` attribute is not used. Redbeat computes it by
+     adding the time remaining from the current instant to
+     `last_run_at`, so it lies before the next execution by the time
+     elapsed since `last_run_at` (see
+     https://github.com/sibson/redbeat/issues/210).
 2. Access pattern: the service function reads the redbeat entry by
    fetcher name via the `RedBeatSchedulerEntry` API. This is an O(1)
    read per fetcher — no full schedule scan.
