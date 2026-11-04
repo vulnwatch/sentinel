@@ -4052,6 +4052,42 @@ or identity audit validation are affected, tests MUST cover:
 - `manage-user list` renders the `BOT` column and `manage-user show` the
   `Bot:` line as `yes` or `no`
 
+**Assignment eligibility in user responses:**
+
+- the derivation of `docs/features/identity/rbac.md` (Assignment Eligibility
+  Wire Format) gives `all`, `non_confidential`, or `none` exactly as Business
+  Rule 10 decides for a confidential and a non-confidential Ticket, for every
+  combination of the predefined roles, the empty one included, each for an
+  active non-bot user, a bot account, and an inactive user
+- `GET /api/v1/users/me`, the directory entry of `GET /api/v1/users` and
+  `GET /api/v1/users/{user}`, and the complete user profile of the
+  administrator reads return that value, derived from the same state as their
+  `active`, `bot`, and `roles`; an administrator mutation response reports the
+  value after the operation, at least for bot marking and the removal of
+  `vulnerability_analyst` from a user who keeps `restricted_analyst`; a role
+  held from several origins, an explicit grant, and package maintainership of
+  a confidential Ticket leave the value unchanged; a committed change is
+  reflected on the next request
+- the `assignment_eligibility` filter of `GET /api/v1/users` and
+  `GET /api/v1/admin/users` selects, for every non-empty subset of the three
+  values, exactly the users whose derived value is in the subset: a test over
+  every combination of the predefined roles, with roles from several origins,
+  bot accounts, inactive users, and users with a grant or maintainership of a
+  confidential Ticket, proves that the database condition and the derivation
+  that the assignment paths apply agree. `all` never returns a user with scope
+  `non_confidential`, and neither `all` nor `non_confidential` returns a bot
+  account, an inactive user, or a user without `triage_ticket`
+- the filter combines with `search`, `active`, `role`, `has_role`,
+  pagination, and every sort field, and `meta.total` counts exactly the
+  filtered users; an invalid value is ignored, and only invalid values yield
+  an empty page with `meta.total = 0`
+- the OpenAPI document declares `assignment_eligibility` as a required
+  property whose schema is an `enum` of exactly `all`, `non_confidential`,
+  and `none` in the current-user, directory-entry, and complete-profile
+  schemas, publishes the same values as the item `enum` of the filter of both
+  lists, and does not add the field to the user reference object or the
+  `manager` object
+
 **Manual role mutation service:**
 
 - an effective manual addition and an effective manual removal each create

@@ -264,6 +264,20 @@ Field Ordering). The function applies every documented filter and loads
 the role and manager data required by the response; API handlers perform
 no ORM query or filtering themselves.
 
+The assignment-eligibility filter is a set of assignment-eligibility values
+(`docs/features/identity/rbac.md`, Assignment Eligibility Wire Format); a
+non-empty set restricts the page and `total` to the users whose value is one
+of them. The condition evaluates the Derivation of that section in the
+database statement: `User.active`, `User.bot`, and whether any `UserRole` row
+of the user, of any origin, has a role that grants `triage_ticket` or whose
+scope is `all`, with the role sets taken from the static role definitions.
+It consults no `TicketAccessGrant` or package maintainership, and a role held
+from several origins never duplicates the user row or the total. The value
+that a response renders for each returned user derives from that user's
+loaded `active`, `bot`, and roles through the same implementation of Business
+Rule 10 that the assignment paths apply, so the filter and the field cannot
+diverge for a given state.
+
 #### `get_user(session, identifier)`
 
 Resolves the UUID or username through `resolve_user_identifier()` and returns

@@ -1051,7 +1051,8 @@ GET /api/v1/users/me
     "roles": ["string"],
     "capabilities": ["string"],
     "active": true,
-    "bot": false
+    "bot": false,
+    "assignment_eligibility": "all"
   }
 }
 ```
@@ -1097,16 +1098,31 @@ decides by itself whether an operation succeeds:
   request (`rbac.md`, Permission Checking), so an operation can return
   `403 AUTH_INSUFFICIENT_PERMISSION` for a capability that a list read
   earlier contains, or succeed for one that it lacks; and
-- the response states neither the user's effective scope nor any permission
-  that depends on a resource, such as an access grant or package
-  maintainership (`rbac.md`, Scope; Scope and Confidential Ticket
-  Visibility).
+- the response states no permission that depends on a resource, such as an
+  access grant or package maintainership, and not the user's effective scope
+  (`rbac.md`, Scope; Scope and Confidential Ticket Visibility);
+  `assignment_eligibility` below states only the outcome of the
+  assignment-eligibility rule.
 
-The list discloses only the capabilities of the authenticated user, which the
-user's own `roles` and the Predefined Roles of `rbac.md` already determine.
-The `403` of an operation remains generic and does not disclose which
-capability the operation requires (`rbac.md`, `require_capability()`
-Dependency).
+`assignment_eligibility` states for which Tickets the authenticated user is
+eligible to be the assignee: `all`, `non_confidential`, or `none` (`rbac.md`,
+Business Rule 10; Assignment Eligibility Wire Format). The route derives it
+from the same role set that it renders as `roles` and from the user's `active`
+and `bot`, so the fields always agree; like resolving `capabilities`, the
+derivation is response formatting and not a database operation. An
+authenticated user is always active, so the value is `none` exactly for a bot
+account and for a user whose roles do not grant `triage_ticket`. It lets a
+client offer the user an assignment only for the Tickets that the user can
+own, without copying the rule. It is informational in the same way as
+`capabilities`: it reflects the user's state when the request that returned it
+was processed, and an assignment still decides eligibility when it is
+requested (`rbac.md`, Assignment Eligibility Wire Format).
+
+The response discloses only the capabilities and the assignment eligibility
+of the authenticated user, which the user's own `active`, `bot`, and `roles`
+and the Predefined Roles of `rbac.md` already determine. The `403` of an
+operation remains generic and does not disclose which capability the
+operation requires (`rbac.md`, `require_capability()` Dependency).
 
 ### Logout
 
