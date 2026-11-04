@@ -116,7 +116,7 @@ from app.services.ticket_service import (
     AccessGrantAction,
     AssigneeInactiveError,
     AssigneeNotCallerError,
-    AssigneeNotVAError,
+    AssigneeNotEligibleError,
     DuplicateConcurrentModificationError,
     DuplicateTargetIsDuplicatedError,
     ResolvedTicket,
@@ -520,8 +520,10 @@ def _severity_derived_error() -> AppError:
         "Creates a Ticket manually, optionally associated with a CVE (an "
         "unknown CVE is created as a placeholder record), with an initial "
         "manual severity (only without a CVE), as confidential, and with an "
-        "initial Coordinated Release Date (only when confidential). An active "
-        "vulnerability analyst creator is assigned and the Ticket starts in "
+        "initial Coordinated Release Date (only when confidential). A creator "
+        "eligible to be the assignee of the new Ticket (active, not a bot "
+        "account, holding `triage_ticket`, and with scope `all` when the "
+        "Ticket is confidential) is assigned and the Ticket starts in "
         "`analysis`; otherwise it starts `new` and unassigned. Returns the "
         "created Ticket detail. Requires `create_ticket`; supplying "
         "`is_confidential` (`true` or `false`) additionally requires "
@@ -657,8 +659,8 @@ async def get_ticket(
         "Sets or clears the manual severity of a Ticket without a CVE. A "
         "lowercase label (`critical`, `high`, `medium`, `low`, `none`) sets "
         "it; JSON `null` clears it (unresolved). An effective change "
-        "auto-assigns an unassigned Ticket to the caller when the caller is an "
-        "active vulnerability analyst, refreshes the automatic priority, and "
+        "auto-assigns an unassigned Ticket to the caller when the caller is "
+        "eligible to be its assignee, refreshes the automatic priority, and "
         "re-evaluates the Ticket status; an unchanged severity returns the "
         "current Ticket with no side effect. "
         "Returns the post-mutation Ticket detail. Requires `triage_ticket`."
@@ -738,7 +740,7 @@ async def set_ticket_severity(
         "Product eligibility and the automatic priority from the CVE's "
         "current assessments and evidence; and re-evaluates the Ticket status, "
         "which may regress. An unassigned Ticket is auto-assigned to the "
-        "caller when the caller is an active vulnerability analyst. Returns "
+        "caller when the caller is eligible to be its assignee. Returns "
         "the post-mutation "
         "Ticket detail. Requires `triage_ticket`."
     ),
@@ -828,11 +830,11 @@ async def associate_ticket_cve(
     return TicketDetailResponse(data=serialize_ticket_detail(detail))
 
 
-def _assignee_not_va_error() -> AppError:
+def _assignee_not_eligible_error(exc: AssigneeNotEligibleError) -> AppError:
     return AppError(
         status_code=status.HTTP_400_BAD_REQUEST,
-        code=ErrorCode.TICKET_ASSIGNEE_NOT_VA,
-        detail="Assignee must hold the vulnerability_analyst role.",
+        code=ErrorCode.TICKET_ASSIGNEE_NOT_ELIGIBLE,
+        detail=str(exc),
     )
 
 
@@ -862,8 +864,8 @@ def _assignee_not_caller_error() -> AppError:
         "to its automatic priority (`priority_automatic`). The override is "
         "sticky: automatic refresh never changes it. An unchanged request is an "
         "idempotent success. An effective change auto-assigns an unassigned "
-        "Ticket to the caller when the caller is an active vulnerability "
-        "analyst, and re-evaluates the Ticket status. Returns the "
+        "Ticket to the caller when the caller is eligible to be its "
+        "assignee, and re-evaluates the Ticket status. Returns the "
         "post-mutation Ticket detail. Requires "
         "`triage_ticket`."
     ),
@@ -931,8 +933,10 @@ async def set_ticket_priority(
     response_model=TicketDetailResponse,
     summary="Assign Ticket",
     description=(
-        "Assigns or reassigns a Ticket to an active vulnerability analyst, "
-        "identified by UUID or exact username. Reassigning to the current "
+        "Assigns or reassigns a Ticket to a user eligible to be its "
+        "assignee (active, not a bot account, holding `triage_ticket`, and "
+        "with scope `all` when the Ticket is confidential), identified by "
+        "UUID or exact username. Reassigning to the current "
         "assignee is an idempotent success. A `new` Ticket moves to `analysis`, "
         "and the Ticket status is re-evaluated. JSON `null` instead unassigns "
         "the caller, who must be the current assignee: the Ticket keeps its "
@@ -944,8 +948,10 @@ async def set_ticket_priority(
         400: {
             "model": ErrorResponse,
             "description": (
-                "`TICKET_ASSIGNEE_NOT_VA`: the target user does not hold the "
-                "`vulnerability_analyst` role."
+                "`TICKET_ASSIGNEE_NOT_ELIGIBLE`: the active target user is not "
+                "eligible to be the assignee of the Ticket: a bot account, "
+                "without the `triage_ticket` capability, or without scope `all` "
+                "when the Ticket is confidential."
             ),
         },
         404: {
@@ -1019,8 +1025,8 @@ async def assign_ticket(
         raise user_not_found_error() from None
     except AssigneeInactiveError:
         raise _assignee_inactive_error() from None
-    except AssigneeNotVAError:
-        raise _assignee_not_va_error() from None
+    except AssigneeNotEligibleError as exc:
+        raise _assignee_not_eligible_error(exc) from None
     except AssigneeNotCallerError:
         raise _assignee_not_caller_error() from None
     detail = await ticket_service.assemble_ticket_detail(
@@ -1068,7 +1074,7 @@ def _duplicate_concurrent_modification_error() -> AppError:
     description=(
         "Moves a `new` or `analysis` Ticket to `ignored` (manual zone). No "
         "request body. An unassigned Ticket is first auto-assigned to the "
-        "caller when the caller is an active vulnerability analyst, which "
+        "caller when the caller is eligible to be its assignee, which "
         "records `new` -> `analysis` before the transition. Returns the "
         "post-mutation Ticket "
         "detail. Requires `triage_ticket`."
@@ -1140,8 +1146,8 @@ async def ignore_ticket(
         "`duplicate_of_ticket_id` (`SNTL-{n}`), which must not itself be "
         "Duplicated. Tickets currently marked as duplicates of this Ticket are "
         "atomically repointed to the new target. An unassigned Ticket is first "
-        "auto-assigned to the caller when the caller is an active "
-        "vulnerability analyst. Returns the post-mutation Ticket detail. "
+        "auto-assigned to the caller when the caller is eligible to be its "
+        "assignee. Returns the post-mutation Ticket detail. "
         "Requires `triage_ticket`."
     ),
     responses={
@@ -1239,8 +1245,8 @@ async def mark_ticket_as_duplicate(
     response_model=TicketDetailResponse,
     summary="Reopen Ticket",
     description=(
-        "Reopens an `ignored` Ticket. No request body. An active vulnerability "
-        "analyst caller becomes the assignee, replacing any current assignee; "
+        "Reopens an `ignored` Ticket. No request body. A caller eligible to be "
+        "its assignee becomes the assignee, replacing any current assignee; "
         "otherwise the current assignee is kept. Automatic Product eligibility "
         "is re-evaluated from current data, and the Ticket status is evaluated "
         "from its gates (`analysis`, `analyzed`, or `resolved`). Returns the "
@@ -1310,8 +1316,8 @@ async def reopen_ticket(
     description=(
         "Reverts a `duplicated` Ticket into the gate zone and clears its "
         "duplicate link. No request body. Tickets previously repointed away "
-        "from this Ticket keep their current target. An active vulnerability "
-        "analyst caller becomes the assignee, replacing any current assignee; "
+        "from this Ticket keep their current target. A caller eligible to be "
+        "its assignee becomes the assignee, replacing any current assignee; "
         "otherwise the current assignee is kept. Automatic Product eligibility "
         "is re-evaluated from current data, and the Ticket status is evaluated "
         "from its gates (`analysis`, `analyzed`, or `resolved`). Returns the "
@@ -1498,9 +1504,14 @@ def _ticket_not_confidential_error() -> AppError:
     description=(
         "Sets whether a Ticket is confidential. Valid in every Ticket status, "
         "including `ignored` and `duplicated`; it never assigns the Ticket or "
-        "changes its status. Making a confidential Ticket non-confidential "
-        "deletes every explicit access grant; making it confidential again "
-        "does not recreate them. Package-maintainer visibility and the "
+        "changes its status. Making a `new`, `analysis`, or `analyzed` Ticket "
+        "confidential unassigns an assignee who is not eligible to be the "
+        "assignee of a confidential Ticket, such as a restricted analyst, "
+        "even one with an access grant or package maintainership; the Ticket "
+        "then appears unassigned. Making a "
+        "confidential Ticket non-confidential deletes every explicit access "
+        "grant; making it confidential again does not recreate them. "
+        "Package-maintainer visibility and the "
         "Coordinated Release Date are unchanged. An unchanged request is an "
         "idempotent success. Returns the post-mutation Ticket detail. Requires "
         "`manage_confidentiality`."

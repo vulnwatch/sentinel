@@ -688,12 +688,7 @@ class TestAssignmentAndEventOrder:
             pytest.param(
                 False, (Role.VULNERABILITY_ANALYST,), "inactive assignee", id="inactive"
             ),
-            pytest.param(
-                True,
-                (Role.RESTRICTED_ANALYST,),
-                "vulnerability_analyst role removed",
-                id="active-without-va",
-            ),
+            pytest.param(True, (), "role removed", id="active-without-triage"),
         ],
     )
     @pytest.mark.parametrize("result", [TicketStatus.ANALYSIS, TicketStatus.ANALYZED])
@@ -735,9 +730,10 @@ class TestAssignmentAndEventOrder:
         )
 
     @pytest.mark.parametrize(
-        ("active", "roles"),
+        ("active", "roles", "bot"),
         [
-            pytest.param(True, (Role.RESTRICTED_ANALYST,), id="restricted-analyst"),
+            pytest.param(True, (Role.VULNERABILITY_ANALYST,), True, id="bot-va"),
+            pytest.param(True, (Role.ADMIN,), False, id="admin-only"),
         ],
     )
     async def test_ineligible_actor_neither_assigns_nor_leaves_new(
@@ -748,8 +744,12 @@ class TestAssignmentAndEventOrder:
         tree: TreeBuilder,
         active: bool,
         roles: tuple[Role, ...],
+        bot: bool,
     ) -> None:
-        actor = await va_user(active=active, roles=roles)
+        """rbac.md, Business Rule 11: an actor that is not eligible to be
+        the assignee is not auto-assigned, and the `New` Ticket stays
+        `New` (tickets.md, Architectural Invariant)."""
+        actor = await va_user(active=active, roles=roles, bot=bot)
         ticket = await cveless(ticket_factory, status=TicketStatus.NEW, severity=None)
         await tree_for(TicketStatus.RESOLVED, ticket, tree)
 

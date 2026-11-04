@@ -46,11 +46,11 @@ needs independent sessions:
 Every race serializes a winner that keeps its locks in an open transaction
 and a waiter proven blocked (`assert_lock_wait`) on a named lock: the target
 User `FOR NO KEY UPDATE` when the winner holds that User (another grant or
-revoke of the same target or a deactivation, which lock it the same way, or
-a reactivation or a rename, which lock it `FOR UPDATE`), or the Ticket `FOR
-UPDATE` when the winner holds only the Ticket (`set_confidentiality()`, or
-an accessibility-loss writer). A reactivation or rename waiter is proven
-blocked on its own User `FOR UPDATE`, a deactivation waiter on its User
+revoke of the same target, a deactivation, or a rename, which lock it the
+same way, or a reactivation, which locks it `FOR UPDATE`), or the Ticket
+`FOR UPDATE` when the winner holds only the Ticket (`set_confidentiality()`,
+or an accessibility-loss writer). A reactivation waiter is proven blocked on
+its own User `FOR UPDATE`, a deactivation or rename waiter on its User
 `FOR NO KEY UPDATE`. Waiters hold
 stale identity-map copies of the Ticket (and, for the lifecycle races, of
 the target User), so their results prove classification from the state
@@ -147,9 +147,10 @@ WAIT = 5
 
 TARGET = "target"
 """The target User `FOR NO KEY UPDATE` of a grant or revoke, and the User
-`FOR NO KEY UPDATE` of `deactivate_user()`."""
+`FOR NO KEY UPDATE` of `deactivate_user()` and `update_user()`
+(user-service.md, `update_user()` step 1)."""
 USER = "user"
-"""The User `FOR UPDATE` of `reactivate_user()` and `update_user()`."""
+"""The User `FOR UPDATE` of `reactivate_user()`."""
 TICKET = "ticket"
 """The Ticket `FOR UPDATE`."""
 
@@ -1045,8 +1046,8 @@ class TestRenameRaces:
         self, world: CommittedWorld, probe: AsyncSession, op: str
     ) -> None:
         """The operation identifies the target by its current username and
-        keeps it locked; the rename waits on the User `FOR UPDATE` and
-        commits afterwards, leaving the event with the old username."""
+        keeps it locked; the rename waits on the User `FOR NO KEY UPDATE`
+        and commits afterwards, leaving the event with the old username."""
         admin = await _analyst(world)
         granter = await _analyst(world)
         actor = await _analyst(world)
@@ -1061,7 +1062,7 @@ class TestRenameRaces:
             ticket,
             _operation(op, ticket, old_name, actor),
             _renaming(target, new_name, admin),
-            blocked_on=[USER],
+            blocked_on=[TARGET],
             stale=target,
         )
 

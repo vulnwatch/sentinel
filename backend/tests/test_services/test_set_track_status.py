@@ -860,25 +860,32 @@ class TestGateTransitions:
 # ---------------------------------------------------------------------------
 
 INELIGIBLE_ACTORS = pytest.mark.parametrize(
-    ("active", "roles", "target", "force"),
+    ("active", "roles", "bot", "target", "force"),
     [
         pytest.param(
             True,
-            (Role.RESTRICTED_ANALYST,),
+            (Role.VULNERABILITY_ANALYST,),
+            True,
             PackageStatus.AFFECTED,
             False,
-            id="restricted-analyst",
+            id="bot-va",
         ),
-        pytest.param(True, (Role.ADMIN,), PackageStatus.FIXED, True, id="admin-only"),
+        pytest.param(
+            True, (Role.ADMIN,), False, PackageStatus.FIXED, True, id="admin-only"
+        ),
         pytest.param(
             False,
             (Role.VULNERABILITY_ANALYST,),
+            False,
             PackageStatus.AFFECTED,
             False,
             id="inactive-va",
         ),
     ],
 )
+"""Actors that are not eligible to be the assignee (rbac.md, Business
+Rule 10): a bot account whatever its roles, a user without
+`triage_ticket`, and an inactive user."""
 
 
 @pytest.mark.integration
@@ -964,10 +971,11 @@ class TestAutoAssignment:
         tree: TreeBuilder,
         active: bool,
         roles: tuple[Role, ...],
+        bot: bool,
         target: PackageStatus,
         force: bool,
     ) -> None:
-        actor = await va_user(active=active, roles=roles)
+        actor = await va_user(active=active, roles=roles, bot=bot)
         ticket = await cveless(ticket_factory, status=TicketStatus.ANALYSIS)
         track = await tree(ticket, status=PackageStatus.ANALYSIS)
 
@@ -995,12 +1003,13 @@ class TestAutoAssignment:
         tree: TreeBuilder,
         active: bool,
         roles: tuple[Role, ...],
+        bot: bool,
         target: PackageStatus,
         force: bool,
     ) -> None:
         """ticket-mutations.md, `reconcile_ticket_status()` step 1: a `New`
         Ticket is outside the gate zone, so it stays `New`."""
-        actor = await va_user(active=active, roles=roles)
+        actor = await va_user(active=active, roles=roles, bot=bot)
         ticket = await cveless(ticket_factory, status=TicketStatus.NEW)
         track = await tree(ticket, status=PackageStatus.ANALYSIS)
 

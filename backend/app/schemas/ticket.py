@@ -73,7 +73,7 @@ _PRIORITY_DESCRIPTION = (
     "Effective priority: `priority_override` when set, otherwise "
     "`priority_automatic`. `p1`-`p4`, or `null` when not yet prioritizable."
 )
-_ASSIGNEE_DESCRIPTION = "Assigned Vulnerability Analyst, or `null` if unassigned."
+_ASSIGNEE_DESCRIPTION = "Current assignee, or `null` if unassigned."
 _DUPLICATE_OF_DESCRIPTION = (
     "Canonical identity (`SNTL-{n}`) of the Ticket this Ticket duplicates, or "
     "`null`. Only the identifier is exposed: following it applies ordinary "
@@ -372,8 +372,10 @@ class TicketAssigneeUpdateRequest(BaseModel):
 
     user_id: str | None = Field(
         description=(
-            "Target user: UUID or exact username. The user must be active and "
-            "hold the `vulnerability_analyst` role. JSON `null` unassigns the "
+            "Target user: UUID or exact username. The user must be eligible to "
+            "be the assignee of the Ticket: active, not a bot account, holding "
+            "`triage_ticket`, and with scope `all` when the Ticket is "
+            "confidential. JSON `null` unassigns the "
             "caller, who must be the current assignee. Required."
         ),
         examples=["jdoe", None],

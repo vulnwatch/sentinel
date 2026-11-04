@@ -457,20 +457,48 @@ class TestConfidentialityCapability:
         ra_user: User,
         db_session: AsyncSession,
     ) -> None:
-        """`create_ticket` alone suffices; a non-VA creator starts `new` and
-        unassigned (rbac.md BR11)."""
+        """`create_ticket` alone suffices. A non-bot restricted analyst is
+        eligible to be the assignee of the non-confidential Ticket it
+        creates, so it is assigned and the Ticket starts in `analysis`
+        (rbac.md, Business Rule 10; tickets.md, Manual Creation)."""
         response = await authenticated_client.post(_PATH, json=body)
 
         assert response.status_code == 201
         data = response.json()["data"]
-        assert data["status"] == "new"
-        assert data["assignee"] is None
+        assert data["status"] == "analysis"
+        assert data["assignee"]["id"] == str(ra_user.id)
         assert data["is_confidential"] is False
         assert data["coordinated_release_at"] is None
         assert data["cve"] is None
         ticket_id = await _ticket_uuid(db_session, data["ticket_id"])
         assert await ticket_events_by_id(db_session, ticket_id) == creation_events(
-            creator_id=ra_user.id, severity=severity, priority=priority
+            creator_id=ra_user.id,
+            assignee_username=ra_user.username,
+            severity=severity,
+            priority=priority,
+        )
+
+    async def test_bot_creator_starts_new_and_unassigned(
+        self,
+        authenticated_client: AsyncClient,
+        va_user: User,
+        db_session: AsyncSession,
+    ) -> None:
+        """A bot account is never eligible to be an assignee, whatever its
+        roles: its Ticket starts `new` and unassigned (rbac.md, Business
+        Rule 10; tickets.md, Manual Creation)."""
+        va_user.bot = True
+        await db_session.flush()
+
+        response = await authenticated_client.post(_PATH, json={})
+
+        assert response.status_code == 201
+        data = response.json()["data"]
+        assert data["status"] == "new"
+        assert data["assignee"] is None
+        ticket_id = await _ticket_uuid(db_session, data["ticket_id"])
+        assert await ticket_events_by_id(db_session, ticket_id) == creation_events(
+            creator_id=va_user.id
         )
 
     @pytest.mark.parametrize("value", [True, False])

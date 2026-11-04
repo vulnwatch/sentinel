@@ -2016,7 +2016,7 @@ def test_role_final_manual_va_removal_unassigns_active_tickets(
             None,
             username,
             None,
-            f"Unassigned from {username}: vulnerability_analyst role removed",
+            f"Unassigned from {username}: role removed",
             None,
         )
     ]
@@ -2029,6 +2029,60 @@ def test_role_final_manual_va_removal_unassigns_active_tickets(
             None,
             None,
         )
+    ]
+
+
+@pytest.mark.integration
+def test_profile_bot_flag_unassigns_active_tickets(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+    ticket_ids: list[UUID],
+) -> None:
+    """user-management.md, `manage-user update` step 4: `--bot` on an
+    account that is not yet a bot account also unassigns it from its
+    Tickets in `New`, `Analysis`, and `Analyzed` in the same transaction;
+    the report still lists only the changed field."""
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    username = _username("scanner.unassigned")
+    cleanup_users_by_username(username)
+    user = asyncio.run(
+        _create_user(
+            cli_session_factory,
+            username=username,
+            roles=[(Role.VULNERABILITY_ANALYST, _MANUAL)],
+        )
+    )
+    analyzed_id = asyncio.run(
+        _create_ticket(
+            cli_session_factory,
+            ticket_ids,
+            status=TicketStatus.ANALYZED,
+            assignee_id=user.id,
+        )
+    )
+    resolved_id = asyncio.run(
+        _create_ticket(
+            cli_session_factory,
+            ticket_ids,
+            status=TicketStatus.RESOLVED,
+            assignee_id=user.id,
+        )
+    )
+
+    result = _invoke(["--username", username, "--bot"])
+
+    _assert_success(result, f"Updated user '{username}': bot.")
+    assert (
+        asyncio.run(_fetch_ticket(cli_session_factory, analyzed_id)).assignee_id is None
+    )
+    resolved = asyncio.run(_fetch_ticket(cli_session_factory, resolved_id))
+    assert resolved.assignee_id == user.id
+    ticket_events = asyncio.run(
+        _fetch_ticket_events(cli_session_factory, [analyzed_id, resolved_id])
+    )
+    assert [(e.ticket_id, e.user_id, e.comment) for e in ticket_events] == [
+        (analyzed_id, None, f"Unassigned from {username}: bot account")
     ]
 
 

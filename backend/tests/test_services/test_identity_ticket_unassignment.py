@@ -1,11 +1,13 @@
 """Tests for the identity-owned Ticket unassignment helpers
-(`_unassign_active_tickets()` and `_unassign_tickets_on_va_role_loss()` in
+(`_unassign_active_tickets()` and `_unassign_ineligible_tickets()` in
 backend/app/services/user_service.py).
 
 See docs/features/identity/user-service.md (Private Helpers) for the
 contract under test; docs/features/tickets/ticket-audit-log.md (Canonical
 Automatic Comment Vocabulary, Testing Requirement 19) for the exact event
-payload; and docs/features/platform/testing-strategy.md (User Lifecycle and
+payload; docs/features/identity/rbac.md (Business Rule 10) for the
+eligibility that `_unassign_ineligible_tickets()` evaluates; and
+docs/features/platform/testing-strategy.md (User Lifecycle and
 Management, "identity unassignment" bullet; Audit Trail Testing) for the
 mandatory scenarios. Every test is single-session: the caller precondition
 (the User locked `FOR NO KEY UPDATE`) is satisfied by locking the User in
@@ -38,7 +40,7 @@ from app.services.ticket_convergence_registry import (
 )
 from app.services.user_service import (
     _unassign_active_tickets,
-    _unassign_tickets_on_va_role_loss,
+    _unassign_ineligible_tickets,
 )
 from tests.support.database import rollback_test_scope
 from tests.support.ticket_mutations import StatementRecorder
@@ -49,20 +51,15 @@ TicketFactory = Callable[..., Awaitable[Ticket]]
 
 _EXTERNAL_GROUP = "Example Security Group"
 
-# user-service.md, Private Helpers, `_unassign_active_tickets()`: the four
-# identity-owned reasons (ticket-audit-log.md, Canonical Automatic Comment
-# Vocabulary, minus the reconciliation-only `inactive assignee`).
-_ACTIVE_REASONS = [
-    "user deactivated",
-    "vulnerability_analyst role removed",
-    "vulnerability_analyst role removed by external sync",
-    "vulnerability_analyst role removed after role mapping deletion",
-]
-# user-service.md, Private Helpers, `_unassign_tickets_on_va_role_loss()`.
-_ROLE_LOSS_REASONS = [
-    "vulnerability_analyst role removed",
-    "vulnerability_analyst role removed by external sync",
-    "vulnerability_analyst role removed after role mapping deletion",
+# user-service.md, Private Helpers, `_unassign_active_tickets()`: the
+# lifecycle reasons of deactivation and bot marking (ticket-audit-log.md,
+# Canonical Automatic Comment Vocabulary).
+_ACTIVE_REASONS = ["user deactivated", "bot account"]
+# user-service.md, Private Helpers, `_unassign_ineligible_tickets()`.
+_ROLE_REMOVAL_REASONS = [
+    "role removed",
+    "role removed by external sync",
+    "role removed after role mapping deletion",
 ]
 
 
@@ -189,9 +186,7 @@ class TestUnassignActiveTicketsSelectionAndLocks:
         locked = await _lock_user(db_session, user)
 
         with StatementRecorder(db_session) as recorder:
-            await _unassign_active_tickets(
-                db_session, locked, "vulnerability_analyst role removed"
-            )
+            await _unassign_active_tickets(db_session, locked, "bot account")
 
         statements = recorder.statements
         ticket_selects = [
@@ -333,8 +328,22 @@ class TestUnassignActiveTicketsReasons:
 
     @pytest.mark.parametrize(
         "reason",
-        ["inactive assignee", "user removed", "", "User Deactivated"],
-        ids=["inactive-assignee", "arbitrary", "empty", "wrong-case"],
+        [
+            "inactive assignee",
+            "confidential ticket",
+            "role removed",
+            "user removed",
+            "",
+            "User Deactivated",
+        ],
+        ids=[
+            "inactive-assignee",
+            "confidential-ticket",
+            "role-removed",
+            "arbitrary",
+            "empty",
+            "wrong-case",
+        ],
     )
     async def test_rejected_reason_raises_before_any_query(
         self,
@@ -343,8 +352,8 @@ class TestUnassignActiveTicketsReasons:
         ticket_factory: TicketFactory,
         reason: str,
     ) -> None:
-        """user-service.md, Private Helpers: the reconciliation-only
-        `inactive assignee` and any other value raise `ValueError` before any
+        """user-service.md, Private Helpers: the reasons of the other system
+        unassignment paths and any other value raise `ValueError` before any
         Ticket mutation."""
         user = await user_factory(username="bob.va")
         ticket = await ticket_factory(
@@ -596,14 +605,20 @@ class TestUnassignActiveTicketsBoundaries:
 
 
 # ---------------------------------------------------------------------------
-# `_unassign_tickets_on_va_role_loss()`
+# `_unassign_ineligible_tickets()`
 # ---------------------------------------------------------------------------
 
 
+async def _remove_origin(db: AsyncSession, origin: UserRole) -> None:
+    """The caller has applied its `UserRole` deletion in this transaction."""
+    await db.delete(origin)
+    await db.flush()
+
+
 @pytest.mark.integration
-class TestUnassignTicketsOnVaRoleLoss:
-    @pytest.mark.parametrize("reason", _ROLE_LOSS_REASONS)
-    async def test_final_loss_delegates_with_exact_payload(
+class TestUnassignIneligibleTickets:
+    @pytest.mark.parametrize("reason", _ROLE_REMOVAL_REASONS)
+    async def test_loss_of_every_triage_role_clears_every_active_assignment(
         self,
         db_session: AsyncSession,
         user_factory: UserFactory,
@@ -611,86 +626,307 @@ class TestUnassignTicketsOnVaRoleLoss:
         ticket_factory: TicketFactory,
         reason: Any,
     ) -> None:
-        """user-service.md, Private Helpers,
-        `_unassign_tickets_on_va_role_loss()` step 3: with no remaining VA
-        origin, delegates to `_unassign_active_tickets()` with `reason`."""
+        """user-service.md, Private Helpers, `_unassign_ineligible_tickets()`
+        steps 3-4: with no remaining role granting `triage_ticket`, the User
+        is eligible for no Ticket, so every `New`, `Analysis`, and
+        `Analyzed` assignment is cleared, confidential or not; `Resolved`
+        keeps its assignee."""
         user = await user_factory(username="bob.va")
-        manual_va = await user_role_factory(
+        va = await user_role_factory(
             user_id=user.id, role=Role.VULNERABILITY_ANALYST.value
         )
-        await user_role_factory(user_id=user.id, role=Role.RESTRICTED_ANALYST.value)
-        active_id, resolved_id = _ordered_ids(2)
+        await user_role_factory(
+            user_id=user.id, role=Role.ADMIN.value, group_name=_EXTERNAL_GROUP
+        )
+        public_id, confidential_id, resolved_id = _ordered_ids(3)
         await ticket_factory(
             id=resolved_id, status=TicketStatus.RESOLVED.value, assignee_id=user.id
         )
         await ticket_factory(
-            id=active_id, status=TicketStatus.ANALYSIS.value, assignee_id=user.id
+            id=confidential_id,
+            status=TicketStatus.ANALYZED.value,
+            assignee_id=user.id,
+            is_confidential=True,
+        )
+        await ticket_factory(
+            id=public_id, status=TicketStatus.ANALYSIS.value, assignee_id=user.id
         )
         locked = await _lock_user(db_session, user)
-        # The caller has applied its UserRole deletion in this transaction.
-        await db_session.delete(manual_va)
-        await db_session.flush()
+        await _remove_origin(db_session, va)
 
-        await _unassign_tickets_on_va_role_loss(db_session, locked, reason)
+        await _unassign_ineligible_tickets(db_session, locked, reason)
 
-        ids = [active_id, resolved_id]
+        ids = [public_id, confidential_id, resolved_id]
         assert await _states(db_session, ids) == {
-            active_id: ("Analysis", None),
+            public_id: ("Analysis", None),
+            confidential_id: ("Analyzed", None),
             resolved_id: ("Resolved", user.id),
         }
         assert await _events(db_session, ids) == [
-            _clear_event(active_id, "bob.va", reason)
+            _clear_event(public_id, "bob.va", reason),
+            _clear_event(confidential_id, "bob.va", reason),
         ]
 
     @pytest.mark.parametrize(
-        "group_name", ["_manual", _EXTERNAL_GROUP], ids=["manual", "external"]
+        ("removed", "remaining"),
+        [
+            pytest.param(
+                Role.VULNERABILITY_ANALYST,
+                Role.RESTRICTED_ANALYST,
+                id="va-removed-restricted-remains",
+            ),
+            pytest.param(
+                Role.ADMIN,
+                Role.RESTRICTED_ANALYST,
+                id="admin-removed-restricted-remains",
+            ),
+        ],
     )
-    async def test_remaining_va_origin_changes_no_ticket(
+    async def test_loss_of_scope_all_clears_only_confidential_assignments(
         self,
         db_session: AsyncSession,
         user_factory: UserFactory,
         user_role_factory: UserRoleFactory,
         ticket_factory: TicketFactory,
-        group_name: str,
+        removed: Role,
+        remaining: Role,
     ) -> None:
-        """user-service.md, Private Helpers,
-        `_unassign_tickets_on_va_role_loss()` step 2: any remaining VA origin,
-        from any `group_name`, leaves every Ticket and creates no event."""
+        """rbac.md, Business Rule 10 and user-service.md, Private Helpers,
+        `_unassign_ineligible_tickets()` step 4: with `triage_ticket` but
+        no remaining role whose scope is `all`, the User stays eligible
+        for every non-confidential Ticket, so only the confidential
+        active-status assignments are cleared, in Ticket UUID order. An
+        anomalously assigned confidential `New` Ticket is also in scope."""
         user = await user_factory(username="bob.va")
-        removed_origin = "_manual" if group_name != "_manual" else _EXTERNAL_GROUP
-        removed = await user_role_factory(
-            user_id=user.id,
-            role=Role.VULNERABILITY_ANALYST.value,
-            group_name=removed_origin,
-        )
+        origin = await user_role_factory(user_id=user.id, role=removed.value)
         await user_role_factory(
-            user_id=user.id,
-            role=Role.VULNERABILITY_ANALYST.value,
-            group_name=group_name,
+            user_id=user.id, role=remaining.value, group_name=_EXTERNAL_GROUP
         )
-        ticket = await ticket_factory(
-            status=TicketStatus.ANALYSIS.value, assignee_id=user.id
-        )
+        ids = _ordered_ids(5)
+        tickets = {
+            ids[0]: (TicketStatus.ANALYSIS, False),
+            ids[1]: (TicketStatus.ANALYSIS, True),
+            ids[2]: (TicketStatus.RESOLVED, True),
+            ids[3]: (TicketStatus.NEW, True),
+            ids[4]: (TicketStatus.ANALYZED, False),
+        }
+        for ticket_id in reversed(ids):
+            status, confidential = tickets[ticket_id]
+            await ticket_factory(
+                id=ticket_id,
+                status=status.value,
+                assignee_id=user.id,
+                is_confidential=confidential,
+            )
         locked = await _lock_user(db_session, user)
-        await db_session.delete(removed)
-        await db_session.flush()
+        await _remove_origin(db_session, origin)
 
         with StatementRecorder(db_session) as recorder:
-            await _unassign_tickets_on_va_role_loss(
-                db_session, locked, "vulnerability_analyst role removed"
-            )
+            await _unassign_ineligible_tickets(db_session, locked, "role removed")
+
+        assert await _states(db_session, ids) == {
+            ids[0]: ("Analysis", user.id),
+            ids[1]: ("Analysis", None),
+            ids[2]: ("Resolved", user.id),
+            ids[3]: ("New", None),
+            ids[4]: ("Analyzed", user.id),
+        }
+        assert await _events(db_session, ids) == [
+            _clear_event(ids[1], "bob.va", "role removed"),
+            _clear_event(ids[3], "bob.va", "role removed"),
+        ]
+        # The candidates are selected without a status or confidentiality
+        # filter and locked in ascending UUID order.
+        candidate = [
+            stmt
+            for stmt in recorder.statements
+            if "FROM ticket " in f"{stmt} " and "FOR UPDATE" not in stmt
+        ]
+        assert len(candidate) == 1
+        assert "ticket.status" not in candidate[0]
+        assert "ticket.is_confidential" not in candidate[0]
+        [lock] = recorder.row_locks()
+        assert "ORDER BY ticket.id" in lock
+
+    @pytest.mark.parametrize(
+        ("removed", "removed_group", "remaining"),
+        [
+            pytest.param(
+                Role.VULNERABILITY_ANALYST,
+                "_manual",
+                Role.VULNERABILITY_ANALYST,
+                id="manual-origin-of-a-role-that-remains-external",
+            ),
+            pytest.param(
+                Role.VULNERABILITY_ANALYST,
+                _EXTERNAL_GROUP,
+                Role.VULNERABILITY_ANALYST,
+                id="external-origin-of-a-role-that-remains-manual",
+            ),
+            pytest.param(
+                Role.RESTRICTED_ANALYST,
+                "_manual",
+                Role.VULNERABILITY_ANALYST,
+                id="role-whose-capabilities-and-scope-remain",
+            ),
+            pytest.param(
+                Role.ADMIN, "_manual", Role.VULNERABILITY_ANALYST, id="admin-removed"
+            ),
+        ],
+    )
+    async def test_user_still_eligible_for_every_ticket_changes_nothing(
+        self,
+        db_session: AsyncSession,
+        user_factory: UserFactory,
+        user_role_factory: UserRoleFactory,
+        ticket_factory: TicketFactory,
+        removed: Role,
+        removed_group: str,
+        remaining: Role,
+    ) -> None:
+        """user-service.md, Private Helpers, `_unassign_ineligible_tickets()`
+        step 2: a User still active, not a bot account, holding
+        `triage_ticket`, and with effective scope `all` after the removal
+        returns without a Ticket query, lock, write, or event."""
+        user = await user_factory(username="bob.va")
+        origin = await user_role_factory(
+            user_id=user.id, role=removed.value, group_name=removed_group
+        )
+        remaining_group = _EXTERNAL_GROUP if removed_group == "_manual" else "_manual"
+        await user_role_factory(
+            user_id=user.id, role=remaining.value, group_name=remaining_group
+        )
+        ticket = await ticket_factory(
+            status=TicketStatus.ANALYSIS.value,
+            assignee_id=user.id,
+            is_confidential=True,
+        )
+        locked = await _lock_user(db_session, user)
+        await _remove_origin(db_session, origin)
+
+        with StatementRecorder(db_session) as recorder:
+            await _unassign_ineligible_tickets(db_session, locked, "role removed")
 
         assert recorder.row_locks() == []
         assert recorder.writes() == []
+        assert recorder.selects_from("ticket") == []
         assert await _states(db_session, [ticket.id]) == {
             ticket.id: ("Analysis", user.id)
         }
         assert await _events(db_session, [ticket.id]) == []
 
     @pytest.mark.parametrize(
+        ("active", "bot"),
+        [pytest.param(False, False, id="inactive"), pytest.param(True, True, id="bot")],
+    )
+    async def test_inactive_or_bot_user_is_eligible_for_no_ticket(
+        self,
+        db_session: AsyncSession,
+        user_factory: UserFactory,
+        user_role_factory: UserRoleFactory,
+        ticket_factory: TicketFactory,
+        active: bool,
+        bot: bool,
+    ) -> None:
+        """Step 1 reads the locked User's `active` and `bot` values: an
+        anomalously assigned inactive User or bot account, which no
+        remaining role makes eligible, loses every active-status
+        assignment with the role-removal reason."""
+        user = await user_factory(username="bob.va", active=active, bot=bot)
+        origin = await user_role_factory(
+            user_id=user.id, role=Role.RESTRICTED_ANALYST.value
+        )
+        await user_role_factory(
+            user_id=user.id,
+            role=Role.VULNERABILITY_ANALYST.value,
+            group_name=_EXTERNAL_GROUP,
+        )
+        ticket = await ticket_factory(
+            status=TicketStatus.ANALYSIS.value, assignee_id=user.id
+        )
+        locked = await _lock_user(db_session, user)
+        await _remove_origin(db_session, origin)
+
+        await _unassign_ineligible_tickets(db_session, locked, "role removed")
+
+        assert await _states(db_session, [ticket.id]) == {ticket.id: ("Analysis", None)}
+        assert await _events(db_session, [ticket.id]) == [
+            _clear_event(ticket.id, "bob.va", "role removed")
+        ]
+
+    async def test_confidentiality_is_read_from_the_locked_current_ticket(
+        self,
+        db_session: AsyncSession,
+        user_factory: UserFactory,
+        user_role_factory: UserRoleFactory,
+        ticket_factory: TicketFactory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """user-service.md, Private Helpers, `_unassign_ineligible_tickets()`
+        (selection without a confidentiality filter, decision from the
+        locked-current Ticket): a candidate made confidential between the
+        selection and the lock is cleared, and one made non-confidential
+        is kept."""
+        user = await user_factory(username="bob.va")
+        va = await user_role_factory(
+            user_id=user.id, role=Role.VULNERABILITY_ANALYST.value
+        )
+        await user_role_factory(
+            user_id=user.id,
+            role=Role.RESTRICTED_ANALYST.value,
+            group_name=_EXTERNAL_GROUP,
+        )
+        classified_id, declassified_id = _ordered_ids(2)
+        await ticket_factory(
+            id=classified_id, status=TicketStatus.ANALYSIS.value, assignee_id=user.id
+        )
+        await ticket_factory(
+            id=declassified_id,
+            status=TicketStatus.ANALYSIS.value,
+            assignee_id=user.id,
+            is_confidential=True,
+        )
+        locked = await _lock_user(db_session, user)
+        await _remove_origin(db_session, va)
+
+        original_execute = db_session.execute
+
+        async def _interleaving_execute(
+            statement: Any, *args: Any, **kwargs: Any
+        ) -> Any:
+            result = await original_execute(statement, *args, **kwargs)
+            compiled = str(statement)
+            if "FROM ticket" in compiled and "FOR UPDATE" not in compiled:
+                # After the candidate selection, before the Ticket locks.
+                for ticket_id, confidential in (
+                    (classified_id, True),
+                    (declassified_id, False),
+                ):
+                    await original_execute(
+                        update(Ticket)
+                        .where(Ticket.id == ticket_id)
+                        .values(is_confidential=confidential)
+                        .execution_options(synchronize_session=False)
+                    )
+            return result
+
+        monkeypatch.setattr(db_session, "execute", _interleaving_execute)
+        await _unassign_ineligible_tickets(db_session, locked, "role removed")
+        monkeypatch.undo()
+
+        ids = [classified_id, declassified_id]
+        assert await _states(db_session, ids) == {
+            classified_id: ("Analysis", None),
+            declassified_id: ("Analysis", user.id),
+        }
+        assert await _events(db_session, ids) == [
+            _clear_event(classified_id, "bob.va", "role removed")
+        ]
+
+    @pytest.mark.parametrize(
         "reason",
-        ["user deactivated", "inactive assignee", "role revoked"],
-        ids=["user-deactivated", "inactive-assignee", "arbitrary"],
+        ["user deactivated", "bot account", "inactive assignee", "role revoked"],
+        ids=["user-deactivated", "bot-account", "inactive-assignee", "arbitrary"],
     )
     async def test_rejected_reason_raises_before_any_ticket_change(
         self,
@@ -699,9 +935,9 @@ class TestUnassignTicketsOnVaRoleLoss:
         ticket_factory: TicketFactory,
         reason: str,
     ) -> None:
-        """user-service.md, Private Helpers: only the three role-loss
+        """user-service.md, Private Helpers: only the three role-removal
         reasons are accepted; any other value raises `ValueError` before
-        Ticket mutation."""
+        any query."""
         user = await user_factory(username="bob.va")
         ticket = await ticket_factory(
             status=TicketStatus.ANALYSIS.value, assignee_id=user.id
@@ -712,9 +948,7 @@ class TestUnassignTicketsOnVaRoleLoss:
             StatementRecorder(db_session) as recorder,
             pytest.raises(ValueError, match="reason"),
         ):
-            await _unassign_tickets_on_va_role_loss(
-                db_session, locked, cast(Any, reason)
-            )
+            await _unassign_ineligible_tickets(db_session, locked, cast(Any, reason))
 
         assert recorder.statements == []
         assert await _states(db_session, [ticket.id]) == {
@@ -722,7 +956,7 @@ class TestUnassignTicketsOnVaRoleLoss:
         }
         assert await _events(db_session, [ticket.id]) == []
 
-    async def test_reinvocation_after_final_loss_creates_no_event(
+    async def test_reinvocation_creates_no_further_event(
         self,
         db_session: AsyncSession,
         user_factory: UserFactory,
@@ -734,19 +968,15 @@ class TestUnassignTicketsOnVaRoleLoss:
         )
         locked = await _lock_user(db_session, user)
 
-        await _unassign_tickets_on_va_role_loss(
-            db_session, locked, "vulnerability_analyst role removed by external sync"
+        await _unassign_ineligible_tickets(
+            db_session, locked, "role removed by external sync"
         )
-        await _unassign_tickets_on_va_role_loss(
-            db_session, locked, "vulnerability_analyst role removed by external sync"
+        await _unassign_ineligible_tickets(
+            db_session, locked, "role removed by external sync"
         )
 
         assert await _events(db_session, [ticket.id]) == [
-            _clear_event(
-                ticket.id,
-                "bob.va",
-                "vulnerability_analyst role removed by external sync",
-            )
+            _clear_event(ticket.id, "bob.va", "role removed by external sync")
         ]
 
     async def test_flushes_without_commit_rollback_or_convergence(
@@ -768,12 +998,11 @@ class TestUnassignTicketsOnVaRoleLoss:
         monkeypatch.setattr(db_session, "rollback", rollback_spy)
         monkeypatch.setattr(ticket_mutations, "reconcile_ticket_status", reconcile_spy)
 
-        await _unassign_tickets_on_va_role_loss(
-            db_session, locked, "vulnerability_analyst role removed"
-        )
+        await _unassign_ineligible_tickets(db_session, locked, "role removed")
 
         commit_spy.assert_not_called()
         rollback_spy.assert_not_called()
         reconcile_spy.assert_not_called()
         assert pending_ticket_convergence_effects(db_session) == ()
+        assert not db_session.dirty
         assert await _states(db_session, [ticket.id]) == {ticket.id: ("Analysis", None)}

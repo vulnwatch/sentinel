@@ -1239,9 +1239,7 @@ class TestAudit:
             pytest.param(
                 False, (Role.VULNERABILITY_ANALYST,), "inactive assignee", id="inactive"
             ),
-            pytest.param(
-                True, (), "vulnerability_analyst role removed", id="active-non-va"
-            ),
+            pytest.param(True, (), "role removed", id="active-without-triage"),
         ],
     )
     async def test_order_package_added_then_sanitation_then_gate(

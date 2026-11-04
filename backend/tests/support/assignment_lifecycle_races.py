@@ -6,11 +6,13 @@ Consumers:
 - `tests/test_services/test_va_role_loss_assignment_races.py` (the real
   final manual VA-origin loss, `update_roles()`);
 - `tests/test_services/test_deactivation_assignment_races.py` (the real
-  `deactivate_user()`).
+  `deactivate_user()`);
+- `tests/test_services/test_bot_marking_assignment_races.py` (the real
+  `update_user()` changing `bot` to `true`).
 
 Owning specifications: docs/features/identity/user-service.md
-(Concurrency Considerations: Assignment concurrent with deactivation or
-active manual role loss) and docs/features/platform/testing-strategy.md
+(Concurrency Considerations: Assignment concurrent with eligibility loss)
+and docs/features/platform/testing-strategy.md
 (User Lifecycle and Management: every assignment-capable path acquires User
 `FOR SHARE` before CVE/Ticket locks; Concurrency Testing, Lock-Wait
 Observation).

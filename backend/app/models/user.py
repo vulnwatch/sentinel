@@ -59,8 +59,10 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    # Descriptive only: no authorization or business rule reads it
-    # (docs/features/identity/user-management.md, Bot Accounts).
+    # Not an authorization input; the only business rule that reads it is
+    # assignment eligibility: a bot account is never a Ticket assignee
+    # (docs/features/identity/rbac.md, Business Rule 10;
+    # docs/features/identity/user-management.md, Bot Accounts).
     bot: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
     )

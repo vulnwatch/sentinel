@@ -6,8 +6,15 @@ Implements, from `docs/features/tickets/ticket-mutations.md`:
 - `stabilize_acting_user()` — the acting-User stabilization that every
   assignment-capable path performs before its CVE or Ticket lock
   (Concurrency Control > Extension to non-module operations;
-  `docs/conventions.md`, Cross-Domain Root Lock Order);
+  `docs/conventions.md`, Cross-Domain Root Lock Order), and
+  `stabilized_ineligibility()`, assignment eligibility
+  (`docs/features/identity/rbac.md`, Business Rule 10) of a stabilized
+  User;
 - `auto_assign_actor()` — the Auto-Assignment Rule;
+- `clear_ineligible_assignee()` — the assignee eligibility observation
+  shared by assignment-eligibility sanitation and
+  `ticket_service.set_confidentiality()` (Assignment Eligibility
+  Sanitization);
 - `reconcile_ticket_status()` — the sole gate-zone status authority,
   including assignment-eligibility sanitation, the `previous_status`
   semantics, and transaction-local Ticket convergence registration;
@@ -53,7 +60,7 @@ leaf `ticket_mutations_errors` hierarchy.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -63,7 +70,7 @@ from uuid import UUID
 
 import structlog
 from pydantic import MISSING
-from sqlalchemy import ColumnElement, and_, case, exists, not_, or_, select
+from sqlalchemy import ColumnElement, and_, case, exists, func, not_, or_, select
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
@@ -101,6 +108,10 @@ from app.models.ticket_package_track import TicketPackageTrack
 from app.models.user import User
 from app.models.user_role import UserRole
 from app.services import settings as settings_service
+from app.services.assignment_eligibility import (
+    AssigneeIneligibility,
+    assignee_ineligibility,
+)
 from app.services.cvss import (
     CVSS_VERSION_RANK,
     SUSE_PROVIDER_NAME,
@@ -131,8 +142,8 @@ from app.services.ticket_visibility import TicketCaller, ticket_visibility_condi
 
 __all__ = [
     "EXTERNAL_PROVIDER_MAX_LENGTH",
-    "INACTIVE_ASSIGNEE_REASON",
-    "VA_ROLE_REMOVED_REASON",
+    "INELIGIBLE_ASSIGNEE_REASONS",
+    "AssigneeIneligibility",
     "CVSSAssessmentAction",
     "CVSSAssessmentMutationResult",
     "CVSSAssessmentNotFoundError",
@@ -149,10 +160,10 @@ __all__ = [
     "TicketMutationsError",
     "TicketNotMutableError",
     "auto_assign_actor",
+    "clear_ineligible_assignee",
     "delete_cvss_assessment",
     "ensure_ticket_operable",
     "gate_status_expression",
-    "is_stabilized_vulnerability_analyst",
     "is_valid_external_provider_name",
     "recalculate_cvss_chain",
     "reconcile_ticket_status",
@@ -160,18 +171,22 @@ __all__ = [
     "require_accepted_cvss_version",
     "set_severity_manual",
     "stabilize_acting_user",
+    "stabilized_ineligibility",
     "upsert_cvss_assessment",
     "upsert_external_cvss_batch",
 ]
 
 logger = structlog.get_logger(__name__)
 
-INACTIVE_ASSIGNEE_REASON: Final = "inactive assignee"
-"""Sanitation reason for an inactive assignee (ticket-audit-log.md,
-Canonical Automatic Comment Vocabulary); takes precedence."""
-
-VA_ROLE_REMOVED_REASON: Final = "vulnerability_analyst role removed"
-"""Sanitation reason for an active assignee without any VA origin."""
+INELIGIBLE_ASSIGNEE_REASONS: Final[Mapping[AssigneeIneligibility, str]] = {
+    AssigneeIneligibility.INACTIVE: "inactive assignee",
+    AssigneeIneligibility.BOT: "bot account",
+    AssigneeIneligibility.NO_TRIAGE_TICKET: "role removed",
+    AssigneeIneligibility.CONFIDENTIAL: "confidential ticket",
+}
+"""The closed reason of the assignee eligibility observation for each
+failing condition (ticket-audit-log.md, Canonical Automatic Comment
+Vocabulary). The condition precedence is `AssigneeIneligibility` order."""
 
 _SANITIZED_RESULTS: Final = frozenset({TicketStatus.ANALYSIS, TicketStatus.ANALYZED})
 _ACCEPTED_CVSS_VERSIONS: Final = tuple(version.value for version in CVSSVersion)
@@ -230,11 +245,13 @@ async def stabilize_acting_user(db: AsyncSession, user_id: UUID) -> User:
     Q3: selects the `User` row with `FOR SHARE`, refreshing any identity-
     map copy, then loads its current `UserRole` origins while holding that
     lock. `FOR SHARE` conflicts with the `FOR NO KEY UPDATE` taken by
-    deactivation and role-origin removal, so `active` and the VA origins
-    stay stable until the transaction ends. Creates no event.
+    deactivation, role-origin removal, and bot marking, so `active`, `bot`,
+    and the role origins (the user's side of assignment eligibility) stay
+    stable until the transaction ends. Creates no event.
 
-    Q4: returns the locked `User` with `active`, `username`, and `roles`
-    loaded; `auto_assign_actor()` reads them without any further query.
+    Q4: returns the locked `User` with `active`, `bot`, `username`, and
+    `roles` loaded; `stabilized_ineligibility()` and `auto_assign_actor()`
+    read them without any further query.
 
     Q6: raises `UserNotFoundError` when no User has `user_id` (an
     invariant violation for an authenticated caller). Database exceptions
@@ -253,25 +270,38 @@ async def stabilize_acting_user(db: AsyncSession, user_id: UUID) -> User:
     return user
 
 
-def is_stabilized_vulnerability_analyst(user: User) -> bool:
-    """Whether the stabilized `user` currently holds any VA origin.
+def stabilized_ineligibility(
+    user: User, *, is_confidential: bool
+) -> AssigneeIneligibility | None:
+    """Assignment eligibility of a stabilized User for one Ticket.
 
-    Category C (pure; no database operation). Shared by
-    `auto_assign_actor()` and the initial-status decision of
-    `ticket_service.create_ticket()`, which reads the creator's
-    eligibility from the same locked row without emitting the
-    auto-assignment events.
+    Category C (pure; no database operation). Applies
+    `assignment_eligibility.assignee_ineligibility()`
+    (`docs/features/identity/rbac.md`, Business Rule 10) to the locked
+    User's `active` and `bot` values and its role origins, with
+    `is_confidential` taken from the locked-current Ticket or, for manual
+    creation, from the requested confidentiality. Shared by
+    `auto_assign_actor()`, the initial-status decision of
+    `ticket_service.create_ticket()`, and the target validation of
+    `ticket_service.assign_ticket()`.
 
-    Reads the roles loaded by `stabilize_acting_user()`; raises
-    `ValueError` if they are not loaded, because loading them here would
-    be a User query under the Ticket lock.
+    Returns `None` when the User is eligible, otherwise the first failing
+    condition. Reads the roles loaded by `stabilize_acting_user()` (or by
+    another `FOR SHARE` lock that loads them); raises `ValueError` if they
+    are not loaded, because loading them here would be a User query under
+    the Ticket lock.
     """
     if "roles" in sa_inspect(user).unloaded:
         raise ValueError(
             "acting_user must be stabilized with stabilize_acting_user() "
             "before the Ticket lock."
         )
-    return any(role.role == Role.VULNERABILITY_ANALYST for role in user.roles)
+    return assignee_ineligibility(
+        active=user.active,
+        bot=user.bot,
+        roles=(Role(origin.role) for origin in user.roles),
+        is_confidential=is_confidential,
+    )
 
 
 async def auto_assign_actor(
@@ -280,10 +310,11 @@ async def auto_assign_actor(
     db: AsyncSession,
     force: bool = False,
 ) -> bool:
-    """Assign `ticket` to the acting user if that user is an active VA.
+    """Assign `ticket` to the acting user if that user is eligible to be its
+    assignee.
 
     Category A (ticket-mutations.md, Auto-Assignment Rule and
-    `auto_assign_actor()`).
+    `auto_assign_actor()`; rbac.md, Business Rules 10-12).
 
     Q1: `ticket` is locked `FOR UPDATE` by the caller; `acting_user` is
     the User returned by `stabilize_acting_user()` before the Ticket lock,
@@ -295,15 +326,19 @@ async def auto_assign_actor(
     `FOR UPDATE` lock.
 
     Q3: in order — a system actor, an already-assigned Ticket (unless
-    `force`), an inactive locked User or one without any current VA
-    origin, and an unchanged assignee return `False` with no effect.
+    `force`), a locked User that is not eligible to be the assignee of the
+    locked-current Ticket (inactive, a bot account, without
+    `triage_ticket`, or without effective scope `all` on a confidential
+    Ticket; `stabilized_ineligibility()`), and an unchanged assignee
+    return `False` with no effect.
     Otherwise sets `assignee_id`, creates one `assignment` event
     attributed to the acting user (`old_value` the previous assignee's
     event-time username or `NULL`, `new_value` the acting username,
     `comment NULL`), and, when the Ticket is `New`, sets `Analysis` and
     creates the system `status_change` `New → Analysis`. The acting
-    User's eligibility is read from the stabilized instance without any
-    query. The only other read is, for `force=True` replacing a different
+    User's side of eligibility is read from the stabilized instance
+    without any query, and the confidentiality from the locked Ticket.
+    The only other read is, for `force=True` replacing a different
     assignee, one unlocked observation of that previous assignee's
     username for `old_value`. Never calls `reconcile_ticket_status()`; the
     caller must reconcile after completing its mutations.
@@ -318,7 +353,10 @@ async def auto_assign_actor(
         return False
     if not force and ticket.assignee_id is not None:
         return False
-    if not acting_user.active or not is_stabilized_vulnerability_analyst(acting_user):
+    if (
+        stabilized_ineligibility(acting_user, is_confidential=ticket.is_confidential)
+        is not None
+    ):
         return False
     if ticket.assignee_id == acting_user.id:
         return False
@@ -515,33 +553,62 @@ async def _evaluate_gate_status(
 # ---------------------------------------------------------------------------
 
 
-async def _sanitize_assignment(db: AsyncSession, ticket: Ticket) -> None:
-    """Assignment Eligibility Sanitization (ticket-mutations.md).
+async def clear_ineligible_assignee(
+    db: AsyncSession, ticket: Ticket
+) -> AssigneeIneligibility | None:
+    """Clear the current assignee when it is no longer eligible.
 
-    A fresh, unlocked observation of the current assignee's `active`
-    value and VA origins; audit history is never read.
+    Category A (ticket-mutations.md, Assignment Eligibility Sanitization:
+    the assignee eligibility observation and reason selection). Shared by
+    reconciliation sanitation and `ticket_service.set_confidentiality()`
+    (ticket-service.md, `set_confidentiality` step 7).
+
+    Q1: `ticket` is locked `FOR UPDATE` by the caller, which has already
+    decided that the Ticket's status requires an eligible assignee.
+
+    Q2: acquires no lock. The assignee's `active` and `bot` values,
+    username, and every current `UserRole` origin are read in one fresh
+    unlocked statement under the caller's Ticket lock; `is_confidential`
+    is the locked Ticket's. Audit history is never read.
+
+    Q3: a Ticket without an assignee, or whose assignee is eligible
+    (`docs/features/identity/rbac.md`, Business Rule 10), is unchanged
+    with no event. Otherwise sets `assignee_id = NULL` and creates one
+    system `assignment` event (`old_value` the observed username,
+    `new_value = NULL`, `comment = "Unassigned from {username}:
+    {reason}"`, `detail = NULL`) whose reason names the first failing
+    condition (`INELIGIBLE_ASSIGNEE_REASONS`). Never changes the status
+    or logs.
+
+    Q4: returns the failing condition of a cleared assignee, or `None`
+    when nothing was cleared.
+
+    Q6: audit validation and database exceptions propagate and roll back
+    the caller's transaction.
     """
     if ticket.assignee_id is None:
-        return
-    has_va_origin = exists(
-        select(UserRole.id).where(
-            UserRole.user_id == User.id,
-            UserRole.role == Role.VULNERABILITY_ANALYST.value,
-        )
-    ).correlate(User)
+        return None
+    origins = (
+        select(func.array_agg(UserRole.role))
+        .where(UserRole.user_id == User.id)
+        .correlate(User)
+        .scalar_subquery()
+    )
     assignee = (
         await db.execute(
-            select(
-                User.id, User.username, User.active, has_va_origin.label("va")
-            ).where(User.id == ticket.assignee_id)
+            select(User.username, User.active, User.bot, origins.label("roles")).where(
+                User.id == ticket.assignee_id
+            )
         )
     ).one()
-    if not assignee.active:
-        reason = INACTIVE_ASSIGNEE_REASON
-    elif not assignee.va:
-        reason = VA_ROLE_REMOVED_REASON
-    else:
-        return
+    condition = assignee_ineligibility(
+        active=assignee.active,
+        bot=assignee.bot,
+        roles=(Role(role) for role in assignee.roles or ()),
+        is_confidential=ticket.is_confidential,
+    )
+    if condition is None:
+        return None
 
     ticket.assignee_id = None
     await TicketAuditLog.log_event(
@@ -551,13 +618,30 @@ async def _sanitize_assignment(db: AsyncSession, ticket: Ticket) -> None:
         user_id=None,
         old_value=assignee.username,
         new_value=None,
-        comment=f"Unassigned from {assignee.username}: {reason}",
+        comment=(
+            f"Unassigned from {assignee.username}: "
+            f"{INELIGIBLE_ASSIGNEE_REASONS[condition]}"
+        ),
     )
+    return condition
+
+
+async def _sanitize_assignment(db: AsyncSession, ticket: Ticket) -> None:
+    """Assignment Eligibility Sanitization (ticket-mutations.md).
+
+    Applies the assignee eligibility observation and, for a cleared
+    assignee, emits the warning that the identity-owned batch or the
+    confidentiality transition should ordinarily have handled the clear.
+    """
+    assignee_id = ticket.assignee_id
+    condition = await clear_ineligible_assignee(db, ticket)
+    if condition is None:
+        return
     logger.warning(
         "ticket_assignee_sanitized",
         ticket_id=str(ticket.id),
-        user_id=str(assignee.id),
-        reason=reason,
+        user_id=str(assignee_id),
+        reason=INELIGIBLE_ASSIGNEE_REASONS[condition],
     )
 
 
@@ -603,10 +687,12 @@ async def reconcile_ticket_status(
     version) and universal resolution completeness over actionable
     tracks; the result is `Resolved`, `Analyzed`, or the `Analysis`
     floor. (3) For an `Analysis` or `Analyzed` result, clears an
-    inactive or non-VA assignee with one system `assignment` event
-    (`Unassigned from {username}: {reason}`, `inactive assignee`
-    preferred) and a warning log; a `Resolved` result retains the
-    assignee. (4) When the result differs from the current status, or
+    assignee that is no longer eligible (`clear_ineligible_assignee()`)
+    with one system `assignment` event (`Unassigned from {username}:
+    {reason}`, reason precedence `inactive assignee`, `bot account`,
+    `role removed`, `confidential ticket`) and a warning log; a
+    `Resolved` result retains the assignee. (4) When the result differs
+    from the current status, or
     `previous_status` is supplied and differs from the result, sets the
     status and creates one system `status_change` whose `old_value` is
     `previous_status` or the current status. (5) Independently of (4),

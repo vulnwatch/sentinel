@@ -6,7 +6,7 @@ CVSS, and package paths.
 Owning specifications:
 
 - docs/features/identity/user-service.md (Concurrency Considerations:
-  Assignment concurrent with deactivation or active manual role loss;
+  Assignment concurrent with eligibility loss;
   `update_roles()`; Private Helpers).
 - docs/features/identity/rbac.md (Business Rule 10, Assignment target
   constraint: prospective and retroactive enforcement).
@@ -66,6 +66,7 @@ test.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 
@@ -73,12 +74,13 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import PackageStatus, Role, TicketStatus
-from app.services.ticket_service import AssigneeNotVAError
+from app.services.ticket_service import AssigneeNotEligibleError
 from app.services.user_service import RoleUpdateResult
 from tests.support.assignment_lifecycle_races import (
     GATE,
     PROMOTION,
     REOPENED,
+    WAIT,
     Actors,
     CommittedRace,
     Factory,
@@ -104,11 +106,13 @@ from tests.support.assignment_lifecycle_races import (
     track_status_path,
 )
 from tests.support.cvss_chain import priority_event
+from tests.support.database import assert_lock_wait
 from tests.support.identity_lifecycle_races import (
-    VA_ROLE_REMOVED,
+    ROLE_REMOVED,
     remove_roles,
     role_removed,
 )
+from tests.support.suse_cvss_races import SessionStatementRecorder
 from tests.support.ticket_creation import creation_events
 from tests.support.ticket_mutations import EventRow, unassigned_event
 
@@ -174,7 +178,7 @@ def _assert_role_lost(committed: CommittedRace, actors: Actors) -> None:
 
 def _cleared(actors: Actors) -> EventRow:
     """The lifecycle batch's system unassignment of the target."""
-    return unassigned_event(actors.target.username, VA_ROLE_REMOVED)
+    return unassigned_event(actors.target.username, ROLE_REMOVED)
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +224,7 @@ class TestExplicitAssignment:
             world,
             actors,
             assign_path(ticket, actors.target, assigner),
-            error=AssigneeNotVAError,
+            error=AssigneeNotEligibleError,
         )
 
         committed = await read_committed(world, actors, ticket.id)
@@ -480,3 +484,117 @@ class TestReopenEmbeddedAssignment:
         assert committed.events == [REOPENED]
         assert committed.unassignments == []
         _assert_role_lost(committed, actors)
+
+
+# ---------------------------------------------------------------------------
+# Loss of scope `all` while `triage_ticket` remains
+# ---------------------------------------------------------------------------
+
+
+async def _scope_loss_actors(world: RaceWorld) -> Actors:
+    """The admin and a target holding `_manual` VA and restricted analyst
+    origins: removing the VA origin keeps `triage_ticket` but leaves scope
+    `non_confidential` (rbac.md, Business Rule 10)."""
+    return Actors(
+        admin=await world.identity_user(manual=[Role.ADMIN], prefix="alice.admin"),
+        target=await world.identity_user(
+            manual=[Role.VULNERABILITY_ANALYST, Role.RESTRICTED_ANALYST],
+            prefix="bob.va",
+        ),
+    )
+
+
+def _assert_scope_lost(committed: CommittedRace, actors: Actors) -> None:
+    assert committed.origins == {(Role.RESTRICTED_ANALYST.value, "_manual")}
+    assert committed.identity == [role_removed(actors.admin, actors.target, VA_WIRE)]
+
+
+@pytest.mark.integration
+class TestScopeLossWithRemainingTriage:
+    """rbac.md, Business Rule 10 and user-service.md,
+    `_unassign_ineligible_tickets()`: the removal decides each assigned
+    Ticket from its locked-current confidentiality."""
+
+    async def test_confidential_assignment_first_is_cleared_by_the_removal(
+        self, world: RaceWorld
+    ) -> None:
+        actors = await _scope_loss_actors(world)
+        assigner = await other_va(world, "carol.va")
+        ticket = await world.ticket(
+            cve_id=None, status=TicketStatus.NEW, is_confidential=True
+        )
+
+        await _assignment_first(
+            world, actors, assign_path(ticket, actors.target, assigner)
+        )
+
+        committed = await read_committed(world, actors, ticket.id)
+        assert committed.ticket == (TicketStatus.ANALYSIS, None, None, None, None)
+        assert committed.events == [
+            assignment_event(assigner, None, actors.target),
+            PROMOTION,
+            _cleared(actors),
+        ]
+        assert committed.unassignments == [ticket.id]
+        _assert_scope_lost(committed, actors)
+
+    async def test_removal_first_rejects_the_confidential_assignment(
+        self, world: RaceWorld
+    ) -> None:
+        actors = await _scope_loss_actors(world)
+        assigner = await other_va(world, "carol.va")
+        ticket = await world.ticket(
+            cve_id=None, status=TicketStatus.NEW, is_confidential=True
+        )
+
+        await _role_loss_first(
+            world,
+            actors,
+            assign_path(ticket, actors.target, assigner),
+            error=AssigneeNotEligibleError,
+        )
+
+        committed = await read_committed(world, actors, ticket.id)
+        assert committed.ticket == (TicketStatus.NEW, None, None, None, None)
+        assert committed.events == []
+        assert committed.unassignments == []
+        _assert_scope_lost(committed, actors)
+
+    async def test_non_confidential_assignment_first_survives_the_removal(
+        self, world: RaceWorld
+    ) -> None:
+        """The removal waits for the assignment's User `FOR SHARE`, then
+        locks the committed assigned Ticket and keeps it: the remaining
+        restricted analyst role is eligible for a non-confidential
+        Ticket."""
+        actors = await _scope_loss_actors(world)
+        assigner = await other_va(world, "carol.va")
+        ticket = await world.ticket(cve_id=None, status=TicketStatus.NEW)
+        a = await world.open_session()
+        b = await world.open_session()
+
+        await assign_path(ticket, actors.target, assigner)(a)
+        with SessionStatementRecorder(b) as recorder:
+            task = world.start(b, _role_loss(actors)(b))
+            await assert_lock_wait(task, waiter=b, blocked_by=a)
+            await a.commit()
+            removal = await asyncio.wait_for(task, timeout=WAIT)
+        await b.commit()
+
+        assert removal.removed_roles == [Role.VULNERABILITY_ANALYST]
+        assert [w for w in recorder.writes() if "UPDATE ticket " in w] == []
+        assert len([s for s in recorder.row_locks() if "FROM ticket" in s]) == 1
+        committed = await read_committed(world, actors, ticket.id)
+        assert committed.ticket == (
+            TicketStatus.ANALYSIS,
+            actors.target.id,
+            None,
+            None,
+            None,
+        )
+        assert committed.events == [
+            assignment_event(assigner, None, actors.target),
+            PROMOTION,
+        ]
+        assert committed.unassignments == []
+        _assert_scope_lost(committed, actors)

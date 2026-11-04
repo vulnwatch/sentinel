@@ -261,19 +261,19 @@ class TestMarkAsDuplicate:
         status: TicketStatus,
     ) -> None:
         """tickets.md, Mark-as-Duplicate Operation: every operable status
-        is a valid source. A non-VA actor is never assigned, so a `New`
-        source records the direct `New -> Duplicated` (Status Transitions,
-        note after the matrix). The entry never reconciles, registers a
-        post-commit effect, or reads audit history."""
-        actor = await va_user(roles=(Role.RESTRICTED_ANALYST,))
+        is a valid source. An actor that is not eligible to be the
+        assignee, here a bot account (rbac.md, Business Rule 10), is never
+        assigned, so a `New` source records the direct `New -> Duplicated`
+        (Status Transitions, note after the matrix). The entry never
+        reconciles, registers a post-commit effect, or reads audit
+        history."""
+        actor = await va_user(bot=True)
         source = await ticket_factory(status=status.value)
         target = await ticket_factory(status=TicketStatus.ANALYSIS.value)
         reconcile = _Spy(monkeypatch, "reconcile_ticket_status")
 
         with StatementRecorder(db_session) as recorder:
-            result = await _mark(
-                db_session, source.id, target.id, actor, scope=Scope.NON_CONFIDENTIAL
-            )
+            result = await _mark(db_session, source.id, target.id, actor)
 
         assert result.id == source.id
         assert (result.status, result.duplicate_of_id) == (

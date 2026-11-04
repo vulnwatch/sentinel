@@ -94,6 +94,7 @@ from tests.support.ticket_mutations import (
     AFTER_EVAL,
     BEFORE_EVAL,
     EVAL,
+    EventRow,
     Prod,
     StatementRecorder,
     TicketFactory,
@@ -458,7 +459,10 @@ class TestAccessibility:
         scope: Scope,
     ) -> None:
         """Each branch is independently sufficient. The restricted analyst
-        is not a VA, so the unassigned Ticket stays unassigned."""
+        is eligible to be the assignee only of the non-confidential Ticket
+        (rbac.md, Business Rule 10), so only that Ticket is auto-assigned;
+        visibility through a grant, maintainership, or a request-resolved
+        scope `all` never confers eligibility."""
         actor = await _restricted(va_user)
         ticket = await cveless(ticket_factory, is_confidential=confidential)
         track = await tree(ticket, status=PackageStatus.ANALYSIS, products=OVERRIDDEN)
@@ -481,11 +485,17 @@ class TestAccessibility:
 
         assert result.outcome is MutationOutcome.CHANGED
         assert await persisted_occurrence(db_session, occurrence) == (False, True)
-        assert await ticket_state(db_session, ticket) == (TicketStatus.ANALYSIS, None)
+        assigned = not confidential
+        claim = EventRow("assignment", actor.id, None, actor.username, None, None)
+        assert await ticket_state(db_session, ticket) == (
+            TicketStatus.ANALYSIS,
+            actor.id if assigned else None,
+        )
         assert await ticket_events(db_session, ticket) == [
+            *([claim] if assigned else []),
             await eligibility_event(
                 db_session, occurrence, actor, True, False, "changed"
-            )
+            ),
         ]
 
 

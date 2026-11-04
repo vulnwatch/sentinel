@@ -10,8 +10,9 @@ Concurrency Testing). `origins()` and
 `identity_events()` read the role origins and the Identity trail of one
 target User. `add_roles()` and
 `remove_roles()` run the real `update_roles()` in one racing session, so a
-consumer can use the real final VA-origin loss as its lifecycle writer;
-`deactivate()` likewise runs the real `deactivate_user()`.
+consumer can use the real role-origin removal as its lifecycle writer;
+`deactivate()` likewise runs the real `deactivate_user()`, and `mark_bot()`
+the real `update_user()` changing the bot marker to `true`.
 
 Expected values in the consumers are transcribed from the specifications;
 nothing here computes an expectation with the module under test.
@@ -35,8 +36,10 @@ from app.models.user_role import UserRole
 from app.services.user_service import (
     DeactivationResult,
     RoleUpdateResult,
+    UserUpdateResult,
     deactivate_user,
     update_roles,
+    update_user,
 )
 from tests.support.suse_cvss_races import CommittedWorld
 
@@ -47,9 +50,14 @@ Coexistence)."""
 EXTERNAL_GROUP = "Example Security Group"
 """A fictional external role-origin `group_name`."""
 
-VA_ROLE_REMOVED = "vulnerability_analyst role removed"
-"""The unassignment reason of a manual final VA-origin loss
-(ticket-audit-log.md, Canonical Automatic Comment Vocabulary)."""
+ROLE_REMOVED = "role removed"
+"""The unassignment reason of a manual role-origin removal that leaves the
+User ineligible (ticket-audit-log.md, Canonical Automatic Comment
+Vocabulary)."""
+
+BOT_ACCOUNT = "bot account"
+"""The unassignment reason of bot marking (ticket-audit-log.md, Canonical
+Automatic Comment Vocabulary)."""
 
 USER_DEACTIVATED = "user deactivated"
 """The unassignment reason of a deactivation (ticket-audit-log.md, Canonical
@@ -183,6 +191,19 @@ def role_removed(actor: User | None, target: User, wire: str) -> IdentityEventRo
     )
 
 
+def bot_changed(actor: User | None, target: User) -> IdentityEventRow:
+    """identity-audit-log.md: the `bot_changed` of marking a local User as a
+    bot account."""
+    return (
+        "bot_changed",
+        actor.id if actor is not None else None,
+        target.id,
+        "false",
+        "true",
+        None,
+    )
+
+
 def user_deactivated(
     actor: User | None, target: User, reason: str, source: str | None = None
 ) -> IdentityEventRow:
@@ -247,4 +268,18 @@ async def deactivate(
         user.id,
         acting_user_id=actor.id if actor is not None else None,
         reason=reason,
+    )
+
+
+async def mark_bot(
+    session: AsyncSession, user: User, actor: User | None = None, **fields: Any
+) -> UserUpdateResult:
+    """The real `update_user(bot=True)` for `user` in `session`, with any
+    further profile `fields`, left uncommitted."""
+    return await update_user(
+        session,
+        user.id,
+        acting_user_id=actor.id if actor is not None else None,
+        bot=True,
+        **fields,
     )

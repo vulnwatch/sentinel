@@ -93,14 +93,32 @@ CRD_OFFSET = datetime(2026, 10, 6, 16, 0, tzinfo=timezone(timedelta(hours=2)))
 NEW_CVE_ID = "CVE-2099-0101"
 """A CVE-ID with no row: creation inserts a placeholder."""
 
-CREATORS = {
-    "active-va": (True, (Role.VULNERABILITY_ANALYST,)),
-    "active-va-and-admin": (True, (Role.ADMIN, Role.VULNERABILITY_ANALYST)),
-    "inactive-va": (False, (Role.VULNERABILITY_ANALYST,)),
-    "restricted-analyst": (True, (Role.RESTRICTED_ANALYST,)),
-    "admin": (True, (Role.ADMIN,)),
+CREATORS: dict[str, tuple[bool, tuple[Role, ...], bool]] = {
+    "active-va": (True, (Role.VULNERABILITY_ANALYST,), False),
+    "active-va-and-admin": (True, (Role.ADMIN, Role.VULNERABILITY_ANALYST), False),
+    "inactive-va": (False, (Role.VULNERABILITY_ANALYST,), False),
+    "bot-va": (True, (Role.VULNERABILITY_ANALYST,), True),
+    "restricted-analyst": (True, (Role.RESTRICTED_ANALYST,), False),
+    "admin-and-restricted": (True, (Role.ADMIN, Role.RESTRICTED_ANALYST), False),
+    "admin": (True, (Role.ADMIN,), False),
+    "role-less": (True, (), False),
 }
-"""Creator kinds: `(active, roles)`. Only an active VA is assigned."""
+"""Creator kinds: `(active, roles, bot)`."""
+
+ASSIGNED_CREATORS = {
+    # kind: (assigned on a public Ticket, assigned on a confidential Ticket)
+    "active-va": (True, True),
+    "active-va-and-admin": (True, True),
+    "inactive-va": (False, False),
+    "bot-va": (False, False),
+    "restricted-analyst": (True, False),
+    "admin-and-restricted": (True, True),
+    "admin": (False, False),
+    "role-less": (False, False),
+}
+"""Whether each creator kind is assigned (rbac.md, Business Rule 10:
+active, not a bot account, holding `triage_ticket`, and with scope `all`
+for a confidential Ticket, the requested confidentiality)."""
 
 
 # ---------------------------------------------------------------------------
@@ -127,8 +145,8 @@ async def _ingest(
 
 
 async def _creator(va_user: VAUser, kind: str) -> User:
-    active, roles = CREATORS[kind]
-    return await va_user(active=active, roles=roles)
+    active, roles, bot = CREATORS[kind]
+    return await va_user(active=active, roles=roles, bot=bot)
 
 
 async def _state(db: AsyncSession, ticket_id: uuid.UUID) -> dict[str, Any]:
@@ -254,14 +272,23 @@ class TestFormatUTCInstant:
 
 @pytest.mark.integration
 class TestInitialStatus:
-    @pytest.mark.parametrize("kind", ["active-va-and-admin", "inactive-va", "admin"])
-    async def test_only_an_active_va_creator_is_assigned(
-        self, db_session: AsyncSession, va_user: VAUser, kind: str
+    @pytest.mark.parametrize(
+        "confidential", [False, True], ids=["public", "confidential"]
+    )
+    @pytest.mark.parametrize("kind", list(ASSIGNED_CREATORS))
+    async def test_only_an_eligible_creator_is_assigned(
+        self, db_session: AsyncSession, va_user: VAUser, kind: str, confidential: bool
     ) -> None:
+        """tickets.md, Manual Creation: the creator is assigned and the
+        Ticket starts in `Analysis` exactly when the creator is eligible to
+        be the assignee of the new Ticket, evaluated with the requested
+        confidentiality (rbac.md, Business Rule 10). A restricted analyst
+        is assigned only to a non-confidential Ticket; a bot account,
+        whatever its roles, never."""
         creator = await _creator(va_user, kind)
-        assigned = kind == "active-va-and-admin"
+        assigned = ASSIGNED_CREATORS[kind][confidential]
 
-        ticket = await _manual(db_session, creator)
+        ticket = await _manual(db_session, creator, is_confidential=confidential)
 
         state = await _state(db_session, ticket.id)
         assert state["status"] == ("Analysis" if assigned else "New")
@@ -459,7 +486,9 @@ class TestEventContract:
         priority: str | None,
     ) -> None:
         creator = await _creator(va_user, kind)
-        assigned = kind == "active-va"
+        # A restricted analyst is eligible only for a non-confidential
+        # Ticket; every combination with a CRD is confidential.
+        assigned = kind == "active-va" or crd is None
         cve_id: str | None = None
         if cve_kind == "evidence":
             cve_id = (await _evidence_cve(cve_factory, cve_kev_entry_factory)).cve_id
@@ -796,7 +825,7 @@ class TestConflict:
 
 @pytest.mark.integration
 class TestRejectedCVE:
-    @pytest.mark.parametrize("kind", ["active-va", "restricted-analyst"])
+    @pytest.mark.parametrize("kind", ["active-va", "restricted-analyst", "bot-va"])
     async def test_manual_creation_keeps_ordinary_status_and_events(
         self,
         db_session: AsyncSession,
@@ -805,7 +834,7 @@ class TestRejectedCVE:
         kind: str,
     ) -> None:
         creator = await _creator(va_user, kind)
-        assigned = kind == "active-va"
+        assigned = ASSIGNED_CREATORS[kind][False]
         cve: CVE = await cve_factory(
             cve_id="CVE-2099-0106",
             cve_state="REJECTED",

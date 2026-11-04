@@ -53,7 +53,7 @@ _EXTERNAL_GROUP = "Example Security Group"
 _ADMIN = "Admin"
 _VA = "Vulnerability Analyst"
 _RA = "Restricted Analyst"
-_ROLE_LOSS_COMMENT = "Unassigned from bob.va: vulnerability_analyst role removed"
+_ROLE_LOSS_COMMENT = "Unassigned from bob.va: role removed"
 _TICKET_STATEMENT = re.compile(r"\b(?:FROM|JOIN|INTO|UPDATE) ticket\b")
 
 
@@ -154,7 +154,7 @@ def _role_loss_event(
     ticket_id: uuid.UUID,
 ) -> tuple[uuid.UUID, str, None, str, None, str, None]:
     """ticket-audit-log.md, Canonical Automatic Comment Vocabulary (System
-    unassignment) with reason `vulnerability_analyst role removed`."""
+    unassignment) with reason `role removed`."""
     return (ticket_id, "assignment", None, "bob.va", None, _ROLE_LOSS_COMMENT, None)
 
 
@@ -798,12 +798,12 @@ class TestUpdateRolesExternalOrigins:
 
 
 # ---------------------------------------------------------------------------
-# Final vulnerability_analyst origin loss
+# Assignment eligibility loss (rbac.md, Business Rule 10)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.integration
-class TestUpdateRolesVaOriginLoss:
+class TestUpdateRolesEligibilityLoss:
     async def test_manual_va_removal_with_external_va_changes_no_ticket(
         self,
         db_session: AsyncSession,
@@ -849,10 +849,11 @@ class TestUpdateRolesVaOriginLoss:
         role: Role,
         stored: str,
     ) -> None:
-        """user-service.md, `update_roles()` step 7: only an effective
-        `vulnerability_analyst` deletion reaches the role-loss helper, so
-        removing another manual role from an assigned VA touches no
-        Ticket."""
+        """user-service.md, `update_roles()` step 7 and
+        `_unassign_ineligible_tickets()` step 2: a removal after which a
+        remaining role still grants `triage_ticket` and scope `all` leaves
+        the User eligible for every Ticket, so removing another manual role
+        from an assigned VA issues no Ticket statement."""
         admin = await user_factory(username="alice.admin")
         target = await user_factory(username="bob.va")
         await user_role_factory(user_id=target.id, role=_VA)
@@ -883,7 +884,7 @@ class TestUpdateRolesVaOriginLoss:
     ) -> None:
         """user-service.md, `update_roles()` TicketAuditEvent: one system
         `assignment` per unassigned active Ticket with reason
-        `vulnerability_analyst role removed`, in Ticket UUID order."""
+        `role removed`, in Ticket UUID order."""
         admin = await user_factory(username="alice.admin")
         target = await user_factory(username="bob.va")
         await user_role_factory(user_id=target.id, role=_VA)
@@ -921,6 +922,99 @@ class TestUpdateRolesVaOriginLoss:
             _role_loss_event(ids[2]),
             _role_loss_event(ids[4]),
         ]
+
+    @pytest.mark.parametrize(
+        ("roles", "removed"),
+        [
+            pytest.param(
+                (Role.VULNERABILITY_ANALYST, Role.RESTRICTED_ANALYST),
+                Role.VULNERABILITY_ANALYST,
+                id="va-removed-restricted-remains",
+            ),
+            pytest.param(
+                (Role.ADMIN, Role.RESTRICTED_ANALYST),
+                Role.ADMIN,
+                id="admin-removed-restricted-remains",
+            ),
+        ],
+    )
+    async def test_loss_of_scope_all_unassigns_only_confidential_tickets(
+        self,
+        db_session: AsyncSession,
+        user_factory: UserFactory,
+        user_role_factory: UserRoleFactory,
+        ticket_factory: TicketFactory,
+        roles: tuple[Role, ...],
+        removed: Role,
+    ) -> None:
+        """user-service.md, `update_roles()` TicketAuditEvent and rbac.md,
+        Business Rule 10: when `triage_ticket` remains but no remaining
+        role has scope `all`, only the confidential active-status Tickets
+        are unassigned (reason `role removed`); the non-confidential ones
+        and a confidential `Resolved` Ticket keep the assignee."""
+        admin = await user_factory(username="alice.admin")
+        target = await user_factory(username="bob.va")
+        for role in roles:
+            await user_role_factory(user_id=target.id, role=role.value)
+        ids = _ordered_ids(4)
+        tickets = {
+            ids[0]: (TicketStatus.ANALYSIS, False),
+            ids[1]: (TicketStatus.ANALYZED, True),
+            ids[2]: (TicketStatus.RESOLVED, True),
+            ids[3]: (TicketStatus.ANALYSIS, True),
+        }
+        for ticket_id in reversed(ids):
+            status, confidential = tickets[ticket_id]
+            await ticket_factory(
+                id=ticket_id,
+                status=status.value,
+                assignee_id=target.id,
+                is_confidential=confidential,
+            )
+
+        result = await update_roles(
+            db_session, target.id, remove=[removed], acting_user_id=admin.id
+        )
+
+        assert result.removed_roles == [removed]
+        assert await _states(db_session, ids) == {
+            ids[0]: ("Analysis", target.id),
+            ids[1]: ("Analyzed", None),
+            ids[2]: ("Resolved", target.id),
+            ids[3]: ("Analysis", None),
+        }
+        assert await _ticket_events(db_session, ids) == [
+            _role_loss_event(ids[1]),
+            _role_loss_event(ids[3]),
+        ]
+
+    async def test_effective_addition_alone_issues_no_ticket_statement(
+        self,
+        db_session: AsyncSession,
+        user_factory: UserFactory,
+        ticket_factory: TicketFactory,
+    ) -> None:
+        """user-service.md, `update_roles()` step 7: effective insertions
+        alone never call the unassignment helper, even for an anomalously
+        assigned role-less User."""
+        target = await user_factory(username="bob.va")
+        ticket = await ticket_factory(
+            status=TicketStatus.ANALYSIS.value, assignee_id=target.id
+        )
+
+        with StatementRecorder(db_session) as recorder:
+            result = await update_roles(
+                db_session,
+                target.id,
+                add=[Role.RESTRICTED_ANALYST],
+                acting_user_id=None,
+            )
+
+        assert result.added_roles == [Role.RESTRICTED_ANALYST]
+        assert not any(_TICKET_STATEMENT.search(s) for s in recorder.statements)
+        assert await _states(db_session, [ticket.id]) == {
+            ticket.id: ("Analysis", target.id)
+        }
 
     async def test_manual_addition_after_final_loss_restores_no_assignment(
         self,

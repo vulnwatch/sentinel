@@ -660,7 +660,10 @@ async def create_user_admin(
     summary="Update user (admin)",
     description=(
         "Updates a local user's email, full name, and bot marker. At least "
-        "one field must be provided. Requires the 'manage_users' capability."
+        "one field must be provided. Marking a user as a bot account also "
+        "unassigns the user from every `new`, `analysis`, and `analyzed` "
+        "Ticket, because a bot account is never a Ticket assignee. Requires "
+        "the 'manage_users' capability."
     ),
     responses={
         404: {

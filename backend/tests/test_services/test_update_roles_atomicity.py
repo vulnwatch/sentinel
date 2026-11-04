@@ -5,7 +5,7 @@ Owning specifications:
 
 - docs/features/identity/user-service.md (`update_roles()`, Concurrency;
   Concurrency Considerations: Concurrent role modification from multiple
-  entry points, Concurrent role removal and deactivation).
+  entry points, Concurrent eligibility losses).
 - docs/features/tickets/ticket-audit-log.md (Canonical Automatic Comment
   Vocabulary; Testing Requirement 23).
 - docs/features/platform/testing-strategy.md (Concurrency Testing,
@@ -50,7 +50,7 @@ from app.services.user_service import RoleUpdateResult
 from tests.support.database import assert_lock_wait
 from tests.support.identity_lifecycle_races import (
     MANUAL,
-    VA_ROLE_REMOVED,
+    ROLE_REMOVED,
     IdentityEventRow,
     IdentityWorld,
     add_roles,
@@ -467,7 +467,7 @@ class TestFinalVaOriginLoss:
             analysis.id: (TicketStatus.ANALYSIS, None),
             analyzed.id: (TicketStatus.ANALYZED, None),
         }
-        unassigned = unassigned_event(target.username, VA_ROLE_REMOVED)
+        unassigned = unassigned_event(target.username, ROLE_REMOVED)
         assert committed.ticket_events == {
             analysis.id: [unassigned],
             analyzed.id: [unassigned],
@@ -505,7 +505,7 @@ class TestFinalVaOriginLoss:
         ]
         assert committed.tickets == {ticket.id: (TicketStatus.ANALYSIS, None)}
         assert committed.ticket_events == {
-            ticket.id: [unassigned_event(target.username, VA_ROLE_REMOVED)]
+            ticket.id: [unassigned_event(target.username, ROLE_REMOVED)]
         }
 
     async def test_addition_first_then_removal_clears_the_ticket_once(
@@ -534,7 +534,7 @@ class TestFinalVaOriginLoss:
         ]
         assert committed.tickets == {ticket.id: (TicketStatus.ANALYSIS, None)}
         assert committed.ticket_events == {
-            ticket.id: [unassigned_event(target.username, VA_ROLE_REMOVED)]
+            ticket.id: [unassigned_event(target.username, ROLE_REMOVED)]
         }
 
 
@@ -545,7 +545,7 @@ class TestFinalVaOriginLoss:
 
 @pytest.mark.integration
 class TestTicketLockRevalidation:
-    """user-service.md, Concurrent role removal and deactivation: the final
+    """user-service.md, Concurrent eligibility losses: the final
     VA-origin loss locks the User, then the candidate Tickets in ascending
     UUID order, and revalidates each from its locked-current row; a
     candidate changed by a concurrent writer gets no clear and no event
@@ -608,7 +608,7 @@ class TestTicketLockRevalidation:
         }
         assert committed.ticket_events == {
             held_id: [],
-            other_id: [unassigned_event(target.username, VA_ROLE_REMOVED)],
+            other_id: [unassigned_event(target.username, ROLE_REMOVED)],
         }
 
 

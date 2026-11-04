@@ -402,10 +402,10 @@ class TestAutoAssignment:
         ]
 
     @pytest.mark.parametrize(
-        ("active", "roles"),
+        ("active", "bot"),
         [
-            pytest.param(True, (Role.RESTRICTED_ANALYST,), id="restricted-analyst"),
-            pytest.param(False, (Role.VULNERABILITY_ANALYST,), id="inactive-va"),
+            pytest.param(True, True, id="bot-va"),
+            pytest.param(False, False, id="inactive-va"),
         ],
     )
     async def test_ineligible_actor_neither_assigns_nor_leaves_new(
@@ -416,9 +416,13 @@ class TestAutoAssignment:
         tree: TreeBuilder,
         monkeypatch: pytest.MonkeyPatch,
         active: bool,
-        roles: tuple[Role, ...],
+        bot: bool,
     ) -> None:
-        actor = await va_user(active=active, roles=roles)
+        """rbac.md, Business Rule 11: an actor that is not eligible to be
+        the assignee (here a vulnerability analyst that is a bot account
+        or inactive) is not auto-assigned, and the `New` Ticket stays
+        `New` (tickets.md, Architectural Invariant)."""
+        actor = await va_user(active=active, bot=bot)
         ticket = await _ticket(ticket_factory, status=TicketStatus.NEW)
         await tree_for(TicketStatus.RESOLVED, ticket, tree)
         reconcile = _Spy(monkeypatch, "reconcile_ticket_status")

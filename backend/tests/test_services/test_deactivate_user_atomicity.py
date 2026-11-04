@@ -7,7 +7,7 @@ Owning specifications:
 - docs/features/identity/user-service.md (`deactivate_user()`, Concurrency
   and Re-invocation; `reset_password()`, Concurrency; `update_roles()`,
   Concurrency; Concurrency Considerations: Concurrent deactivation from
-  multiple entry points, Concurrent role removal and deactivation, Session
+  multiple entry points, Concurrent eligibility losses, Session
   creation concurrent with deactivation, Redis operations and lock scope).
 - docs/features/identity/authentication.md (Session creation: Deactivation
   serialization).
@@ -72,8 +72,8 @@ from app.services.session_service import create_session
 from app.services.user_service import reset_password
 from tests.support.database import assert_lock_wait
 from tests.support.identity_lifecycle_races import (
+    ROLE_REMOVED,
     USER_DEACTIVATED,
-    VA_ROLE_REMOVED,
     IdentityEventRow,
     IdentityWorld,
     deactivate,
@@ -784,7 +784,7 @@ class TestDeactivationAndPasswordReset:
 
 @pytest.mark.integration
 class TestDeactivationAndManualRoleLoss:
-    """user-service.md, Concurrent role removal and deactivation: both
+    """user-service.md, Concurrent eligibility losses: both
     serialize on the User lock; the first to commit performs the Ticket
     unassignment with its own reason, and the second finds no assigned
     Ticket and creates no duplicate `assignment` event."""
@@ -844,5 +844,5 @@ class TestDeactivationAndManualRoleLoss:
         ]
         assert committed.tickets == {ticket.id: (TicketStatus.ANALYSIS, None)}
         assert committed.ticket_events == {
-            ticket.id: [unassigned_event(target.username, VA_ROLE_REMOVED)]
+            ticket.id: [unassigned_event(target.username, ROLE_REMOVED)]
         }

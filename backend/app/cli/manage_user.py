@@ -312,7 +312,10 @@ _EXTERNAL_USER_REACTIVATION_ERROR = "Error: Cannot reactivate external users."
 @click.option(
     "--bot",
     is_flag=True,
-    help="Mark the account as a bot account (profile mode); excludes --no-bot.",
+    help=(
+        "Mark the account as a bot account, which also unassigns it from its "
+        "active Tickets (profile mode); excludes --no-bot."
+    ),
 )
 @click.option(
     "--no-bot",

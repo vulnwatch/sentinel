@@ -34,7 +34,7 @@ from app.api import dependencies
 from app.api.dependencies import SESSION_COOKIE_NAME
 from app.api.v1.users import _parse_role_filters, _parse_user_type
 from app.config import settings
-from app.core.enums import Role, SessionCreationReason, UserType
+from app.core.enums import Role, SessionCreationReason, TicketStatus, UserType
 from app.core.exceptions import UserNotFoundError
 from app.core.jwt import issue_token
 from app.database import get_db
@@ -42,6 +42,8 @@ from app.main import app
 from app.models.api_key import ApiKey
 from app.models.identity_audit_event import IdentityAuditEvent
 from app.models.session import Session
+from app.models.ticket import Ticket
+from app.models.ticket_audit_event import TicketAuditEvent
 from app.models.user import User
 from app.models.user_role import UserRole
 from app.services import api_key_service, user_service
@@ -2232,6 +2234,50 @@ class TestUpdateUserAdmin:
             for event in events
         ] == [("bot_changed", str(stored).lower(), str(requested).lower(), admin.id)]
         assert events[0].detail is None
+
+    async def test_marking_a_bot_unassigns_its_active_tickets(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        ticket_factory: Callable[..., Awaitable[Ticket]],
+        db_session: AsyncSession,
+    ) -> None:
+        """user-management.md, Update User (Admin) rule 5: an effective
+        change of `bot` to `true` also unassigns the user from every `new`,
+        `analysis`, and `analyzed` Ticket in the same transaction, with one
+        system `assignment` event each; a `resolved` Ticket keeps it."""
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="botunassigned")
+        active = await ticket_factory(
+            status=TicketStatus.ANALYSIS.value, assignee_id=target.id
+        )
+        resolved = await ticket_factory(
+            status=TicketStatus.RESOLVED.value, assignee_id=target.id
+        )
+
+        response = await client.patch(
+            f"/api/v1/admin/users/{target.id}", json={"bot": True}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["bot"] is True
+        rows = await db_session.execute(
+            select(Ticket.id, Ticket.assignee_id).where(
+                Ticket.id.in_([active.id, resolved.id])
+            )
+        )
+        assert {row.id: row.assignee_id for row in rows} == {
+            active.id: None,
+            resolved.id: target.id,
+        }
+        events = await db_session.execute(
+            select(TicketAuditEvent.ticket_id, TicketAuditEvent.comment).where(
+                TicketAuditEvent.ticket_id.in_([active.id, resolved.id])
+            )
+        )
+        assert [(row.ticket_id, row.comment) for row in events] == [
+            (active.id, "Unassigned from botunassigned: bot account")
+        ]
 
     async def test_bot_with_email_and_full_name_updates_all_three(
         self,
