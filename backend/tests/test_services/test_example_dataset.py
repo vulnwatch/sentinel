@@ -435,6 +435,22 @@ RELEASED: Final = "released"
 TrackKey = tuple[int, str, str]
 """(SNTL number, package, track reference)."""
 
+SNTL_11_MORE_PACKAGES: Final = (
+    "fictional-expat",
+    "fictional-gzip",
+    "fictional-jq",
+    "fictional-libpng",
+    "fictional-libssh",
+    "fictional-libtiff",
+    "fictional-ncurses",
+    "fictional-pcre",
+    "fictional-rsync",
+    "fictional-sqlite",
+    "fictional-xz",
+)
+"""Packages, Tracks, and Maintainers: the packages that `SNTL-11` holds
+after `fictional-curl`."""
+
 TRACKS: Final[
     dict[
         TrackKey,
@@ -453,6 +469,15 @@ TRACKS: Final[
         P_PENDING,
         {SERVER_15_SP7: (True, "")},
     ),
+    **{
+        (11, name, GIT_16): (
+            GIT,
+            PackageStatus.ANALYSIS,
+            P_PENDING,
+            {SERVER_16: (True, "")},
+        )
+        for name in SNTL_11_MORE_PACKAGES
+    },
     (12, "fictional-openssl", SP7_UPDATE): (
         IBS,
         AFFECTED,
@@ -1869,6 +1894,19 @@ class TestPackages:
             "fictional-openssl": ["dbrown", "ghill"],
             "fictional-zlib": ["ghill"],
         }
+
+    def test_sntl_11_lists_more_than_ten_package_names(self, loaded: Loaded) -> None:
+        """`SNTL-11` holds 12 packages, more than a client lists at once, with
+        `fictional-curl` first (tickets.md, TicketSummary)."""
+
+        async def reader(db: AsyncSession) -> tuple[str, ...]:
+            page = await ticket_service.list_tickets(
+                db, caller=await _caller(db, "jdoe"), per_page=100
+            )
+            [item] = [item for item in page.items if item.ticket_id == "SNTL-11"]
+            return item.package_names
+
+        assert read(loaded.url, reader) == ("fictional-curl", *SNTL_11_MORE_PACKAGES)
 
     @pytest.mark.parametrize(
         ("maintainer", "expected"),
