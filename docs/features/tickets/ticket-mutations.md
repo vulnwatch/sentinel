@@ -365,7 +365,7 @@ does not change the ticket's status.
 
 > **Invariant**: ticket status reflects work state, not staffing state.
 > A ticket in `Analysis`, `Analyzed`, or `Resolved` status may have
-> `assignee_id = NULL` (an orphaned ticket awaiting reassignment).
+> `assignee_id = NULL` (an unassigned ticket awaiting an assignee).
 > See the Architectural Invariant in
 > `docs/features/tickets/tickets.md`.
 

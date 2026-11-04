@@ -529,6 +529,22 @@ class _Package:
     """The usernames whose emails `maintainer_emails` contains."""
 
 
+_SNTL_11_MORE_PACKAGES: Final = (
+    "fictional-expat",
+    "fictional-gzip",
+    "fictional-jq",
+    "fictional-libpng",
+    "fictional-libssh",
+    "fictional-libtiff",
+    "fictional-ncurses",
+    "fictional-pcre",
+    "fictional-rsync",
+    "fictional-sqlite",
+    "fictional-xz",
+)
+"""The packages that `SNTL-11` holds after `fictional-curl`, more than ten
+besides its first (Packages, Tracks, and Maintainers)."""
+
 _PACKAGES: Final = {
     package.name: package
     for package in (
@@ -541,6 +557,10 @@ _PACKAGES: Final = {
                 _Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),
             ),
             ("dbrown",),
+        ),
+        *(
+            _Package(11, name, "bwilson", (_Track(_GIT_16, _GIT, (_SERVER_16,)),), ())
+            for name in _SNTL_11_MORE_PACKAGES
         ),
         _Package(
             12,
@@ -1428,6 +1448,8 @@ class _Load:
         # SNTL-11
         await self.add_package("fictional-curl")
         await self.track_status("fictional-curl", _GIT_16, affected, "bwilson")
+        for name in _SNTL_11_MORE_PACKAGES:
+            await self.add_package(name)
         # SNTL-12
         sntl_12 = self.ticket_ids[12]
 

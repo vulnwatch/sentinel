@@ -621,7 +621,7 @@ named user is a system operation (Attribution).
 |---|---|
 | `SNTL-9` | `eblack` takes the Ticket: `assign_ticket()` with `eblack` as acting user and assignee. `jdoe` deactivates `eblack` with the reason `example dataset`, which unassigns the Ticket and keeps its status (`docs/features/identity/user-service.md`, `deactivate_user()`) |
 | `SNTL-10` | `security-scanner` adds the manual reference of `SNTL-10` (References) |
-| `SNTL-11` | `bwilson` adds `fictional-curl` (Packages, Tracks, and Maintainers). `bwilson` sets the `fles-16.0` track to `AFFECTED` |
+| `SNTL-11` | `bwilson` adds `fictional-curl` (Packages, Tracks, and Maintainers). `bwilson` sets the `fles-16.0` track to `AFFECTED`. `bwilson` adds the eleven further packages of `SNTL-11`, in the order of their table |
 | `SNTL-12` | `bwilson` assigns the Ticket to `asmith`. `bwilson` sets the priority override `P1`. `asmith` adds the manual reference of `SNTL-12` (References). `asmith` adds `fictional-openssl` and `fictional-zlib`, sets the track of each to `AFFECTED`, and adds the SUSE assessment |
 | `SNTL-13` | `asmith` adds `fictional-httpd`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-13` are applied in order (IBS Requests) |
 | `SNTL-14` | `asmith` adds `fictional-libxml`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-14` are applied in order. Track release detection sets the track to `FIXED`. Product release detection confirms the release of `Server 15 SP7` at `T − 2d` with the advisory `SUSE-SU-2099:0001-1` |
@@ -702,6 +702,7 @@ status is `PENDING` unless IBS Requests changes it.
 |---|---|---|---|---|---|---|---|
 | `SNTL-11` | `fictional-curl` | `git` | `fles-16.0` | `Server 16.0`, `Micro 6.2` | `AFFECTED` | `PENDING` | `dbrown` |
 | | | `ibs` | `SUSE:FLES-15-SP7:Update` | `Server 15 SP7` | `ANALYSIS` | `PENDING` | |
+| | `fictional-expat`, `fictional-gzip`, `fictional-jq`, `fictional-libpng`, `fictional-libssh`, `fictional-libtiff`, `fictional-ncurses`, `fictional-pcre`, `fictional-rsync`, `fictional-sqlite`, `fictional-xz`, each | `git` | `fles-16.0` | `Server 16.0` | `ANALYSIS` | `PENDING` | — |
 | `SNTL-12` | `fictional-openssl` | `ibs` | `SUSE:FLES-15-SP7:Update` | `Server 15 SP7` | `AFFECTED` | `PENDING` | `dbrown`, `ghill` |
 | | `fictional-zlib` | `git` | `fles-16.0` | `Server 16.0`, `Micro 6.2` | `AFFECTED` | `PENDING` | `ghill` |
 | `SNTL-13` | `fictional-httpd` | `ibs` | `SUSE:FLES-15-SP7:Update` | `Server 15 SP7` | `AFFECTED` | `IN_PROGRESS` | `dbrown` |
@@ -717,6 +718,12 @@ A Product is eligible unless the table states otherwise
 (`docs/features/packages/package-model.md`, Axis 2: Eligibility): `Server LTSS
 15 SP4` is in Reactive Support, and the SUSE score of `CVE-2099-0016` is below
 the threshold of `Server LTSS 15 SP5`.
+
+`SNTL-11` has 12 packages, more than ten besides its first, so that a client
+can show a Ticket with a long list of package names; `fictional-curl` comes
+first in its `package_names` (`docs/features/tickets/tickets.md`,
+TicketSummary). Its further packages have no maintainer, so they change no
+maintainer workbench.
 
 `SNTL-12` has several packages, with different maintainers, and a package with
 two maintainers. The maintainer workbenches

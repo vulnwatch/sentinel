@@ -595,7 +595,7 @@ actionability-aware gate evaluation, and architectural test requirements.
 > Consequently:
 >
 > - A ticket in `Analysis`, `Analyzed`, or `Resolved` status may have
->   `assignee_id = NULL` (an orphaned ticket awaiting reassignment).
+>   `assignee_id = NULL` (an unassigned ticket awaiting an assignee).
 >   This is a valid and expected state, visible in the unassigned queue
 >   (`?assignee=none`).
 > - `New` is the initial pre-gate state: the Ticket has not yet been admitted
