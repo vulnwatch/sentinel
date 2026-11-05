@@ -255,9 +255,10 @@ def _ticket_list_query(
                 "Filter by past-due, uncompleted milestones: `triage` (Ticket "
                 "`new` or `analysis` past its triage due date, VA decision), "
                 "`submission` (maintainer submission request), `um` (UM "
-                "release request), `qa` (QA testing and publication): at least "
-                "one track has that milestone overdue. Repeatable; OR "
-                "semantics. Invalid values are ignored."
+                "release request), `qa` (QA testing and publication): the "
+                "Ticket is not `resolved` and at least one track has that "
+                "milestone overdue. Repeatable; OR semantics. Invalid values "
+                "are ignored."
             ),
             json_schema_extra=enum_filter_schema(_OVERDUE_FILTER, repeatable=True),
         ),

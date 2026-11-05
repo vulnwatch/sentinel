@@ -213,6 +213,11 @@ The `aiosqlite` dependency MUST NOT be included in dev dependencies —
 it would allow writing tests against SQLite, creating a divergence from
 the PostgreSQL-only policy.
 
+The session-scoped test engine (`_engine`) connects with the application's
+connection arguments (`engine_connect_args()` in `app/database.py`), so
+statements run without JIT as in production (`docs/conventions.md`,
+PostgreSQL JIT).
+
 ### Database Provisioning
 
 Two provisioning modes, selected automatically:

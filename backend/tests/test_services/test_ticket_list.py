@@ -28,6 +28,7 @@ so a list observes exactly the Tickets the test creates.
 from __future__ import annotations
 
 import dataclasses
+import re
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import UTC, date, datetime, timedelta, timezone
@@ -1132,9 +1133,9 @@ class TestOverdueMatrix:
         case: DeadlineCase,
     ) -> None:
         """For every shared-matrix case, the list selects the Ticket for a
-        later phase exactly when the case's track milestone is `overdue`,
-        for `triage` by the Ticket-level rule, and projects the expected
-        Ticket-level due dates."""
+        later phase exactly when the case's track milestone is `overdue`
+        and the Ticket is not `Resolved`, for `triage` by the Ticket-level
+        rule, and projects the expected Ticket-level due dates."""
         persisted = await deadline_world.build(case)
         clock.instant = case.evaluation_instant
         sntl = _sntl(persisted.ticket)
@@ -1163,7 +1164,11 @@ class TestOverdueMatrix:
 
         for phase, index in LATER_PHASE_INDEX.items():
             selected = await _ids(db_session, overdue=[phase])
-            assert (sntl in selected) is (case.expected_statuses[index] is O), phase
+            expected = (
+                case.expected_statuses[index] is O
+                and case.ticket_status is not TicketStatus.RESOLVED
+            )
+            assert (sntl in selected) is expected, phase
         triage = await _ids(db_session, overdue=[MilestonePhase.TRIAGE])
         assert (sntl in triage) is _triage_overdue(case)
 
@@ -1256,7 +1261,11 @@ class TestOverdueFilter:
     ) -> None:
         """A `Resolved` Ticket: its applicable `FIXED` track is released to
         every actionable eligible Product; a `NOT_AFFECTED` track has its
-        later phases `not_applicable`."""
+        later phases `not_applicable`. A second `Resolved` Ticket whose
+        track has every later milestone `overdue`, as after a change that
+        invalidates resolution and before its reconciliation, does not
+        match either: a later phase is open only for a Ticket that is not
+        `Resolved`."""
         clock.instant = AFTER_ALL_DUE
         resolved = await deadline_world.build(
             _overdue_track_case(
@@ -1274,6 +1283,9 @@ class TestOverdueFilter:
                 track_status=PackageStatus.NOT_AFFECTED,
             ),
             ticket=resolved.ticket,
+        )
+        await deadline_world.build(
+            _overdue_track_case("unreconciled", ticket_status=TicketStatus.RESOLVED)
         )
 
         assert await _ids(db_session, overdue=list(MilestonePhase)) == []
@@ -1351,6 +1363,24 @@ class TestOverdueFilter:
         ]
         clock.instant = datetime(2026, 3, 29, 0, 30, tzinfo=UTC)
         assert await _ids(db_session, overdue=[MilestonePhase.SUBMISSION]) == []
+
+    async def test_track_checks_are_gated_by_the_ticket_status(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Each later-phase existence check over the tracks sits inside a
+        `CASE` on the Ticket status, so PostgreSQL evaluates it only for an
+        active Ticket instead of turning it into a semi-join over every
+        track; with a few hundred thousand Tickets that semi-join takes
+        seconds."""
+        with _StatementRecorder(db_session) as recorder:
+            await _list(db_session, overdue=list(LATER_PHASE_INDEX))
+
+        (statement,) = [s for s in recorder.statements if "filtered" in s]
+        checks = re.findall(
+            r"(THEN )?EXISTS \(SELECT ticket_package_track_\d+\.id", statement
+        )
+        assert len(checks) == len(LATER_PHASE_INDEX)
+        assert all(checks)
 
 
 # ---------------------------------------------------------------------------

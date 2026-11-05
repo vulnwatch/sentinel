@@ -94,6 +94,25 @@ TRIAGE_OPEN_TICKET_STATUSES: Final = frozenset(
 """Ticket statuses with the Ticket-level `triage` phase open (Ticket-Level
 Overdue Filter; Ticket Current Phase, Open Phases)."""
 
+CURRENT_PHASE_TICKET_STATUSES: Final[Mapping[CurrentPhase, frozenset[TicketStatus]]] = (
+    MappingProxyType(
+        {
+            CurrentPhase.TRIAGE: TRIAGE_OPEN_TICKET_STATUSES,
+            CurrentPhase.SUBMISSION: frozenset({TicketStatus.ANALYZED}),
+            CurrentPhase.UM: frozenset({TicketStatus.ANALYZED}),
+            CurrentPhase.QA: frozenset({TicketStatus.ANALYZED}),
+            CurrentPhase.DONE: frozenset(
+                {TicketStatus.ANALYZED, TicketStatus.RESOLVED}
+            ),
+        }
+    )
+)
+"""The only Ticket statuses that can have each Ticket `current_phase` value,
+as the Rules of Ticket Current Phase imply: `triage` comes from a `New` or
+`Analysis` status, a `Resolved` Ticket is `done`, the manual zone has no
+SLA, so only an `Analyzed` Ticket has a later phase. A filter may test the
+status first, before the current phase reads any track."""
+
 _PHASES: Final = tuple(MilestonePhase)
 _OPEN_STATUSES: Final = frozenset({MilestoneStatus.PENDING, MilestoneStatus.OVERDUE})
 
@@ -341,10 +360,11 @@ def resolve_ticket_current_phase(
 
     Rules, first match wins: (1) `due_dates is None` (no SLA) → `None`;
     (2) the first open phase: `triage` when `ticket_status` is `New` or
-    `Analysis`, otherwise `submission`, `um`, or `qa` when at least one
-    track has that member `pending` or `overdue`; (3) `done` when the
-    Ticket is `Resolved` or no track has a `None` member; (4) otherwise
-    `None`.
+    `Analysis`, otherwise, for a Ticket that is not `Resolved`,
+    `submission`, `um`, or `qa` when at least one track has that member
+    `pending` or `overdue`; (3) `done` when the Ticket is `Resolved` or no
+    track has a `None` member; (4) otherwise `None`. A `Resolved` Ticket
+    is therefore `done` whatever its tracks report.
 
     The milestone of an open phase is `overdue` when the Ticket matches
     the `overdue` filter value of that phase (`triage`: its due date is
@@ -370,6 +390,9 @@ def resolve_ticket_current_phase(
             ),
         )
 
+    if ticket_status is TicketStatus.RESOLVED:
+        return TicketCurrentPhase(phase=CurrentPhase.DONE, milestone=None)
+
     for phase in _PHASES[1:]:
         statuses = {milestones.status_of(phase) for milestones in track_milestones}
         if statuses & _OPEN_STATUSES:
@@ -387,6 +410,6 @@ def resolve_ticket_current_phase(
         for milestones in track_milestones
         for phase in _PHASES
     )
-    if ticket_status is TicketStatus.RESOLVED or not has_null_member:
+    if not has_null_member:
         return TicketCurrentPhase(phase=CurrentPhase.DONE, milestone=None)
     return TicketCurrentPhase(phase=None, milestone=None)

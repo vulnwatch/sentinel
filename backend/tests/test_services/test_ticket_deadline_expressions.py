@@ -16,8 +16,9 @@ Ticket, CVE, package, track, Product, and IBS request evidence rows
 expressions in PostgreSQL, and compared with both the independently
 transcribed expectation and the pure functions. The Ticket current phase
 (Ticket Current Phase; Requirement 15) is proven the same way over the
-shared multi-track matrix `TICKET_PHASE_CASES`, and so is the current due
-date (Current Due Date; Requirement 16), against the date that its rule
+shared multi-track matrix `TICKET_PHASE_CASES` and, one track per Ticket,
+over every evidence case of `DEADLINE_CASES`; so is the current due date
+(Current Due Date; Requirement 16), against the date that its rule
 selects from the pure functions.
 """
 
@@ -64,8 +65,10 @@ from app.services.ticket_deadline_expressions import (
 )
 from app.services.ticket_deadlines import (
     ACTIVE_RELEASE_REQUEST_STATES,
+    TRIAGE_OPEN_TICKET_STATUSES,
     TicketCurrentPhase,
     compute_due_dates,
+    resolve_ticket_current_phase,
     resolve_track_milestones,
 )
 from tests.support.deadline_matrix import (
@@ -252,6 +255,41 @@ class TestTicketCurrentPhaseSqlPureParity:
 
 
 @pytest.mark.integration
+class TestTicketCurrentPhaseSqlPureParityPerTrack:
+    @pytest.mark.parametrize("case", DEADLINE_CASES, ids=lambda case: case.id)
+    async def test_one_track_ticket_equals_the_pure_function(
+        self,
+        db_session: AsyncSession,
+        deadline_world: DeadlineWorld,
+        case: DeadlineCase,
+    ) -> None:
+        """The SQL Ticket current phase derives a track's earliest open
+        phase from fewer checks than its three milestone statuses. For every
+        evidence case, the Ticket with that one track, read as `Analyzed`
+        when the case's Ticket is `New` or `Analysis` so that the track is
+        read, equals `resolve_ticket_current_phase()` over the track's
+        `resolve_track_milestones()`."""
+        if case.ticket_status in TRIAGE_OPEN_TICKET_STATUSES:
+            case = dataclasses.replace(case, ticket_status=TicketStatus.ANALYZED)
+        persisted = await deadline_world.build(case)
+
+        sql = await _sql_ticket_phase(
+            db_session, persisted.ticket, case.evaluation_instant
+        )
+
+        due = compute_due_dates(**case.due_dates_kwargs())
+        pure = resolve_ticket_current_phase(
+            due_dates=due,
+            ticket_status=case.ticket_status,
+            track_milestones=[
+                resolve_track_milestones(due_dates=due, **case.milestone_kwargs())
+            ],
+            evaluation_instant=case.evaluation_instant,
+        )
+        assert sql == pure
+
+
+@pytest.mark.integration
 class TestTicketCurrentDueDateSqlPureParity:
     @pytest.mark.parametrize("case", TICKET_PHASE_CASES, ids=lambda case: case.id)
     async def test_sql_equals_the_date_selected_from_the_pure_functions(
@@ -288,13 +326,15 @@ class TestTicketCurrentDueDateSqlPureParity:
 class TestSharedMatrixStructure:
     def test_every_matrix_consumer_iterates_the_same_case_tuple(self) -> None:
         """A case added to the shared matrix is exercised by the pure
-        functions, the package-tree projection, the SQL expressions, and
-        the Ticket list's `overdue` filter and due-date projection."""
+        functions, the package-tree projection, the SQL expressions (the
+        track milestones and the Ticket current phase of its one track),
+        and the Ticket list's `overdue` filter and due-date projection."""
         consumers = (
             pure_tests.TestComputeDueDatesMatrix.test_matrix_due_dates,
             pure_tests.TestResolveTrackMilestonesMatrix.test_matrix_milestones,
             tree_tests.TestTrackMilestones.test_milestones_current_phase_and_due_dates,
             TestSqlPureParity.test_sql_equals_expectation_and_pure_functions,
+            TestTicketCurrentPhaseSqlPureParityPerTrack.test_one_track_ticket_equals_the_pure_function,
             list_tests.TestOverdueMatrix.test_overdue_filter_and_due_dates_match_the_shared_matrix,
         )
 

@@ -148,6 +148,7 @@ from app.services.ticket_deadline_expressions import (
     track_milestone_status_expression,
 )
 from app.services.ticket_deadlines import (
+    CURRENT_PHASE_TICKET_STATUSES,
     TRIAGE_OPEN_TICKET_STATUSES,
     DueDates,
     TicketCurrentPhase,
@@ -586,6 +587,9 @@ _YEAR_NUMBER: Final = re.compile(r"[0-9]{4}-[0-9]+")
 _TRIAGE_OPEN_STATUSES: Final = tuple(
     sorted(status.value for status in TRIAGE_OPEN_TICKET_STATUSES)
 )
+_ACTIVE_STATUSES: Final = tuple(
+    sorted(status.value for status in ACTIVE_TICKET_STATUSES)
+)
 
 # Semantic ranks (docs/api-spec.md, Semantic Sort Fields). SQL `NULL` is
 # not ranked, so it sorts last under Nullable Sort Field Ordering.
@@ -694,9 +698,15 @@ def _overdue_condition(
 ) -> ColumnElement[bool]:
     """The Ticket-level `overdue` filter (ticket-deadlines.md,
     Ticket-Level Overdue Filter), OR over `phases`: `triage` is past due
-    for a `New` or `Analysis` Ticket; a later phase matches when at least
-    one track of the Ticket has that milestone `overdue` (existence
-    semantics over aliased package and track)."""
+    for a `New` or `Analysis` Ticket; a later phase matches a Ticket that
+    is not `Resolved` when at least one of its tracks has that milestone
+    `overdue` (existence semantics over aliased package and track).
+
+    A later phase reads the tracks of an active Ticket only: `Ignored`
+    and `Duplicated` have no SLA and never match. The status test and
+    the existence check share a `CASE`, so that PostgreSQL evaluates the
+    check per remaining Ticket instead of turning it into a semi-join
+    over every track."""
     instant = literal(evaluation_instant, DateTime(timezone=True))
     branches: list[ColumnElement[bool]] = []
     for phase in MilestonePhase:
@@ -718,15 +728,19 @@ def _overdue_condition(
             track=track,
             due_dates=due,
         )
+        has_overdue_track = exists(
+            select(track.id)
+            .join(package, package.id == track.ticket_package_id)
+            .where(
+                package.ticket_id == Ticket.id,
+                milestone == MilestoneStatus.OVERDUE.value,
+            )
+        ).correlate(Ticket)
         branches.append(
-            exists(
-                select(track.id)
-                .join(package, package.id == track.ticket_package_id)
-                .where(
-                    package.ticket_id == Ticket.id,
-                    milestone == MilestoneStatus.OVERDUE.value,
-                )
-            ).correlate(Ticket)
+            case(
+                (Ticket.status.in_(_ACTIVE_STATUSES), has_overdue_track),
+                else_=false(),
+            )
         )
     return or_(*branches) if branches else false()
 
@@ -736,9 +750,22 @@ def _current_phase_condition(
 ) -> ColumnElement[bool]:
     """The `current_phase` filter (ticket-deadlines.md, Current Phase
     Filter), OR over `phases`; a `null` current phase matches no value and
-    a supplied but empty collection matches nothing."""
+    a supplied but empty collection matches nothing.
+
+    The only statuses that can have the supplied values are tested too:
+    the cheaper condition, which PostgreSQL evaluates first, so the
+    current phase is evaluated only for the remaining Tickets."""
     values = sorted({phase.value for phase in phases})
-    return current.phase.in_(values) if values else false()
+    if not values:
+        return false()
+    statuses = sorted(
+        {
+            status.value
+            for phase in phases
+            for status in CURRENT_PHASE_TICKET_STATUSES[phase]
+        }
+    )
+    return and_(Ticket.status.in_(statuses), current.phase.in_(values))
 
 
 def _occurrence_condition(

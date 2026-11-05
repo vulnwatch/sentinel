@@ -29,6 +29,7 @@
     - [Async-only Database Access](#async-only-database-access)
     - [Sync-to-Async Bridging](#sync-to-async-bridging)
     - [Cross-Loop Pooled Connection Lifecycle](#cross-loop-pooled-connection-lifecycle)
+    - [PostgreSQL JIT](#postgresql-jit)
   - [Enum Storage Strategy](#enum-storage-strategy)
   - [Audit Trail](#audit-trail)
   - [Transaction and Locking](#transaction-and-locking)
@@ -757,6 +758,25 @@ Entry-Point Tests).
 
 See `docs/features/platform/testing-strategy.md` (Cross-Loop Engine Lifecycle)
 for the required regression and structural test coverage.
+
+#### PostgreSQL JIT
+
+Every connection of the application engine disables PostgreSQL's JIT
+compiler: the engine in `app/database.py`, which every runtime process role and
+the CLI use, sends `jit = off` in the startup packet of each connection
+(`engine_connect_args()`), and the test harness engine uses the same arguments
+(`docs/features/platform/testing-strategy.md`, Engine: PostgreSQL Only). No
+PostgreSQL server setting is required, and none replaces the per-connection
+one. Alembic migrations use their own engine and keep the server's `jit`.
+
+**Rationale:** Sentinel's statements are short reads and writes. Some build
+large expression trees (for example the deadline projections of the Ticket
+list), whose estimated cost exceeds the JIT thresholds although they run in
+milliseconds; compiling them took seconds per statement. A server-level `jit`
+does not reach every session: asyncpg's type introspection reads the session's
+`jit` and restores it with a session-level `set_config()`, which overrides the
+server's value from then on. A deterministic test asserts the setting on every
+connection, also after that introspection.
 
 ### Enum Storage Strategy
 
