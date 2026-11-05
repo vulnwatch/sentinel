@@ -4,11 +4,12 @@
 Owning specifications:
 
 - docs/features/tickets/ticket-service.md (Caller category and Ticket
-  accessibility; Concurrency control; `assign_ticket` Locking;
-  Architectural Test Requirement 15, assignment part).
+  accessibility; Concurrency control; `assign_ticket` Locking and
+  Concurrency; Architectural Test Requirement 15, assignment part, and
+  23, independent-session part).
 - docs/features/tickets/tickets.md (Reassignment: every assignment path
   stabilizes the prospective assignee with a User `FOR SHARE` lock before
-  the Ticket lock).
+  the Ticket lock; Expected assignee).
 - docs/features/tickets/ticket-audit-log.md (Cross-Event Ordering,
   Locking, and Rollback; Testing Requirement 23).
 - docs/features/platform/testing-strategy.md (Concurrency Testing; Service
@@ -44,11 +45,12 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 import pytest
+from pydantic import MISSING
 from sqlalchemy import Select, select, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import Role, Scope, TicketStatus
+from app.core.enums import Role, Scope, TicketPriority, TicketStatus
 from app.core.exceptions import TicketNotFoundError
 from app.core.identifiers import format_ticket_id
 from app.models.ticket import Ticket
@@ -58,9 +60,12 @@ from app.services.ticket_convergence_registry import (
     pending_ticket_convergence_effects,
 )
 from app.services.ticket_service import (
+    AssigneeChangedError,
     AssigneeInactiveError,
     assign_ticket,
     resolve_ticket_locator,
+    set_priority_override,
+    unassign_ticket,
 )
 from app.services.ticket_visibility import TicketCaller
 from tests.support.database import assert_lock_wait
@@ -118,9 +123,13 @@ def _start(
     actor: User,
     *,
     scope: Scope = Scope.ALL,
+    expected: uuid.UUID | MISSING | None = MISSING,
 ) -> asyncio.Task[Any]:
     """An `assign_ticket()` in `session`, tracked by the world."""
-    return world.start(session, _assign(session, ticket, target, actor, scope=scope))
+    return world.start(
+        session,
+        _assign(session, ticket, target, actor, scope=scope, expected=expected),
+    )
 
 
 async def _assign(
@@ -130,6 +139,7 @@ async def _assign(
     actor: User,
     *,
     scope: Scope = Scope.ALL,
+    expected: uuid.UUID | MISSING | None = MISSING,
 ) -> Ticket:
     return await assign_ticket(
         session,
@@ -137,6 +147,7 @@ async def _assign(
         assignee=target,
         acting_user_id=actor.id,
         caller=TicketCaller.authenticated(actor.id, scope),
+        expected_assignee_id=expected,
         evaluation_date=EVAL,
     )
 
@@ -276,6 +287,155 @@ class TestTicketLockSerialization:
         assert await _committed(committed_world, ticket) == (
             (TicketStatus.ANALYSIS, x.id),
             [_assignment(actor_b, None, x), PROMOTION],
+        )
+
+
+# ---------------------------------------------------------------------------
+# ATR 23: expected-assignee races
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestExpectedAssigneeRaces:
+    """Session B changes the assignee and holds the Ticket lock
+    uncommitted; session A expects the assignee that it read before B and
+    is proven blocked on the Ticket lock. After B commits, A decides its
+    expectation from B's committed assignee (ticket-service.md,
+    `assign_ticket`, Concurrency)."""
+
+    async def test_same_expectation_with_another_target_raises_assignee_changed(
+        self, committed_world: CommittedWorld, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        actor_a = await committed_world.user(role=Role.VULNERABILITY_ANALYST)
+        actor_b = await committed_world.user(role=Role.VULNERABILITY_ANALYST)
+        x = await committed_world.user(role=Role.VULNERABILITY_ANALYST)
+        y = await committed_world.user(role=Role.VULNERABILITY_ANALYST)
+        ticket = await committed_world.ticket(cve_id=None, status=TicketStatus.NEW)
+        a = await committed_world.open_session()
+        b = await committed_world.open_session()
+        reconcile = _Spy(monkeypatch, "reconcile_ticket_status")
+
+        await _assign(b, ticket, str(x.id), actor_b, expected=None)
+        with SessionStatementRecorder(a) as recorder:
+            task = _start(committed_world, a, ticket, str(y.id), actor_a, expected=None)
+            await assert_lock_wait(task, waiter=a, blocked_by=b)
+            await b.commit()
+            with pytest.raises(AssigneeChangedError):
+                await asyncio.wait_for(task, timeout=5)
+
+        assert recorder.writes() == []
+        assert reconcile.sessions == [b]
+        assert pending_ticket_convergence_effects(a) == ()
+        await a.rollback()
+        assert await _committed(committed_world, ticket) == (
+            (TicketStatus.ANALYSIS, x.id),
+            [_assignment(actor_b, None, x), PROMOTION],
+        )
+
+    async def test_same_expectation_with_the_same_target_is_the_no_op(
+        self, committed_world: CommittedWorld, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        actor_a = await committed_world.user(role=Role.VULNERABILITY_ANALYST)
+        actor_b = await committed_world.user(role=Role.VULNERABILITY_ANALYST)
+        x = await committed_world.user(role=Role.VULNERABILITY_ANALYST)
+        ticket = await committed_world.ticket(cve_id=None, status=TicketStatus.NEW)
+        a = await committed_world.open_session()
+        b = await committed_world.open_session()
+        reconcile = _Spy(monkeypatch, "reconcile_ticket_status")
+
+        await _assign(b, ticket, str(x.id), actor_b, expected=None)
+        with SessionStatementRecorder(a) as recorder:
+            task = _start(
+                committed_world, a, ticket, x.username, actor_a, expected=None
+            )
+            await assert_lock_wait(task, waiter=a, blocked_by=b)
+            await b.commit()
+            result = await asyncio.wait_for(task, timeout=5)
+
+        assert result.assignee_id == x.id
+        assert recorder.writes() == []
+        assert reconcile.sessions == [b]
+        await a.commit()
+        assert await _committed(committed_world, ticket) == (
+            (TicketStatus.ANALYSIS, x.id),
+            [_assignment(actor_b, None, x), PROMOTION],
+        )
+
+    async def test_auto_assignment_winner_makes_the_expectation_stale(
+        self, committed_world: CommittedWorld
+    ) -> None:
+        """B's effective priority override auto-assigns its eligible actor
+        on the unassigned Ticket; A expected no assignee."""
+        actor_a = await committed_world.user(role=Role.VULNERABILITY_ANALYST)
+        owner = await committed_world.user(role=Role.VULNERABILITY_ANALYST)
+        y = await committed_world.user(role=Role.VULNERABILITY_ANALYST)
+        ticket = await committed_world.ticket(cve_id=None)
+        a = await committed_world.open_session()
+        b = await committed_world.open_session()
+
+        await set_priority_override(
+            b,
+            ticket_id=ticket.id,
+            priority=TicketPriority.P1,
+            acting_user_id=owner.id,
+            caller=TicketCaller.authenticated(owner.id, Scope.ALL),
+            evaluation_date=EVAL,
+        )
+        with SessionStatementRecorder(a) as recorder:
+            task = _start(committed_world, a, ticket, str(y.id), actor_a, expected=None)
+            await assert_lock_wait(task, waiter=a, blocked_by=b)
+            await b.commit()
+            with pytest.raises(AssigneeChangedError):
+                await asyncio.wait_for(task, timeout=5)
+
+        assert recorder.writes() == []
+        await a.rollback()
+        assert await _committed(committed_world, ticket) == (
+            (TicketStatus.ANALYSIS, owner.id),
+            [
+                _assignment(owner, None, owner),
+                EventRow(
+                    "priority_changed",
+                    owner.id,
+                    None,
+                    "P1",
+                    None,
+                    {"override_action": "set"},
+                ),
+            ],
+        )
+
+    async def test_self_unassignment_winner_makes_the_expectation_stale(
+        self, committed_world: CommittedWorld
+    ) -> None:
+        """B's assignee returns the Ticket; A expected that assignee."""
+        actor_a = await committed_world.user(role=Role.VULNERABILITY_ANALYST)
+        owner = await committed_world.user(role=Role.VULNERABILITY_ANALYST)
+        y = await committed_world.user(role=Role.VULNERABILITY_ANALYST)
+        ticket = await committed_world.ticket(cve_id=None, assignee_id=owner.id)
+        a = await committed_world.open_session()
+        b = await committed_world.open_session()
+
+        await unassign_ticket(
+            b,
+            ticket_id=ticket.id,
+            acting_user_id=owner.id,
+            caller=TicketCaller.authenticated(owner.id, Scope.ALL),
+        )
+        with SessionStatementRecorder(a) as recorder:
+            task = _start(
+                committed_world, a, ticket, str(y.id), actor_a, expected=owner.id
+            )
+            await assert_lock_wait(task, waiter=a, blocked_by=b)
+            await b.commit()
+            with pytest.raises(AssigneeChangedError):
+                await asyncio.wait_for(task, timeout=5)
+
+        assert recorder.writes() == []
+        await a.rollback()
+        assert await _committed(committed_world, ticket) == (
+            (TicketStatus.ANALYSIS, None),
+            [EventRow("assignment", owner.id, owner.username, None, None, None)],
         )
 
 

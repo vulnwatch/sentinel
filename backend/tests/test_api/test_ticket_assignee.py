@@ -1,10 +1,12 @@
 """End-to-end tests for the Assign Ticket endpoint
 (`PATCH /api/v1/tickets/{ticket_id}/assignee`, `backend/app/api/v1/tickets.py`).
 
-See docs/features/tickets/tickets.md (Assign Ticket, Reassignment,
-Self-Unassignment, Response Schemas > TicketDetail, Endpoint -> Schema
-Mapping), docs/features/tickets/ticket-service.md (`assign_ticket`;
-`unassign_ticket`; `get_ticket_detail()` mutation assembly),
+See docs/features/tickets/tickets.md (Assign Ticket, Reassignment
+including Expected assignee, Self-Unassignment, Response Schemas >
+TicketDetail, Endpoint -> Schema Mapping),
+docs/features/tickets/ticket-service.md (`assign_ticket`;
+`unassign_ticket`; `get_ticket_detail()` mutation assembly; Architectural
+Test Requirement 23, API part),
 docs/api-spec.md (Authorization Chain Evaluation Order
 flow 3, Global Responses, Ticket Accessibility Check, Manual-Zone Mutability
 Guard, User Identifier Resolution, Partial Update Semantics),
@@ -37,6 +39,7 @@ from unittest.mock import AsyncMock
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
+from pydantic import MISSING, TypeAdapter, ValidationError
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -87,6 +90,27 @@ _ASSIGNEE_NOT_CALLER = {
     "code": "TICKET_ASSIGNEE_NOT_CALLER",
     "detail": "Only the current assignee can unassign themselves.",
 }
+_ASSIGNEE_CHANGED = {
+    "code": "TICKET_ASSIGNEE_CHANGED",
+    "detail": "The assignee of the Ticket has changed.",
+}
+
+
+def _expected_assignee_error(value: Any, error_type: str) -> dict[str, Any]:
+    """The `VALIDATION_ERROR` item for an `expected_assignee_id` that is not
+    a UUID. `loc` and `type` are the stable contract; `msg` is the message
+    Pydantic produces for the same input (see `malformed_uuid_error()`)."""
+    try:
+        TypeAdapter(uuid.UUID).validate_python(value)
+    except ValidationError as exc:
+        message = exc.errors()[0]["msg"]
+    else:
+        raise AssertionError(f"{value!r} unexpectedly validated as a UUID")
+    return {
+        "loc": ["body", "expected_assignee_id"],
+        "msg": message,
+        "type": error_type,
+    }
 
 
 def _url(target: Ticket | str) -> str:
@@ -352,6 +376,21 @@ class TestRequestValidation:
                     id=f"invalid-{value!r}",
                 )
                 for value in (42, True)
+            ],
+            *[
+                # The expected assignee accepts only a UUID: a username is
+                # never resolved (api-spec.md, User Identifier Resolution).
+                pytest.param(
+                    {"user_id": user_id, "expected_assignee_id": value},
+                    _expected_assignee_error(value, error_type),
+                    id=f"expected-{error_type}-{value!r}-with-{user_id!r}",
+                )
+                for value, error_type in (
+                    ("jdoe", "uuid_parsing"),
+                    ("", "uuid_parsing"),
+                    (42, "uuid_type"),
+                )
+                for user_id in ("jdoe", None)
             ],
         ],
     )
@@ -718,6 +757,183 @@ class TestErrorMappings:
         assert await ticket_row(db_session, target.id) == before
         assert await event_count(db_session, target.id) == 0
 
+    @pytest.mark.parametrize("form", ["assignment", "self-unassignment"])
+    async def test_stale_expectation_returns_assignee_changed(
+        self,
+        authenticated_client: AsyncClient,
+        va_user: User,
+        db_session: AsyncSession,
+        ticket_factory: Factory,
+        target_user: TargetUser,
+        form: str,
+    ) -> None:
+        """Both forms map `AssigneeChangedError`: an assignment that expects
+        no assignee on a Ticket assigned to another user, and the assignee's
+        self-unassignment that expects another user. The guard order is
+        proven once at the service tier."""
+        other = await target_user()
+        if form == "assignment":
+            assignee_id, body = (
+                other.id,
+                {
+                    "user_id": str((await target_user()).id),
+                    "expected_assignee_id": None,
+                },
+            )
+        else:
+            assignee_id, body = (
+                va_user.id,
+                {
+                    "user_id": None,
+                    "expected_assignee_id": str(other.id),
+                },
+            )
+        target: Ticket = await ticket_factory(
+            status=TicketStatus.ANALYSIS.value, assignee_id=assignee_id
+        )
+        before = await ticket_row(db_session, target.id)
+
+        response = await authenticated_client.patch(_url(target), json=body)
+
+        assert response.status_code == 409
+        assert response.json() == _ASSIGNEE_CHANGED
+        assert await ticket_row(db_session, target.id) == before
+        assert await event_count(db_session, target.id) == 0
+
+    @pytest.mark.parametrize("assigned", [False, True], ids=["unassigned", "assigned"])
+    async def test_uuid_of_no_user_is_a_mismatch_never_user_not_found(
+        self,
+        authenticated_client: AsyncClient,
+        va_user: User,
+        db_session: AsyncSession,
+        ticket_factory: Factory,
+        target_user: TargetUser,
+        assigned: bool,
+    ) -> None:
+        """The expected assignee is compared, never looked up (api-spec.md,
+        User Identifier Resolution): a UUID that identifies no user returns
+        `409 TICKET_ASSIGNEE_CHANGED`, not `404 USER_NOT_FOUND`."""
+        target: Ticket = await ticket_factory(
+            status=(TicketStatus.ANALYSIS if assigned else TicketStatus.NEW).value,
+            assignee_id=(await target_user()).id if assigned else None,
+        )
+        assignee = await target_user()
+        before = await ticket_row(db_session, target.id)
+
+        response = await authenticated_client.patch(
+            _url(target),
+            json={
+                "user_id": str(assignee.id),
+                "expected_assignee_id": str(uuid.uuid7()),
+            },
+        )
+
+        assert response.status_code == 409
+        assert response.json() == _ASSIGNEE_CHANGED
+        assert await ticket_row(db_session, target.id) == before
+        assert await event_count(db_session, target.id) == 0
+
+
+# ---------------------------------------------------------------------------
+# Expected assignee: success and the handler's forwarding of the member
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+class TestExpectedAssignee:
+    @pytest.mark.parametrize("case", ["lower", "upper"])
+    async def test_expectation_read_from_the_ticket_allows_the_reassignment(
+        self,
+        authenticated_client: AsyncClient,
+        va_user: User,
+        db_session: AsyncSession,
+        ticket_factory: Factory,
+        target_user: TargetUser,
+        case: str,
+    ) -> None:
+        """The client sends the `assignee.id` that it read; the UUID is
+        compared by value, whatever the case of its hexadecimal digits."""
+        previous = await target_user()
+        assignee = await target_user()
+        target: Ticket = await ticket_factory(
+            status=TicketStatus.ANALYSIS.value, assignee_id=previous.id
+        )
+        read = await authenticated_client.get(f"/api/v1/tickets/{locator(target)}")
+        expected: str = read.json()["data"]["assignee"]["id"]
+
+        response = await authenticated_client.patch(
+            _url(target),
+            json={
+                "user_id": assignee.username,
+                "expected_assignee_id": expected.upper()
+                if case == "upper"
+                else expected,
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["assignee"] == user_reference(assignee)
+        state = await ticket_row(db_session, target.id)
+        assert state["assignee_id"] == assignee.id
+        assert await event_count(db_session, target.id) == 1
+
+    @pytest.mark.parametrize(
+        ("user_id", "member", "status_code"),
+        [
+            # The caller assigns themselves, already the assignee: the
+            # idempotent success whatever the expectation.
+            pytest.param("caller", "omitted", 200, id="assignment-omitted"),
+            pytest.param("caller", "null", 200, id="assignment-null"),
+            pytest.param("caller", "caller", 200, id="assignment-uuid"),
+            # The caller returns their own Ticket.
+            pytest.param(None, "omitted", 200, id="self-unassignment-omitted"),
+            pytest.param(None, "null", 409, id="self-unassignment-null"),
+            pytest.param(None, "caller", 200, id="self-unassignment-uuid"),
+        ],
+    )
+    async def test_member_reaches_the_service_unchanged(
+        self,
+        authenticated_client: AsyncClient,
+        va_user: User,
+        ticket_factory: Factory,
+        monkeypatch: pytest.MonkeyPatch,
+        user_id: str | None,
+        member: str,
+        status_code: int,
+    ) -> None:
+        """The handler passes the omitted member as `MISSING`, `null` as
+        `None`, and a UUID string as that UUID, to whichever service the
+        `user_id` form selects."""
+        forwarded: list[Any] = []
+        for name in ("assign_ticket", "unassign_ticket"):
+            original = getattr(ticket_service, name)
+
+            async def _spy(
+                db: AsyncSession, _original: Any = original, **kwargs: Any
+            ) -> Ticket:
+                forwarded.append(kwargs["expected_assignee_id"])
+                result: Ticket = await _original(db, **kwargs)
+                return result
+
+            monkeypatch.setattr(ticket_service, name, _spy)
+        target: Ticket = await ticket_factory(
+            status=TicketStatus.ANALYSIS.value, assignee_id=va_user.id
+        )
+        body: dict[str, Any] = {
+            "user_id": va_user.username if user_id == "caller" else None
+        }
+        if member != "omitted":
+            body["expected_assignee_id"] = (
+                str(va_user.id) if member == "caller" else None
+            )
+
+        response = await authenticated_client.patch(_url(target), json=body)
+
+        assert response.status_code == status_code
+        assert forwarded == [
+            {"omitted": MISSING, "null": None, "caller": va_user.id}[member]
+        ]
+
 
 # ---------------------------------------------------------------------------
 # Handler-owned final assembly in the real request transaction
@@ -897,7 +1113,9 @@ class TestEvaluationDate:
 
         assert response.status_code == 200
         assert seen == {
-            "mutation": [{"ticket_id", "acting_user_id", "caller"}],
+            "mutation": [
+                {"ticket_id", "acting_user_id", "caller", "expected_assignee_id"}
+            ],
             "reconcile": [],
             "assembly": [date(2026, 9, 27)],
         }
@@ -945,11 +1163,29 @@ class TestOpenApiContract:
 
         schema = self._resolve(request_body["content"]["application/json"]["schema"])
         assert schema["required"] == ["user_id"]
-        assert set(schema["properties"]) == {"user_id"}
+        assert set(schema["properties"]) == {"user_id", "expected_assignee_id"}
         user_id = schema["properties"]["user_id"]
         assert user_id["anyOf"] == [{"type": "string"}, {"type": "null"}]
         assert "default" not in user_id
         assert "format" not in user_id
+
+    def test_expected_assignee_is_an_optional_nullable_uuid_without_default(
+        self,
+    ) -> None:
+        """Optional (not in `required`), nullable because `null` expects a
+        Ticket without an assignee, without a default because its omission
+        differs from every value (api-spec.md, Request Body Nullability and
+        Defaults), and of format `uuid` because it accepts no username."""
+        request_body = self._operation()["requestBody"]
+        schema = self._resolve(request_body["content"]["application/json"]["schema"])
+
+        member = schema["properties"]["expected_assignee_id"]
+        assert member["anyOf"] == [
+            {"type": "string", "format": "uuid"},
+            {"type": "null"},
+        ]
+        assert "default" not in member
+        assert "expected_assignee_id" not in schema["required"]
 
     def test_responses_declare_detail_and_error_envelopes(self) -> None:
         responses = self._operation()["responses"]
@@ -963,6 +1199,7 @@ class TestOpenApiContract:
         assert "USER_NOT_FOUND" in responses["404"]["description"]
         assert "TICKET_ASSIGNEE_INACTIVE" in responses["409"]["description"]
         assert "TICKET_ASSIGNEE_NOT_CALLER" in responses["409"]["description"]
+        assert "TICKET_ASSIGNEE_CHANGED" in responses["409"]["description"]
         assert "TICKET_NOT_MUTABLE" in responses["409"]["description"]
         assert "422" in responses
 

@@ -63,6 +63,7 @@ from uuid import UUID
 
 import structlog
 from celery.exceptions import OperationalError  # kombu.exceptions.OperationalError
+from pydantic import MISSING
 from sqlalchemy import (
     CTE,
     ColumnElement,
@@ -1291,6 +1292,15 @@ class AssigneeNotCallerError(TicketServiceError):
         super().__init__("Only the current assignee can unassign themselves.")
 
 
+class AssigneeChangedError(TicketServiceError):
+    """An assignment or self-unassignment that would change the assignee
+    expects an assignee other than the current one. Maps to
+    `409 TICKET_ASSIGNEE_CHANGED`. The message is static."""
+
+    def __init__(self) -> None:
+        super().__init__("The assignee of the Ticket has changed.")
+
+
 class SelfDuplicateError(TicketServiceError):
     """A Ticket cannot be marked as a duplicate of itself. Maps to
     `400 TICKET_SELF_DUPLICATE`. The message is static."""
@@ -1751,6 +1761,7 @@ async def assign_ticket(
     assignee: str,
     acting_user_id: UUID,
     caller: TicketCaller,
+    expected_assignee_id: UUID | MISSING | None = MISSING,
     evaluation_date: date | None = None,
 ) -> Ticket:
     """Assign or reassign a Ticket to a user eligible to be its assignee.
@@ -1763,9 +1774,12 @@ async def assign_ticket(
     raw UUID-or-username identifier. `acting_user_id` is the
     authenticated acting user; `caller` is the request-resolved caller
     information whose `user_id` must identify `acting_user_id`.
-    `evaluation_date` is the workflow's UTC date, shared with any
-    `TicketDetail` response; one UTC date is captured at entry when
-    omitted.
+    `expected_assignee_id` is the assignee that the caller expects to
+    replace (tickets.md, Reassignment, Expected assignee): `MISSING`
+    applies no check, `None` expects no assignee, and a UUID expects that
+    User; it is compared, never resolved or locked. `evaluation_date` is
+    the workflow's UTC date, shared with any `TicketDetail` response; one
+    UTC date is captured at entry when omitted.
 
     Q2: the caller has verified `triage_ticket` and owns the transaction.
     Locks, in order: the target User `FOR SHARE` (absence preserved), then
@@ -1779,27 +1793,30 @@ async def assign_ticket(
     then inactive, then not eligible (a bot account, without
     `triage_ticket`, or without effective scope `all` for a confidential
     Ticket); (6) an unchanged assignee is a no-op with no write, event, or
-    reconciliation; (7)-(8) sets the assignee and creates one
-    `assignment` event attributed to the acting user (`old_value` the
-    previous assignee's username from one unlocked observation or `NULL`,
-    `new_value` the target's username); (9) a `New` Ticket moves to
-    `Analysis` with the explicit system `status_change`; (10) exactly one
-    `reconcile_ticket_status()` with the one date, which may promote
-    further. Never calls `auto_assign_actor()`, reads audit history, or
-    commits.
+    reconciliation, whatever the expectation; (7) a supplied expectation
+    that differs from the locked-current assignee raises
+    `AssigneeChangedError` with no effect; (8)-(9) sets the assignee and
+    creates one `assignment` event attributed to the acting user
+    (`old_value` the previous assignee's username from one unlocked
+    observation or `NULL`, `new_value` the target's username); (10) a
+    `New` Ticket moves to `Analysis` with the explicit system
+    `status_change`; (11) exactly one `reconcile_ticket_status()` with the
+    one date, which may promote further. Never calls
+    `auto_assign_actor()`, reads audit history, or commits.
 
     Q4: returns the locked Ticket in its post-mutation state.
 
-    Q5: re-invocation with the same target is the step-6 no-op.
+    Q5: re-invocation with the same target is the step-6 no-op, so a
+    retry of an applied request succeeds whatever its expectation.
 
     Q6: raises `ValueError` before any database operation when `caller`
     does not identify `acting_user_id`. Raises `TicketNotFoundError` for
     a missing or inaccessible Ticket before any target result;
     `TicketNotMutableError` for `Ignored` or `Duplicated`;
     `UserNotFoundError`, `AssigneeInactiveError`, then
-    `AssigneeNotEligibleError` carrying the first failing condition.
-    Audit, database, flush, and reconciliation exceptions propagate and
-    roll back the caller's transaction.
+    `AssigneeNotEligibleError` carrying the first failing condition; then
+    `AssigneeChangedError`. Audit, database, flush, and reconciliation
+    exceptions propagate and roll back the caller's transaction.
     """
     if caller.user_id != acting_user_id:
         raise ValueError("caller must identify the acting user.")
@@ -1820,6 +1837,11 @@ async def assign_ticket(
         raise AssigneeNotEligibleError(condition)
     if ticket.assignee_id == target.id:
         return ticket
+    if (
+        expected_assignee_id is not MISSING
+        and expected_assignee_id != ticket.assignee_id
+    ):
+        raise AssigneeChangedError()
 
     previous_username: str | None = None
     if ticket.assignee_id is not None:
@@ -1860,6 +1882,7 @@ async def unassign_ticket(
     ticket_id: UUID,
     acting_user_id: UUID,
     caller: TicketCaller,
+    expected_assignee_id: UUID | MISSING | None = MISSING,
 ) -> Ticket:
     """Clear the acting user's own assignment of a Ticket.
 
@@ -1870,6 +1893,8 @@ async def unassign_ticket(
     public `SNTL-{n}` locator first). `acting_user_id` is the
     authenticated caller; `caller` is the request-resolved caller
     information whose `user_id` must identify `acting_user_id`.
+    `expected_assignee_id` has the meaning that it has for
+    `assign_ticket()`.
 
     Q2: the caller has verified `triage_ticket` and owns the transaction.
     Locks only the Ticket `FOR UPDATE`: no User becomes the assignee, so
@@ -1878,11 +1903,13 @@ async def unassign_ticket(
 
     Q3: (1)-(2) locks the Ticket and revalidates accessibility from
     locked-current state; (3) `ensure_ticket_operable()`; (4) a Ticket
-    without an assignee is a no-op with no write or event; (5) another
-    assignee raises `AssigneeNotCallerError`; (6) observes the caller's
-    username with one unlocked read under the Ticket lock, as the
-    event-time snapshot; (7)-(8) clears the assignee and creates one
-    `assignment` event attributed to the caller (`old_value` that
+    without an assignee is a no-op with no write or event, whatever the
+    expectation; (5) another assignee raises `AssigneeNotCallerError`;
+    (6) a supplied expectation other than the caller, the locked-current
+    assignee, raises `AssigneeChangedError` with no effect; (7) observes
+    the caller's username with one unlocked read under the Ticket lock,
+    as the event-time snapshot; (8)-(9) clears the assignee and creates
+    one `assignment` event attributed to the caller (`old_value` that
     username, `new_value` `NULL`). Never changes the status, calls
     `reconcile_ticket_status()` or `auto_assign_actor()`, registers a
     convergence effect, reads audit history, or commits.
@@ -1894,9 +1921,9 @@ async def unassign_ticket(
     Q6: raises `ValueError` before any database operation when `caller`
     does not identify `acting_user_id`. Raises `TicketNotFoundError` for
     a missing or inaccessible Ticket, `TicketNotMutableError` for
-    `Ignored` or `Duplicated`, then `AssigneeNotCallerError`. Audit,
-    database, and flush exceptions propagate and roll back the caller's
-    transaction.
+    `Ignored` or `Duplicated`, `AssigneeNotCallerError`, then
+    `AssigneeChangedError`. Audit, database, and flush exceptions
+    propagate and roll back the caller's transaction.
     """
     if caller.user_id != acting_user_id:
         raise ValueError("caller must identify the acting user.")
@@ -1907,6 +1934,11 @@ async def unassign_ticket(
         return ticket
     if ticket.assignee_id != acting_user_id:
         raise AssigneeNotCallerError()
+    if (
+        expected_assignee_id is not MISSING
+        and expected_assignee_id != ticket.assignee_id
+    ):
+        raise AssigneeChangedError()
 
     username = (
         await db.execute(select(User.username).where(User.id == acting_user_id))

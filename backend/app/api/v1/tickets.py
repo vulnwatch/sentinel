@@ -114,6 +114,7 @@ from app.services.cve_service import CVEIdFormatError
 from app.services.ticket_service import (
     TICKET_CONVERGENCE_DISPATCH_FAILED_MESSAGE,
     AccessGrantAction,
+    AssigneeChangedError,
     AssigneeInactiveError,
     AssigneeNotCallerError,
     AssigneeNotEligibleError,
@@ -855,6 +856,14 @@ def _assignee_not_caller_error() -> AppError:
     )
 
 
+def _assignee_changed_error() -> AppError:
+    return AppError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=ErrorCode.TICKET_ASSIGNEE_CHANGED,
+        detail="The assignee of the Ticket has changed.",
+    )
+
+
 @router.patch(
     "/tickets/{ticket_id}/priority",
     response_model=TicketDetailResponse,
@@ -942,7 +951,11 @@ async def set_ticket_priority(
         "and the Ticket status is re-evaluated. JSON `null` instead unassigns "
         "the caller, who must be the current assignee: the Ticket keeps its "
         "status, and a Ticket without an assignee is an idempotent success. "
-        "Another user's assignment cannot be cleared, only reassigned. Returns "
+        "Another user's assignment cannot be cleared, only reassigned. The "
+        "optional `expected_assignee_id` states the assignee that the client "
+        "expects to replace: when the current assignee differs and the "
+        "request is not an idempotent success, it fails with "
+        "`TICKET_ASSIGNEE_CHANGED` and changes nothing. Returns "
         "the post-mutation Ticket detail. Requires `triage_ticket`."
     ),
     responses={
@@ -970,6 +983,9 @@ async def set_ticket_priority(
                 "`TICKET_ASSIGNEE_INACTIVE`: the target user is inactive. "
                 "`TICKET_ASSIGNEE_NOT_CALLER`: `user_id` is `null` and another "
                 "user is the current assignee. "
+                "`TICKET_ASSIGNEE_CHANGED`: `expected_assignee_id` differs from "
+                "the current assignee and the request is not an idempotent "
+                "success. "
                 "`TICKET_NOT_MUTABLE`: the Ticket is Ignored or Duplicated."
             ),
         },
@@ -995,9 +1011,12 @@ async def assign_ticket(
     before the Ticket but reports its absence only after locked-current
     Ticket accessibility and operability. JSON `null` routes to
     `unassign_ticket()`, which locks only the Ticket (tickets.md,
-    Self-Unassignment). The handler captures the one workflow
-    `evaluation_date`, reused by reconciliation and by the `TicketDetail`
-    assembled from the locked post-state inside the same transaction
+    Self-Unassignment). Both forms receive `expected_assignee_id`
+    unchanged, its omission (`MISSING`) included; the service compares it
+    under the Ticket lock (tickets.md, Reassignment, Expected assignee).
+    The handler captures the one workflow `evaluation_date`, reused by
+    reconciliation and by the `TicketDetail` assembled from the locked
+    post-state inside the same transaction
     (`docs/features/tickets/ticket-service.md`, `get_ticket_detail()`).
     """
     evaluation_date = _utc_now().date()
@@ -1008,6 +1027,7 @@ async def assign_ticket(
                 ticket_id=ticket.id,
                 acting_user_id=principal.user.id,
                 caller=caller,
+                expected_assignee_id=body.expected_assignee_id,
             )
         else:
             await ticket_service.assign_ticket(
@@ -1016,6 +1036,7 @@ async def assign_ticket(
                 assignee=body.user_id,
                 acting_user_id=principal.user.id,
                 caller=caller,
+                expected_assignee_id=body.expected_assignee_id,
                 evaluation_date=evaluation_date,
             )
     except TicketNotFoundError:
@@ -1030,6 +1051,8 @@ async def assign_ticket(
         raise _assignee_not_eligible_error(exc) from None
     except AssigneeNotCallerError:
         raise _assignee_not_caller_error() from None
+    except AssigneeChangedError:
+        raise _assignee_changed_error() from None
     detail = await ticket_service.assemble_ticket_detail(
         db, ticket_id=ticket.id, evaluation_date=evaluation_date
     )

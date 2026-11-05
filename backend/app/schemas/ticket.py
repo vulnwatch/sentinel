@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from typing import Annotated, Any, Literal, Self
+from uuid import UUID
 
 from pydantic import MISSING, BaseModel, Field, field_validator, model_validator
 
@@ -369,6 +370,15 @@ class TicketAssigneeUpdateRequest(BaseModel):
     locked-current Ticket accessibility. JSON `null` clears the caller's
     own assignment (tickets.md, Self-Unassignment). An omitted field or a
     value of another type fails with the global `422 VALIDATION_ERROR`.
+
+    `expected_assignee_id` is optional and nullable, and its omission
+    differs from every value, so it defaults to `MISSING`
+    (`docs/conventions.md`, Omitted Values) and is published without a
+    default. It is a condition of the request, not a field to change
+    (`docs/api-spec.md`, Partial Update Semantics): the service compares
+    it with the locked-current assignee. It is typed as a UUID and never
+    resolved, so a username fails with the global `422 VALIDATION_ERROR`
+    (`docs/api-spec.md`, User Identifier Resolution).
     """
 
     user_id: str | None = Field(
@@ -380,6 +390,22 @@ class TicketAssigneeUpdateRequest(BaseModel):
             "caller, who must be the current assignee. Required."
         ),
         examples=["jdoe", None],
+    )
+    expected_assignee_id: UUID | MISSING | None = Field(
+        default=MISSING,
+        description=(
+            "The assignee that the client expects the Ticket to have: the "
+            "`id` of the `assignee` that it last read, or JSON `null` for a "
+            "Ticket that it read without an assignee. When it differs from the "
+            "current assignee, the request fails with `409 "
+            "TICKET_ASSIGNEE_CHANGED` and changes nothing, unless the request "
+            "is an idempotent success (the target already is the assignee, or "
+            "`user_id` is `null` and the Ticket has no assignee). Omitted: no "
+            "check. Only a UUID is accepted, compared by value and never looked "
+            "up: a username fails validation, and a UUID of no user is a "
+            "mismatch."
+        ),
+        examples=["01994c20-7c00-7000-8000-000000000003", None],
     )
 
 

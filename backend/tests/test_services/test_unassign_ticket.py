@@ -6,9 +6,9 @@ Owning specifications:
 - docs/features/tickets/ticket-service.md (Caller category and Ticket
   accessibility; Operability guard; Concurrency control;
   `unassign_ticket`; Architectural Test Requirement 21, single-session
-  part).
-- docs/features/tickets/tickets.md (Self-Unassignment; Architectural
-  Invariant).
+  part, and 23, `unassign_ticket()` part).
+- docs/features/tickets/tickets.md (Self-Unassignment; Reassignment,
+  Expected assignee; Architectural Invariant).
 - docs/features/tickets/ticket-audit-log.md (Event Type Contract:
   `assignment`; Canonical Mutation and No-Event Matrix: Self-unassignment;
   Cross-Event Ordering, Locking, and Rollback; Testing Requirements 1-7).
@@ -33,6 +33,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
+from pydantic import MISSING
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -47,7 +48,11 @@ from app.services.ticket_audit_log import TicketAuditLog
 from app.services.ticket_convergence_registry import (
     pending_ticket_convergence_effects,
 )
-from app.services.ticket_service import AssigneeNotCallerError, unassign_ticket
+from app.services.ticket_service import (
+    AssigneeChangedError,
+    AssigneeNotCallerError,
+    unassign_ticket,
+)
 from app.services.ticket_visibility import TicketCaller
 from tests.support.database import rollback_test_scope
 from tests.support.ticket_mutations import (
@@ -83,13 +88,16 @@ async def _unassign(
     actor: User,
     *,
     scope: Scope = Scope.ALL,
+    expected: uuid.UUID | MISSING | None = MISSING,
 ) -> Ticket:
-    """Call the service as the API handler does for `user_id: null`."""
+    """Call the service as the API handler does for `user_id: null`.
+    `expected` is the expected assignee, omitted (`MISSING`) by default."""
     return await unassign_ticket(
         db,
         ticket_id=ticket_id,
         acting_user_id=actor.id,
         caller=TicketCaller.authenticated(actor.id, scope),
+        expected_assignee_id=expected,
     )
 
 
@@ -128,6 +136,7 @@ async def _assert_no_effect(
     actor: User,
     error_type: type[Exception] | None,
     scope: Scope = Scope.ALL,
+    expected: uuid.UUID | MISSING | None = MISSING,
 ) -> None:
     """Call the service and assert the zero-side-effect contract of a
     rejected call (`error_type`) or of the idempotent no-op (`None`): no
@@ -140,11 +149,13 @@ async def _assert_no_effect(
 
     with StatementRecorder(db) as recorder:
         if error_type is None:
-            result = await _unassign(db, ticket_id, actor, scope=scope)
+            result = await _unassign(
+                db, ticket_id, actor, scope=scope, expected=expected
+            )
             assert result.id == ticket_id
         else:
             with pytest.raises(error_type):
-                await _unassign(db, ticket_id, actor, scope=scope)
+                await _unassign(db, ticket_id, actor, scope=scope, expected=expected)
 
     assert recorder.writes() == []
     assert (reconcile.calls, assign.calls) == ([], [])
@@ -201,7 +212,7 @@ class TestSelfUnassignment:
         self, db_session: AsyncSession, ticket_factory: TicketFactory, va_user: VAUser
     ) -> None:
         """Every assigning path promotes `New` to `Analysis`; an anomalous
-        `New` assignment to the caller is still cleared by steps 6-8 without
+        `New` assignment to the caller is still cleared by steps 7-9 without
         a status change (ticket-service.md, `unassign_ticket`)."""
         actor = await va_user()
         ticket = await cveless(
@@ -285,6 +296,162 @@ class TestIdempotency:
         assert await ticket_events_by_id(db_session, ticket.id) == [
             _self_unassignment(actor)
         ]
+
+
+# ---------------------------------------------------------------------------
+# ATR 23: expected assignee
+# ---------------------------------------------------------------------------
+
+
+EXPECTATIONS = ["none", "caller", "other", "unknown"]
+"""An expected assignee: none, the caller, another active VA, or a UUID
+that identifies no user."""
+
+
+async def _expectation(kind: str, actor: User, va_user: VAUser) -> uuid.UUID | None:
+    if kind == "none":
+        return None
+    if kind == "caller":
+        return actor.id
+    if kind == "other":
+        return (await va_user()).id
+    return uuid.uuid7()
+
+
+@pytest.mark.integration
+class TestExpectedAssignee:
+    async def test_expecting_the_caller_clears_as_an_omitted_expectation(
+        self, db_session: AsyncSession, ticket_factory: TicketFactory, va_user: VAUser
+    ) -> None:
+        actor = await va_user()
+        ticket = await cveless(ticket_factory, assignee_id=actor.id)
+
+        await _unassign(db_session, ticket.id, actor, expected=actor.id)
+
+        assert await _state(db_session, ticket.id) == (TicketStatus.ANALYSIS, None)
+        assert await ticket_events_by_id(db_session, ticket.id) == [
+            _self_unassignment(actor)
+        ]
+
+    @pytest.mark.parametrize("expected", ["none", "other", "unknown"])
+    async def test_another_expectation_raises_assignee_changed_with_no_effect(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+        monkeypatch: pytest.MonkeyPatch,
+        expected: str,
+    ) -> None:
+        actor = await va_user()
+        ticket = await cveless(ticket_factory, assignee_id=actor.id)
+
+        await _assert_no_effect(
+            db_session,
+            monkeypatch,
+            ticket_id=ticket.id,
+            actor=actor,
+            error_type=AssigneeChangedError,
+            expected=await _expectation(expected, actor, va_user),
+        )
+
+    @pytest.mark.parametrize("expected", EXPECTATIONS)
+    async def test_unassigned_ticket_is_the_no_op_whatever_the_expectation(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+        monkeypatch: pytest.MonkeyPatch,
+        expected: str,
+    ) -> None:
+        actor = await va_user()
+        ticket = await cveless(ticket_factory)
+
+        await _assert_no_effect(
+            db_session,
+            monkeypatch,
+            ticket_id=ticket.id,
+            actor=actor,
+            error_type=None,
+            expected=await _expectation(expected, actor, va_user),
+        )
+
+    @pytest.mark.parametrize("expected", [*EXPECTATIONS, "assignee"])
+    async def test_another_assignee_raises_not_caller_whatever_the_expectation(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+        monkeypatch: pytest.MonkeyPatch,
+        expected: str,
+    ) -> None:
+        """`AssigneeNotCallerError` precedes the expectation, including one
+        that names the actual assignee."""
+        actor = await va_user()
+        other = await va_user()
+        ticket = await cveless(ticket_factory, assignee_id=other.id)
+
+        await _assert_no_effect(
+            db_session,
+            monkeypatch,
+            ticket_id=ticket.id,
+            actor=actor,
+            error_type=AssigneeNotCallerError,
+            expected=(
+                other.id
+                if expected == "assignee"
+                else await _expectation(expected, actor, va_user)
+            ),
+        )
+
+    @pytest.mark.parametrize(
+        ("status", "scope", "error_type"),
+        [
+            pytest.param(
+                TicketStatus.ANALYSIS,
+                Scope.NON_CONFIDENTIAL,
+                TicketNotFoundError,
+                id="not-found",
+            ),
+            pytest.param(
+                TicketStatus.IGNORED, Scope.ALL, TicketNotMutableError, id="not-mutable"
+            ),
+        ],
+    )
+    async def test_accessibility_and_operability_precede_assignee_changed(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+        monkeypatch: pytest.MonkeyPatch,
+        status: TicketStatus,
+        scope: Scope,
+        error_type: type[Exception],
+    ) -> None:
+        """The caller is the assignee and expects nobody: a confidential
+        Ticket that a `non_confidential` caller cannot see, or a manual-zone
+        Ticket, keeps its own outcome."""
+        restricted = scope is Scope.NON_CONFIDENTIAL
+        actor = await va_user(
+            roles=(Role.RESTRICTED_ANALYST,)
+            if restricted
+            else (Role.VULNERABILITY_ANALYST,)
+        )
+        ticket = await cveless(
+            ticket_factory,
+            status=status,
+            is_confidential=restricted,
+            assignee_id=actor.id,
+        )
+
+        await _assert_no_effect(
+            db_session,
+            monkeypatch,
+            ticket_id=ticket.id,
+            actor=actor,
+            error_type=error_type,
+            scope=scope,
+            expected=None,
+        )
 
 
 # ---------------------------------------------------------------------------
