@@ -355,6 +355,17 @@ DEADLINE_CASES: tuple[DeadlineCase, ...] = (
         expected_statuses=(D, D, D, D),
         expected_current_phase=CurrentPhase.DONE,
     ),
+    DeadlineCase(
+        # A change that invalidates resolution, before its reconciliation:
+        # the track milestones report the open phases, while the Ticket stays
+        # `done` and matches no `overdue` value (Ticket Current Phase).
+        id="resolved_ticket_track_milestones_still_report_open_phases",
+        ticket_status=TicketStatus.RESOLVED,
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_offsets_days=_T30,
+        expected_statuses=(D, O, O, O),
+        expected_current_phase=CurrentPhase.SUBMISSION,
+    ),
     # --- Rule 2: non-actionable track ---------------------------------------
     DeadlineCase(
         id="non_actionable_track_excluded",
@@ -993,6 +1004,30 @@ TICKET_PHASE_CASES: tuple[TicketPhaseCase, ...] = (
         expected_phase=CurrentPhase.QA,
         expected_milestone=O,
     ),
+    TicketPhaseCase(
+        # `um` evidence (the RR) outranks `submission` evidence alone.
+        id="qa_from_release_request_with_submission_in_progress",
+        tracks=(
+            TrackEvidence(
+                delivery_status=DeliveryStatus.IN_PROGRESS, requests=(_ACTIVE_RR,)
+            ),
+        ),
+        expected_phase=CurrentPhase.QA,
+        expected_milestone=P,
+    ),
+    TicketPhaseCase(
+        id="qa_from_released_delivery_with_one_unreleased_product",
+        tracks=(
+            TrackEvidence(
+                track_status=PackageStatus.FIXED,
+                delivery_status=DeliveryStatus.RELEASED,
+                products=(_RELEASED, _UNRELEASED),
+            ),
+        ),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_phase=CurrentPhase.QA,
+        expected_milestone=O,
+    ),
     # --- Rules 3 and 4: no open phase ----------------------------------------
     TicketPhaseCase(
         id="analyzed_null_member_without_open_phase",
@@ -1027,8 +1062,31 @@ TICKET_PHASE_CASES: tuple[TicketPhaseCase, ...] = (
         expected_milestone=None,
     ),
     TicketPhaseCase(
+        # A change that invalidates resolution, before its reconciliation:
+        # a later phase is open only for a Ticket that is not `Resolved`.
+        id="resolved_with_open_later_phases_is_done",
+        ticket_status=TicketStatus.RESOLVED,
+        tracks=(_OPEN_SUBMISSION, _OPEN_QA, _UNOBSERVABLE),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_phase=CurrentPhase.DONE,
+        expected_milestone=None,
+    ),
+    TicketPhaseCase(
         id="analyzed_every_phase_completed_is_done",
         tracks=(_ALL_DONE_AFFECTED,),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_phase=CurrentPhase.DONE,
+        expected_milestone=None,
+    ),
+    TicketPhaseCase(
+        # The only eligible Products without `released_at` are EOL or
+        # excluded, so the actionable ones are all released (`qa` evidence),
+        # and an ineligible-only track has its later phases not applicable.
+        id="unreleased_eol_or_excluded_products_open_no_phase",
+        tracks=(
+            TrackEvidence(products=(_RELEASED, _EOL, _EXCLUDED)),
+            TrackEvidence(products=(_NOT_ELIGIBLE, _EOL)),
+        ),
         evaluation_instant=AFTER_ALL_DUE,
         expected_phase=CurrentPhase.DONE,
         expected_milestone=None,

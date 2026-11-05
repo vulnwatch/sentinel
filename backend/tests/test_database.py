@@ -2,7 +2,7 @@
 
 `app/database.py` is excluded from the coverage gate (module-level
 side-effecting engine construction — see pyproject.toml), but these
-structural assertions guard two real regressions:
+structural assertions guard three real regressions:
 
 1. `DEBUG` must never re-couple to SQLAlchemy's `echo` parameter (see
    docs/features/platform/logging.md, "Relationship with DEBUG").
@@ -10,6 +10,10 @@ structural assertions guard two real regressions:
    (which may include credential material) never leak into an
    unhandled `StatementError`'s traceback/message, independent of
    `LOG_LEVEL` (see docs/conventions.md, Secrets and PII Discipline).
+3. Every connection must send `jit = off`, so PostgreSQL never spends
+   seconds JIT-compiling a statement that runs in milliseconds, also
+   after asyncpg's type introspection (see docs/conventions.md,
+   SQLAlchemy Conventions, PostgreSQL JIT).
 
 Also covers the post-commit callback mechanism (`get_db()`,
 `register_post_commit_callback()`) used by API workflows that need a
@@ -45,12 +49,15 @@ from typing import Annotated, Any, cast
 import pytest
 from fastapi import Depends, FastAPI, HTTPException
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import event, text
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app import database
 from app.database import (
     detach_post_commit_callbacks,
     engine,
+    engine_connect_args,
     get_db,
     register_post_commit_callback,
 )
@@ -160,6 +167,61 @@ class TestEngineConstruction:
         """DEBUG must not control SQLAlchemy echo; echo must remain
         unset (falsy) regardless of the DEBUG setting."""
         assert not engine.sync_engine.echo
+
+    async def test_every_connection_sends_jit_off(self) -> None:
+        """Every connection of the module-level engine sends `jit = off` at
+        connection start (docs/conventions.md, SQLAlchemy Conventions,
+        PostgreSQL JIT). The attempt stops in `do_connect`, before any
+        network I/O."""
+        captured: dict[str, Any] = {}
+
+        class _StopConnectError(Exception):
+            pass
+
+        def _capture(
+            dialect: object, record: object, cargs: object, cparams: dict[str, Any]
+        ) -> None:
+            captured.update(cparams)
+            raise _StopConnectError
+
+        event.listen(engine.sync_engine, "do_connect", _capture)
+        try:
+            with pytest.raises(_StopConnectError):
+                async with engine.connect():
+                    pass
+        finally:
+            event.remove(engine.sync_engine, "do_connect", _capture)
+
+        assert captured["server_settings"] == {"jit": "off"}
+
+
+@pytest.mark.integration
+class TestJitDisabled:
+    async def test_jit_stays_off_after_asyncpg_type_introspection(
+        self,
+        _engine: AsyncEngine,  # noqa: PT019 — value used below (.url), not just for setup
+    ) -> None:
+        """asyncpg introspects a type it has no codec for (`varchar[]`, as in
+        the roles that every authenticated request reads) by turning `jit`
+        off and then restoring the session's previous value, which leaves a
+        session-level setting that overrides the server's. With `jit = off`
+        sent at connection start, the session stays without JIT."""
+        dedicated = create_async_engine(
+            _engine.url, poolclass=NullPool, connect_args=engine_connect_args()
+        )
+        jit = text("SELECT setting FROM pg_settings WHERE name = 'jit'")
+        try:
+            async with dedicated.connect() as connection:
+                before = await connection.scalar(jit)
+                values = await connection.scalar(
+                    text("SELECT ARRAY['a', 'b']::varchar[]")
+                )
+                after = await connection.scalar(jit)
+        finally:
+            await dedicated.dispose()
+
+        assert values == ["a", "b"]
+        assert (before, after) == ("off", "off")
 
 
 @pytest.fixture

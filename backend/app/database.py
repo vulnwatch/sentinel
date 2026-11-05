@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from typing import Annotated
+from typing import Annotated, Any
 
 import structlog
 from fastapi import Depends
@@ -18,7 +18,22 @@ from app.config import settings
 
 logger = structlog.get_logger(__name__)
 
-engine = create_async_engine(settings.database_url, hide_parameters=True)
+
+def engine_connect_args() -> dict[str, Any]:
+    """The `connect_args` of every Sentinel database engine.
+
+    Each connection sends `jit = off` in its startup packet, so PostgreSQL
+    never JIT-compiles a Sentinel statement — see docs/conventions.md
+    (SQLAlchemy Conventions, PostgreSQL JIT). A session-level setting is
+    required: asyncpg's type introspection pins `jit` per session, which
+    overrides any server-level value.
+    """
+    return {"server_settings": {"jit": "off"}}
+
+
+engine = create_async_engine(
+    settings.database_url, hide_parameters=True, connect_args=engine_connect_args()
+)
 
 async_session_factory = async_sessionmaker(
     engine,

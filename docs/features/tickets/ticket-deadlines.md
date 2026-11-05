@@ -272,7 +272,7 @@ would equal `qa`. A Ticket matches a value when:
 | Value | Match |
 |---|---|
 | `triage` | Ticket status is `New` or `Analysis`, and `triage_due_at` is past |
-| `submission`, `um`, `qa` | At least one track of the Ticket has that `milestones` member equal to `overdue` |
+| `submission`, `um`, `qa` | Ticket status is not `Resolved`, and at least one track of the Ticket has that `milestones` member equal to `overdue` |
 
 The `triage` value is Ticket-level so that a Ticket without packages is
 covered: statuses `Analyzed` and `Resolved` count as triage completed. The
@@ -282,12 +282,19 @@ an applicable CVE-associated IBS track with an actionable eligible Product
 lacking `released_at`.
 
 `Ignored` and `Duplicated` Tickets never match because their dates and
-statuses are `null`. `Resolved` Tickets never match by construction: every
-actionable track is resolution-complete, so each applicable `FIXED` track has
-every actionable eligible Product released, the other observable tracks
-(`AFFECTED` or `FIXED` without an actionable eligible Product, `NOT_AFFECTED`,
-and `WONT_FIX`) have their later phases `not_applicable`, and the tracks whose
-later phases Sentinel cannot observe have them `null`.
+statuses are `null`. `Resolved` Tickets never match. Once the Ticket status is
+reconciled, their tracks agree: every actionable track is
+resolution-complete, so each applicable `FIXED` track has every actionable
+eligible Product released, the other observable tracks (`AFFECTED` or `FIXED`
+without an actionable eligible Product, `NOT_AFFECTED`, and `WONT_FIX`) have
+their later phases `not_applicable`, and the tracks whose later phases
+Sentinel cannot observe have them `null`. A change that invalidates
+resolution without a gate-relevant mutation, such as a corrected AIMAAS date
+that makes an EOL Product actionable again, reopens a track milestone before
+the Ticket leaves `Resolved` at its next reconciliation
+([product-lifecycle-transitions.md](../packages/product-lifecycle-transitions.md#fetcher-evaluate_lifecycle_transitions)).
+Until then the track reports that milestone, while the Ticket matches no
+`overdue` value and its [current phase](#ticket-current-phase) stays `done`.
 
 Tickets whose severity is still unresolved are ordered for triage by the
 informational priority (`sort_by=priority` of `GET /api/v1/tickets`; see
@@ -310,7 +317,7 @@ For a Ticket with an SLA, a phase is **open** when:
 | Phase | Open when |
 |---|---|
 | `triage` | The Ticket status is `New` or `Analysis` |
-| `submission`, `um`, `qa` | At least one track of the Ticket has that `milestones` member equal to `pending` or `overdue` |
+| `submission`, `um`, `qa` | The Ticket status is not `Resolved`, and at least one track of the Ticket has that `milestones` member equal to `pending` or `overdue` |
 
 These are the conditions of the
 [Ticket-Level Overdue Filter](#ticket-level-overdue-filter) without its
@@ -340,13 +347,15 @@ On a Ticket with an SLA, a `null` milestone member is a later phase that
 Sentinel cannot observe
 ([Observability of Later Phases](#observability-of-later-phases)). It never
 holds back the Ticket's current phase, which is the earliest open phase among
-the phases that Sentinel observes. A `Resolved` Ticket is `done` even with
-unobservable tracks, because the Resolved gate establishes that every
-actionable track is resolution-complete
-([tickets.md](tickets.md#gate-analyzed--resolved)). An `Analyzed` Ticket
-without an open phase is `done` when no track has a `null` member, for example
-while an `AFFECTED` track whose actionable eligible Products are all released
-waits to become `FIXED`. It is `null` when a track has a `null` member, because
+the phases that Sentinel observes. A `Resolved` Ticket has no open phase and
+is `done`, even with unobservable tracks, because the Resolved gate
+establishes that every actionable track is resolution-complete
+([tickets.md](tickets.md#gate-analyzed--resolved)); a track milestone reopened
+before the next reconciliation does not change it
+([Ticket-Level Overdue Filter](#ticket-level-overdue-filter)). An `Analyzed`
+Ticket without an open phase is `done` when no track has a `null` member, for
+example while an `AFFECTED` track whose actionable eligible Products are all
+released waits to become `FIXED`. It is `null` when a track has a `null` member, because
 the milestones do not show whether that track still has work in a later phase.
 In particular, an `Analyzed` Ticket without a CVE has a `null` current phase
 while it has an actionable track.
@@ -575,6 +584,14 @@ pagination; no Python post-filter may remove rows from a page. Track and
 Product existence checks use existence semantics, so they cannot duplicate a
 Ticket or inflate `total`.
 
+The Ticket status alone decides the current phase of every Ticket that is not
+`Analyzed`: `null` without an SLA, `triage` for `New` and `Analysis`, and
+`done` for `Resolved`. The SQL expressions therefore read the tracks only of
+an `Analyzed` Ticket for the current phase and the current due date, and only
+of an active Ticket for a later-phase `overdue` value, so that filtering,
+sorting, and counting grow with the active Tickets rather than with every
+Ticket in the database.
+
 The overdue comparison depends on the current instant and therefore cannot be
 served by an index even if due dates were persisted. Persisting due dates would
 be a transparent optimization that does not change this API contract.
@@ -624,8 +641,9 @@ Tests MUST cover:
    other filters, invalid values ignored, Ticket-level `triage` semantics for
    Tickets without packages and for `Analyzed`/`Resolved`, `overdue=qa`
    returning a Ticket with an unreleased actionable eligible Product, exclusion
-   of `Ignored`, `Duplicated`, and `Resolved` Tickets, no row duplication, and
-   correct `total`.
+   of `Ignored`, `Duplicated`, and `Resolved` Tickets (including a `Resolved`
+   Ticket with a track milestone `overdue`), no row duplication, and correct
+   `total`.
 9. The five `sort_by` values with `null` last in both directions and
    deterministic tie-breaking.
 10. SQL/pure-function equivalence for due dates and milestone statuses over a
@@ -645,7 +663,8 @@ Tests MUST cover:
     `Analysis` with and without packages, including while a track has a later
     phase open; each later phase as the earliest open phase across tracks; a
     track with `null` members not holding back an open phase of another track;
-    `done` for `Resolved`, including with tracks that have `null` members;
+    `done` for `Resolved`, including with tracks that have `null` members and
+    with a track that has a later phase `pending` or `overdue`;
     `done` for an `Analyzed` Ticket without an open phase and without a `null`
     track member; `null` for an `Analyzed` Ticket without an open phase and
     with a `null` track member, including an `Analyzed` CVE-less Ticket; and
@@ -665,7 +684,9 @@ Tests MUST cover:
     evaluation instant; the post-mutation value in a `TicketDetail` returned by
     a mutation (for example `null` after Ignore, and `triage` after a Reopen
     that returns the Ticket to `Analysis`); and SQL/pure-function equivalence
-    for the Ticket current phase over a shared multi-track input matrix.
+    for the Ticket current phase over a shared multi-track input matrix and,
+    for a Ticket with one track, over every evidence case of the input matrix
+    of Requirement 10.
 16. The current due date: over the shared multi-track input matrix, equality
     with the date that [Current Due Date](#current-due-date) selects from the
     pure functions, including `release_due_at` for a `null` current phase with

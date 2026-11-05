@@ -37,6 +37,7 @@ from app.core.enums import (
 )
 from app.services import ticket_deadlines
 from app.services.ticket_deadlines import (
+    CURRENT_PHASE_TICKET_STATUSES,
     PHASE_SHARES,
     SLA_TIER_DAYS,
     UNRESOLVED_SLA_DAYS,
@@ -867,7 +868,13 @@ class TestTicketCurrentPhaseInvariantsExhaustive:
                     evaluation_instant=instant,
                 )
 
-                if later_track_phases:
+                if status is TicketStatus.RESOLVED:
+                    # A later phase is open only for a Ticket that is not
+                    # `Resolved`: its tracks never change `done`.
+                    assert result == TicketCurrentPhase(
+                        phase=CurrentPhase.DONE, milestone=None
+                    )
+                elif later_track_phases:
                     # The earliest track current phase: an unobservable
                     # (`null`) track never holds the Ticket back.
                     order = list(CurrentPhase)
@@ -879,12 +886,39 @@ class TestTicketCurrentPhaseInvariantsExhaustive:
                 else:
                     assert result.milestone is None
                     unobservable = any(t.current_phase is None for t in pair)
-                    expected = (
-                        None
-                        if unobservable and status is TicketStatus.ANALYZED
-                        else CurrentPhase.DONE
-                    )
+                    expected = None if unobservable else CurrentPhase.DONE
                     assert result.phase is expected
+
+    @pytest.mark.parametrize(
+        "instant", [BEFORE_ANY_DUE, AFTER_SUBMISSION_DUE, AFTER_ALL_DUE]
+    )
+    def test_current_phase_ticket_statuses_are_exactly_the_reachable_ones(
+        self, instant: datetime
+    ) -> None:
+        """`CURRENT_PHASE_TICKET_STATUSES`, which lets a filter test the
+        status before the current phase, lists exactly the statuses that
+        produce each value: every status with its own due dates, over every
+        pair of tracks."""
+        tracks = self._decided_track_milestones(instant)
+        reached: dict[CurrentPhase, set[TicketStatus]] = {}
+        for status in TicketStatus:
+            due = compute_due_dates(
+                created_at=CREATED_AT, severity=Severity.HIGH, ticket_status=status
+            )
+            for pair in itertools.product(tracks, repeat=2):
+                phase = resolve_ticket_current_phase(
+                    due_dates=due,
+                    ticket_status=status,
+                    track_milestones=pair,
+                    evaluation_instant=instant,
+                ).phase
+                if phase is not None:
+                    reached.setdefault(phase, set()).add(status)
+
+        assert reached == {
+            phase: set(statuses)
+            for phase, statuses in CURRENT_PHASE_TICKET_STATUSES.items()
+        }
 
 
 # ---------------------------------------------------------------------------

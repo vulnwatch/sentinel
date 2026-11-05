@@ -52,7 +52,7 @@ from app.core.enums import (
     WorkflowType,
 )
 from app.core.passwords import hash_password
-from app.database import Base, get_db
+from app.database import Base, engine_connect_args, get_db
 from app.main import app
 
 # Import the models package (not just the User class) so all model
@@ -434,7 +434,10 @@ async def _engine() -> AsyncGenerator[AsyncEngine]:
     single-process run creates and drops the tables in the harness
     database itself. The pool bounds are the per-worker connection budget
     validated by `pytest_configure` (see
-    docs/features/platform/testing-strategy.md, Parallel Execution).
+    docs/features/platform/testing-strategy.md, Parallel Execution). Its
+    connections send the application's server settings
+    (`engine_connect_args()`), so statements run without JIT as in
+    production.
     """
     database_url = _database_url()
     worker_database = (
@@ -448,6 +451,7 @@ async def _engine() -> AsyncGenerator[AsyncEngine]:
         echo=False,
         pool_size=ENGINE_POOL_SIZE,
         max_overflow=ENGINE_MAX_OVERFLOW,
+        connect_args=engine_connect_args(),
     )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
