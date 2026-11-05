@@ -1423,6 +1423,20 @@ idempotent resolution paths again, but none guarantees rediscovery of every
 lost candidate. A mapping-file change likewise takes effect only on a later or
 manual trigger.
 
+A package unit that fails with `ProductCatalogNotReadyError` is lost in the
+same way. It occurs only before the first complete Product catalog snapshot
+commits, because catalog readiness is never lost (`product-catalog.md`,
+Catalog Readiness and Freshness). Publication of that snapshot does not repair
+it: the candidates are not persisted, and the Product catalog backfill selects
+only existing `TicketPackage` rows, which the failed unit did not create
+(`product-catalog.md`, Product Catalog Backfill). This loss is accepted. The
+first-deployment step in `docs/deployment.md` (Product Catalog Initialization)
+prevents it. The operator recovery, once the catalog is ready, is a manual CVE
+refetch (`POST /api/v1/cves/{cve_id}/refetch`) of the CVE of each Ticket
+named by the `ticket_id` of a `ticket_package_resolution_package_failed`
+warning whose `cause` is `ProductCatalogNotReadyError`; every refetched source
+that supplies candidates publishes its package handoff again.
+
 #### Audit and observability
 
 The task and workflow create no `TicketAuditEvent` of their own. Effective
@@ -1441,7 +1455,7 @@ aggregate terminal event. `empty`, `inactive`, `completed`, `partial`, and
 | `ticket_package_resolution_no_match` | INFO | A valid package candidate had no SMELT match. |
 | `ticket_package_resolution_excluded` | INFO | Locked package state was directly excluded. |
 | `ticket_package_resolution_inactive` | INFO | Locked-current Ticket was inactive; remaining packages were not attempted. This is the aggregate terminal event even if earlier package units committed or had expected or isolated outcomes; do not also emit `ticket_package_resolution_completed` or `ticket_package_resolution_partial`. Aggregate counts preserve the preceding outcomes. |
-| `ticket_package_resolution_package_failed` | WARNING | A package had an isolated catalog, target, or SMELT failure. |
+| `ticket_package_resolution_package_failed` | WARNING | A package had an isolated catalog, target, or SMELT failure. Carries `ticket_id` and the exception class name as `cause`. |
 | `ticket_package_resolution_partial` | WARNING | Every applicable package was attempted and the workflow returned normally, but at least one package had an isolated catalog, target, or SMELT failure. Expected no-match or excluded outcomes alone do not make the invocation partial. Aggregate counts preserve successful, no-match, excluded, and isolated-failure outcomes. |
 | `ticket_package_resolution_completed` | INFO | Every applicable package was attempted and the workflow returned normally without an isolated package failure. Aggregate counts preserve successful, no-match, and excluded outcomes. |
 | `ticket_package_resolution_failed` | ERROR | Validation, resolver, database, commit, audit, delegated, or programming failure terminated the task. Aggregate counts preserve any earlier committed or expected package outcomes. |
@@ -2197,6 +2211,8 @@ transitions. The test must cover:
   and resolver behavior
 - `docs/features/tickets/cve-service.md` — `PostIngestTasks` producer and
   post-commit handoff
+- `docs/features/tickets/cve-tracking.md` — manual CVE refetch endpoint
+- `docs/deployment.md` — first-deployment Product catalog initialization
 - `docs/features/platform/fetcher-infrastructure.md` — Celery result handling,
   task registration, and sub-operation classification
 - `docs/features/platform/networking.md` — shared HTTP client, TLS, and

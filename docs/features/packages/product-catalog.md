@@ -476,7 +476,11 @@ Backfill completes only package trees represented by an existing active
 `PACKAGE_TARGETS_UNRESOLVED` created no such row and is not discoverable by
 this workflow; it is retried only by a later manual or automatic caller. This
 is an accepted limitation and no durable failed-addition registry is
-introduced.
+introduced. Post-ingest package resolution that failed with
+`ProductCatalogNotReadyError` before the first snapshot likewise created no
+such row, so the backfill dispatched by the first snapshot does not discover
+it; `package-service.md` (Post-ingest CVE package resolution, Idempotency,
+delivery, and recovery) defines that accepted loss and its operator recovery.
 
 The system-wide scan is deliberate because Sentinel does not persist which
 unmatched CPEs were omitted from earlier package resolutions. Backfill

@@ -56,6 +56,7 @@ For architectural decisions and design constraints, see
   - [Database Migrations](#database-migrations)
   - [CLI Operational Access](#cli-operational-access)
   - [Health Checks](#health-checks)
+  - [Product Catalog Initialization](#product-catalog-initialization)
   - [Redis Durability, Memory, and Persistence](#redis-durability-memory-and-persistence)
   - [CVSS Recalculation Recovery](#cvss-recalculation-recovery)
   - [Log Aggregation](#log-aggregation)
@@ -357,6 +358,8 @@ database that holds data, including a partially loaded dataset.
    - `GET /ready` — readiness (PostgreSQL + Redis reachable)
 7. **Verify SSO**: confirm that `GET /api/v1/auth/providers` through the
    host reports `sso` as `true`, then complete a test SSO login in the UI
+8. **Initialize the Product catalog** (first deployment only): see
+   [Product Catalog Initialization](#product-catalog-initialization)
 
 #### Staging-Specific Notes
 
@@ -397,6 +400,8 @@ Same as staging, with these differences:
 4. **Health checks**: configure orchestrator to use `/health` (liveness)
    and `/ready` (readiness) on the API container
 5. **Verify**: confirm all services are healthy, check logs for errors
+6. **Initialize the Product catalog** (first deployment only): see
+   [Product Catalog Initialization](#product-catalog-initialization)
 
 #### Pre-Production Checklist
 
@@ -2342,6 +2347,43 @@ application read (see Monitoring Scheduler Liveness for the monitoring
 credential). That endpoint reports `disabled` when the consumer is configured
 off and `unreachable` when Redis cannot provide a valid fresh heartbeat; both
 are HTTP 200 operational observations.
+
+### Product Catalog Initialization
+
+Automatic package resolution requires a ready Product catalog, which the first
+complete snapshot that a `sync_smelt_products` run publishes establishes
+(`docs/features/packages/product-catalog.md`, Catalog Readiness and
+Freshness). Readiness, once reached, is never lost, so this step applies only
+to the first deployment of an environment.
+
+Immediately after the first deployment, as a user with the `manage_fetchers`
+capability:
+
+1. Trigger `sync_smelt_products`:
+   `POST /api/v1/fetchers/sync_smelt_products/trigger` returns the `run_id`
+   of the queued run.
+2. Poll `GET /api/v1/fetchers/sync_smelt_products/runs/{run_id}` until
+   `status` is no longer `queued` or `running`. A run with
+   `status = success` has published the catalog. After any other outcome,
+   read the run's `error_message` and `error_detail`, resolve the cause, and
+   repeat from step 1.
+3. Only then trigger other fetchers manually, create Tickets, or associate or
+   refetch CVEs.
+
+The schedules leave time for this step: the discovery fetchers
+`sync_nvd_cves`, `sync_ghsa_advisories`, `sync_mitre_cves`, and
+`sync_kernel_cves` only record their cursor on their first successful run, so
+their scheduled runs ingest no CVE before their second successful run.
+
+If the step fails or is skipped, Sentinel keeps operating, and the catalog
+becomes ready with the first `sync_smelt_products` run that publishes a
+snapshot, scheduled (by default daily at 01:00 UTC) or triggered again. Until
+then, a manual package addition fails with `503 PRODUCT_CATALOG_NOT_READY`,
+and the packages that CVE ingestion resolves for a Ticket are not added. They
+are not added when the catalog becomes ready either; recover them with the
+operator recovery in `docs/features/packages/package-service.md` (Post-ingest
+CVE package resolution, Idempotency, delivery, and recovery), which requires
+the `triage_ticket` capability.
 
 ### Redis Durability, Memory, and Persistence
 
