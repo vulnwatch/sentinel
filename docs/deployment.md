@@ -88,10 +88,10 @@ Simpler development-stack commands use that same supported baseline. See
 `docs/features/platform/testing-strategy.md` (Image / Container Smoke Testing)
 for the full justification.
 
-PostgreSQL needs no server setting for Sentinel's JIT handling: every Sentinel
-connection disables the JIT compiler when it opens, whatever `jit` the server
-sets (`docs/conventions.md`, PostgreSQL JIT), so operators leave `jit` at its
-default.
+PostgreSQL needs no server setting for Sentinel's JIT handling: every
+connection of Sentinel's runtime process roles and CLI disables the JIT
+compiler when it opens, whatever `jit` the server sets (`docs/conventions.md`,
+PostgreSQL JIT), so operators leave `jit` at its default.
 
 ### Network Access (Staging/Production)
 

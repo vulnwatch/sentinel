@@ -20,10 +20,11 @@ logger = structlog.get_logger(__name__)
 
 
 def engine_connect_args() -> dict[str, Any]:
-    """The `connect_args` of every Sentinel database engine.
+    """The `connect_args` of the application engine (and of the test
+    harness engine that stands in for it).
 
     Each connection sends `jit = off` in its startup packet, so PostgreSQL
-    never JIT-compiles a Sentinel statement — see docs/conventions.md
+    never JIT-compiles an application statement — see docs/conventions.md
     (SQLAlchemy Conventions, PostgreSQL JIT). A session-level setting is
     required: asyncpg's type introspection pins `jit` per session, which
     overrides any server-level value.

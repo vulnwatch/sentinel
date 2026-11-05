@@ -117,12 +117,12 @@ _CURRENT_PHASE_DESCRIPTION = (
     "quality assurance, tests the update before publication) when the Ticket "
     "is not `resolved` and at least one track has that milestone `pending` "
     "or `overdue`. A phase that a track reports as `null` (not observable) "
-    "does not hold it back. `done` when the Ticket is `resolved`, or when no "
-    "phase is open and no track has a `null` milestone. `null` when no SLA "
-    "applies (Ticket `ignored` or "
-    "`duplicated`, or severity `none`), or when no phase is open, the Ticket "
-    "is not `resolved`, and a track has a `null` milestone. Unlike a track's "
-    "`current_phase`, it takes `triage` from the Ticket status."
+    "does not hold it back. `null` when no SLA applies (Ticket `ignored` or "
+    "`duplicated`, or severity `none`). Otherwise `done` when the Ticket is "
+    "`resolved`, or when no phase is open and no track has a `null` "
+    "milestone; `null` when no phase is open, the Ticket is not `resolved`, "
+    "and a track has a `null` milestone. Unlike a track's `current_phase`, "
+    "it takes `triage` from the Ticket status."
 )
 _CURRENT_PHASE_MILESTONE_DESCRIPTION = (
     "Milestone status of `current_phase`: `overdue` when the Ticket matches "

@@ -205,23 +205,26 @@ class TestJitDisabled:
         the roles that every authenticated request reads) by turning `jit`
         off and then restoring the session's previous value, which leaves a
         session-level setting that overrides the server's. With `jit = off`
-        sent at connection start, the session stays without JIT."""
+        sent at connection start (source `client`), the session stays
+        without JIT; the source `session` afterwards shows that the
+        introspection ran."""
         dedicated = create_async_engine(
             _engine.url, poolclass=NullPool, connect_args=engine_connect_args()
         )
-        jit = text("SELECT setting FROM pg_settings WHERE name = 'jit'")
+        jit = text("SELECT setting, source FROM pg_settings WHERE name = 'jit'")
         try:
             async with dedicated.connect() as connection:
-                before = await connection.scalar(jit)
+                before = tuple((await connection.execute(jit)).one())
                 values = await connection.scalar(
                     text("SELECT ARRAY['a', 'b']::varchar[]")
                 )
-                after = await connection.scalar(jit)
+                after = tuple((await connection.execute(jit)).one())
         finally:
             await dedicated.dispose()
 
         assert values == ["a", "b"]
-        assert (before, after) == ("off", "off")
+        assert before == ("off", "client")
+        assert after == ("off", "session")
 
 
 @pytest.fixture

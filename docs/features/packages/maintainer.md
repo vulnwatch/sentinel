@@ -95,7 +95,9 @@ time. The deadline is projected only on rows that satisfy a workbench
 classification; a submission milestone that is overdue on a track outside every
 classification (for example `FIXED` with delivery `pending`, or a track still in
 `ANALYSIS`) remains visible through the track's `milestones` in the Ticket
-package tree and the `overdue` filter of `GET /api/v1/tickets`.
+package tree and, unless the Ticket is `Resolved`
+(`docs/features/tickets/ticket-deadlines.md`, Ticket-Level Overdue Filter),
+the `overdue` filter of `GET /api/v1/tickets`.
 Correlated IBS request actions and their exact current states remain available
 through the Ticket
 [submission-request](ibs-submission-tracking.md#list-submission-requests) and

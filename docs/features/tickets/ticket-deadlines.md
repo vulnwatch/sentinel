@@ -355,10 +355,10 @@ before the next reconciliation does not change it
 ([Ticket-Level Overdue Filter](#ticket-level-overdue-filter)). An `Analyzed`
 Ticket without an open phase is `done` when no track has a `null` member, for
 example while an `AFFECTED` track whose actionable eligible Products are all
-released waits to become `FIXED`. It is `null` when a track has a `null` member, because
-the milestones do not show whether that track still has work in a later phase.
-In particular, an `Analyzed` Ticket without a CVE has a `null` current phase
-while it has an actionable track.
+released waits to become `FIXED`. It is `null` when a track has a `null`
+member, because the milestones do not show whether that track still has work
+in a later phase. In particular, an `Analyzed` Ticket without a CVE has a
+`null` current phase while it has an actionable track.
 
 `current_phase_milestone` is the status of the current phase at the Ticket
 level: `overdue` when the Ticket matches the `overdue` filter value of its
@@ -584,13 +584,13 @@ pagination; no Python post-filter may remove rows from a page. Track and
 Product existence checks use existence semantics, so they cannot duplicate a
 Ticket or inflate `total`.
 
-The Ticket status alone decides the current phase of every Ticket that is not
-`Analyzed`: `null` without an SLA, `triage` for `New` and `Analysis`, and
-`done` for `Resolved`. The SQL expressions therefore read the tracks only of
-an `Analyzed` Ticket for the current phase and the current due date, and only
-of an active Ticket for a later-phase `overdue` value, so that filtering,
-sorting, and counting grow with the active Tickets rather than with every
-Ticket in the database.
+The Ticket status and SLA alone decide the current phase of every Ticket that
+is not `Analyzed`: `null` without an SLA, otherwise `triage` for `New` and
+`Analysis`, and `done` for `Resolved`. The SQL expressions therefore read the
+tracks only of an `Analyzed` Ticket for the current phase and the current due
+date, and only of an active Ticket for a later-phase `overdue` value, so that
+filtering, sorting, and counting grow with the active Tickets rather than with
+every Ticket in the database.
 
 The overdue comparison depends on the current instant and therefore cannot be
 served by an index even if due dates were persisted. Persisting due dates would

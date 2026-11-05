@@ -761,12 +761,13 @@ for the required regression and structural test coverage.
 
 #### PostgreSQL JIT
 
-Every Sentinel database connection disables PostgreSQL's JIT compiler: the
-engine in `app/database.py` sends `jit = off` in the startup packet of each
-connection (`engine_connect_args()`), and the test harness engine uses the
-same arguments (`docs/features/platform/testing-strategy.md`, Engine:
-PostgreSQL Only). No PostgreSQL server setting is required, and none replaces
-the per-connection one.
+Every connection of the application engine disables PostgreSQL's JIT
+compiler: the engine in `app/database.py`, which every runtime process role and
+the CLI use, sends `jit = off` in the startup packet of each connection
+(`engine_connect_args()`), and the test harness engine uses the same arguments
+(`docs/features/platform/testing-strategy.md`, Engine: PostgreSQL Only). No
+PostgreSQL server setting is required, and none replaces the per-connection
+one. Alembic migrations use their own engine and keep the server's `jit`.
 
 **Rationale:** Sentinel's statements are short reads and writes. Some build
 large expression trees (for example the deadline projections of the Ticket
