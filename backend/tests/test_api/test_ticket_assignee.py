@@ -380,17 +380,17 @@ class TestRequestValidation:
             *[
                 # The expected assignee accepts only a UUID: a username is
                 # never resolved (api-spec.md, User Identifier Resolution).
+                # One request model validates both forms before routing.
                 pytest.param(
-                    {"user_id": user_id, "expected_assignee_id": value},
+                    {"user_id": None, "expected_assignee_id": value},
                     _expected_assignee_error(value, error_type),
-                    id=f"expected-{error_type}-{value!r}-with-{user_id!r}",
+                    id=f"expected-{error_type}-{value!r}",
                 )
                 for value, error_type in (
                     ("jdoe", "uuid_parsing"),
                     ("", "uuid_parsing"),
                     (42, "uuid_type"),
                 )
-                for user_id in ("jdoe", None)
             ],
         ],
     )
@@ -800,7 +800,6 @@ class TestErrorMappings:
         assert await ticket_row(db_session, target.id) == before
         assert await event_count(db_session, target.id) == 0
 
-    @pytest.mark.parametrize("assigned", [False, True], ids=["unassigned", "assigned"])
     async def test_uuid_of_no_user_is_a_mismatch_never_user_not_found(
         self,
         authenticated_client: AsyncClient,
@@ -808,14 +807,13 @@ class TestErrorMappings:
         db_session: AsyncSession,
         ticket_factory: Factory,
         target_user: TargetUser,
-        assigned: bool,
     ) -> None:
         """The expected assignee is compared, never looked up (api-spec.md,
         User Identifier Resolution): a UUID that identifies no user returns
-        `409 TICKET_ASSIGNEE_CHANGED`, not `404 USER_NOT_FOUND`."""
+        `409 TICKET_ASSIGNEE_CHANGED`, not `404 USER_NOT_FOUND`. The
+        unassigned case is proven at the service tier."""
         target: Ticket = await ticket_factory(
-            status=(TicketStatus.ANALYSIS if assigned else TicketStatus.NEW).value,
-            assignee_id=(await target_user()).id if assigned else None,
+            status=TicketStatus.ANALYSIS.value, assignee_id=(await target_user()).id
         )
         assignee = await target_user()
         before = await ticket_row(db_session, target.id)
