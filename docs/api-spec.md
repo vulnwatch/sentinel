@@ -883,7 +883,7 @@ Error codes are grouped by prefix:
 |--------|--------|----------|
 | `VALIDATION_*` | Input validation | `VALIDATION_ERROR` |
 | `AUTH_*` | Authentication and authorization | `AUTH_NOT_AUTHENTICATED`, `AUTH_INSUFFICIENT_PERMISSION`, `AUTH_API_KEY_NOT_FOUND`, `AUTH_API_KEY_NAME_CONFLICT`, `AUTH_API_KEY_NAME_INVALID`, `AUTH_API_KEY_INVALID_EXPIRY`, `AUTH_SESSION_REQUIRED`, `AUTH_INVALID_CREDENTIALS`, `AUTH_ACCOUNT_LOCKED`, `AUTH_LOGOUT_NOT_APPLICABLE`, `AUTH_CROSS_ORIGIN_REJECTED`; reserved: `AUTH_SSO_FAILED`, `AUTH_SSO_USER_NOT_FOUND`, `AUTH_SSO_USER_INACTIVE`, `AUTH_SSO_STATE_INVALID`, `AUTH_SSO_DISABLED` |
-| `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_INVALID_TRANSITION`, `TICKET_NOT_MUTABLE`, `TICKET_NOT_CONFIDENTIAL`, `TICKET_DUPLICATE_TARGET_DUPLICATED`, `TICKET_DUPLICATE_CONCURRENT_MODIFICATION`, `TICKET_SELF_DUPLICATE`, `TICKET_CVE_CONFLICT`, `TICKET_CVE_ALREADY_SET`, `TICKET_SEVERITY_DERIVED`, `TICKET_ASSIGNEE_NOT_ELIGIBLE`, `TICKET_ASSIGNEE_INACTIVE`, `TICKET_ASSIGNEE_NOT_CALLER` |
+| `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_INVALID_TRANSITION`, `TICKET_NOT_MUTABLE`, `TICKET_NOT_CONFIDENTIAL`, `TICKET_DUPLICATE_TARGET_DUPLICATED`, `TICKET_DUPLICATE_CONCURRENT_MODIFICATION`, `TICKET_SELF_DUPLICATE`, `TICKET_CVE_CONFLICT`, `TICKET_CVE_ALREADY_SET`, `TICKET_SEVERITY_DERIVED`, `TICKET_ASSIGNEE_NOT_ELIGIBLE`, `TICKET_ASSIGNEE_INACTIVE`, `TICKET_ASSIGNEE_NOT_CALLER`, `TICKET_ASSIGNEE_CHANGED` |
 | `CVE_*` | CVE operations | `CVE_NOT_FOUND`, `CVE_FETCH_FAILED`, `CVE_INVALID_SOURCE`, `CVE_INVALID_FORMAT` |
 | `CVSS_*` | CVSS assessment and default-version operations | `CVSS_INVALID_VECTOR`, `CVSS_ASSESSMENT_NOT_FOUND`, `CVSS_RECALC_ALREADY_IN_PROGRESS`, `CVSS_PREVIEW_TIMEOUT` |
 | `RESOURCE_*` | Generic resource errors | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_NOT_EDITABLE` |
@@ -1420,6 +1420,15 @@ The special filter value `none` (used in query parameters like `assignee`)
 is not subject to user resolution — it is handled as a literal keyword
 before resolution is attempted.
 
+`expected_assignee_id` of `PATCH /api/v1/tickets/{ticket_id}/assignee`
+([tickets.md](features/tickets/tickets.md#assign-ticket)) is not subject to
+user resolution either. It identifies no user to act on: it states the
+assignee that the client expects the Ticket to have, which Sentinel compares
+with the `id` of the current assignee. It therefore accepts only a UUID, which
+is never looked up: a username fails validation, and a UUID that identifies no
+user never produces `USER_NOT_FOUND` but simply differs from the current
+assignee.
+
 `GET /api/v1/users/me` addresses the authenticated caller and takes
 precedence over `GET /api/v1/users/{user}`. The username `me` is therefore
 reserved and never assigned (`docs/conventions.md`, Username Format), so the
@@ -1557,6 +1566,11 @@ semantics that `null` may carry beyond "clear the value" (e.g.,
 resetting a computed value to automatic calculation, reverting to a
 system default). The partial update semantics defined here are the
 baseline; domain-specific meaning is additive.
+
+`expected_assignee_id` of `PATCH /api/v1/tickets/{ticket_id}/assignee` is not
+a field to change but a condition of the request, so the table above does not
+apply to it: omitted, it applies no check, and `null` expects a Ticket without
+an assignee ([tickets.md](features/tickets/tickets.md#assign-ticket)).
 
 Implementation note: a request schema defaults every member whose omission
 differs from every value it accepts, including every optional PATCH member,

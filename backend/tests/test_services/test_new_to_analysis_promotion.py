@@ -4,7 +4,7 @@
 Every code path that sets `assignee_id` on a `New` Ticket produces exactly
 one system `status_change` (`old_value = "New"`, `new_value = "Analysis"`,
 `user_id = NULL`) immediately after its `assignment` event
-(ticket-service.md, `assign_ticket` step 9; ticket-mutations.md,
+(ticket-service.md, `assign_ticket` step 10; ticket-mutations.md,
 Auto-Assignment Rule and `auto_assign_actor()` step 7; tickets.md,
 Architectural Invariant). The paths are `assign_ticket()` (explicit
 assignment) and every existing consumer mutation that reaches

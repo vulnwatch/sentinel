@@ -6,9 +6,10 @@ Owning specifications:
 - docs/features/tickets/ticket-service.md (Transaction ownership; Caller
   category and Ticket accessibility; Operability guard; Concurrency
   control; `assign_ticket`; Architectural Test Requirement 2, 3, 4
-  (`assign_ticket()` path), and 15 (single-session part)).
-- docs/features/tickets/tickets.md (Reassignment; Architectural
-  Invariant).
+  (`assign_ticket()` path), 15 (single-session part), and 23
+  (`assign_ticket()` single-session part)).
+- docs/features/tickets/tickets.md (Reassignment, including Expected
+  assignee; Architectural Invariant).
 - docs/features/tickets/ticket-audit-log.md (Event Type Contract:
   `assignment`, `status_change`; Canonical Mutation and No-Event Matrix:
   Direct assignment or reassignment; Cross-Event Ordering, Locking, and
@@ -18,9 +19,9 @@ Owning specifications:
   Accessibility: Locked mutations).
 
 The independent-session tests (Ticket and target-User lock serialization,
-the winner/loser old value of audit Testing Requirement 23, and the
-locked-current accessibility races) live in
-`tests/test_services/test_assign_ticket_atomicity.py`.
+the winner/loser old value of audit Testing Requirement 23, the
+expected-assignee races, and the locked-current accessibility races) live
+in `tests/test_services/test_assign_ticket_atomicity.py`.
 
 Not reachable, hence not tested: the converse self-loss case of
 Architectural Test Requirement 15 (an authorized mutation that itself
@@ -42,6 +43,7 @@ from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Any
 
 import pytest
+from pydantic import MISSING
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -69,6 +71,7 @@ from app.services.ticket_convergence_registry import (
     pending_ticket_convergence_effects,
 )
 from app.services.ticket_service import (
+    AssigneeChangedError,
     AssigneeInactiveError,
     AssigneeNotEligibleError,
     assign_ticket,
@@ -93,7 +96,7 @@ pytest_plugins = ["tests.support.ticket_mutation_fixtures"]
 """Provides the shared `va_user` and `tree` fixtures."""
 
 PROMOTION = status_event(TicketStatus.NEW.value, TicketStatus.ANALYSIS.value)
-"""The explicit system `New -> Analysis` event of step 9."""
+"""The explicit system `New -> Analysis` event of step 10."""
 
 
 # ---------------------------------------------------------------------------
@@ -122,16 +125,19 @@ async def _assign(
     actor: User,
     *,
     scope: Scope = Scope.ALL,
+    expected: uuid.UUID | MISSING | None = MISSING,
     evaluation_date: date | None = EVAL,
 ) -> Ticket:
     """Call the service as an API handler would (fixed `EVAL` by default;
-    `None` omits the date)."""
+    `None` omits the date). `expected` is the expected assignee, omitted
+    (`MISSING`) by default."""
     return await assign_ticket(
         db,
         ticket_id=ticket_id,
         assignee=target,
         acting_user_id=actor.id,
         caller=TicketCaller.authenticated(actor.id, scope),
+        expected_assignee_id=expected,
         evaluation_date=evaluation_date,
     )
 
@@ -187,6 +193,7 @@ async def _assert_rejected(
     target: str,
     actor: User,
     scope: Scope = Scope.ALL,
+    expected: uuid.UUID | MISSING | None = MISSING,
 ) -> BaseException:
     """Call the service and assert the zero-side-effect contract of a
     rejected call: the expected error, no write, no reconciliation, no
@@ -196,7 +203,7 @@ async def _assert_rejected(
     before = await _state(db, ticket_id)
 
     with StatementRecorder(db) as recorder, pytest.raises(error_type) as raised:
-        await _assign(db, ticket_id, target, actor, scope=scope)
+        await _assign(db, ticket_id, target, actor, scope=scope, expected=expected)
 
     assert recorder.writes() == []
     assert reconcile.calls == []
@@ -220,7 +227,7 @@ class TestExplicitPromotion:
         va_user: VAUser,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Step 9 creates the system `New -> Analysis` event before the one
+        """Step 10 creates the system `New -> Analysis` event before the one
         reconciliation, which finds the Ticket already in `Analysis` and
         (no gate being met) adds nothing. The acting user is an eligible
         VA on an unassigned Ticket: `auto_assign_actor()` is never used."""
@@ -378,6 +385,207 @@ class TestIdempotency:
         assert await _state(db_session, ticket.id) == (TicketStatus.ANALYSIS, target.id)
         assert await ticket_events(db_session, ticket) == first
         assert pending_ticket_convergence_effects(db_session) == ()
+
+
+# ---------------------------------------------------------------------------
+# ATR 23: expected assignee
+# ---------------------------------------------------------------------------
+
+
+async def _expectation(kind: str, va_user: VAUser) -> uuid.UUID | None:
+    """An expected assignee that is not the target: none (`None`), another
+    active VA's UUID, or a UUID that identifies no user."""
+    if kind == "none":
+        return None
+    if kind == "other":
+        return (await va_user()).id
+    return uuid.uuid7()
+
+
+@pytest.mark.integration
+class TestExpectedAssignee:
+    @pytest.mark.parametrize("current", ["none", "assigned"])
+    async def test_matching_expectation_assigns_as_an_omitted_one(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+        current: str,
+    ) -> None:
+        """`None` for an unassigned `New` Ticket, the assignee's UUID for an
+        assigned one: the request assigns exactly as without an
+        expectation, including the `New -> Analysis` promotion."""
+        actor = await va_user()
+        target = await va_user()
+        previous = await va_user() if current == "assigned" else None
+        ticket = await cveless(
+            ticket_factory,
+            status=TicketStatus.NEW if previous is None else TicketStatus.ANALYSIS,
+            severity=None,
+            assignee_id=previous.id if previous is not None else None,
+        )
+
+        await _assign(
+            db_session,
+            ticket.id,
+            str(target.id),
+            actor,
+            expected=previous.id if previous is not None else None,
+        )
+
+        assert await _state(db_session, ticket.id) == (TicketStatus.ANALYSIS, target.id)
+        assert await ticket_events(db_session, ticket) == [
+            _assignment(actor, previous, target),
+            *([PROMOTION] if previous is None else []),
+        ]
+
+    @pytest.mark.parametrize(
+        ("current", "expected"),
+        [
+            pytest.param("none", "other", id="unassigned-expects-a-user"),
+            pytest.param("none", "unknown", id="unassigned-expects-an-unknown-uuid"),
+            pytest.param("assigned", "none", id="assigned-expects-none"),
+            pytest.param("assigned", "other", id="assigned-expects-another-user"),
+            pytest.param("assigned", "unknown", id="assigned-expects-an-unknown-uuid"),
+        ],
+    )
+    async def test_mismatch_raises_assignee_changed_with_no_effect(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+        tree: TreeBuilder,
+        monkeypatch: pytest.MonkeyPatch,
+        current: str,
+        expected: str,
+    ) -> None:
+        """No write, event, reconciliation, or convergence registration; an
+        unassigned `New` Ticket stays `New`, and an assigned Ticket whose
+        gates are met above its status is not promoted."""
+        actor = await va_user()
+        target = await va_user()
+        if current == "none":
+            ticket = await cveless(
+                ticket_factory, status=TicketStatus.NEW, severity=None
+            )
+        else:
+            ticket = await cveless(ticket_factory, assignee_id=(await va_user()).id)
+            await tree_for(TicketStatus.ANALYZED, ticket, tree)
+
+        await _assert_rejected(
+            db_session,
+            monkeypatch,
+            AssigneeChangedError,
+            ticket_id=ticket.id,
+            target=str(target.id),
+            actor=actor,
+            expected=await _expectation(expected, va_user),
+        )
+
+    async def test_rejection_adds_no_statement_under_the_ticket_lock(
+        self, db_session: AsyncSession, ticket_factory: TicketFactory, va_user: VAUser
+    ) -> None:
+        """The expectation is compared with the row that the lock returned:
+        after the Ticket `FOR UPDATE`, the only statement is the visibility
+        decision, and no previous-assignee username is read."""
+        actor = await va_user()
+        target = await va_user()
+        ticket = await cveless(ticket_factory, assignee_id=(await va_user()).id)
+
+        with (
+            StatementRecorder(db_session) as recorder,
+            pytest.raises(AssigneeChangedError),
+        ):
+            await _assign(db_session, ticket.id, str(target.id), actor, expected=None)
+
+        statements = recorder.statements
+        ticket_lock = next(
+            i
+            for i, s in enumerate(statements)
+            if "FROM ticket" in s and "FOR UPDATE" in s
+        )
+        assert len(recorder.row_locks()) == 2
+        assert len(statements) == ticket_lock + 2
+        assert 'FROM "user"' not in statements[-1]
+
+    @pytest.mark.parametrize("expected", ["none", "other", "unknown"])
+    async def test_target_already_the_assignee_is_the_no_op_whatever_the_expectation(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+        tree: TreeBuilder,
+        monkeypatch: pytest.MonkeyPatch,
+        expected: str,
+    ) -> None:
+        """The step-6 no-op precedes the expectation, so a retry of an
+        applied request succeeds: no write, event, or reconciliation, even
+        with gates met above the status."""
+        actor = await va_user()
+        target = await va_user()
+        ticket = await cveless(ticket_factory, assignee_id=target.id)
+        await tree_for(TicketStatus.ANALYZED, ticket, tree)
+        stale = await _expectation(expected, va_user)
+        reconcile = _Spy(monkeypatch, "reconcile_ticket_status")
+
+        with StatementRecorder(db_session) as recorder:
+            result = await _assign(
+                db_session, ticket.id, str(target.id), actor, expected=stale
+            )
+
+        assert result.assignee_id == target.id
+        assert recorder.writes() == []
+        assert reconcile.calls == []
+        assert await _state(db_session, ticket.id) == (TicketStatus.ANALYSIS, target.id)
+        assert await ticket_events(db_session, ticket) == []
+        assert pending_ticket_convergence_effects(db_session) == ()
+
+    @pytest.mark.parametrize(
+        ("case", "error_type"),
+        [
+            pytest.param("inaccessible", TicketNotFoundError, id="not-found"),
+            pytest.param("ignored", TicketNotMutableError, id="not-mutable"),
+            pytest.param("absent", UserNotFoundError, id="user-not-found"),
+            pytest.param("inactive", AssigneeInactiveError, id="inactive"),
+            pytest.param("bot", AssigneeNotEligibleError, id="not-eligible"),
+        ],
+    )
+    async def test_every_other_error_precedes_assignee_changed(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+        monkeypatch: pytest.MonkeyPatch,
+        case: str,
+        error_type: type[Exception],
+    ) -> None:
+        """An assigned Ticket and the stale expectation `None`: accessibility,
+        operability, and each target error keep their outcome."""
+        restricted = case == "inaccessible"
+        actor = await va_user(
+            roles=(Role.RESTRICTED_ANALYST,)
+            if restricted
+            else (Role.VULNERABILITY_ANALYST,)
+        )
+        target = await _target(case if case in TARGET_KINDS else "eligible", va_user)
+        ticket = await cveless(
+            ticket_factory,
+            status=TicketStatus.IGNORED if case == "ignored" else TicketStatus.ANALYSIS,
+            severity=None,
+            is_confidential=restricted,
+            assignee_id=(await va_user()).id,
+        )
+
+        await _assert_rejected(
+            db_session,
+            monkeypatch,
+            error_type,
+            ticket_id=ticket.id,
+            target=target,
+            actor=actor,
+            scope=Scope.NON_CONFIDENTIAL if restricted else Scope.ALL,
+            expected=None,
+        )
 
 
 # ---------------------------------------------------------------------------
