@@ -76,11 +76,13 @@ stream. This keeps the INFO stream
 focused on lifecycle events and operator-actionable signals, while
 per-item detail remains available at DEBUG for drill-down diagnostics.
 
-`LOG_LEVEL` (see Configuration) controls the minimum level emitted, for
-**all** loggers uniformly — application code and third-party libraries
-alike. There are no per-logger overrides, no conditional pins, and no
-interaction with the `DEBUG` setting (see "Relationship with `DEBUG`"
-below).
+`LOG_LEVEL` (see Configuration) controls the minimum level emitted for
+every logger — application code and third-party libraries alike — with
+one fixed exception: at `LOG_LEVEL=INFO`, the `sqlalchemy` logger
+hierarchy emits only `WARNING` and above, because SQLAlchemy reports
+per-statement detail at `INFO` (see "SQLAlchemy Echo"). There are no
+configurable per-logger overrides and no interaction with the `DEBUG`
+setting (see "Relationship with `DEBUG`" below).
 
 ### Startup Validation
 
@@ -114,11 +116,12 @@ third-party loggers (notably `sqlalchemy.engine` and `httpcore`) emit
 sensitive data (SQL result rows, HTTP connection traces including
 response headers). This is accepted as an operator-initiated action: the
 operator explicitly requests maximum verbosity and accepts the
-consequences. SQL statements and request URLs are not limited to
-`DEBUG`: at `INFO`, the default level, `sqlalchemy.engine` logs every SQL
-statement (its bound parameters are hidden because the engine is created
-with `hide_parameters=True`) and `httpx` logs the method, URL, and status
-of every request (see "Integration with Third-Party Loggers"). See
+consequences. `DEBUG` also logs every SQL statement, whose bound
+parameters are hidden because the engine is created with
+`hide_parameters=True`; below `DEBUG`, SQLAlchemy logs no statements (see
+"SQLAlchemy Echo"). Request URLs are not limited to `DEBUG`: at `INFO`,
+the default level, `httpx` logs the method, URL, and status of every
+request (see "Integration with Third-Party Loggers"). See
 "Secrets and PII Discipline" below and `docs/deployment.md` (Log
 Aggregation) for the corresponding operational guidance. No code-level safety mechanism restricts
 `LOG_LEVEL` — the protection is operational, not architectural. The
@@ -282,13 +285,13 @@ Scope).
 
 ## Integration with Third-Party Loggers
 
-All third-party loggers captured via the stdlib `logging` bridge (D1)
-follow `LOG_LEVEL` unconditionally — no pins, no conditional levels.
-`LOG_LEVEL` controls every logger uniformly:
+All third-party loggers captured via the stdlib `logging` bridge
+(Principle 1) follow `LOG_LEVEL`, except the `sqlalchemy` hierarchy at
+`LOG_LEVEL=INFO` (see "SQLAlchemy Echo" below):
 
 | Logger | Typical output at `DEBUG` | PII/credential risk |
 |--------|----------------------------|----------------------|
-| `sqlalchemy.engine` | SQL statements at `INFO`, with bound parameters hidden (`hide_parameters=True`); result rows at `DEBUG` | Yes — result rows may include credentials or personal data |
+| `sqlalchemy` (every child logger, including `sqlalchemy.engine`) | SQL statements, with bound parameters hidden (`hide_parameters=True`), transaction boundaries, result rows, mapper configuration, and connection pool events; none of them below `DEBUG` | Yes — result rows may include credentials or personal data |
 | `httpx` | One `HTTP Request:` line per request with the method, full URL, and response status, emitted at `INFO` and therefore also at the default level | Yes — URLs may embed tokens |
 | `httpcore` | Connection and request/response traces, including response headers | Yes — headers may carry credentials |
 | `celery` | Task execution details | Low |
@@ -317,6 +320,42 @@ Per-logger override env vars (e.g., `LOG_LEVEL_SQLALCHEMY`) are not
 currently specified. If production experience shows
 the need for "verbose httpx only, quiet everything else", per-logger
 vars can be added without breaking changes.
+
+### SQLAlchemy Echo
+
+SQLAlchemy uses logger levels as echo switches rather than as
+severities. At `INFO`, `sqlalchemy.engine` logs every SQL statement, a
+second record for its parameters, and every transaction boundary, and
+the ORM and connection pool loggers report mapper configuration and
+connection lifecycle, including connection invalidation and its reason;
+`DEBUG` adds result rows. This is high-volume per-item detail in the
+sense of Log Levels: it grows with database work, and a single API read
+can log a statement of tens of kilobytes. At `INFO` it would make up
+almost the whole log, and on a platform that rotates the log by size
+(see `docs/deployment.md`, Log Aggregation) it would push the lifecycle
+and security events out of the log within minutes.
+
+The pipeline therefore sets the level of the `sqlalchemy` parent logger
+from `LOG_LEVEL`; its child loggers have no level of their own and defer
+to it:
+
+| `LOG_LEVEL` | Minimum level of the `sqlalchemy` hierarchy |
+|-------------|---------------------------------------------|
+| `DEBUG` | `DEBUG` |
+| `INFO` | `WARNING` |
+| `WARNING`, `ERROR`, `CRITICAL` | Same as `LOG_LEVEL` |
+
+The level is explicit, so the result does not depend on whether
+SQLAlchemy is imported before or after the pipeline is configured.
+SQLAlchemy's own `WARNING` and `ERROR` records are still emitted
+whenever `LOG_LEVEL` admits them, and a database failure that reaches
+Sentinel's code is logged as its owning specification requires.
+
+SQL statements are therefore logged only at `LOG_LEVEL=DEBUG`, together
+with the rest of the `DEBUG` output. No setting shows statements at a
+lower level: statement echo is a time-bounded diagnostic, governed by
+the `LOG_LEVEL=DEBUG` operational note above, and no operational
+procedure requires it at another level.
 
 ### Scope of this pipeline
 
@@ -421,10 +460,10 @@ third-party loggers captured by the stdlib bridge — notably
 sensitive data when `LOG_LEVEL=DEBUG`. This is accepted as an explicit
 operator choice: setting `LOG_LEVEL=DEBUG` is a deliberate request for
 maximum verbosity, and the operator accepts the PII/credential exposure
-risk. At `INFO`, the default level, `sqlalchemy.engine` logs SQL statements
-without their bound parameters (`hide_parameters=True`), while `httpx` logs
-the full URL of every request, so a credential embedded in a request URL
-would be logged without any operator choice. The Redaction Processor masks
+risk. At `INFO`, the default level, `sqlalchemy` logs neither statements
+nor result rows (see "SQLAlchemy Echo"), while `httpx` logs the full URL
+of every request, so a credential embedded in a request URL would be
+logged without any operator choice. The Redaction Processor masks
 only the URL's userinfo and exact configured secret values (see Redaction
 Processor); any other credential in a URL path or query is logged as is.
 See `docs/deployment.md` (Log Aggregation) for the corresponding
@@ -502,7 +541,7 @@ logging configuration are not covered.
 
 | Env Var | Type | Default | Notes |
 |---------|------|---------|-------|
-| `LOG_LEVEL` | enum | `INFO` | One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` (case-insensitive). Controls all loggers (application and third-party) uniformly. Fully independent of `DEBUG` — see "Relationship with `DEBUG`" above. Invalid values cause the process to fail fast at startup (plain-text error on stderr). |
+| `LOG_LEVEL` | enum | `INFO` | One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` (case-insensitive). Controls all loggers (application and third-party); at `INFO`, the `sqlalchemy` hierarchy emits only `WARNING` and above, so SQL statements are logged only at `DEBUG` — see "SQLAlchemy Echo" above. Fully independent of `DEBUG` — see "Relationship with `DEBUG`" above. Invalid values cause the process to fail fast at startup (plain-text error on stderr). |
 | `LOG_FORMAT` | enum | `auto` | One of `auto`, `json`, `console` (case-insensitive). `json` selects the structured JSON renderer (production/staging). `console` selects the human-readable colorized renderer (local development). `auto` selects the format based on `sys.stdout.isatty()`: `True` → `console`, `False` → `json`. An explicit `LOG_FORMAT=json` or `LOG_FORMAT=console` always overrides auto-detection. Invalid values cause the process to fail fast at startup (plain-text error on stderr). |
 
 No process-role variable is defined. Process/container identification
@@ -542,6 +581,13 @@ Logging configuration and correlation-ID propagation are tested as follows:
 - **Startup validation**: unit tests verifying that an invalid
   `LOG_LEVEL` or `LOG_FORMAT` value causes the process to fail fast
   with a plain-text stderr message.
+- **SQLAlchemy echo**: unit tests verifying the level of the
+  `sqlalchemy` hierarchy for every `LOG_LEVEL` value, and that at
+  `INFO` its records below `WARNING` are dropped while its warnings,
+  Sentinel's own `INFO` records, and the access log are emitted; and an
+  integration test verifying that a statement executed through a real
+  engine produces no `sqlalchemy` record at `INFO` and is logged at
+  `DEBUG`.
 - **Correlation ID propagation**: a dedicated test verifying the ASGI
   middleware adopts the client-supplied `X-Request-ID` when it passes
   validation and generates a UUIDv7 otherwise, and that the value appears both

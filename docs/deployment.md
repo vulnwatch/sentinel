@@ -2642,9 +2642,12 @@ responsibility.
 
 Setting `LOG_LEVEL=DEBUG` causes third-party loggers (notably
 `sqlalchemy.engine` and `httpcore`) to emit sensitive data — SQL result
-rows, HTTP connection traces including response headers. SQL statements
-(without bound parameters) and full request URLs are logged by
-`sqlalchemy.engine` and `httpx` already at the default `INFO` level. See
+rows, HTTP connection traces including response headers. It also logs
+every SQL statement (without bound parameters), which SQLAlchemy does
+not log at the default `INFO` level; their volume can push every other
+event out of a size-rotated log within minutes
+(`docs/features/platform/logging.md`, SQLAlchemy Echo). Full request
+URLs are logged by `httpx` already at `INFO`. See
 `docs/features/platform/logging.md` (Secrets and PII Discipline) for the
 full policy. Operators should use
 `LOG_LEVEL=DEBUG` in production only for time-bounded diagnostics and

@@ -79,7 +79,7 @@ only the variable.
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `LOG_LEVEL` | enum | `INFO` | Log verbosity (`DEBUG`\|`INFO`\|`WARNING`\|`ERROR`\|`CRITICAL`), applies to all loggers uniformly | `docs/features/platform/logging.md` |
+| `LOG_LEVEL` | enum | `INFO` | Log verbosity (`DEBUG`\|`INFO`\|`WARNING`\|`ERROR`\|`CRITICAL`), applies to all loggers; at `INFO`, SQLAlchemy emits only warnings and errors, so SQL statements are logged only at `DEBUG` | `docs/features/platform/logging.md` |
 | `LOG_FORMAT` | enum | `auto` | Log output format (`auto`\|`json`\|`console`) | `docs/features/platform/logging.md` |
 
 `LOG_LEVEL` controls all logging and is independent of `DEBUG` — see

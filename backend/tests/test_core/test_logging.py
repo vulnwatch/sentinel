@@ -13,6 +13,9 @@ from dataclasses import dataclass
 
 import pytest
 import structlog
+from sqlalchemy import URL, text
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.config import Settings
 from app.core import logging as core_logging
@@ -202,9 +205,19 @@ class TestConfigureLoggingConsole:
         assert "console_event" in line
 
 
+# Loggers through which SQLAlchemy echoes statements, mapper configuration,
+# and connection pool events.
+_SQLALCHEMY_CHILD_LOGGERS = (
+    "sqlalchemy.engine.Engine",
+    "sqlalchemy.orm.mapper.Mapper",
+    "sqlalchemy.pool.impl.AsyncAdaptedQueuePool",
+)
+
+
 @pytest.mark.unit
 class TestConfigureLoggingLevel:
-    """LOG_LEVEL controls all loggers uniformly; no per-logger pins."""
+    """LOG_LEVEL controls all loggers; the "sqlalchemy" hierarchy emits
+    only warnings and above at INFO (logging.md, SQLAlchemy Echo)."""
 
     def test_debug_below_configured_level_is_suppressed(self) -> None:
         stream = _FakeStream(isatty=False)
@@ -237,22 +250,53 @@ class TestConfigureLoggingLevel:
 
         for name in _THIRD_PARTY_LOGGERS:
             logger = logging.getLogger(name)
-            assert logger.level == logging.NOTSET
+            if name != "sqlalchemy":
+                assert logger.level == logging.NOTSET
+            assert logger.handlers == []
             assert logger.propagate is True
 
-    def test_sqlalchemy_parent_logger_does_not_cap_engine_level(self) -> None:
-        """SQLAlchemy pins the parent "sqlalchemy" logger to WARNING at
-        import time; it must also be reset so it doesn't cap the
-        effective level of "sqlalchemy.engine" below the configured
-        LOG_LEVEL (see docs/features/platform/logging.md, third-party
-        logger integration)."""
-        stream = _FakeStream(isatty=False)
-        settings = _settings(log_level="DEBUG")
-        configure_logging(settings, stream=stream)
+    @pytest.mark.parametrize(
+        ("log_level", "expected"),
+        [
+            ("DEBUG", logging.DEBUG),
+            ("INFO", logging.WARNING),
+            ("WARNING", logging.WARNING),
+            ("ERROR", logging.ERROR),
+            ("CRITICAL", logging.CRITICAL),
+        ],
+    )
+    def test_sqlalchemy_hierarchy_follows_log_level_except_at_info(
+        self, log_level: str, expected: int
+    ) -> None:
+        """The "sqlalchemy" parent carries an explicit level (logging.md,
+        SQLAlchemy Echo), which SQLAlchemy's import-time default for a
+        parent without a level cannot replace; its children inherit it."""
+        configure_logging(_settings(log_level=log_level), stream=_FakeStream())
 
-        assert (
-            logging.getLogger("sqlalchemy.engine").getEffectiveLevel() == logging.DEBUG
+        assert logging.getLogger("sqlalchemy").level == expected
+        for name in _SQLALCHEMY_CHILD_LOGGERS:
+            assert logging.getLogger(name).getEffectiveLevel() == expected
+
+    def test_at_info_sqlalchemy_info_is_dropped_and_other_records_emitted(
+        self,
+    ) -> None:
+        stream = _FakeStream(isatty=False)
+        configure_logging(_settings(log_level="INFO"), stream=stream)
+
+        for name in _SQLALCHEMY_CHILD_LOGGERS:
+            logging.getLogger(name).info("SELECT tickets.id FROM tickets")
+        logging.getLogger("sqlalchemy.pool.impl.AsyncAdaptedQueuePool").warning(
+            "pool warning"
         )
+        structlog.get_logger("app.test.lifecycle").info("login_failed")
+        logging.getLogger("uvicorn.access").info("GET /api/v1/tickets HTTP/1.1 200")
+
+        records = [json.loads(line) for line in stream.getvalue().splitlines()]
+        assert [(record["logger"], record["event"]) for record in records] == [
+            ("sqlalchemy.pool.impl.AsyncAdaptedQueuePool", "pool warning"),
+            ("app.test.lifecycle", "login_failed"),
+            ("uvicorn.access", "GET /api/v1/tickets HTTP/1.1 200"),
+        ]
 
     def test_third_party_logger_captured_in_same_pipeline(self) -> None:
         stream = _FakeStream(isatty=False)
@@ -270,6 +314,51 @@ class TestConfigureLoggingLevel:
         assert record["level"] == "info"
         assert record["app"] == "sentinel-third-party"
         assert record["timestamp"].endswith("Z")
+
+
+async def _sqlalchemy_events_of_select_one(url: URL, log_level: str) -> list[str]:
+    """Configure the pipeline at `log_level`, execute `SELECT 1` through a
+    new engine, and return the events of the `sqlalchemy` records.
+
+    The engine is created after the pipeline is configured, because a
+    connection decides whether to echo when it is created; like the
+    application engine, it hides bound parameters.
+    """
+    stream = _FakeStream(isatty=False)
+    configure_logging(_settings(log_level=log_level), stream=stream)
+    engine = create_async_engine(url, poolclass=NullPool, hide_parameters=True)
+    try:
+        async with engine.connect() as connection:
+            (await connection.execute(text("SELECT 1"))).all()
+    finally:
+        await engine.dispose()
+    records = [json.loads(line) for line in stream.getvalue().splitlines()]
+    return [
+        record["event"]
+        for record in records
+        if record["logger"].split(".")[0] == "sqlalchemy"
+    ]
+
+
+@pytest.mark.integration
+class TestSqlalchemyEchoWithRealEngine:
+    """A statement executed through a real engine reaches the log only at
+    LOG_LEVEL=DEBUG (logging.md, SQLAlchemy Echo)."""
+
+    async def test_statement_is_not_logged_at_info(
+        self,
+        _engine: AsyncEngine,  # noqa: PT019 — value used below (.url), not just for setup
+    ) -> None:
+        assert await _sqlalchemy_events_of_select_one(_engine.url, "INFO") == []
+
+    async def test_statement_is_logged_at_debug(
+        self,
+        _engine: AsyncEngine,  # noqa: PT019 — value used below (.url), not just for setup
+    ) -> None:
+        events = await _sqlalchemy_events_of_select_one(_engine.url, "DEBUG")
+
+        assert "SELECT 1" in events
+        assert "Row (1,)" in events
 
 
 @pytest.mark.unit
