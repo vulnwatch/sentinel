@@ -670,12 +670,12 @@ of the first instead of replacing them. A request whose target already is the
 assignee remains the idempotent success whatever its expectation, and a
 request without an expectation replaces whichever assignee the Ticket has.
 Reopen Ticket and Revert Duplicate Status accept no expectation: apart from
-these exits, no operation changes the assignee of an `Ignored` or
+leaving that status, no operation changes the assignee of an `Ignored` or
 `Duplicated` Ticket, so a client that shows that status also shows the
 assignee that the exit replaces. An assignee that the client did not show is
-replaced only when the Ticket left that status and returned to it in between,
-with another user becoming its assignee on the exit; the audit trail records
-both replacements, and this residual is accepted.
+replaced only when the Ticket left that status and returned to it in between
+and its assignee changed meanwhile; the audit trail records every replacement,
+and this residual is accepted.
 
 **System-initiated unassignment**: tickets are automatically unassigned
 in these scenarios:
@@ -2004,15 +2004,11 @@ the given UUID:
 - `expected_assignee_id` (string | null, optional): the assignee that the
   client expects the Ticket to have (see [Reassignment](#reassignment),
   Expected assignee): the `id` of the `assignee` that the client last read, or
-  JSON `null` for a Ticket that it read without an assignee. When present and
-  different from the locked-current assignee, the request fails with `409
-  TICKET_ASSIGNEE_CHANGED`, with no write and no audit event, unless it is an
-  idempotent success: the target already is the assignee, or `user_id` is
-  `null` and the Ticket has no assignee. When omitted, no check applies. It
-  accepts only a UUID, which is compared without being resolved
-  (`docs/api-spec.md`, User Identifier Resolution): a username or any other
-  value produces the global `422 VALIDATION_ERROR`, and a UUID that identifies
-  no user is an ordinary mismatch
+  JSON `null` for a Ticket that it read without an assignee. When omitted, no
+  check applies. It accepts only a UUID, which is compared by value and never
+  resolved (`docs/api-spec.md`, User Identifier Resolution): a username or any
+  other value produces the global `422 VALIDATION_ERROR`, and a UUID that
+  identifies no user is an ordinary mismatch
 
 `null` never clears another user's assignment: a Ticket assigned to someone
 else can only be reassigned. The target-user errors (`USER_NOT_FOUND`,

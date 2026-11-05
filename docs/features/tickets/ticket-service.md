@@ -851,7 +851,9 @@ two requests with the same expectation, the first to lock writes; the second
 is the step-6 no-op when it names the same target and otherwise raises
 `AssigneeChangedError`. Every other committed change of the assignee, such as
 an auto-assignment, a self-unassignment, or a system unassignment, likewise
-fails a waiter whose expectation it made stale.
+fails a waiter whose expectation it made stale, unless an earlier step decides
+the waiter's outcome: a target error of step 5, or the step-6 no-op when the
+change made the waiter's target the assignee.
 
 **reconcile_ticket_status**: YES — evaluates whether the ticket's
 existing data satisfies gates above `Analysis` (Analyzed or Resolved).
@@ -2289,14 +2291,15 @@ behavior of `ticket_service` operations:
     outcomes whatever the expectation. Independent sessions, with a lock-wait
     proof, race two assignments with the same expectation: with different
     targets one commits its event and the other raises
-    `AssigneeChangedError`; with the same target exactly one event is
-    committed and the other request is the no-op. They also prove that an
-    auto-assignment winner and a self-unassignment winner make a waiting
-    assignment with the stale expectation raise `AssigneeChangedError`. API
-    tests cover a username and a non-string value as `422 VALIDATION_ERROR`,
-    the mapping to `409 TICKET_ASSIGNEE_CHANGED` for both forms, and the
-    OpenAPI document, which publishes the member as an optional nullable UUID
-    without a default and names the code under `409`
+    `AssigneeChangedError`; with the same target exactly one `assignment`
+    event is committed and the other request is the no-op. They also prove
+    that an auto-assignment winner and a self-unassignment winner make a
+    waiting assignment with the stale expectation raise
+    `AssigneeChangedError`. API tests cover a username and a non-string value
+    as `422 VALIDATION_ERROR`, a UUID that identifies no user as `409
+    TICKET_ASSIGNEE_CHANGED` and never `404 USER_NOT_FOUND`, the mapping to
+    `409 TICKET_ASSIGNEE_CHANGED` for both forms, and the member's publication
+    as a string of format `uuid`
 
 ## Cross-references
 
