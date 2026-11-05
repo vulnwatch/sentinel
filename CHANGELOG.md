@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.18.0](https://github.com/vulnwatch/sentinel/compare/v0.17.0...v0.18.0) (2026-11-05)
+
+
+### Features
+
+* add a dataset Ticket with 12 packages and unify "unassigned" ([#1197](https://github.com/vulnwatch/sentinel/issues/1197)) ([3301c2a](https://github.com/vulnwatch/sentinel/commit/3301c2a10fc65cd12728c161ec24fd5c5f416b0e)), closes [#1196](https://github.com/vulnwatch/sentinel/issues/1196)
+* log SQLAlchemy echo only at LOG_LEVEL=DEBUG ([#1210](https://github.com/vulnwatch/sentinel/issues/1210)) ([5317e39](https://github.com/vulnwatch/sentinel/commit/5317e39697190b30e3ee476adad59ea0493f5b82)), closes [#1200](https://github.com/vulnwatch/sentinel/issues/1200)
+* reject a Ticket assignment when the assignee has changed ([#1214](https://github.com/vulnwatch/sentinel/issues/1214)) ([23be14b](https://github.com/vulnwatch/sentinel/commit/23be14b98a728eddc8a27e11c8cbf5c0284aabc6)), closes [#1205](https://github.com/vulnwatch/sentinel/issues/1205)
+
+
+### Bug Fixes
+
+* report the real next run in next_run_at of the fetcher list ([#1201](https://github.com/vulnwatch/sentinel/issues/1201)) ([9412004](https://github.com/vulnwatch/sentinel/commit/94120046284593cb4f67505736c91f3618846051))
+* speed up Ticket list reads that evaluate the current phase ([#1213](https://github.com/vulnwatch/sentinel/issues/1213)) ([cbf39f9](https://github.com/vulnwatch/sentinel/commit/cbf39f9c3cb0caafb66818449c90b78512745452)), closes [#1211](https://github.com/vulnwatch/sentinel/issues/1211)
+
 ## [0.17.0](https://github.com/vulnwatch/sentinel/compare/v0.16.0...v0.17.0) (2026-11-04)
 
 
