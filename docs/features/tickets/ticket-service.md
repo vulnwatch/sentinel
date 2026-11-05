@@ -760,6 +760,7 @@ async def assign_ticket(
     ticket_id: UUID,
     assignee: str,
     acting_user_id: UUID,
+    expected_assignee_id: UUID | MISSING | None = MISSING,
     evaluation_date: date | None = None,
 ) -> Ticket:
 ```
@@ -768,6 +769,15 @@ async def assign_ticket(
 1 through the user-domain matching boundary (see Concurrency control). The API
 passes the request value unchanged; resolving it before the service would
 report target absence before Ticket accessibility.
+
+`expected_assignee_id` is the assignee that the caller expects to replace
+([tickets.md](tickets.md#reassignment), Expected assignee): `MISSING`,
+Pydantic's omitted-value sentinel (`docs/conventions.md`, Omitted Values),
+applies no check, `None` expects a Ticket without an assignee, and a UUID
+expects the User with that UUID. Step 7 compares it with the locked-current
+`ticket.assignee_id`; it is never resolved or locked and need not identify an
+existing User. The API passes the request member unchanged, its omission
+included.
 
 For an API workflow returning `TicketDetail`, the caller supplies the same UTC
 date to this function and final detail assembly. Other callers may omit it; the
@@ -781,6 +791,8 @@ function captures one date at entry if reconciliation becomes applicable.
   `AssigneeInactiveError`), and not a bot account, holding `triage_ticket`,
   and, for a confidential Ticket, with effective scope `all` (else
   `AssigneeNotEligibleError`)
+- A supplied expected assignee must equal the locked-current assignee unless
+  the target already is the assignee (else `AssigneeChangedError`)
 
 **Behavioral steps**:
 
@@ -802,42 +814,58 @@ function captures one date at entry if reconciliation becomes applicable.
    code
 6. **Idempotency check**: if `ticket.assignee_id` equals the locked target's
     `id`, return ticket unchanged (no audit event, no status evaluation)
-7. Set `ticket.assignee_id` to the locked target's `id`
-8. Create `TicketAuditEvent` (`assignment`, `user_id = acting_user_id`,
+7. **Expected assignee**: if `expected_assignee_id` is not `MISSING` and
+    differs from `ticket.assignee_id`, raise `AssigneeChangedError` with no
+    write, event, status change, or reconciliation. The check follows every
+    guard and the idempotency check, so their outcomes keep their precedence
+    and a retry of a request that was already applied succeeds
+8. Set `ticket.assignee_id` to the locked target's `id`
+9. Create `TicketAuditEvent` (`assignment`, `user_id = acting_user_id`,
     `new_value` = the locked target's username). For a reassignment,
     `old_value` is the previous assignee's username from one unlocked
     PostgreSQL observation under the Ticket lock; it is not an eligibility
     decision and locks no User
-9. If `ticket.status == New`: set `ticket.status = Analysis`, create
+10. If `ticket.status == New`: set `ticket.status = Analysis`, create
     `TicketAuditEvent` (`status_change`, `user_id = NULL`,
     `old_value = "New"`, `new_value = "Analysis"`) — this is the explicit
     `New → Analysis` transition (see Architectural Invariant in
     `tickets.md`); the `status_change` event is created here, not by
     `reconcile_ticket_status`
-10. Call `reconcile_ticket_status(ticket, evaluation_date=evaluation_date)` —
+11. Call `reconcile_ticket_status(ticket, evaluation_date=evaluation_date)` —
     using the supplied date or the one captured at entry, evaluates further promotion
     from `Analysis` upward; may produce a second `status_change` event
     if `Analyzed` or `Resolved` gate conditions are already satisfied
-11. Return updated Ticket
+12. Return updated Ticket
 
 **Locking**: `FOR SHARE` on target User, then `FOR UPDATE` on Ticket. Target
 absence is reported only after locked-current Ticket accessibility and
 operability, preserving their existing precedence. A concurrent
 `set_confidentiality()` serializes on the Ticket lock (see
-[`set_confidentiality`](#set_confidentiality), Concurrency and result).
+[`set_confidentiality`](#set_confidentiality), Concurrency and result). The
+expected assignee adds no lock or query: step 7 compares it with the Ticket
+row that the lock returned.
+
+**Concurrency**: requests on one Ticket serialize on the Ticket lock, and a
+waiter decides its expectation from the assignee that the winner committed. Of
+two requests with the same expectation, the first to lock writes; the second
+is the step-6 no-op when it names the same target and otherwise raises
+`AssigneeChangedError`. Every other committed change of the assignee, such as
+an auto-assignment, a self-unassignment, or a system unassignment, likewise
+fails a waiter whose expectation it made stale.
 
 **reconcile_ticket_status**: YES — evaluates whether the ticket's
 existing data satisfies gates above `Analysis` (Analyzed or Resolved).
 While `ticket-mutations.md` classifies assignment as "not gate-relevant"
 in the sense that it does not modify CVSS/severity/package data, the
-explicit `New → Analysis` transition in step 9 means the ticket is now
+explicit `New → Analysis` transition in step 10 means the ticket is now
 in the gate zone and `reconcile_ticket_status` can promote it further
 if conditions are met.
 
 **Audit events**: `assignment` (only if assignee actually changes).
-Possibly `status_change` (explicit `New → Analysis` in step 9 and/or
+Possibly `status_change` (explicit `New → Analysis` in step 10 and/or
 further promotion from `reconcile_ticket_status`). Assignment promotion and
-ordinary gate events use `comment = NULL`.
+ordinary gate events use `comment = NULL`. A rejected expectation creates no
+event.
 
 **auto_assign_actor**: Not called — this operation performs an explicit
 assignment to a specified user, which supersedes implicit
@@ -854,14 +882,17 @@ async def unassign_ticket(
     *,
     ticket_id: UUID,
     acting_user_id: UUID,
+    expected_assignee_id: UUID | MISSING | None = MISSING,
 ) -> Ticket:
 ```
 
 `acting_user_id` is the authenticated caller, whose request-resolved caller
 information drives locked-current accessibility (see Caller category and
 Ticket accessibility). The API passes it for `PATCH .../assignee` with
-`user_id: null`. The operation takes no evaluation date because it neither
-reconciles nor changes any dated state.
+`user_id: null`, together with the request's `expected_assignee_id`
+unchanged, which has the meaning that it has for
+[`assign_ticket()`](#assign_ticket). The operation takes no evaluation date
+because it neither reconciles nor changes any dated state.
 
 **Behavioral steps**:
 
@@ -875,20 +906,23 @@ reconciles nor changes any dated state.
    unchanged (no write, no audit event)
 5. If `ticket.assignee_id` is not `acting_user_id`, raise
    `AssigneeNotCallerError` with no effect
-6. Observe the caller's current username with one unlocked PostgreSQL read
+6. **Expected assignee**: if `expected_assignee_id` is not `MISSING` and
+   differs from `ticket.assignee_id`, which step 5 established to be the
+   caller, raise `AssigneeChangedError` with no effect
+7. Observe the caller's current username with one unlocked PostgreSQL read
    under the Ticket lock. It is the event-time snapshot of the previous
    assignee, as for the previous assignee of `assign_ticket()`, and is not an
    eligibility decision
-7. Set `ticket.assignee_id = NULL`
-8. Create `TicketAuditEvent` (`assignment`, `user_id = acting_user_id`,
+8. Set `ticket.assignee_id = NULL`
+9. Create `TicketAuditEvent` (`assignment`, `user_id = acting_user_id`,
    `old_value` = the observed username, `new_value = NULL`, `comment = NULL`,
    `detail = NULL`)
-9. Return the locked Ticket in its post-mutation state
+10. Return the locked Ticket in its post-mutation state
 
 Self-unassignment is valid in `New`, `Analysis`, `Analyzed`, and `Resolved`.
 Every assigning path promotes `New` to `Analysis`, so a `New` Ticket ordinarily
 has no assignee and step 4 returns it unchanged; an anomalous `New` assignment
-to the caller is cleared by steps 6–8 without a status change.
+to the caller is cleared by steps 7–9 without a status change.
 
 **Locking**: `FOR UPDATE` on the Ticket only.
 
@@ -917,15 +951,15 @@ in `tickets.md`). No Ticket convergence effect is registered.
 **auto_assign_actor**: Not called. The operation never assigns anyone, the
 caller included.
 
-**Audit events**: one `assignment` event, only for an effective clear (step 8).
+**Audit events**: one `assignment` event, only for an effective clear (step 9).
 No status, Product, priority, or other event.
 
 **Transaction and exceptions**: the function flushes but neither commits nor
 rolls back. It propagates `TicketNotFoundError`, `TicketNotMutableError`,
-`AssigneeNotCallerError`, and database, audit, and flush failures; any failure
-or caller rollback leaves neither the cleared assignee nor the event. The API
-returns the `TicketDetail` projection of the post-mutation Ticket under
-[`get_ticket_detail()`](#get_ticket_detail).
+`AssigneeNotCallerError`, `AssigneeChangedError`, and database, audit, and
+flush failures; any failure or caller rollback leaves neither the cleared
+assignee nor the event. The API returns the `TicketDetail` projection of the
+post-mutation Ticket under [`get_ticket_detail()`](#get_ticket_detail).
 
 ### set_priority_override
 
@@ -1985,6 +2019,7 @@ to the corresponding HTTP status code and error code per `api-spec.md`.
 | `AssigneeNotEligibleError` | 400 | `TICKET_ASSIGNEE_NOT_ELIGIBLE` | Active target user is not eligible to be the assignee of the Ticket: a bot account, without `triage_ticket`, or without effective scope `all` for a confidential Ticket |
 | `AssigneeInactiveError` | 409 | `TICKET_ASSIGNEE_INACTIVE` | Target user is inactive (for assignment) |
 | `AssigneeNotCallerError` | 409 | `TICKET_ASSIGNEE_NOT_CALLER` | Self-unassignment is requested while another user is the assignee |
+| `AssigneeChangedError` | 409 | `TICKET_ASSIGNEE_CHANGED` | An assignment or self-unassignment that would change the assignee expects an assignee other than the current one |
 | `InactiveUserError` † | 409 | `USER_INACTIVE` | A new access grant is requested for an inactive target that has no existing grant |
 | `SelfDuplicateError` | 400 | `TICKET_SELF_DUPLICATE` | Ticket cannot be marked as duplicate of itself |
 | `DuplicateTargetIsDuplicatedError` | 409 | `TICKET_DUPLICATE_TARGET_DUPLICATED` | Target ticket is already in Duplicated status |
@@ -2238,6 +2273,30 @@ behavior of `ticket_service` operations:
     `set_confidentiality(true)` in both commit orders and prove that no
     committed active-status confidential Ticket has an assignee with scope
     `non_confidential`
+23. **Expected assignee**: for `assign_ticket()`, an expectation equal to the
+    locked-current assignee — `None` for an unassigned Ticket, the assignee's
+    UUID for an assigned one — assigns exactly as an omitted expectation
+    does. A mismatch — `None` for an assigned Ticket, another user's UUID, a
+    UUID that identifies no user, or a UUID for an unassigned Ticket — raises
+    `AssigneeChangedError` with no write, `assignment` or `status_change`
+    event, reconciliation, or convergence registration, and a `New` Ticket
+    stays `New`. A target that already is the assignee is the no-op whatever
+    the expectation. Accessibility, operability, and each target-user error
+    precede `AssigneeChangedError`. For `unassign_ticket()`, an expectation
+    equal to the caller clears as an omitted one does, any other expectation
+    raises `AssigneeChangedError` with no effect, and an unassigned Ticket
+    (no-op) and another assignee (`AssigneeNotCallerError`) keep their
+    outcomes whatever the expectation. Independent sessions, with a lock-wait
+    proof, race two assignments with the same expectation: with different
+    targets one commits its event and the other raises
+    `AssigneeChangedError`; with the same target exactly one event is
+    committed and the other request is the no-op. They also prove that an
+    auto-assignment winner and a self-unassignment winner make a waiting
+    assignment with the stale expectation raise `AssigneeChangedError`. API
+    tests cover a username and a non-string value as `422 VALIDATION_ERROR`,
+    the mapping to `409 TICKET_ASSIGNEE_CHANGED` for both forms, and the
+    OpenAPI document, which publishes the member as an optional nullable UUID
+    without a default and names the code under `409`
 
 ## Cross-references
 

@@ -658,6 +658,25 @@ condition from the locked-current Ticket. Auto-assignment and embedded
 assignment are skipped if the acting user is ineligible; explicit assignment
 retains the errors above.
 
+**Expected assignee**: a client shows a Ticket as it last read it, and the
+assignee it shows can be stale when it requests an assignment. An explicit
+assignment can therefore state the assignee that the client expects to
+replace, as `expected_assignee_id` of [Assign Ticket](#assign-ticket): the
+UUID of that user, or `null` for a Ticket that the client read as unassigned.
+A request whose expectation differs from the locked-current assignee fails
+with 409 Conflict (`TICKET_ASSIGNEE_CHANGED`), with no write and no audit
+event: of two analysts who take the same unassigned Ticket, the second learns
+of the first instead of replacing them. A request whose target already is the
+assignee remains the idempotent success whatever its expectation, and a
+request without an expectation replaces whichever assignee the Ticket has.
+Reopen Ticket and Revert Duplicate Status accept no expectation: apart from
+these exits, no operation changes the assignee of an `Ignored` or
+`Duplicated` Ticket, so a client that shows that status also shows the
+assignee that the exit replaces. An assignee that the client did not show is
+replaced only when the Ticket left that status and returned to it in between,
+with another user becoming its assignee on the exit; the audit trail records
+both replacements, and this residual is accepted.
+
 **System-initiated unassignment**: tickets are automatically unassigned
 in these scenarios:
 
@@ -710,6 +729,11 @@ explicit reassignment.
 - On a Ticket without an assignee it is an idempotent success with no effect.
   When another user is the assignee it is rejected with 409
   `TICKET_ASSIGNEE_NOT_CALLER`.
+- It can state the expected assignee as an assignment can (see
+  [Reassignment](#reassignment), Expected assignee). An effective
+  self-unassignment clears the caller, so an expectation other than the caller
+  is rejected with 409 `TICKET_ASSIGNEE_CHANGED`, with no effect. The
+  idempotent success and `TICKET_ASSIGNEE_NOT_CALLER` take precedence over it.
 
 Auto-assignment is unchanged: a later effective modifying operation by the same
 user, while eligible, assigns the Ticket to them again (see
@@ -1960,6 +1984,16 @@ Self-unassignment request:
 }
 ```
 
+Reassignment request that expects the Ticket to be assigned to the user with
+the given UUID:
+
+```json
+{
+  "user_id": "jdoe",
+  "expected_assignee_id": "01994c20-7c00-7000-8000-000000000003"
+}
+```
+
 - `user_id` (string | null, required): a string is the UUID or username of the
   target user, who must be eligible to be the assignee of the Ticket (see
   [Reassignment](#reassignment), Target constraint), and assigns or
@@ -1967,14 +2001,27 @@ Self-unassignment request:
   JSON `null` clears the caller's own assignment through
   `ticket_service.unassign_ticket()`. An omitted field or a value of another
   type produces the global `422 VALIDATION_ERROR`
+- `expected_assignee_id` (string | null, optional): the assignee that the
+  client expects the Ticket to have (see [Reassignment](#reassignment),
+  Expected assignee): the `id` of the `assignee` that the client last read, or
+  JSON `null` for a Ticket that it read without an assignee. When present and
+  different from the locked-current assignee, the request fails with `409
+  TICKET_ASSIGNEE_CHANGED`, with no write and no audit event, unless it is an
+  idempotent success: the target already is the assignee, or `user_id` is
+  `null` and the Ticket has no assignee. When omitted, no check applies. It
+  accepts only a UUID, which is compared without being resolved
+  (`docs/api-spec.md`, User Identifier Resolution): a username or any other
+  value produces the global `422 VALIDATION_ERROR`, and a UUID that identifies
+  no user is an ordinary mismatch
 
 `null` never clears another user's assignment: a Ticket assigned to someone
 else can only be reassigned. The target-user errors (`USER_NOT_FOUND`,
 `TICKET_ASSIGNEE_INACTIVE`, `TICKET_ASSIGNEE_NOT_ELIGIBLE`, in this order of
 precedence) apply only to a string `user_id`, and `TICKET_ASSIGNEE_NOT_CALLER`
-only to `null`. For both forms, Ticket accessibility (`404 TICKET_NOT_FOUND`)
-and operability (`409 TICKET_NOT_MUTABLE`) precede every endpoint-specific
-error.
+only to `null`. `TICKET_ASSIGNEE_CHANGED` applies to both forms and is decided
+last, after the idempotent success and every other error. For both forms,
+Ticket accessibility (`404 TICKET_NOT_FOUND`) and operability (`409
+TICKET_NOT_MUTABLE`) precede every endpoint-specific error.
 
 System-initiated unassignment may also occur as a side effect of a change
 that makes the assignee ineligible, such as deactivation, a role-origin
@@ -1997,6 +2044,7 @@ Response: `TicketDetail` object in standard `{"data": ...}` envelope
 | 404 | `USER_NOT_FOUND` | Target user not found |
 | 409 | `TICKET_ASSIGNEE_INACTIVE` | Target user is inactive |
 | 409 | `TICKET_ASSIGNEE_NOT_CALLER` | `user_id` is `null` and another user is the current assignee |
+| 409 | `TICKET_ASSIGNEE_CHANGED` | `expected_assignee_id` is present and differs from the current assignee, and the request is not an idempotent success |
 
 ### Ignore Ticket
 

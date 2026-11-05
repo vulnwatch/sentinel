@@ -690,7 +690,9 @@ confidential clears an ineligible active-status assignee under the Ticket lock.
 Reconciliation defensively clears an ineligible assignee when its final
 gate result is `Analysis` or `Analyzed`, while `Resolved` preserves the current
 assignee. The current assignee can also clear their own assignment under the
-Ticket lock alone, without a status change.
+Ticket lock alone, without a status change. An explicit assignment or
+self-unassignment can state the assignee that it expects to replace; a stale
+expectation fails under the Ticket lock with no effect.
 
 ### Ticket Status Zones
 
