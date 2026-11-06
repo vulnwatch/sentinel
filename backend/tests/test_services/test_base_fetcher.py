@@ -2485,13 +2485,28 @@ def _timeout_message(fetcher_name: str, processed: int) -> str:
     )
 
 
-async def _run_in_own_task(fetcher: BaseFetcher, run_id: UUID) -> BaseException | None:
+@dataclasses.dataclass(frozen=True)
+class _OwnTaskOutcome:
+    raised: BaseException | None
+    cancelling: int
+    """`Task.cancelling()` of the run's task once `run()` has ended."""
+
+
+async def _run_in_own_task(fetcher: BaseFetcher, run_id: UUID) -> _OwnTaskOutcome:
     """Run `fetcher.run()` in a task of its own, so that its cancellation
-    never reaches the test's task, and return what it raised."""
-    [outcome] = await asyncio.gather(
-        fetcher.run(run_id=run_id, config=_make_config()), return_exceptions=True
-    )
-    return outcome
+    never reaches the test's task, and return how it ended."""
+    cancelling: list[int] = []
+
+    async def _run() -> None:
+        try:
+            await fetcher.run(run_id=run_id, config=_make_config())
+        finally:
+            current = asyncio.current_task()
+            assert current is not None
+            cancelling.append(current.cancelling())
+
+    [raised] = await asyncio.gather(_run(), return_exceptions=True)
+    return _OwnTaskOutcome(raised, cancelling[0])
 
 
 def _cancel_current_task() -> None:
@@ -2554,7 +2569,7 @@ class TestRunLifecycleSoftTimeLimitDelivery:
         assert callable(observed[0])
         assert observed[0] is not raise_soft_time_limit
         assert handler_after_run is raise_soft_time_limit
-        assert (None if outcome is None else type(outcome)) is raised
+        assert (None if outcome.raised is None else type(outcome.raised)) is raised
 
     @pytest.mark.parametrize(
         "disposition",
@@ -2616,8 +2631,9 @@ class TestRunLifecycleSoftTimeLimitDelivery:
         with prefork_soft_timeout_handler():
             outcome = await _run_in_own_task(fetcher_cls(), run_id)
 
-        assert isinstance(outcome, SoftTimeLimitExceeded)
-        assert isinstance(outcome.__cause__, asyncio.CancelledError)
+        assert isinstance(outcome.raised, SoftTimeLimitExceeded)
+        assert isinstance(outcome.raised.__cause__, asyncio.CancelledError)
+        assert outcome.cancelling == 0
         assert executed == []
         run = await _get_run(real_session_factory, run_id)
         assert run.status == "failure"
@@ -2644,8 +2660,9 @@ class TestRunLifecycleSoftTimeLimitDelivery:
         with prefork_soft_timeout_handler():
             outcome = await _run_in_own_task(fetcher_cls(), run_id)
 
-        assert isinstance(outcome, SoftTimeLimitExceeded)
-        assert isinstance(outcome.__cause__, RuntimeError)
+        assert isinstance(outcome.raised, SoftTimeLimitExceeded)
+        assert isinstance(outcome.raised.__cause__, RuntimeError)
+        assert outcome.cancelling == 0
         run = await _get_run(real_session_factory, run_id)
         assert run.status == "failure"
         assert run.error_message == _timeout_message(fetcher_name, 1)
@@ -2686,9 +2703,10 @@ class TestRunLifecycleSoftTimeLimitDelivery:
         with prefork_soft_timeout_handler():
             outcome = await _run_in_own_task(fetcher_cls(), run_id)
 
-        assert isinstance(outcome, SoftTimeLimitExceeded)
-        assert isinstance(outcome.__cause__, RuntimeError)
-        assert isinstance(outcome.__cause__.__context__, asyncio.CancelledError)
+        assert isinstance(outcome.raised, SoftTimeLimitExceeded)
+        assert isinstance(outcome.raised.__cause__, RuntimeError)
+        assert isinstance(outcome.raised.__cause__.__context__, asyncio.CancelledError)
+        assert outcome.cancelling == 0
         run = await _get_run(real_session_factory, run_id)
         assert run.status == "failure"
         assert run.error_message == _timeout_message(fetcher_name, 0)
@@ -2717,8 +2735,9 @@ class TestRunLifecycleSoftTimeLimitDelivery:
             outcome = await _run_in_own_task(fetcher_cls(), run_id)
 
         assert later_await_completed == [True]
-        assert isinstance(outcome, SoftTimeLimitExceeded)
-        assert outcome.__cause__ is None
+        assert isinstance(outcome.raised, SoftTimeLimitExceeded)
+        assert outcome.raised.__cause__ is None
+        assert outcome.cancelling == 0
         run = await _get_run(real_session_factory, run_id)
         assert run.status == "failure"
         assert run.error_message == _timeout_message(fetcher_name, 2)
@@ -2730,7 +2749,8 @@ class TestRunLifecycleSoftTimeLimitDelivery:
         real_session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         """When another party also cancels the task, the cancellation wins:
-        it propagates without finalization and the handler is restored."""
+        it propagates without finalization, only `run()`'s own request is
+        withdrawn, and the handler is restored."""
         fetcher_name, run_id = await fetcher_lifecycle()
 
         async def _execute(self: BaseFetcher, session: AsyncSession) -> None:
@@ -2743,7 +2763,8 @@ class TestRunLifecycleSoftTimeLimitDelivery:
             outcome = await _run_in_own_task(fetcher_cls(), run_id)
             handler_after_run = signal.getsignal(signal.SIGUSR1)
 
-        assert isinstance(outcome, asyncio.CancelledError)
+        assert isinstance(outcome.raised, asyncio.CancelledError)
+        assert outcome.cancelling == 1
         assert handler_after_run is raise_soft_time_limit
         run = await _get_run(real_session_factory, run_id)
         assert run.status == "running"
