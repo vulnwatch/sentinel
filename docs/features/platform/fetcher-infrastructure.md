@@ -310,7 +310,7 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
    | `execute()` returned normally, all selected units failed | Finalization succeeded | None — `run()` returns normally (failure is recorded in the `FetcherRun`, not as a task exception) |
    | `execute()` raised | Finalization succeeded | Original execution exception re-raised |
    | Soft time limit reached during settings construction, previous cursor load, or `execute()` | Finalization succeeded | `SoftTimeLimitExceeded` re-raised, with the exception that these phases ended with, if any, as `__cause__` (see "Soft time limit delivery" in phase 5) |
-   | Settings construction, previous cursor load, or `execute()` ended with an exception that is not an `Exception` (a cancellation, `SystemExit`, `KeyboardInterrupt`), other than the cancellation that delivers the soft time limit | Not performed | That exception propagates unchanged |
+   | Settings construction, previous cursor load, or `execute()` ended with an exception that is not an `Exception` (a cancellation, `SystemExit`, `KeyboardInterrupt`), other than the cancellation that delivers the soft time limit (see "Soft time limit delivery" in phase 5) | Not performed | That exception propagates unchanged |
    | Settings validation failed | Finalization succeeded | `FetcherConfigError` re-raised |
    | Settings construction raised a non-`ValidationError` | Finalization succeeded | Original settings exception re-raised |
    | Previous cursor load raised | Finalization succeeded | Original cursor-load exception re-raised |
@@ -3487,12 +3487,13 @@ lifecycle: Finalization and Soft time limit delivery).
 **Relationship to hard time limit**: the Running Stale Threshold is
 intentionally set ABOVE the hard time limit
 (`hard_time_limit_seconds + 60 > hard_time_limit_seconds`). This ensures
-that when stale detection triggers, the process is already dead —
-force-terminated by the hard limit (Celery/Billiard send `SIGTERM` to
-the pool child first, then `SIGKILL` as a backstop if it has not exited
-after a short grace period). The stale detection mechanism therefore
-never needs to kill or revoke a task — it only cleans up the orphaned
-database record left behind by a force-killed process.
+that when stale detection triggers, the task is no longer running: it
+has ended, or the hard limit has force-terminated the process
+(Celery/Billiard send `SIGTERM` to the pool child first, then `SIGKILL`
+as a backstop if it has not exited after a short grace period). The
+stale detection mechanism therefore never needs to kill or revoke a
+task — it only cleans up the orphaned database record left behind by a
+force-killed process or by a task that ended without finalizing it.
 
 **Pool precondition**: this guarantee holds only under Celery's
 `prefork` execution pool, which is the only pool that reliably
