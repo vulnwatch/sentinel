@@ -41,7 +41,12 @@ from app.core.enums import (
     Role,
     SessionCreationReason,
 )
-from app.core.identifiers import CVE_ID_MAX_LENGTH, CVE_ID_PATTERN, format_ticket_id
+from app.core.identifiers import (
+    CVE_ID_MAX_LENGTH,
+    CVE_ID_PATTERN,
+    TICKET_ID_PATTERN,
+    format_ticket_id,
+)
 from app.database import get_db
 from app.main import app
 from app.models.cve import CVE
@@ -1315,6 +1320,9 @@ _TICKET_FILTER_PARAMETERS = {"ticket_status", "has_ticket"}
 attributes, not Ticket identities (package-model.md, Search Packages
 Across Tickets, naming note; cve-tracking.md, List CVEs: the
 associated-Ticket presence filter)."""
+_TICKET_IDENTITY_FILTER_PARAMETERS = {"duplicate_of_ticket_id"}
+"""Query filters that name a Ticket by its canonical `SNTL-{n}` identity
+(tickets.md, List Tickets: the duplicates of an original)."""
 
 
 def _walk_properties(node: Any, found: list[tuple[str, dict[str, Any]]]) -> None:
@@ -1476,6 +1484,12 @@ class TestOpenApiContract:
                         assert parameter["schema"]["format"] == "uuid", (path, method)
                     elif parameter["name"] in _TICKET_FILTER_PARAMETERS:
                         assert parameter["in"] == "query", (path, method)
+                    elif parameter["name"] in _TICKET_IDENTITY_FILTER_PARAMETERS:
+                        assert parameter["in"] == "query", (path, method)
+                        assert "format" not in parameter["schema"], (path, method)
+                        assert parameter["schema"]["pattern"] == (
+                            TICKET_ID_PATTERN.pattern
+                        ), (path, method)
                     elif "ticket" in parameter["name"].lower():
                         assert parameter["name"] == "ticket_id", (path, method)
                         assert parameter["in"] == "path", (path, method)

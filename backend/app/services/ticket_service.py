@@ -659,6 +659,7 @@ _STATUS_RANK: Final[dict[str, int]] = {
 
 _LIST_ASSIGNEE = aliased(User, name="list_assignee")
 _LIST_DUPLICATE_TARGET = aliased(Ticket, name="list_duplicate_target")
+_LIST_ORIGINAL = aliased(Ticket, name="list_original")
 
 
 def _sequence_prefix(term: str) -> str | None:
@@ -853,6 +854,21 @@ def _occurrence_condition(
     return exists(statement).correlate(Ticket)
 
 
+def _duplicate_of_condition(sequence_id: int) -> ColumnElement[bool]:
+    """The `duplicate_of_ticket_id` filter (tickets.md, List Tickets >
+    Duplicate filter): the Tickets whose `duplicate_of_id` is the Ticket
+    with `sequence_id`. That original is looked up without a visibility
+    check, which the listed rows receive instead; an unknown sequence
+    yields `NULL`, which matches nothing. Served by the unique
+    `sequence_id` and the partial `ix_ticket_duplicate_of_id` indexes."""
+    original = (
+        select(_LIST_ORIGINAL.id)
+        .where(_LIST_ORIGINAL.sequence_id == sequence_id)
+        .scalar_subquery()
+    )
+    return Ticket.duplicate_of_id == original
+
+
 def _user_filter_ids(identifier: str) -> Select[UUID]:
     """The `User.id` matching a UUID-or-username filter value (at most
     one), resolved inside the list statement through the user-domain
@@ -1032,6 +1048,7 @@ async def list_tickets(
     maintainer: str | None = None,
     product: str | None = None,
     track: str | None = None,
+    duplicate_of_ticket_id: str | None = None,
     sort_by: TicketSortField = TicketSortField.CREATED_AT,
     sort_order: SortOrder = SortOrder.DESC,
     page: int = 1,
@@ -1052,7 +1069,9 @@ async def list_tickets(
     (SQL `NULL`). `assignee` is a User UUID, exact username, or the
     literal `none`; `maintainer` a User UUID or exact username. `product`
     is a canonical Product CPE and `track` a track reference, each `None`
-    when omitted. `page` is positive and `per_page` is 1-100.
+    when omitted. `duplicate_of_ticket_id` is the canonical `SNTL-{n}` of
+    an original Ticket, `None` when omitted. `page` is positive and
+    `per_page` is 1-100.
 
     Q3: captures one UTC evaluation instant and derives the read
     `evaluation_date` from its UTC date. Then, in one SQL statement and
@@ -1070,6 +1089,9 @@ async def list_tickets(
        `product` and `track` match exact values through occurrences that
        are not effectively excluded, correlated on the same occurrence
        when both are supplied, and an unknown value matches nothing;
+       `duplicate_of_ticket_id` matches the duplicates of the Ticket with
+       that sequence, whatever that Ticket's visibility, and an unknown
+       value matches nothing;
     4. resolves severity once per Ticket through the canonical cascade,
        the effective priority as `COALESCE(priority_override,
        priority_auto)`, the automatic priority basis of the page rows from
@@ -1101,13 +1123,21 @@ async def list_tickets(
     Q4: returns the page items, the total, and the echoed `page` and
     `per_page`. A page beyond the last is empty with the correct total.
 
-    Q6: raises `ValueError` before any query for `page < 1` or
-    `per_page` outside 1-100. Database exceptions propagate unchanged.
+    Q6: raises `ValueError` before any query for `page < 1`, `per_page`
+    outside 1-100, or a `duplicate_of_ticket_id` outside the canonical
+    grammar and range. Database exceptions propagate unchanged.
     """
     if page < 1:
         raise ValueError("page must be at least 1")
     if not 1 <= per_page <= MAX_PER_PAGE:
         raise ValueError(f"per_page must be between 1 and {MAX_PER_PAGE}")
+    duplicate_of_sequence_id: int | None = None
+    if duplicate_of_ticket_id is not None:
+        duplicate_of_sequence_id = parse_ticket_id(duplicate_of_ticket_id)
+        if duplicate_of_sequence_id is None:
+            raise ValueError(
+                "duplicate_of_ticket_id must be a canonical SNTL-{n} identifier"
+            )
     evaluation_instant = _utc_now()
     evaluation_date = evaluation_instant.astimezone(UTC).date()
 
@@ -1167,6 +1197,8 @@ async def list_tickets(
         )
     if product is not None or track is not None:
         conditions.append(_occurrence_condition(product, track))
+    if duplicate_of_sequence_id is not None:
+        conditions.append(_duplicate_of_condition(duplicate_of_sequence_id))
 
     # Only the identity and the sort keys are materialized for every
     # candidate; the display projections (resolved severity, priority, due

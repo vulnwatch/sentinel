@@ -35,7 +35,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Final
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
-from pydantic import MISSING
+from pydantic import MISSING, AfterValidator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.dependencies import (
@@ -76,7 +76,11 @@ from app.core.exceptions import (
     TicketNotMutableError,
     UserNotFoundError,
 )
-from app.core.identifiers import format_ticket_id, is_valid_cve_id
+from app.core.identifiers import (
+    TICKET_SEQUENCE_ID_MAX,
+    format_ticket_id,
+    is_valid_cve_id,
+)
 from app.core.permissions import get_capabilities
 from app.database import DatabaseSession, async_session_factory
 from app.schemas.common import PaginationMeta, UserReference
@@ -89,6 +93,7 @@ from app.schemas.errors import (
     ValidationErrorResponse,
 )
 from app.schemas.ticket import (
+    DUPLICATE_OF_TICKET_ID_SCHEMA,
     PriorityBasis,
     TicketAccessGrantDataResponse,
     TicketAccessGrantListResponse,
@@ -109,6 +114,7 @@ from app.schemas.ticket import (
     TicketPriorityUpdateRequest,
     TicketSeverityUpdateRequest,
     TicketSummary,
+    validate_duplicate_of_ticket_id,
 )
 from app.services import ticket_mutations, ticket_service
 from app.services.cve_service import CVEIdFormatError
@@ -318,6 +324,21 @@ def _ticket_list_query(
             )
         ),
     ] = None,
+    duplicate_of_ticket_id: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Filter by original: canonical identity (`SNTL-{n}`, `n` at most "
+                f"{TICKET_SEQUENCE_ID_MAX}) of a Ticket. Matches the Tickets "
+                "whose `duplicate_of_ticket_id` is that value, the duplicates of "
+                "that Ticket. A malformed value fails validation; an unknown "
+                "value yields an empty page, and the visibility of the named "
+                "Ticket has no effect."
+            ),
+            json_schema_extra=DUPLICATE_OF_TICKET_ID_SCHEMA,
+        ),
+        AfterValidator(validate_duplicate_of_ticket_id),
+    ] = None,
     page: Annotated[int, Query(ge=1, le=2_147_483_647, description="Page number.")] = 1,
     per_page: Annotated[
         int, Query(ge=1, le=100, description="Items per page; maximum 100.")
@@ -350,7 +371,9 @@ def _ticket_list_query(
 
     Declared as individual `Query()` parameters so each one is visible to
     the shared query-length-limit dependency (`app.core.query_limits`).
-    `status` uses an alias only to keep the Python name distinct.
+    `status` uses an alias only to keep the Python name distinct. A
+    malformed `duplicate_of_ticket_id` fails parameter validation, the
+    global `422 VALIDATION_ERROR` (tickets.md, List Tickets).
     """
     return TicketListQuery(
         search=search,
@@ -363,6 +386,7 @@ def _ticket_list_query(
         maintainer=maintainer,
         product=product,
         track=track,
+        duplicate_of_ticket_id=duplicate_of_ticket_id,
         page=page,
         per_page=per_page,
         sort_by=sort_by,
@@ -488,8 +512,8 @@ def serialize_ticket_detail(detail: TicketDetailProjection) -> TicketDetail:
     description=(
         "Returns a paginated list of the Tickets visible to the caller, with "
         "multi-field search, repeatable status, severity, priority, overdue, and "
-        "current phase filters, assignee, maintainer, Product, and track "
-        "filters, and sorting. "
+        "current phase filters, assignee, maintainer, Product, track, and "
+        "duplicate-original filters, and sorting. "
         "Visibility is applied before every filter, sort, count, and page. Requires "
         "authentication (JWT session or API key); the caller's scope, grants, "
         "and package maintainership determine access to confidential Tickets."
@@ -519,6 +543,7 @@ async def list_tickets(
         maintainer=query.maintainer,
         product=query.product,
         track=query.track,
+        duplicate_of_ticket_id=query.duplicate_of_ticket_id,
         sort_by=query.sort_by,
         sort_order=query.sort_order,
         page=query.page,

@@ -9,7 +9,8 @@ Owning specifications:
   collapse, `package_names`, sorting with the `Ticket.id` tie-breaker,
   `total` before slicing, and one coherent PostgreSQL observation.
 - docs/features/tickets/tickets.md (Ticket Identification > Search;
-  Severity Resolution; Response Schemas > TicketSummary; List Tickets).
+  Severity Resolution; Duplicate Handling; Response Schemas >
+  TicketSummary; List Tickets, including the Duplicate filter).
 - docs/features/tickets/ticket-priority.md (Testing Requirement 9).
 - docs/features/tickets/ticket-deadlines.md (Evaluation Instant,
   Ticket-Level Overdue Filter, Ticket Current Phase, Sorting, Current Due
@@ -79,6 +80,8 @@ from app.services.ticket_service import (
     TicketUserProjection,
     get_ticket_detail,
     list_tickets,
+    mark_as_duplicate,
+    revert_duplicate,
 )
 from app.services.ticket_visibility import TicketCaller
 from tests.support.callers import ROLELESS_CALLER
@@ -1124,6 +1127,217 @@ class TestProductAndTrackFilters:
         page = await _list(db_session, stranger, product=SLES_CPE, per_page=1)
         assert [item.ticket_id for item in page.items] == [_sntl(public)]
         assert page.total == 1
+
+
+# ---------------------------------------------------------------------------
+# Duplicate filter (tickets.md, List Tickets > Duplicate filter)
+# ---------------------------------------------------------------------------
+
+UNKNOWN_TICKET_ID = "SNTL-2147483647"
+"""Canonical, with the maximum `n`, and never reached by a test's Tickets."""
+
+
+@pytest.mark.integration
+class TestDuplicateFilter:
+    async def test_lists_exactly_the_duplicates_of_the_named_ticket(
+        self, db_session: AsyncSession, clock: Clock, ticket_factory: Factory
+    ) -> None:
+        original = await ticket_factory(status=TicketStatus.ANALYSIS.value)
+        first = await ticket_factory(duplicate_of_id=original.id)
+        second = await ticket_factory(duplicate_of_id=original.id)
+        other_original = await ticket_factory(status=TicketStatus.RESOLVED.value)
+        await ticket_factory(duplicate_of_id=other_original.id)
+        without_duplicates = await ticket_factory(status=TicketStatus.ANALYSIS.value)
+
+        page = await _list(db_session, duplicate_of_ticket_id=_sntl(original))
+        assert {item.ticket_id for item in page.items} == _set([first, second])
+        assert page.total == 2
+        for item in page.items:
+            assert item.status is TicketStatus.DUPLICATED
+            assert item.duplicate_of_ticket_id == _sntl(original)
+        assert (
+            await _list(db_session, duplicate_of_ticket_id=_sntl(original), per_page=1)
+        ).total == 2
+        # A Ticket without duplicates, a Duplicated Ticket (never an
+        # original), and an unknown value list nothing.
+        for value in (_sntl(without_duplicates), _sntl(first), UNKNOWN_TICKET_ID):
+            page = await _list(db_session, duplicate_of_ticket_id=value)
+            assert page.items == (), value
+            assert page.total == 0, value
+
+    async def test_follows_the_repoint_and_the_non_retroactive_revert(
+        self,
+        db_session: AsyncSession,
+        clock: Clock,
+        ticket_factory: Factory,
+        user_factory: Factory,
+        system_setting_factory: Factory,
+    ) -> None:
+        """The filter reads the current link (tickets.md, Mark-as-Duplicate
+        Operation, step 6; Revert-Duplicate Operation), through the real
+        lifecycle operations."""
+        await system_setting_factory(key="default_cvss_version", value="3.1")
+        actor: User = await user_factory()
+        caller = TicketCaller.authenticated(actor.id, Scope.ALL)
+        source = await ticket_factory(
+            status=TicketStatus.ANALYSIS.value, severity_manual=Severity.HIGH.value
+        )
+        target = await ticket_factory(status=TicketStatus.ANALYSIS.value)
+        kept = await ticket_factory(duplicate_of_id=source.id)
+        reverted = await ticket_factory(
+            duplicate_of_id=source.id, severity_manual=Severity.HIGH.value
+        )
+
+        await mark_as_duplicate(
+            db_session,
+            ticket_id=source.id,
+            duplicate_of_id=target.id,
+            acting_user_id=actor.id,
+            caller=caller,
+        )
+        assert set(await _ids(db_session, duplicate_of_ticket_id=_sntl(target))) == (
+            _set([source, kept, reverted])
+        )
+        assert await _ids(db_session, duplicate_of_ticket_id=_sntl(source)) == []
+
+        await revert_duplicate(
+            db_session, ticket_id=reverted.id, acting_user_id=actor.id, caller=caller
+        )
+        assert set(await _ids(db_session, duplicate_of_ticket_id=_sntl(target))) == (
+            _set([source, kept])
+        )
+
+        # Non-retroactive: reverting the source leaves its former duplicates
+        # under the target.
+        await revert_duplicate(
+            db_session, ticket_id=source.id, acting_user_id=actor.id, caller=caller
+        )
+        assert await _ids(db_session, duplicate_of_ticket_id=_sntl(target)) == [
+            _sntl(kept)
+        ]
+        assert await _ids(db_session, duplicate_of_ticket_id=_sntl(source)) == []
+
+    async def test_lists_only_visible_duplicates_whatever_the_original(
+        self,
+        db_session: AsyncSession,
+        clock: Clock,
+        ticket_factory: Factory,
+        user_factory: Factory,
+        ticket_access_grant_factory: Factory,
+    ) -> None:
+        caller_user: User = await user_factory()
+        restricted = TicketCaller.authenticated(caller_user.id, Scope.NON_CONFIDENTIAL)
+        stranger = TicketCaller.authenticated(uuid.uuid4(), Scope.NON_CONFIDENTIAL)
+        original = await ticket_factory()
+        public = await ticket_factory(duplicate_of_id=original.id)
+        granted = await ticket_factory(
+            duplicate_of_id=original.id, is_confidential=True
+        )
+        await ticket_access_grant_factory(ticket_id=granted.id, user_id=caller_user.id)
+        hidden = await ticket_factory(duplicate_of_id=original.id, is_confidential=True)
+
+        expectations = {
+            stranger: [public],
+            restricted: [public, granted],
+            ALL_SCOPE: [public, granted, hidden],
+        }
+        for caller, visible in expectations.items():
+            page = await _list(
+                db_session, caller, duplicate_of_ticket_id=_sntl(original), per_page=1
+            )
+            assert page.total == len(visible), caller
+            assert set(
+                await _ids(db_session, caller, duplicate_of_ticket_id=_sntl(original))
+            ) == _set(visible), caller
+
+        # An original that the caller cannot see lists the duplicates that
+        # the caller can see.
+        confidential_original = await ticket_factory(is_confidential=True)
+        visible_duplicate = await ticket_factory(
+            duplicate_of_id=confidential_original.id
+        )
+        page = await _list(
+            db_session, stranger, duplicate_of_ticket_id=_sntl(confidential_original)
+        )
+        assert [item.ticket_id for item in page.items] == [_sntl(visible_duplicate)]
+        assert page.items[0].duplicate_of_ticket_id == _sntl(confidential_original)
+
+        # Without such duplicates, it returns the response of an unknown value.
+        hidden_original = await ticket_factory(is_confidential=True)
+        await ticket_factory(duplicate_of_id=hidden_original.id, is_confidential=True)
+        unknown = await _list(
+            db_session, stranger, duplicate_of_ticket_id=UNKNOWN_TICKET_ID
+        )
+        assert unknown.total == 0
+        assert (
+            await _list(
+                db_session, stranger, duplicate_of_ticket_id=_sntl(hidden_original)
+            )
+            == unknown
+        )
+
+    async def test_combines_with_the_other_filters_by_and(
+        self, db_session: AsyncSession, clock: Clock, ticket_factory: Factory
+    ) -> None:
+        original = await ticket_factory(status=TicketStatus.ANALYSIS.value)
+        high = await ticket_factory(
+            duplicate_of_id=original.id, severity_manual=Severity.HIGH.value
+        )
+        await ticket_factory(
+            duplicate_of_id=original.id, severity_manual=Severity.LOW.value
+        )
+        elsewhere = await ticket_factory(
+            duplicate_of_id=(await ticket_factory()).id,
+            severity_manual=Severity.HIGH.value,
+        )
+
+        with _StatementRecorder(db_session) as recorder:
+            page = await _list(
+                db_session,
+                duplicate_of_ticket_id=_sntl(original),
+                severity=[Severity.HIGH],
+            )
+        assert len(recorder.statements) == 1
+        assert [item.ticket_id for item in page.items] == [_sntl(high)]
+        assert page.total == 1
+        assert set(await _ids(db_session, severity=[Severity.HIGH])) == _set(
+            [high, elsewhere]
+        )
+        # Every duplicate is Duplicated, so no other status matches.
+        assert (
+            await _ids(
+                db_session,
+                duplicate_of_ticket_id=_sntl(original),
+                status=[TicketStatus.ANALYSIS],
+            )
+            == []
+        )
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "sntl-1",
+            "Sntl-1",
+            " SNTL-1",
+            "SNTL-1 ",
+            "SNTL-0",
+            "SNTL-01",
+            "SNTL--1",
+            "SNTL-+1",
+            "SNTL-2147483648",
+            "SNTL-",
+            "1",
+            "",
+            "01994c20-7c00-7000-8000-000000000002",
+        ],
+    )
+    async def test_malformed_value_raises_before_any_query(self, value: str) -> None:
+        db = AsyncMock(spec=AsyncSession)
+
+        with pytest.raises(ValueError, match="duplicate_of_ticket_id"):
+            await list_tickets(db, caller=ALL_SCOPE, duplicate_of_ticket_id=value)
+
+        db.execute.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

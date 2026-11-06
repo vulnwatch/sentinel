@@ -56,6 +56,34 @@ _CVE_ID_SCHEMA: dict[str, Any] = {
 enforced by the schema (`docs/api-spec.md`, Published Input Constraints):
 the endpoint enforces it with `422 CVE_INVALID_FORMAT` and its precedence."""
 
+DUPLICATE_OF_TICKET_ID_SCHEMA: dict[str, Any] = {
+    "pattern": TICKET_ID_PATTERN.pattern,
+    "maxLength": TICKET_ID_MAX_LENGTH,
+}
+"""The `SNTL-{n}` grammar and length bound of a `duplicate_of_ticket_id`
+input, the Mark Ticket as Duplicate body member and the List Tickets filter,
+published from the constants `validate_duplicate_of_ticket_id()` enforces
+(`docs/api-spec.md`, Published Input Constraints). No keyword expresses the
+range of `n`, which each description states."""
+
+
+def validate_duplicate_of_ticket_id(value: str) -> str:
+    """Accept a `duplicate_of_ticket_id` input only in the canonical
+    `SNTL-{n}` grammar and range, parsed by the pure Core parser without
+    trimming or normalization (`docs/api-spec.md`, Ticket Identifier
+    Resolution). Raises `ValueError`, which validation reports as the
+    global `422 VALIDATION_ERROR`, for any other value.
+
+    Shared by the request-body member of Mark Ticket as Duplicate and the
+    List Tickets filter (tickets.md), so both reject the same values.
+    """
+    if parse_ticket_id(value) is None:
+        raise ValueError(
+            "duplicate_of_ticket_id must be a canonical SNTL-{n} identifier."
+        )
+    return value
+
+
 # Field descriptions shared by `TicketSummary` and `TicketDetail`, so the
 # two representations cannot drift (docs/features/tickets/tickets.md,
 # Response Schemas; docs/features/tickets/ticket-deadlines.md, Actors and
@@ -331,7 +359,9 @@ class TicketListQuery(BaseModel):
     Filter Validation), and an empty list means the filter was omitted.
     `sort_by` and `sort_order` are typed, so an invalid value is the
     global `422 VALIDATION_ERROR` (Sort Parameter Validation). String
-    parameters share the global 500-character limit.
+    parameters share the global 500-character limit;
+    `duplicate_of_ticket_id` arrives already validated as a canonical
+    `SNTL-{n}` (`validate_duplicate_of_ticket_id()`).
     """
 
     search: str | None = None
@@ -344,6 +374,7 @@ class TicketListQuery(BaseModel):
     maintainer: str | None = None
     product: str | None = None
     track: str | None = None
+    duplicate_of_ticket_id: str | None = None
     page: int = Field(default=1, ge=1, le=2_147_483_647)
     per_page: int = Field(default=20, ge=1, le=100)
     sort_by: TicketSortField = TicketSortField.CREATED_AT
@@ -525,22 +556,14 @@ class TicketDuplicateRequest(BaseModel):
             "target returns `404 TICKET_NOT_FOUND`. Required."
         ),
         examples=["SNTL-42"],
-        json_schema_extra={
-            "pattern": TICKET_ID_PATTERN.pattern,
-            "maxLength": TICKET_ID_MAX_LENGTH,
-        },
+        json_schema_extra=DUPLICATE_OF_TICKET_ID_SCHEMA,
     )
 
     @field_validator("duplicate_of_ticket_id")
     @classmethod
     def _canonical_ticket_id(cls, value: str) -> str:
-        """Accept only the canonical grammar, parsed by the pure Core
-        parser without trimming or normalization."""
-        if parse_ticket_id(value) is None:
-            raise ValueError(
-                "duplicate_of_ticket_id must be a canonical SNTL-{n} identifier."
-            )
-        return value
+        """Accept only the canonical grammar and range."""
+        return validate_duplicate_of_ticket_id(value)
 
 
 class TicketAssociateCVERequest(BaseModel):
