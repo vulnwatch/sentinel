@@ -3,8 +3,8 @@
 See `docs/features/platform/fetcher-infrastructure.md` for the full
 specification this module implements: the `run()` lifecycle (logging
 context, per-run state reset, settings validation, cursor load, execution
-under the automatic periodic context, finalization, HTTP teardown,
-exception propagation), import-time class
+under the automatic periodic context, soft time limit delivery,
+finalization, HTTP teardown, exception propagation), import-time class
 validation (`__init_subclass__`), the custom Settings schema, error
 message sanitization, and the BaseFetcher HTTP client integration.
 
@@ -26,14 +26,19 @@ startup via `app/tasks/beat_startup.py`. These build on this module's
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import re
+import signal
+import threading
 import traceback
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import IntEnum, StrEnum
+from types import FrameType
 from typing import Any, ClassVar, Literal, get_args, get_origin
 from uuid import UUID
 
@@ -343,6 +348,85 @@ def _validate_metric_count(count: int) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Soft time limit delivery
+# ---------------------------------------------------------------------------
+
+
+class _SoftTimeLimitDelivery:
+    """Deliver the Celery soft time limit to `run()` as a cancellation.
+
+    Billiard's prefork child raises `SoftTimeLimitExceeded` from its
+    `SIGUSR1` handler at whatever bytecode the main thread is running. An
+    asyncio fetcher waits in the event loop most of the time, where the
+    exception escapes the loop, or is logged and dropped when a loop
+    callback is running, so `run()` would not finalize the run. While
+    armed, the handler instead cancels the task running `run()` and wakes
+    the loop, as `asyncio.Runner` does for `SIGINT`. See
+    `docs/features/platform/fetcher-infrastructure.md` (`run()` lifecycle,
+    Soft time limit delivery).
+    """
+
+    def __init__(
+        self,
+        task: asyncio.Task[Any],
+        previous: Callable[[int, FrameType | None], Any],
+    ) -> None:
+        self._task = task
+        self._previous = previous
+        self._cancelling_before = task.cancelling()
+        self._fired = False
+
+    @classmethod
+    def arm(cls) -> _SoftTimeLimitDelivery | None:
+        """Replace the Python `SIGUSR1` handler of the main thread.
+
+        Returns `None`, changing nothing, outside the main thread or when
+        `SIGUSR1` has no Python handler (default action, ignored, or set
+        outside Python).
+        """
+        if threading.current_thread() is not threading.main_thread():
+            return None
+        previous = signal.getsignal(signal.SIGUSR1)
+        task = asyncio.current_task()
+        if not callable(previous) or task is None:
+            return None
+        delivery = cls(task, previous)
+        signal.signal(signal.SIGUSR1, delivery._on_soft_time_limit)
+        return delivery
+
+    def _on_soft_time_limit(self, signum: int, frame: FrameType | None) -> None:
+        if self._fired:
+            return
+        self._fired = True
+        self._task.cancel()
+        # The selector may be blocked: only a thread-safe callback wakes it.
+        self._task.get_loop().call_soon_threadsafe(lambda: None)
+
+    def disarm(self, exit_exc: BaseException | None) -> bool:
+        """Restore the previous handler and withdraw this cancellation.
+
+        `exit_exc` is the exception that the guarded phases raised, `None`
+        when they returned. Returns whether the soft time limit decides
+        their outcome: it fired, and `exit_exc` is neither a cancellation
+        also requested elsewhere nor an exception outside `Exception` and
+        `CancelledError`.
+        """
+        signal.signal(signal.SIGUSR1, self._previous)
+        if not self._fired:
+            return False
+        cancelled_elsewhere = self._task.uncancel() > self._cancelling_before
+        if isinstance(exit_exc, asyncio.CancelledError):
+            return not cancelled_elsewhere
+        return exit_exc is None or isinstance(exit_exc, Exception)
+
+
+def _soft_time_limit_exceeded(cause: BaseException | None) -> BaseException:
+    exceeded: BaseException = SoftTimeLimitExceeded()
+    exceeded.__cause__ = cause
+    return exceeded
+
+
+# ---------------------------------------------------------------------------
 # BaseFetcher
 # ---------------------------------------------------------------------------
 
@@ -520,7 +604,7 @@ class BaseFetcher:
         tokens = bind_contextvars(fetcher_run_id=str(run_id))
         execution_exc: BaseException | None = None
         try:
-            execution_exc = await self._run_settings_and_execution(config)
+            execution_exc = await self._run_until_soft_time_limit(config)
             await self._finalize(run_id, config, execution_exc)
         finally:
             await self._teardown_http_client()
@@ -528,6 +612,26 @@ class BaseFetcher:
 
         if execution_exc is not None:
             raise execution_exc
+
+    async def _run_until_soft_time_limit(
+        self, config: FetcherRunConfig
+    ) -> BaseException | None:
+        """Run phases 3-5 with the soft time limit delivered as a cancellation.
+
+        Returns the outcome of `_run_settings_and_execution()` or, when the
+        soft time limit fired meanwhile, a `SoftTimeLimitExceeded` chained
+        from the exception that those phases ended with.
+        """
+        delivery = _SoftTimeLimitDelivery.arm()
+        try:
+            outcome = await self._run_settings_and_execution(config)
+        except BaseException as exc:
+            if delivery is not None and delivery.disarm(exc):
+                return _soft_time_limit_exceeded(exc)
+            raise
+        if delivery is not None and delivery.disarm(None):
+            return _soft_time_limit_exceeded(outcome)
+        return outcome
 
     async def _run_settings_and_execution(
         self, config: FetcherRunConfig

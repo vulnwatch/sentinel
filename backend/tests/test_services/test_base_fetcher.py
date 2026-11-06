@@ -3,8 +3,9 @@ client integration (backend/app/services/base_fetcher.py).
 
 See `docs/features/platform/fetcher-infrastructure.md` for the
 contract under test: import-time class validation
-(`__init_subclass__`), the `run()` lifecycle (9 phases), the
-finalization status precedence, error message sanitization, the
+(`__init_subclass__`), the `run()` lifecycle (9 phases) and its soft
+time limit delivery, the finalization status precedence, error message
+sanitization, the
 custom Settings schema, and the BaseFetcher HTTP client integration.
 
 Import-time validation, metrics, `get_setting()`, and the HTTP client
@@ -20,8 +21,11 @@ rollback — teardown deletes them explicitly.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import dataclasses
 import itertools
+import signal
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from datetime import UTC, datetime, timedelta
@@ -36,7 +40,7 @@ import structlog.contextvars as ctxvars
 from celery.exceptions import SoftTimeLimitExceeded
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 import app.services.base_fetcher as base_fetcher_module
 from app.models.fetcher_audit_event import FetcherAuditEvent
@@ -51,6 +55,10 @@ from app.services.base_fetcher import (
     get_catch_up_fetchers,
 )
 from app.services.http_client import create_http_client
+from tests.support.soft_time_limit import (
+    prefork_soft_timeout_handler,
+    raise_soft_time_limit,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -2459,6 +2467,308 @@ class TestErrorSanitization:
         )
         assert run.error_traceback is not None
         assert "ValueError" in run.error_traceback
+
+
+# ---------------------------------------------------------------------------
+# Soft time limit delivery
+# ---------------------------------------------------------------------------
+
+_BLOCK_SECONDS = 60
+"""How long an await would block if the soft time limit did not stop it."""
+
+
+def _timeout_message(fetcher_name: str, processed: int) -> str:
+    return (
+        "Execution reached the soft time limit (hard limit for this run: "
+        f"3600s; {processed} items processed). Review FetcherConfig.run_timeout "
+        f"for future runs of fetcher '{fetcher_name}'."
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class _OwnTaskOutcome:
+    raised: BaseException | None
+    cancelling: int
+    """`Task.cancelling()` of the run's task once `run()` has ended."""
+
+
+async def _run_in_own_task(fetcher: BaseFetcher, run_id: UUID) -> _OwnTaskOutcome:
+    """Run `fetcher.run()` in a task of its own, so that its cancellation
+    never reaches the test's task, and return how it ended."""
+    cancelling: list[int] = []
+
+    async def _run() -> None:
+        try:
+            await fetcher.run(run_id=run_id, config=_make_config())
+        finally:
+            current = asyncio.current_task()
+            assert current is not None
+            cancelling.append(current.cancelling())
+
+    [raised] = await asyncio.gather(_run(), return_exceptions=True)
+    return _OwnTaskOutcome(raised, cancelling[0])
+
+
+def _cancel_current_task() -> None:
+    current = asyncio.current_task()
+    assert current is not None
+    current.cancel()
+
+
+async def _return(self: BaseFetcher, session: AsyncSession) -> None:
+    pass
+
+
+async def _raise_value_error(self: BaseFetcher, session: AsyncSession) -> None:
+    raise ValueError("boom")
+
+
+async def _be_cancelled(self: BaseFetcher, session: AsyncSession) -> None:
+    _cancel_current_task()
+    await asyncio.sleep(_BLOCK_SECONDS)
+
+
+@pytest.mark.integration
+class TestRunLifecycleSoftTimeLimitDelivery:
+    """`run()` lifecycle, Soft time limit delivery: the `SIGUSR1` handler
+    that `run()` installs for phases 3-5 and the outcome it records. Each
+    test installs the prefork child's handler (`tests/support/
+    soft_time_limit.py`) and raises the signal in the code under test; the
+    signal landing in the event loop, through the real `run_fetcher`
+    wrapper, is covered by `tests/test_tasks/
+    test_run_fetcher_soft_time_limit.py`."""
+
+    @pytest.mark.parametrize(
+        ("body", "raised"),
+        [
+            pytest.param(_return, None, id="return"),
+            pytest.param(_raise_value_error, ValueError, id="captured-exception"),
+            pytest.param(_be_cancelled, asyncio.CancelledError, id="cancellation"),
+        ],
+    )
+    async def test_handler_is_replaced_during_execution_and_restored_after(
+        self,
+        fetcher_lifecycle: Callable[..., Awaitable[tuple[str, UUID]]],
+        body: Callable[[BaseFetcher, AsyncSession], Awaitable[None]],
+        raised: type[BaseException] | None,
+    ) -> None:
+        """Without a soft time limit, every exit keeps its outcome."""
+        fetcher_name, run_id = await fetcher_lifecycle()
+        observed: list[object] = []
+
+        async def _execute(self: BaseFetcher, session: AsyncSession) -> None:
+            observed.append(signal.getsignal(signal.SIGUSR1))
+            await body(self, session)
+
+        fetcher_cls = _fetcher_class(fetcher_name, _execute)
+        with prefork_soft_timeout_handler():
+            outcome = await _run_in_own_task(fetcher_cls(), run_id)
+            handler_after_run = signal.getsignal(signal.SIGUSR1)
+
+        assert len(observed) == 1
+        assert callable(observed[0])
+        assert observed[0] is not raise_soft_time_limit
+        assert handler_after_run is raise_soft_time_limit
+        assert (None if outcome.raised is None else type(outcome.raised)) is raised
+
+    @pytest.mark.parametrize(
+        "disposition",
+        [
+            pytest.param(signal.SIG_DFL, id="default-action"),
+            pytest.param(signal.SIG_IGN, id="ignored"),
+        ],
+    )
+    async def test_no_python_handler_leaves_the_disposition_unchanged(
+        self,
+        fetcher_lifecycle: Callable[..., Awaitable[tuple[str, UUID]]],
+        real_session_factory: async_sessionmaker[AsyncSession],
+        disposition: signal.Handlers,
+    ) -> None:
+        fetcher_name, run_id = await fetcher_lifecycle()
+        observed: list[object] = []
+
+        async def _execute(self: BaseFetcher, session: AsyncSession) -> None:
+            observed.append(signal.getsignal(signal.SIGUSR1))
+
+        fetcher_cls = _fetcher_class(fetcher_name, _execute)
+        previous = signal.signal(signal.SIGUSR1, disposition)
+        try:
+            await fetcher_cls().run(run_id=run_id, config=_make_config())
+            disposition_after_run = signal.getsignal(signal.SIGUSR1)
+        finally:
+            signal.signal(signal.SIGUSR1, previous)
+
+        assert observed == [disposition]
+        assert disposition_after_run == disposition
+        run = await _get_run(real_session_factory, run_id)
+        assert run.status == "success"
+
+    async def test_soft_time_limit_in_the_previous_cursor_load_finalizes_failure(
+        self,
+        fetcher_lifecycle: Callable[..., Awaitable[tuple[str, UUID]]],
+        real_session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Phase 4 is guarded too: the run fails without calling
+        `execute()`."""
+        fetcher_name, run_id = await fetcher_lifecycle()
+        executed: list[bool] = []
+
+        async def _load_until_the_soft_time_limit(
+            self: BaseFetcher, fetcher_name: str
+        ) -> dict[str, Any] | None:
+            signal.raise_signal(signal.SIGUSR1)
+            await asyncio.sleep(_BLOCK_SECONDS)
+            return None
+
+        async def _execute(self: BaseFetcher, session: AsyncSession) -> None:
+            executed.append(True)
+
+        fetcher_cls = _fetcher_class(
+            fetcher_name,
+            _execute,
+            _load_previous_cursor=_load_until_the_soft_time_limit,
+        )
+        with prefork_soft_timeout_handler():
+            outcome = await _run_in_own_task(fetcher_cls(), run_id)
+
+        assert isinstance(outcome.raised, SoftTimeLimitExceeded)
+        assert isinstance(outcome.raised.__cause__, asyncio.CancelledError)
+        assert outcome.cancelling == 0
+        assert executed == []
+        run = await _get_run(real_session_factory, run_id)
+        assert run.status == "failure"
+        assert run.error_message == _timeout_message(fetcher_name, 0)
+
+    async def test_cancellation_turned_into_a_captured_exception_is_soft_time_limit(
+        self,
+        fetcher_lifecycle: Callable[..., Awaitable[tuple[str, UUID]]],
+        real_session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """An exception that `execute()` raises instead of the cancellation
+        becomes the `__cause__` of the recorded soft time limit."""
+        fetcher_name, run_id = await fetcher_lifecycle()
+
+        async def _execute(self: BaseFetcher, session: AsyncSession) -> None:
+            self.record_succeeded()
+            signal.raise_signal(signal.SIGUSR1)
+            try:
+                await asyncio.sleep(_BLOCK_SECONDS)
+            except asyncio.CancelledError as exc:
+                raise RuntimeError("request aborted") from exc
+
+        fetcher_cls = _fetcher_class(fetcher_name, _execute)
+        with prefork_soft_timeout_handler():
+            outcome = await _run_in_own_task(fetcher_cls(), run_id)
+
+        assert isinstance(outcome.raised, SoftTimeLimitExceeded)
+        assert isinstance(outcome.raised.__cause__, RuntimeError)
+        assert outcome.cancelling == 0
+        run = await _get_run(real_session_factory, run_id)
+        assert run.status == "failure"
+        assert run.error_message == _timeout_message(fetcher_name, 1)
+        assert run.error_traceback is not None
+        assert "RuntimeError: request aborted" in run.error_traceback
+
+    async def test_exception_escaping_the_phases_after_the_signal_is_soft_time_limit(
+        self,
+        _engine: AsyncEngine,  # noqa: PT019 — value used below, not just for setup
+        fetcher_lifecycle: Callable[..., Awaitable[tuple[str, UUID]]],
+        real_session_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An exception that escapes the phases themselves, here from
+        closing the cancelled execution session, is converted as well."""
+        fetcher_name, run_id = await fetcher_lifecycle()
+        close_fails = [False]
+
+        class _CloseFailsOnce(AsyncSession):
+            async def close(self) -> None:
+                await super().close()
+                if close_fails[0]:
+                    close_fails[0] = False
+                    raise RuntimeError("close failed")
+
+        monkeypatch.setattr(
+            base_fetcher_module,
+            "async_session_factory",
+            async_sessionmaker(_engine, class_=_CloseFailsOnce, expire_on_commit=False),
+        )
+
+        async def _execute(self: BaseFetcher, session: AsyncSession) -> None:
+            close_fails[0] = True
+            signal.raise_signal(signal.SIGUSR1)
+            await asyncio.sleep(_BLOCK_SECONDS)
+
+        fetcher_cls = _fetcher_class(fetcher_name, _execute)
+        with prefork_soft_timeout_handler():
+            outcome = await _run_in_own_task(fetcher_cls(), run_id)
+
+        assert isinstance(outcome.raised, SoftTimeLimitExceeded)
+        assert isinstance(outcome.raised.__cause__, RuntimeError)
+        assert isinstance(outcome.raised.__cause__.__context__, asyncio.CancelledError)
+        assert outcome.cancelling == 0
+        run = await _get_run(real_session_factory, run_id)
+        assert run.status == "failure"
+        assert run.error_message == _timeout_message(fetcher_name, 0)
+
+    async def test_swallowed_cancellation_is_soft_time_limit_and_later_signals_inert(
+        self,
+        fetcher_lifecycle: Callable[..., Awaitable[tuple[str, UUID]]],
+        real_session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """A normal return after the signal still records the soft time
+        limit, and only the first signal cancels."""
+        fetcher_name, run_id = await fetcher_lifecycle()
+        later_await_completed: list[bool] = []
+
+        async def _execute(self: BaseFetcher, session: AsyncSession) -> None:
+            self.record_succeeded(2)
+            signal.raise_signal(signal.SIGUSR1)
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.sleep(_BLOCK_SECONDS)
+            signal.raise_signal(signal.SIGUSR1)
+            await asyncio.sleep(0)
+            later_await_completed.append(True)
+
+        fetcher_cls = _fetcher_class(fetcher_name, _execute)
+        with prefork_soft_timeout_handler():
+            outcome = await _run_in_own_task(fetcher_cls(), run_id)
+
+        assert later_await_completed == [True]
+        assert isinstance(outcome.raised, SoftTimeLimitExceeded)
+        assert outcome.raised.__cause__ is None
+        assert outcome.cancelling == 0
+        run = await _get_run(real_session_factory, run_id)
+        assert run.status == "failure"
+        assert run.error_message == _timeout_message(fetcher_name, 2)
+        assert run.items_succeeded == 2
+
+    async def test_cancellation_also_requested_elsewhere_propagates_unchanged(
+        self,
+        fetcher_lifecycle: Callable[..., Awaitable[tuple[str, UUID]]],
+        real_session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """When another party also cancels the task, the cancellation wins:
+        it propagates without finalization, only `run()`'s own request is
+        withdrawn, and the handler is restored."""
+        fetcher_name, run_id = await fetcher_lifecycle()
+
+        async def _execute(self: BaseFetcher, session: AsyncSession) -> None:
+            _cancel_current_task()
+            signal.raise_signal(signal.SIGUSR1)
+            await asyncio.sleep(_BLOCK_SECONDS)
+
+        fetcher_cls = _fetcher_class(fetcher_name, _execute)
+        with prefork_soft_timeout_handler():
+            outcome = await _run_in_own_task(fetcher_cls(), run_id)
+            handler_after_run = signal.getsignal(signal.SIGUSR1)
+
+        assert isinstance(outcome.raised, asyncio.CancelledError)
+        assert outcome.cancelling == 1
+        assert handler_after_run is raise_soft_time_limit
+        run = await _get_run(real_session_factory, run_id)
+        assert run.status == "running"
+        assert run.finished_at is None
 
 
 # ---------------------------------------------------------------------------

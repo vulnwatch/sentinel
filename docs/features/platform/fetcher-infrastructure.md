@@ -176,6 +176,34 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
       durable. A fetcher that reports a create or update before its commit has
       succeeded is a programming error, not a supported pattern.
 
+      **Soft time limit delivery**: Celery's prefork pool signals the soft
+      time limit with `SIGUSR1`, and the pool child's handler raises
+      `SoftTimeLimitExceeded` at whatever point the main thread is
+      executing. An asyncio fetcher waits in the event loop most of the
+      time, where that exception would escape the event loop without
+      reaching `run()`, or be logged and dropped while the loop runs one
+      of its callbacks. From the start of phase 3 to the end of phase 5,
+      `run()` therefore replaces that handler with one that cancels the
+      task running `run()` and wakes the event loop, and it restores the
+      previous handler on every path out of these phases. The soft time
+      limit thus reaches settings construction, the previous-cursor load,
+      or `execute()` as `asyncio.CancelledError` at their current or next
+      `await`; only the first signal acts. When the phases end after the
+      signal, `run()` withdraws its own cancellation request and captures
+      `SoftTimeLimitExceeded` for finalization, with the exception that the
+      phases raised or captured, if any, as its `__cause__`. This holds
+      whether the phases raised `CancelledError` or another `Exception`,
+      captured an exception, or returned normally. Two exits are not
+      converted and propagate unchanged, without finalization: a
+      `CancelledError` while a cancellation of the task requested elsewhere
+      remains, and an exception that is neither an `Exception` nor a
+      `CancelledError`, such as the `SystemExit` of a cold worker shutdown.
+      `run()` changes no signal handler outside the main thread or when
+      `SIGUSR1` has no Python-level handler. A soft time limit that fires
+      outside phases 3 to 5, for example during finalization, keeps the
+      pool handler's behavior and can leave the run `running` until Stale
+      Run Detection recovers it.
+
    6. **Finalization**: in a separate short-lived session, update the
       `FetcherRun` record with final status, metrics, timing, error
       fields, and cursor. See "Finalization" below for the complete
@@ -195,15 +223,20 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
    Finalization updates the `FetcherRun` record in a separate
    short-lived session. It runs regardless of whether settings
    construction, previous-cursor loading, or `execute()` succeeded or
-   raised.
+   raised an `Exception`, and after a soft time limit that `run()`
+   captures (see "Soft time limit delivery" in phase 5). An exception
+   that is not an `Exception`, such as any other cancellation of the
+   task, `SystemExit`, or `KeyboardInterrupt`, propagates without
+   finalization, and Stale Run Detection recovers the run.
 
    **Status determination precedence** (evaluated in order):
 
    1. If settings construction, previous-cursor loading, or `execute()`
       raised an exception: `failure`. Metric counters are preserved for
       diagnostics but do not influence the status. This includes
-      `SoftTimeLimitExceeded` — when the soft time limit is reached, the
-      exception propagates to `run()`, resulting in `failure` status with
+      `SoftTimeLimitExceeded` — when the soft time limit is reached during
+      these phases, `run()` captures `SoftTimeLimitExceeded` (see "Soft
+      time limit delivery" in phase 5), resulting in `failure` status with
       an enriched error message (see the generic fallback table entry for
       `SoftTimeLimitExceeded` in "Error Message Sanitization" below).
       The hard time limit (`time_limit`) terminates the process if the
@@ -266,21 +299,24 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
 
    ### Exception Propagation
 
-   `run()` always re-raises after finalization. This ensures that the
-   Celery task reports a task failure for observability (worker logs,
-   Celery flower). The specific behavior:
+   `run()` always re-raises the captured exception after finalization,
+   and an exit that skips finalization (see "Finalization") propagates
+   unchanged. This ensures that the Celery task reports a task failure
+   for observability (worker logs, Celery flower). The specific behavior:
 
    | Lifecycle outcome | Finalization outcome | Exception propagated |
    |---|---|---|
    | `execute()` succeeded | Finalization succeeded | None — `run()` returns normally |
    | `execute()` returned normally, all selected units failed | Finalization succeeded | None — `run()` returns normally (failure is recorded in the `FetcherRun`, not as a task exception) |
    | `execute()` raised | Finalization succeeded | Original execution exception re-raised |
+   | Soft time limit reached during settings construction, previous cursor load, or `execute()` | Finalization succeeded | `SoftTimeLimitExceeded` re-raised, with the exception that these phases ended with, if any, as `__cause__` (see "Soft time limit delivery" in phase 5) |
+   | Settings construction, previous cursor load, or `execute()` ended with an exception that is not an `Exception` (a cancellation, `SystemExit`, `KeyboardInterrupt`), other than the cancellation that delivers the soft time limit (see "Soft time limit delivery" in phase 5) | Not performed | That exception propagates unchanged |
    | Settings validation failed | Finalization succeeded | `FetcherConfigError` re-raised |
    | Settings construction raised a non-`ValidationError` | Finalization succeeded | Original settings exception re-raised |
    | Previous cursor load raised | Finalization succeeded | Original cursor-load exception re-raised |
    | Cursor serialization failed | Finalization succeeded | None — `run()` returns normally (failure is recorded in the `FetcherRun`) |
    | `execute()` succeeded | Finalization failed | Finalization exception raised |
-   | Settings construction, previous cursor load, or `execute()` raised | Finalization failed | Finalization exception raised (with original as `__cause__`) |
+   | Settings construction, previous cursor load, or `execute()` raised, or the soft time limit was reached | Finalization failed | Finalization exception raised (with the captured exception as `__cause__`) |
 
    Because `run_fetcher` has no top-level retry, propagated exceptions
    result in a permanent Celery task failure. Recovery happens at the
@@ -1030,9 +1066,14 @@ specialized `cve_fetch_item_failed` event defined in
 [cve-fetcher-infrastructure.md](cve-fetcher-infrastructure.md#batch-error-handling).
 
 Concrete fetchers do NOT need to catch these signals at the `execute()` level.
-`CancelledError` propagates to the task boundary, and `run()` provides the
-enriched timeout message for `SoftTimeLimitExceeded` automatically (see the
-generic fallback table above).
+Within `run()`, the soft time limit reaches `execute()` as `CancelledError`
+(see "Soft time limit delivery" in the `run()` lifecycle), so a handler that
+consumes `CancelledError` also keeps the soft time limit from interrupting
+execution, which then continues until it ends or the hard time limit
+terminates the process. `run()` turns that cancellation back into
+`SoftTimeLimitExceeded` and provides the enriched timeout message
+automatically (see the generic fallback table above); any other
+`CancelledError` propagates to the task boundary.
 
 **Not excluded — `OperationalError` and database connection loss**:
 database errors are caught per-item (not excluded from the per-item
@@ -3435,19 +3476,24 @@ graceful shutdown (`SIGTERM` to the worker) does not require this
 mechanism: Celery's warm shutdown lets the currently executing task run
 to completion, so `run()` finalizes the `FetcherRun` record normally
 (`success`, `partial`, or `failure`) before the worker process exits —
-no orphaned `running` row is left behind. Stale detection only
-recovers rows orphaned by a termination that kills the process before
-`run()`'s finalization step completes.
+no orphaned `running` row is left behind. Stale detection recovers rows
+orphaned by a termination that kills the process before `run()`'s
+finalization step completes, and the rows that a surviving worker leaves
+`running` when finalization fails or does not run: a finalization
+database failure, an exit that propagates without finalization, and a
+soft time limit that fires outside phases 3 to 5 (see the `run()`
+lifecycle: Finalization and Soft time limit delivery).
 
 **Relationship to hard time limit**: the Running Stale Threshold is
 intentionally set ABOVE the hard time limit
 (`hard_time_limit_seconds + 60 > hard_time_limit_seconds`). This ensures
-that when stale detection triggers, the process is already dead —
-force-terminated by the hard limit (Celery/Billiard send `SIGTERM` to
-the pool child first, then `SIGKILL` as a backstop if it has not exited
-after a short grace period). The stale detection mechanism therefore
-never needs to kill or revoke a task — it only cleans up the orphaned
-database record left behind by a force-killed process.
+that when stale detection triggers, the task is no longer running: it
+has ended, or the hard limit has force-terminated the process
+(Celery/Billiard send `SIGTERM` to the pool child first, then `SIGKILL`
+as a backstop if it has not exited after a short grace period). The
+stale detection mechanism therefore never needs to kill or revoke a
+task — it only cleans up the orphaned database record left behind by a
+force-killed process or by a task that ended without finalizing it.
 
 **Pool precondition**: this guarantee holds only under Celery's
 `prefork` execution pool, which is the only pool that reliably
@@ -3888,8 +3934,9 @@ timestamp and `user_id`. If the same PATCH also changes `enabled` to
 default schedules (one to eight runs per fetcher per day), the table grows by
 approximately 15,000 rows per year — negligible for PostgreSQL. No cleanup
 task or retention policy is necessary. Orphaned runs (stuck in `queued` or
-`running` status due to an unpublished trigger or an unclean process
-termination) are resolved by the existing Stale Run Detection mechanism at the
+`running` status due to an unpublished trigger, an unclean process
+termination, or a finalization that failed or did not run) are resolved by
+the existing Stale Run Detection mechanism at the
 next scheduled acquisition, manual trigger attempt, or `run_timeout` PATCH —
 see `docs/features/platform/fetcher-operations.md` ("Process Crash Between
 Commit and Enqueue") for the one case where none of these occurs: a
