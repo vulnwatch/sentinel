@@ -507,15 +507,16 @@ class TestListEndpoint:
     ) -> None:
         """tickets.md (List Tickets > Embargo filters): both boolean values
         of each filter and the CRD sort over HTTP, against the server's one
-        evaluation instant."""
+        evaluation instant. The creation order differs from the CRD order,
+        so a sort that falls back to `created_at` fails."""
         await user_role_factory(
             user_id=authenticated_user.id, role=Role.VULNERABILITY_ANALYST.value
         )
-        passed = await ticket_factory(
-            is_confidential=True, coordinated_release_at=_NOW - timedelta(days=1)
-        )
         coming = await ticket_factory(
             is_confidential=True, coordinated_release_at=_NOW + timedelta(days=1)
+        )
+        passed = await ticket_factory(
+            is_confidential=True, coordinated_release_at=_NOW - timedelta(days=1)
         )
         without_crd = await ticket_factory(is_confidential=True)
         retained = await ticket_factory(coordinated_release_at=_NOW - timedelta(days=2))

@@ -377,7 +377,7 @@ def _ticket_list_query(
                 "`qa_due_at`, `release_due_at`), `current_due_at` (the due "
                 "date of the Ticket's `current_phase`, or `release_due_at` "
                 "when `current_phase` is `null` and the Ticket has due dates; "
-                "`null` for `done` and without an SLA), or "
+                "`null` for `done` and without an SLA), "
                 "`priority_then_current_due` (the effective priority, then the "
                 "current due date: `desc` lists `p1` first and, within one "
                 "priority, the earliest current due date first; `asc` reverses "

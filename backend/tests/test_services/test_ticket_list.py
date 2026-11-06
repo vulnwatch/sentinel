@@ -2676,7 +2676,6 @@ class TestVisibility:
             {"current_phase": [CurrentPhase.TRIAGE]},
             {"is_confidential": True},
             {"coordinated_release_passed": True},
-            {"coordinated_release_passed": False},
             {"sort_by": TicketSortField.SEVERITY},
             {"sort_by": TicketSortField.COORDINATED_RELEASE_AT},
         ):
@@ -2737,6 +2736,7 @@ class TestBoundedRead:
             db_session,
             overdue=list(MilestonePhase),
             current_phase=list(CurrentPhase),
+            coordinated_release_passed=False,
             sort_by=TicketSortField.TRIAGE_DUE_AT,
         )
 
