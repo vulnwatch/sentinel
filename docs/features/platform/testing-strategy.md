@@ -3057,6 +3057,21 @@ visibility predicate.
   publishes the parameter with the pattern and length bound of the
   request-body `duplicate_of_ticket_id`. `list_tickets()` given a malformed
   value raises `ValueError` before any query.
+- Ticket list embargo tests (`docs/features/tickets/tickets.md`, List Tickets,
+  Embargo filters) use a controlled clock. `is_confidential` lists exactly the
+  confidential, or non-confidential, Tickets. `coordinated_release_passed=true`
+  matches a confidential Ticket whose CRD equals the evaluation instant and one
+  whose CRD has passed, including in `Ignored` and `Duplicated`, but not a CRD
+  one microsecond after the instant, a confidential Ticket without a CRD, or a
+  CRD retained on a non-confidential Ticket, which `false` matches instead. The
+  filters compose with each other and with another filter by AND with a
+  correct `total`, and a confidential Ticket that the caller sees through an
+  access grant or package maintainership is listed and counted, while one that
+  the caller cannot see is neither. `sort_by=coordinated_release_at` orders
+  both directions with the Tickets without a CRD last, a retained CRD included,
+  and pages deterministically. A non-boolean value of either filter produces
+  the global `422 VALIDATION_ERROR`, and the OpenAPI document publishes both
+  filters as booleans and the sort value.
 - Ticket list tests create one-to-many package, track, Product, maintainer, and
   external-ID fan-out and prove one row per Ticket plus an uninflated filtered
   total. They cover equal primary sort keys, semantic severity/status ordering,

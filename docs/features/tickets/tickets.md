@@ -1288,7 +1288,9 @@ authorized user may make the Ticket non-confidential.
   delivery, assignment, auto-assignment, Ticket accessibility, priority, the
   remediation deadlines in [ticket-deadlines.md](ticket-deadlines.md), or any
   fetcher scope. Sentinel never declassifies a Ticket or changes any state
-  when the CRD passes.
+  when the CRD passes. [List Tickets](#list-tickets) instead lists the
+  confidential Tickets whose CRD has passed, and orders Tickets by their CRD
+  (Embargo filters there).
 - It is set at creation (`POST /api/v1/tickets` with `is_confidential: true`)
   or through
   [Set Coordinated Release Date](#set-coordinated-release-date) while the Ticket
@@ -1743,6 +1745,12 @@ Query parameters:
   value that identifies no Ticket, or a Ticket that the caller cannot see, is
   not an error and never returns 404: an unknown value returns an empty
   result, and the visibility of the named Ticket has no effect.
+- `is_confidential` (boolean, optional): `true` matches the confidential
+  Tickets, `false` the non-confidential ones (see Embargo filters below).
+- `coordinated_release_passed` (boolean, optional): `true` matches the
+  confidential Tickets whose Coordinated Release Date is at or before the
+  evaluation instant of the request; `false` matches every other Ticket (see
+  Embargo filters below).
 - `page` (integer, optional): page number for pagination (default: 1).
 - `per_page` (integer, optional): items per page (default: 20).
 - `sort_by` (string, optional): field to sort by (default: `created_at`).
@@ -1758,7 +1766,9 @@ Query parameters:
   Sorting, then the current due date; with the default `desc`, `P1` first and
   the earliest current due date first within one priority; `NULL` sorts last
   for each key). See
-  [ticket-deadlines.md](ticket-deadlines.md#current-due-date) for both.
+  [ticket-deadlines.md](ticket-deadlines.md#current-due-date) for both. Also
+  `coordinated_release_at` (the stored Coordinated Release Date; `NULL` sorts
+  last, see Embargo filters below).
 - `sort_order` (string, optional): `asc` or `desc` (default: `desc`).
 
 **Product and track filters.** When both `product` and `track` are supplied,
@@ -1807,6 +1817,49 @@ the source that the caller cannot see
 ([ticket-service.md](ticket-service.md#mark_as_duplicate)), so a client that
 names the duplicates of a Ticket before marking it as duplicate, for example
 in the confirmation of that operation, names the visible ones only.
+
+**Embargo filters.** `is_confidential` and `coordinated_release_passed` list
+the embargoed Tickets and those still confidential after their
+[Coordinated Release Date](#coordinated-release-date), whose declassification
+an authorized user has yet to perform:
+
+- The `is_confidential` filter matches the Tickets whose `is_confidential`
+  equals its value.
+- `coordinated_release_passed=true` matches a Ticket exactly when it is
+  confidential and its `coordinated_release_at` is set and at or before the
+  evaluation instant. `coordinated_release_passed=false` matches every Ticket
+  that `true` does not match: a non-confidential Ticket, a confidential Ticket
+  without a CRD, and one whose CRD lies after the instant. A CRD retained on a
+  non-confidential Ticket, which is inert, therefore never matches `true`.
+
+The boundary is inclusive because SUSE may publish from the CRD onward, while a
+due date is past only strictly before the instant. The comparison uses the one
+evaluation instant of the response, which also decides its milestone statuses
+and the `overdue` filter
+([ticket-deadlines.md](ticket-deadlines.md#evaluation-instant)), so the rows
+and `meta.total` agree and do not depend on the client's clock. Ticket status
+has no effect on either filter: a confidential `Resolved`, `Ignored`, or
+`Duplicated` Ticket whose CRD has passed still matches, because its
+confidentiality and its CRD remain editable in every status. The two filters
+combine with each other and with every other filter by AND; for example
+`is_confidential=true&coordinated_release_passed=false` lists the confidential
+Tickets whose CRD has not passed or that have none.
+
+`sort_by=coordinated_release_at` orders by the stored `coordinated_release_at`,
+a CRD retained on a non-confidential Ticket included, so that the order agrees
+with the `coordinated_release_at` of the returned rows. Tickets without a CRD
+sort last in both directions under Nullable Sort Field Ordering in
+`docs/api-spec.md`. With `is_confidential=true` and `sort_order=asc`, the
+sort therefore lists the confidential Tickets with the earliest CRD first, the
+passed CRDs before the coming ones, and those without a CRD last.
+
+Both filters narrow the Tickets that the caller can see, require no
+capability, and change no visibility rule
+([Confidentiality Filtering](#confidentiality-filtering);
+`docs/features/identity/rbac.md`, Scope and Confidential Ticket Visibility).
+Every listed row already carries `is_confidential` and
+`coordinated_release_at`, so neither filter discloses anything that the rows do
+not.
 
 Response: paginated `TicketSummary` array in standard
 `{"data": [...], "meta": {...}}` envelope (200 OK).
