@@ -3061,9 +3061,10 @@ visibility predicate.
   Embargo filters) use a controlled clock. `is_confidential` lists exactly the
   confidential, or non-confidential, Tickets. `coordinated_release_passed=true`
   matches a confidential Ticket whose CRD equals the evaluation instant and one
-  whose CRD has passed, including in `Ignored` and `Duplicated`, but not a CRD
-  one microsecond after the instant, a confidential Ticket without a CRD, or a
-  CRD retained on a non-confidential Ticket, which `false` matches instead. The
+  whose CRD has passed, including in `Resolved`, `Ignored`, and `Duplicated`,
+  but not a CRD one microsecond after the instant, a confidential Ticket
+  without a CRD, or a CRD retained on a non-confidential Ticket;
+  `coordinated_release_passed=false` matches each of these three instead. The
   filters compose with each other and with another filter by AND with a
   correct `total`, and a confidential Ticket that the caller sees through an
   access grant or package maintainership is listed and counted, while one that

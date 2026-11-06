@@ -1749,7 +1749,7 @@ Query parameters:
   Tickets, `false` the non-confidential ones (see Embargo filters below).
 - `coordinated_release_passed` (boolean, optional): `true` matches the
   confidential Tickets whose Coordinated Release Date is at or before the
-  evaluation instant of the request; `false` matches every other Ticket (see
+  evaluation instant of the response; `false` matches every other Ticket (see
   Embargo filters below).
 - `page` (integer, optional): page number for pagination (default: 1).
 - `per_page` (integer, optional): items per page (default: 20).
@@ -1766,9 +1766,9 @@ Query parameters:
   Sorting, then the current due date; with the default `desc`, `P1` first and
   the earliest current due date first within one priority; `NULL` sorts last
   for each key). See
-  [ticket-deadlines.md](ticket-deadlines.md#current-due-date) for both. Also
-  `coordinated_release_at` (the stored Coordinated Release Date; `NULL` sorts
-  last, see Embargo filters below).
+  [ticket-deadlines.md](ticket-deadlines.md#current-due-date) for both.
+  `coordinated_release_at` is also valid (the stored Coordinated Release Date;
+  `NULL` sorts last, see Embargo filters below).
 - `sort_order` (string, optional): `asc` or `desc` (default: `desc`).
 
 **Product and track filters.** When both `product` and `track` are supplied,
@@ -1819,9 +1819,9 @@ names the duplicates of a Ticket before marking it as duplicate, for example
 in the confirmation of that operation, names the visible ones only.
 
 **Embargo filters.** `is_confidential` and `coordinated_release_passed` list
-the embargoed Tickets and those still confidential after their
-[Coordinated Release Date](#coordinated-release-date), whose declassification
-an authorized user has yet to perform:
+the confidential Tickets and, among them, those whose
+[Coordinated Release Date](#coordinated-release-date) has passed, whose
+declassification an authorized user has yet to perform:
 
 - The `is_confidential` filter matches the Tickets whose `is_confidential`
   equals its value.
