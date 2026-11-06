@@ -322,6 +322,7 @@ Conceptual semantic inputs are:
 | `maintainer` | `str \| None` | `None` | User UUID or exact username |
 | `product` | `str \| None` | `None` | Canonical Product CPE, exact match |
 | `track` | `str \| None` | `None` | Track reference, exact match |
+| `duplicate_of_ticket_id` | `str \| None` | `None` | Canonical `SNTL-{n}` of an original Ticket |
 | `sort_by` | `created_at`, `updated_at`, `severity`, `priority`, `status`, `ticket_id`, `triage_due_at`, `submission_due_at`, `um_due_at`, `qa_due_at`, `release_due_at`, `current_due_at`, or `priority_then_current_due` | `created_at` | Sort order before the tie-breaker |
 | `sort_order` | `asc` or `desc` | `desc` | Sort direction |
 | `page` | positive integer | `1` | One-indexed page |
@@ -359,7 +360,12 @@ The result contains a collection of Ticket summary projections plus `total`,
    `NULL`; when both are supplied, one such Product occurrence must lie under
    one such track. An unknown value yields an empty page. Lifecycle,
    eligibility, affectedness, delivery, Product release, and Ticket status are
-   not inputs of these two filters.
+   not inputs of these two filters. `duplicate_of_ticket_id` matches the
+   Tickets whose `duplicate_of_id` is the Ticket whose `sequence_id` is its
+   `n`, whatever the visibility of that Ticket, under List Tickets (Duplicate
+   filter) in `tickets.md`; an unknown value yields an empty page. The API
+   rejects a malformed value; given one, the operation raises `ValueError`
+   before any query.
 4. Resolve severity exactly once per Ticket using the canonical Ticket severity
    cascade. Severity filtering, semantic sorting, and projection all use that
    same value, including the distinction between resolved `None` and SQL NULL.

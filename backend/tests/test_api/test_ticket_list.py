@@ -428,6 +428,75 @@ class TestListEndpoint:
             track="SUSE:SLE-15-SP6:Update",
         ) == [_sntl(through_update)]
 
+    async def test_duplicate_of_ticket_id_lists_the_visible_duplicates(
+        self,
+        authenticated_client: AsyncClient,
+        fixed_clock: list[datetime],
+        ticket_factory: Factory,
+    ) -> None:
+        """A canonical value is never a `404`: the visibility of the named
+        Ticket has no effect, and an unknown value yields an empty page."""
+        original = await ticket_factory(is_confidential=True)
+        public = await ticket_factory(duplicate_of_id=original.id)
+        await ticket_factory(duplicate_of_id=original.id, is_confidential=True)
+
+        response = await authenticated_client.get(
+            _PATH, params={"duplicate_of_ticket_id": _sntl(original)}
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert [item["ticket_id"] for item in body["data"]] == [_sntl(public)]
+        assert body["data"][0]["status"] == "duplicated"
+        assert body["data"][0]["duplicate_of_ticket_id"] == _sntl(original)
+        assert body["meta"]["total"] == 1
+        for value in (_sntl(public), "SNTL-2147483647"):
+            response = await authenticated_client.get(
+                _PATH, params={"duplicate_of_ticket_id": value}
+            )
+            assert response.status_code == 200, value
+            assert response.json() == {
+                "data": [],
+                "meta": {"total": 0, "page": 1, "per_page": 20},
+            }, value
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "sntl-42",
+            " SNTL-42",
+            "SNTL-42 ",
+            "SNTL-0",
+            "SNTL-0042",
+            "SNTL--42",
+            "SNTL-2147483648",
+            "SNTL-",
+            "42",
+            "",
+            "01994c20-7c00-7000-8000-000000000002",
+            "SNTL-" + "4" * 496,
+        ],
+    )
+    async def test_malformed_duplicate_of_ticket_id_returns_422(
+        self,
+        authenticated_client: AsyncClient,
+        value: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        spy = AsyncMock()
+        monkeypatch.setattr(ticket_service, "list_tickets", spy)
+
+        response = await authenticated_client.get(
+            _PATH, params={"duplicate_of_ticket_id": value}
+        )
+
+        assert response.status_code == 422
+        body = response.json()
+        assert body["code"] == "VALIDATION_ERROR"
+        assert [error["loc"] for error in body["errors"]] == [
+            ["query", "duplicate_of_ticket_id"]
+        ]
+        spy.assert_not_awaited()
+
     async def test_search_and_sort_reach_the_service(
         self,
         authenticated_client: AsyncClient,
@@ -821,12 +890,30 @@ class TestOpenApiContract:
             "maintainer",
             "product",
             "track",
+            "duplicate_of_ticket_id",
             "page",
             "per_page",
             "sort_by",
             "sort_order",
         }
         assert [p for p in parameters if p["in"] == "path"] == []
+
+    def test_duplicate_of_ticket_id_publishes_the_request_body_grammar(self) -> None:
+        """tickets.md (List Tickets): the pattern and length bound of the
+        request-body `duplicate_of_ticket_id`, and the range of `n` in the
+        description (docs/api-spec.md, Published Input Constraints)."""
+        parameters = {p["name"]: p for p in self._operation()["parameters"]}
+        schema = parameters["duplicate_of_ticket_id"]["schema"]
+        body_member = self._schemas()["TicketDuplicateRequest"]["properties"][
+            "duplicate_of_ticket_id"
+        ]
+
+        assert parameters["duplicate_of_ticket_id"]["required"] is False
+        assert schema["type"] == "string"
+        assert schema["pattern"] == body_member["pattern"] == "^SNTL-[1-9][0-9]*$"
+        assert schema["maxLength"] == body_member["maxLength"] == 15
+        assert not {"enum", "items", "default", "anyOf"} & set(schema)
+        assert "`n` at most 2147483647" in schema["description"]
 
     def test_product_and_track_are_single_bounded_strings(self) -> None:
         parameters = {p["name"]: p for p in self._operation()["parameters"]}

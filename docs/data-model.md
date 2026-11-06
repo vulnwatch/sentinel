@@ -981,7 +981,8 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 
 - `ix_ticket_duplicate_of_id`: partial index on `duplicate_of_id` WHERE
   `duplicate_of_id IS NOT NULL` — supports `mark_as_duplicate` finding
-  dependents of the source ticket.
+  dependents of the source ticket and the Ticket-list `duplicate_of_ticket_id`
+  filter.
 - `ix_ticket_assignee_id`: non-unique B-tree index on `assignee_id`. It serves
   the Ticket selection by assignee in `_unassign_active_tickets()` and
   `_unassign_ineligible_tickets()`, which run while the target User is locked
