@@ -73,6 +73,7 @@ TICKET_DETAIL_FIELDS = {
     "priority",
     "priority_automatic",
     "priority_override",
+    "priority_automatic_basis",
     "assignee",
     "cve",
     "duplicate_of_ticket_id",

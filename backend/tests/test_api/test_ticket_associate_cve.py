@@ -1556,6 +1556,13 @@ class TestAssociateCve:
             "priority": "p1",
             "priority_automatic": "p1",
             "priority_override": None,
+            # The post-association basis: the CVE's severity and its KEV
+            # entry replace the manual Medium with no evidence (P4).
+            "priority_automatic_basis": {
+                "severity": "critical",
+                "exploitation": "kev",
+                "evidence": [{"kind": "kev", "value": "2099-01-15"}],
+            },
             "assignee": assignee,
             "cve": {
                 **_placeholder_cve(world.cve_string),
@@ -1694,6 +1701,11 @@ class TestAssociateCve:
             "priority": None,
             "priority_automatic": None,
             "priority_override": None,
+            "priority_automatic_basis": {
+                "severity": None,
+                "exploitation": "unknown",
+                "evidence": [],
+            },
             "assignee": assignee,
             "cve": _placeholder_cve(_NEW_CVE_ID),
             "duplicate_of_ticket_id": None,

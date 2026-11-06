@@ -380,6 +380,10 @@ class TestSetPriority:
             cleared["priority_automatic"],
             cleared["priority_override"],
         ) == ("p3", "p3", None)
+        # The override never changes what the automatic priority is based on.
+        basis = {"severity": "high", "exploitation": "unknown", "evidence": []}
+        assert data["priority_automatic_basis"] == basis
+        assert cleared["priority_automatic_basis"] == basis
         state = await ticket_row(db_session, target.id)
         assert (state["priority_auto"], state["priority_override"]) == ("P3", None)
         assert await event_count(db_session, target.id) == 2

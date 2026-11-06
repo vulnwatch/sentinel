@@ -1,7 +1,8 @@
 """Request and response schemas for Tickets.
 
 See `docs/features/tickets/tickets.md` (Response Schemas > TicketSummary
-and TicketDetail, Endpoint -> Schema Mapping, List Tickets, Create Ticket,
+and TicketDetail, Shared Sub-Schemas > PriorityBasis and
+PriorityEvidence, Endpoint -> Schema Mapping, List Tickets, Create Ticket,
 Set Severity Manual, Mark Ticket as Duplicate, Set Confidentiality, Set
 Coordinated Release Date, Access Grant Management and
 TicketAccessGrantResponse) for the authoritative contract,
@@ -26,7 +27,7 @@ from uuid import UUID
 
 from pydantic import MISSING, BaseModel, Field, field_validator, model_validator
 
-from app.core.enums import SortOrder, TicketSortField
+from app.core.enums import ExploitationLevel, SortOrder, TicketSortField
 from app.core.identifiers import (
     CVE_ID_MAX_LENGTH,
     CVE_ID_PATTERN,
@@ -74,6 +75,13 @@ _PRIORITY_DESCRIPTION = (
     "Effective priority: `priority_override` when set, otherwise "
     "`priority_automatic`. `p1`-`p4`, or `null` when not yet prioritizable."
 )
+_PRIORITY_AUTOMATIC_DESCRIPTION = (
+    "System-derived priority: `p1`-`p4`, or `null` when not yet prioritizable."
+)
+_PRIORITY_OVERRIDE_DESCRIPTION = (
+    "Manual priority override: `p1`-`p4`, or `null` when no override is set."
+)
+_PRIORITY_BASIS_DESCRIPTION = "What `priority_automatic` is based on."
 _ASSIGNEE_DESCRIPTION = "Current assignee, or `null` if unassigned."
 _DUPLICATE_OF_DESCRIPTION = (
     "Canonical identity (`SNTL-{n}`) of the Ticket this Ticket duplicates, or "
@@ -175,6 +183,82 @@ def parse_coordinated_release_at(value: object) -> datetime | None:
         ) from exc
 
 
+type SSVCExploitationEvidenceValue = Literal["active", "poc"]
+"""The SSVC exploitation values that decide a level (ticket-priority.md,
+Exploitation Level): the subset of `SSVCExploitation` without `none`."""
+
+
+class KEVPriorityEvidence(BaseModel):
+    """Deciding evidence: the CISA KEV catalog entry of the CVE."""
+
+    kind: Literal["kev"]
+    value: date = Field(description="`date_added` of the CVE's CISA KEV catalog entry.")
+
+
+class SSVCExploitationPriorityEvidence(BaseModel):
+    """Deciding evidence: the CISA SSVC exploitation decision point."""
+
+    kind: Literal["ssvc_exploitation"]
+    value: SSVCExploitationEvidenceValue = Field(
+        description="CISA SSVC exploitation decision point: `active` or `poc`."
+    )
+
+
+class EPSSPercentilePriorityEvidence(BaseModel):
+    """Deciding evidence: the FIRST EPSS percentile of the CVE."""
+
+    kind: Literal["epss_percentile"]
+    value: float = Field(
+        description=(
+            "FIRST EPSS percentile rank (0.0-1.0), at or above the threshold "
+            "of the `likely` level."
+        )
+    )
+
+
+type PriorityEvidence = Annotated[
+    KEVPriorityEvidence
+    | SSVCExploitationPriorityEvidence
+    | EPSSPercentilePriorityEvidence,
+    Field(discriminator="kind"),
+]
+"""One piece of deciding evidence, discriminated by `kind`
+(docs/features/tickets/tickets.md, PriorityEvidence)."""
+
+
+class PriorityBasis(BaseModel):
+    """What the automatic priority of a Ticket is based on.
+
+    See `docs/features/tickets/tickets.md` (PriorityBasis) and
+    `docs/features/tickets/ticket-priority.md` (Automatic Priority Basis).
+    The Decision Table cell of `severity` and `exploitation` is the
+    `priority_automatic` of the same response.
+    """
+
+    severity: SeverityValue | None = Field(
+        description=(
+            "Resolved severity that selects the Decision Table column: "
+            "`critical`, `high`, `medium`, `low`, or `none`, or `null` when "
+            "unresolved. Equal to the Ticket's `severity`."
+        )
+    )
+    exploitation: ExploitationLevel = Field(
+        description=(
+            "Exploitation level that selects the Decision Table row: `kev` "
+            "(listed in CISA KEV), `active` (SSVC exploitation `active`), "
+            "`likely` (SSVC exploitation `poc` or a high EPSS percentile), or "
+            "`unknown`."
+        )
+    )
+    evidence: list[PriorityEvidence] = Field(
+        description=(
+            "Persisted evidence that decided `exploitation`, ordered `kev`, "
+            "`ssvc_exploitation`, `epss_percentile`; empty when "
+            "`exploitation` is `unknown`."
+        )
+    )
+
+
 class TicketSummary(BaseModel):
     """Compact Ticket representation returned by the list endpoint.
 
@@ -186,6 +270,15 @@ class TicketSummary(BaseModel):
     status: TicketStatusValue = Field(description=_STATUS_DESCRIPTION)
     severity: SeverityValue | None = Field(description=_SEVERITY_DESCRIPTION)
     priority: TicketPriorityValue | None = Field(description=_PRIORITY_DESCRIPTION)
+    priority_automatic: TicketPriorityValue | None = Field(
+        description=_PRIORITY_AUTOMATIC_DESCRIPTION
+    )
+    priority_override: TicketPriorityValue | None = Field(
+        description=_PRIORITY_OVERRIDE_DESCRIPTION
+    )
+    priority_automatic_basis: PriorityBasis = Field(
+        description=_PRIORITY_BASIS_DESCRIPTION
+    )
     assignee: UserReference | None = Field(description=_ASSIGNEE_DESCRIPTION)
     cve: CVESummary | None = Field(
         description="Summary of the associated CVE, or `null` if no CVE."
@@ -271,14 +364,13 @@ class TicketDetail(BaseModel):
     severity: SeverityValue | None = Field(description=_SEVERITY_DESCRIPTION)
     priority: TicketPriorityValue | None = Field(description=_PRIORITY_DESCRIPTION)
     priority_automatic: TicketPriorityValue | None = Field(
-        description=(
-            "System-derived priority: `p1`-`p4`, or `null` when not yet prioritizable."
-        )
+        description=_PRIORITY_AUTOMATIC_DESCRIPTION
     )
     priority_override: TicketPriorityValue | None = Field(
-        description=(
-            "Manual priority override: `p1`-`p4`, or `null` when no override is set."
-        )
+        description=_PRIORITY_OVERRIDE_DESCRIPTION
+    )
+    priority_automatic_basis: PriorityBasis = Field(
+        description=_PRIORITY_BASIS_DESCRIPTION
     )
     assignee: UserReference | None = Field(description=_ASSIGNEE_DESCRIPTION)
     cve: CVEDetail | None = Field(

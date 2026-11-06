@@ -42,9 +42,10 @@ layer.
 
 Ticket list. `list_tickets()` also runs one SQL statement (a CTE chain:
 visible and filtered Tickets, their total, the requested page, then the
-page's one-to-one assignee, CVE, and duplicate target plus the included
-package names), so rows, total, resolved users, severity, sorting, and
-pagination derive from one PostgreSQL observation. Due dates, milestone
+page's one-to-one assignee, CVE with its KEV, SSVC, and EPSS evidence, and
+duplicate target plus the included package names), so rows, total,
+resolved users, severity, the priority basis, sorting, and pagination
+derive from one PostgreSQL observation. Due dates, milestone
 statuses, the Ticket current phase, and resolved severity come from the
 shared SQL expressions of `ticket_deadline_expressions` and
 `ticket_severity`; User filters use the user-domain matching condition of
@@ -92,6 +93,7 @@ from app.core.enums import (
     ACTIVE_TICKET_STATUSES,
     CurrentPhase,
     CVESourceType,
+    ExploitationLevel,
     MilestonePhase,
     MilestoneStatus,
     Severity,
@@ -125,6 +127,7 @@ from app.services.cve_projection import (
     CVEDetailProjection,
     cve_detail_columns,
     cve_detail_from_row,
+    cve_priority_evidence_columns,
     join_cve_evidence,
 )
 from app.services.package_service import PackageProjection
@@ -169,6 +172,7 @@ from app.services.ticket_mutations import (
     stabilize_acting_user,
     stabilized_ineligibility,
 )
+from app.services.ticket_priority import ExploitationEvidence, classify_exploitation
 from app.services.ticket_severity import (
     resolved_severity_expression,
     severity_rank_expression,
@@ -216,13 +220,30 @@ class TicketUserProjection:
 
 
 @dataclass(frozen=True, slots=True)
+class PriorityBasisProjection:
+    """What the automatic priority of a Ticket is based on (ticket-priority.md,
+    Automatic Priority Basis).
+
+    `severity` is the resolved severity and `exploitation` the level, the
+    Decision Table column and row of `priority_auto`; `evidence` is the
+    level's deciding evidence in the order KEV, SSVC, EPSS. Derived at read
+    time from the same observation as `priority_auto`, never persisted.
+    """
+
+    severity: Severity | None
+    exploitation: ExploitationLevel
+    evidence: tuple[ExploitationEvidence, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class TicketDetailProjection:
     """The semantic projection represented by `TicketDetail`.
 
     `ticket_id` is the public `SNTL-{n}` identity; the internal Ticket
     UUID is deliberately absent. `severity` is the resolved severity
     (tickets.md, Severity Resolution). `priority` is the effective
-    priority `COALESCE(priority_override, priority_automatic)`.
+    priority `COALESCE(priority_override, priority_automatic)`, and
+    `priority_basis` what `priority_automatic` is based on.
     `due_dates` is `None` when no SLA applies (every Ticket-level due
     date is then `null`). `current_phase` is the Ticket current phase and
     its milestone status, derived from the tree's track milestones.
@@ -237,6 +258,7 @@ class TicketDetailProjection:
     priority: TicketPriority | None
     priority_automatic: TicketPriority | None
     priority_override: TicketPriority | None
+    priority_basis: PriorityBasisProjection
     assignee: TicketUserProjection | None
     cve: CVEDetailProjection | None
     duplicate_of_ticket_id: str | None
@@ -270,7 +292,8 @@ class TicketSummaryProjection:
     `ticket_id` is the public `SNTL-{n}` identity; the internal Ticket
     UUID is deliberately absent. `severity` is the resolved severity and
     `priority` the effective priority, the same values the list filtered
-    and sorted by. `due_dates` is `None` when no SLA applies.
+    and sorted by; `priority_basis` is what `priority_automatic` is based
+    on. `due_dates` is `None` when no SLA applies.
     `current_phase` is the Ticket current phase and its milestone status,
     the values the list filtered by. `package_names` are the directly
     included package names in ascending Unicode code-point order.
@@ -280,6 +303,9 @@ class TicketSummaryProjection:
     status: TicketStatus
     severity: Severity | None
     priority: TicketPriority | None
+    priority_automatic: TicketPriority | None
+    priority_override: TicketPriority | None
+    priority_basis: PriorityBasisProjection
     assignee: TicketUserProjection | None
     cve: CVESummaryProjection | None
     duplicate_of_ticket_id: str | None
@@ -367,6 +393,26 @@ def _priority(value: str | None) -> TicketPriority | None:
     return TicketPriority(value) if value is not None else None
 
 
+def _priority_basis(
+    severity: Severity | None, row: Row[*tuple[Any, ...]]
+) -> PriorityBasisProjection:
+    """The automatic priority basis from the resolved `severity` and the
+    row's persisted evidence columns (`kev_date_added`,
+    `ssvc_exploitation`, `epss_percentile`), classified exactly as
+    `refresh_priority_auto()` classifies them (ticket-priority.md,
+    Automatic Priority Basis). Pure."""
+    classification = classify_exploitation(
+        kev_date_added=row.kev_date_added,
+        ssvc_exploitation=row.ssvc_exploitation,
+        epss_percentile=row.epss_percentile,
+    )
+    return PriorityBasisProjection(
+        severity=severity,
+        exploitation=classification.level,
+        evidence=classification.evidence,
+    )
+
+
 def _project(
     row: Row[*tuple[Any, ...]], *, evaluation_instant: datetime
 ) -> TicketDetailProjection:
@@ -406,6 +452,7 @@ def _project(
         priority=_priority(row.priority),
         priority_automatic=_priority(row.priority_automatic),
         priority_override=_priority(row.priority_override),
+        priority_basis=_priority_basis(context.severity, row),
         assignee=assignee,
         cve=cve_detail_from_row(row),
         duplicate_of_ticket_id=(
@@ -500,7 +547,8 @@ async def get_ticket_detail(
     detail: root fields, resolved severity, effective, automatic, and
     override priority, the current assignee, the expanded CVE with its
     KEV, EPSS, SSVC, grouped CWE, and ordered external-identifier
-    evidence (no inline CVSS), the duplicate target's `sequence_id` only
+    evidence (no inline CVSS), the automatic priority basis classified
+    from that severity and evidence, the duplicate target's `sequence_id` only
     (no chain following, no target content, no second protected lookup),
     and the package-owned complete tree for that date. Ticket-level due
     dates come from `compute_due_dates()`; per-track milestones compare
@@ -907,6 +955,9 @@ def _summary(row: Row[*tuple[Any, ...]]) -> TicketSummaryProjection:
         status=status,
         severity=severity,
         priority=_priority(row.priority),
+        priority_automatic=_priority(row.priority_automatic),
+        priority_override=_priority(row.priority_override),
+        priority_basis=_priority_basis(severity, row),
         assignee=(
             TicketUserProjection(
                 id=row.assignee_id,
@@ -1021,7 +1072,9 @@ async def list_tickets(
        when both are supplied, and an unknown value matches nothing;
     4. resolves severity once per Ticket through the canonical cascade,
        the effective priority as `COALESCE(priority_override,
-       priority_auto)`, and the five due dates through
+       priority_auto)`, the automatic priority basis of the page rows from
+       that severity and the CVE's KEV, SSVC, and EPSS rows (unique per
+       CVE) through `classify_exploitation()`, and the five due dates through
        `ticket_due_date_expressions()`; filters, the sort keys, and the
        projection use these same expressions; `overdue` applies the
        Ticket-level rules at the one instant with existence semantics;
@@ -1163,7 +1216,7 @@ async def list_tickets(
         )
         .scalar_subquery()
     )
-    statement = (
+    statement = join_cve_evidence(
         select(
             total.c.total,
             Ticket.id.label("ticket_pk"),
@@ -1171,6 +1224,9 @@ async def list_tickets(
             Ticket.status,
             resolved_severity.label("severity"),
             effective_priority.label("priority"),
+            Ticket.priority_auto.label("priority_automatic"),
+            Ticket.priority_override.label("priority_override"),
+            *cve_priority_evidence_columns(),
             Ticket.is_confidential,
             Ticket.coordinated_release_at,
             Ticket.created_at,
@@ -1202,9 +1258,8 @@ async def list_tickets(
             _LIST_DUPLICATE_TARGET.id == Ticket.duplicate_of_id,
         )
         .outerjoin(CVE, CVE.id == Ticket.cve_id)
-        .order_by(
-            *_ordered(_sort_columns(sort_keys, page_rows), page_rows.c.id, sort_order)
-        )
+    ).order_by(
+        *_ordered(_sort_columns(sort_keys, page_rows), page_rows.c.id, sort_order)
     )
     rows = (await db.execute(statement)).all()
     return TicketPage(

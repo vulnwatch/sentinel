@@ -877,6 +877,37 @@ class TicketPriority(StrEnum):
     P4 = "P4"
 
 
+class ExploitationLevel(StrEnum):
+    """Classification of the exploitation evidence of a Ticket's CVE, the
+    Decision Table row of its automatic priority.
+
+    Category B — classification (Python Enum only; never stored in the
+    database). Serialized only as `exploitation` of the automatic priority
+    basis. See `docs/features/tickets/ticket-priority.md` (Exploitation
+    Level; Automatic Priority Basis).
+    """
+
+    KEV = "kev"
+    ACTIVE = "active"
+    LIKELY = "likely"
+    UNKNOWN = "unknown"
+
+
+class ExploitationEvidenceKind(StrEnum):
+    """Kind of one piece of evidence that decided an exploitation level.
+
+    Category B — classification (Python Enum only; never stored in the
+    database). Serialized only as the `kind` discriminator of the evidence
+    of the automatic priority basis. See
+    `docs/features/tickets/ticket-priority.md` (Exploitation Level;
+    `classify_exploitation()`).
+    """
+
+    KEV = "kev"
+    SSVC_EXPLOITATION = "ssvc_exploitation"
+    EPSS_PERCENTILE = "epss_percentile"
+
+
 class TicketAuditEventType(StrEnum):
     """Semantic Ticket event recorded in `TicketAuditEvent.event_type`.
 

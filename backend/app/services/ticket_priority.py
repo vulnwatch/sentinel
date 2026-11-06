@@ -10,17 +10,25 @@ of their declared input types. Callers select the resolved severity
 (`CVE.severity` for a Ticket with a CVE, otherwise
 `Ticket.severity_manual`) and read the persisted exploitation evidence;
 a Ticket without a CVE passes no evidence and therefore uses the
-`unknown` row.
+`unknown` row. `refresh_priority_auto()` and the Ticket reads that
+project the automatic priority basis share `classify_exploitation()`, so
+the basis always states the level that selected `priority_auto`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from enum import StrEnum
+from dataclasses import dataclass
+from datetime import date
 from types import MappingProxyType
 from typing import Final
 
-from app.core.enums import Severity, TicketPriority
+from app.core.enums import (
+    ExploitationEvidenceKind,
+    ExploitationLevel,
+    Severity,
+    TicketPriority,
+)
 
 EPSS_LIKELY_PERCENTILE_THRESHOLD: Final = 0.95
 """EPSS percentile (inclusive) at or above which exploitation is `likely`.
@@ -33,17 +41,26 @@ _SSVC_ACTIVE: Final = "active"
 _SSVC_POC: Final = "poc"
 
 
-class ExploitationLevel(StrEnum):
-    """Internal classification of the exploitation evidence of a CVE.
+@dataclass(frozen=True, slots=True)
+class ExploitationEvidence:
+    """One persisted input that decided an exploitation level.
 
-    Service-internal: neither persisted nor serialized. See
-    `docs/features/tickets/ticket-priority.md` (Exploitation Level).
+    `value` is the persisted value of that input: the KEV `date_added`
+    for `kev`, the SSVC `exploitation` (`active` or `poc`) for
+    `ssvc_exploitation`, and the EPSS percentile for `epss_percentile`.
     """
 
-    KEV = "kev"
-    ACTIVE = "active"
-    LIKELY = "likely"
-    UNKNOWN = "unknown"
+    kind: ExploitationEvidenceKind
+    value: date | str | float
+
+
+@dataclass(frozen=True, slots=True)
+class ExploitationClassification:
+    """The exploitation level of a CVE and its deciding evidence, in the
+    order KEV, SSVC, EPSS; `evidence` is empty for `unknown`."""
+
+    level: ExploitationLevel
+    evidence: tuple[ExploitationEvidence, ...]
 
 
 _P1, _P2, _P3, _P4 = (
@@ -89,33 +106,65 @@ _DECISION_TABLE: Final[
 
 def classify_exploitation(
     *,
-    kev_listed: bool,
+    kev_date_added: date | None,
     ssvc_exploitation: str | None,
     epss_percentile: float | None,
-) -> ExploitationLevel:
+) -> ExploitationClassification:
     """Classify the persisted exploitation evidence of one CVE.
 
-    `kev_listed` states whether a `CVEKEVEntry` exists;
-    `ssvc_exploitation` is the persisted `CVESSVCAssessment.exploitation`
-    or `None` when no assessment exists; `epss_percentile` is the
-    persisted `CVEEPSSScore.percentile` or `None` when no score exists.
+    `kev_date_added` is the persisted `CVEKEVEntry.date_added` or `None`
+    when no entry exists; `ssvc_exploitation` is the persisted
+    `CVESSVCAssessment.exploitation` or `None` when no assessment exists;
+    `epss_percentile` is the persisted `CVEEPSSScore.percentile` or `None`
+    when no score exists.
 
     The first matching level wins: `kev` when KEV-listed; `active` when
     SSVC exploitation is `active`; `likely` when SSVC exploitation is
     `poc` or the EPSS percentile is at least
     `EPSS_LIKELY_PERCENTILE_THRESHOLD`; otherwise `unknown`. Any other
-    SSVC value (including `none`) contributes no evidence. Infallible.
+    SSVC value (including `none`) contributes no evidence. The deciding
+    evidence is the input that satisfies the selected level's condition
+    (for `likely`, SSVC `poc` and a qualifying percentile, both when both
+    hold); evidence that satisfies only a lower level is not listed.
+    Infallible.
     """
-    if kev_listed:
-        return ExploitationLevel.KEV
+    if kev_date_added is not None:
+        return ExploitationClassification(
+            level=ExploitationLevel.KEV,
+            evidence=(
+                ExploitationEvidence(ExploitationEvidenceKind.KEV, kev_date_added),
+            ),
+        )
     if ssvc_exploitation == _SSVC_ACTIVE:
-        return ExploitationLevel.ACTIVE
-    if ssvc_exploitation == _SSVC_POC or (
+        return ExploitationClassification(
+            level=ExploitationLevel.ACTIVE,
+            evidence=(
+                ExploitationEvidence(
+                    ExploitationEvidenceKind.SSVC_EXPLOITATION, ssvc_exploitation
+                ),
+            ),
+        )
+    evidence: list[ExploitationEvidence] = []
+    if ssvc_exploitation == _SSVC_POC:
+        evidence.append(
+            ExploitationEvidence(
+                ExploitationEvidenceKind.SSVC_EXPLOITATION, ssvc_exploitation
+            )
+        )
+    if (
         epss_percentile is not None
         and epss_percentile >= EPSS_LIKELY_PERCENTILE_THRESHOLD
     ):
-        return ExploitationLevel.LIKELY
-    return ExploitationLevel.UNKNOWN
+        evidence.append(
+            ExploitationEvidence(
+                ExploitationEvidenceKind.EPSS_PERCENTILE, epss_percentile
+            )
+        )
+    if evidence:
+        return ExploitationClassification(
+            level=ExploitationLevel.LIKELY, evidence=tuple(evidence)
+        )
+    return ExploitationClassification(level=ExploitationLevel.UNKNOWN, evidence=())
 
 
 def resolve_priority(

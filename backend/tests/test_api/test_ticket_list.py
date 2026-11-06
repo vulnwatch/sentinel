@@ -30,6 +30,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1 import tickets as route
 from app.core.enums import (
     CurrentPhase,
+    ExploitationEvidenceKind,
+    ExploitationLevel,
     MilestonePhase,
     MilestoneStatus,
     Role,
@@ -47,8 +49,10 @@ from app.models.user import User
 from app.models.user_role import UserRole
 from app.services import ticket_service
 from app.services.ticket_deadlines import DueDates, TicketCurrentPhase
+from app.services.ticket_priority import ExploitationEvidence
 from app.services.ticket_service import (
     CVESummaryProjection,
+    PriorityBasisProjection,
     TicketPage,
     TicketSummaryProjection,
     TicketUserProjection,
@@ -76,6 +80,9 @@ _TICKET_SUMMARY_FIELDS = {
     "status",
     "severity",
     "priority",
+    "priority_automatic",
+    "priority_override",
+    "priority_automatic_basis",
     "assignee",
     "cve",
     "duplicate_of_ticket_id",
@@ -147,6 +154,7 @@ class TestListEndpoint:
             description=None,
             severity=Severity.CRITICAL.value,
         )
+        # Critical without exploitation evidence is the P2 cell.
         ticket: Ticket = await ticket_factory(
             cve_id=cve.id,
             assignee_id=assignee.id,
@@ -170,6 +178,13 @@ class TestListEndpoint:
             "status": "analysis",
             "severity": "critical",
             "priority": "p2",
+            "priority_automatic": "p2",
+            "priority_override": None,
+            "priority_automatic_basis": {
+                "severity": "critical",
+                "exploitation": "unknown",
+                "evidence": [],
+            },
             "assignee": {
                 "id": str(assignee.id),
                 "username": "fictional.analyst",
@@ -697,6 +712,17 @@ class TestSerializer:
                 status=TicketStatus.ANALYZED,
                 severity=Severity.LOW,
                 priority=TicketPriority.P4,
+                priority_automatic=TicketPriority.P3,
+                priority_override=TicketPriority.P4,
+                priority_basis=PriorityBasisProjection(
+                    severity=Severity.LOW,
+                    exploitation=ExploitationLevel.ACTIVE,
+                    evidence=(
+                        ExploitationEvidence(
+                            ExploitationEvidenceKind.SSVC_EXPLOITATION, "active"
+                        ),
+                    ),
+                ),
                 assignee=TicketUserProjection(
                     id=uuid.UUID(int=1),
                     username="fictional.user",
@@ -725,6 +751,15 @@ class TestSerializer:
             "low",
             "p4",
         )
+        assert (serialized.priority_automatic, serialized.priority_override) == (
+            "p3",
+            "p4",
+        )
+        assert serialized.priority_automatic_basis.model_dump(mode="json") == {
+            "severity": "low",
+            "exploitation": "active",
+            "evidence": [{"kind": "ssvc_exploitation", "value": "active"}],
+        }
         assert serialized.um_due_at == due.um
         assert serialized.release_due_at == due.release
         assert (serialized.current_phase, serialized.current_phase_milestone) == (
@@ -855,8 +890,6 @@ class TestOpenApiContract:
             "ticket_sequence_id",
             "duplicate_of_id",
             "packages",
-            "priority_automatic",
-            "priority_override",
         } & set(properties)
         assert set(schemas["CVESummary"]["properties"]) == {
             "cve_id",
@@ -875,10 +908,14 @@ class TestOpenApiContract:
             "current_phase_milestone",
             "severity",
             "priority",
+            "priority_automatic",
+            "priority_override",
+            "priority_automatic_basis",
             "ticket_id",
             "status",
         ):
             assert summary[field]["description"] == detail[field]["description"]
             assert summary[field].get("anyOf") == detail[field].get("anyOf")
+            assert summary[field].get("$ref") == detail[field].get("$ref")
         assert "VA (Vulnerability Analyst)" in summary["triage_due_at"]["description"]
         assert "qa_due_at" in summary["release_due_at"]["description"]
