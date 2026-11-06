@@ -4,7 +4,11 @@
 Covers `docs/features/tickets/ticket-priority.md` (Testing Requirement 1):
 every Decision Table cell (including the `None` severity label versus SQL
 `NULL`), the exploitation precedence, the EPSS percentile boundary, and
-ignored SSVC values and non-inputs. CVE-less Tickets (Testing Requirement 2)
+ignored SSVC values and non-inputs; and the `classify_exploitation()` half
+of Testing Requirement 10: the deciding evidence of each level, with its
+kinds, values, and order (Exploitation Level). The basis in the Ticket
+reads and responses is proven in test_ticket_priority_basis.py and
+tests/test_api/test_ticket_priority_basis.py. CVE-less Tickets (Testing Requirement 2)
 are proven in test_ticket_priority_refresh.py `TestCvelessTickets`. Refresh
 points, the override, audit, and the API surface (Requirements 3-9) are
 proven by the service and API tests that persist priority, including
@@ -23,15 +27,21 @@ from __future__ import annotations
 
 import inspect
 import itertools
+from datetime import date
 
 import pytest
 
-from app.core import enums
-from app.core.enums import Severity, TicketPriority
+from app.core.enums import (
+    ExploitationEvidenceKind,
+    ExploitationLevel,
+    Severity,
+    TicketPriority,
+)
 from app.services import ticket_priority
 from app.services.ticket_priority import (
     EPSS_LIKELY_PERCENTILE_THRESHOLD,
-    ExploitationLevel,
+    ExploitationClassification,
+    ExploitationEvidence,
     classify_exploitation,
     resolve_priority,
 )
@@ -78,19 +88,27 @@ def _decision_cells() -> list[tuple[str, Severity | None, TicketPriority | None]
     return cells
 
 
-@pytest.mark.unit
-class TestExploitationLevelEnum:
-    def test_exact_values(self) -> None:
-        assert [member.value for member in ExploitationLevel] == [
-            "kev",
-            "active",
-            "likely",
-            "unknown",
-        ]
+KEV_DATE = date(2099, 1, 15)
+"""A fictional KEV `date_added`."""
 
-    def test_is_service_internal_not_core(self) -> None:
-        assert not hasattr(enums, "ExploitationLevel")
-        assert ExploitationLevel.__module__ == "app.services.ticket_priority"
+KEV = ExploitationEvidence(ExploitationEvidenceKind.KEV, KEV_DATE)
+SSVC_ACTIVE = ExploitationEvidence(ExploitationEvidenceKind.SSVC_EXPLOITATION, "active")
+SSVC_POC = ExploitationEvidence(ExploitationEvidenceKind.SSVC_EXPLOITATION, "poc")
+
+
+def _epss(percentile: float) -> ExploitationEvidence:
+    return ExploitationEvidence(ExploitationEvidenceKind.EPSS_PERCENTILE, percentile)
+
+
+def _level(
+    *,
+    kev: date | None = None,
+    ssvc: str | None = None,
+    epss: float | None = None,
+) -> ExploitationLevel:
+    return classify_exploitation(
+        kev_date_added=kev, ssvc_exploitation=ssvc, epss_percentile=epss
+    ).level
 
 
 @pytest.mark.unit
@@ -132,42 +150,24 @@ class TestResolvePriority:
 @pytest.mark.unit
 class TestClassifyExploitation:
     def test_no_evidence_is_unknown(self) -> None:
-        assert (
-            classify_exploitation(
-                kev_listed=False, ssvc_exploitation=None, epss_percentile=None
-            )
-            is ExploitationLevel.UNKNOWN
-        )
+        assert classify_exploitation(
+            kev_date_added=None, ssvc_exploitation=None, epss_percentile=None
+        ) == ExploitationClassification(level=ExploitationLevel.UNKNOWN, evidence=())
 
     @pytest.mark.parametrize("ssvc", [None, "none", "poc", "active"])
     @pytest.mark.parametrize("epss", [None, 0.0, 0.5, 0.95, 1.0])
     def test_kev_wins_over_every_other_evidence(
         self, ssvc: str | None, epss: float | None
     ) -> None:
-        assert (
-            classify_exploitation(
-                kev_listed=True, ssvc_exploitation=ssvc, epss_percentile=epss
-            )
-            is ExploitationLevel.KEV
-        )
+        assert _level(kev=KEV_DATE, ssvc=ssvc, epss=epss) is ExploitationLevel.KEV
 
     @pytest.mark.parametrize("epss", [None, 0.0, 0.94, 0.95, 1.0])
     def test_ssvc_active_wins_over_poc_level_evidence(self, epss: float | None) -> None:
-        assert (
-            classify_exploitation(
-                kev_listed=False, ssvc_exploitation="active", epss_percentile=epss
-            )
-            is ExploitationLevel.ACTIVE
-        )
+        assert _level(ssvc="active", epss=epss) is ExploitationLevel.ACTIVE
 
     @pytest.mark.parametrize("epss", [None, 0.0, 0.5])
     def test_ssvc_poc_is_likely(self, epss: float | None) -> None:
-        assert (
-            classify_exploitation(
-                kev_listed=False, ssvc_exploitation="poc", epss_percentile=epss
-            )
-            is ExploitationLevel.LIKELY
-        )
+        assert _level(ssvc="poc", epss=epss) is ExploitationLevel.LIKELY
 
     def test_epss_threshold_is_the_specified_constant(self) -> None:
         assert EPSS_LIKELY_PERCENTILE_THRESHOLD == 0.95
@@ -186,40 +186,24 @@ class TestClassifyExploitation:
     def test_epss_percentile_boundary(
         self, percentile: float, expected: ExploitationLevel
     ) -> None:
-        assert (
-            classify_exploitation(
-                kev_listed=False, ssvc_exploitation=None, epss_percentile=percentile
-            )
-            is expected
-        )
+        assert _level(epss=percentile) is expected
 
     @pytest.mark.parametrize(
         "ssvc",
         ["none", "", "Active", "POC", "unknown", "total", "yes", " active"],
     )
     def test_other_ssvc_values_contribute_no_evidence(self, ssvc: str) -> None:
-        assert (
-            classify_exploitation(
-                kev_listed=False, ssvc_exploitation=ssvc, epss_percentile=None
-            )
-            is ExploitationLevel.UNKNOWN
-        )
+        assert classify_exploitation(
+            kev_date_added=None, ssvc_exploitation=ssvc, epss_percentile=None
+        ) == ExploitationClassification(level=ExploitationLevel.UNKNOWN, evidence=())
 
     def test_ssvc_none_with_high_epss_is_likely(self) -> None:
-        assert (
-            classify_exploitation(
-                kev_listed=False, ssvc_exploitation="none", epss_percentile=0.99
-            )
-            is ExploitationLevel.LIKELY
-        )
+        assert _level(ssvc="none", epss=0.99) is ExploitationLevel.LIKELY
 
     def test_nan_percentile_is_not_evidence_and_does_not_raise(self) -> None:
-        assert (
-            classify_exploitation(
-                kev_listed=False, ssvc_exploitation=None, epss_percentile=float("nan")
-            )
-            is ExploitationLevel.UNKNOWN
-        )
+        assert classify_exploitation(
+            kev_date_added=None, ssvc_exploitation=None, epss_percentile=float("nan")
+        ) == ExploitationClassification(level=ExploitationLevel.UNKNOWN, evidence=())
 
     def test_only_specified_inputs_exist(self) -> None:
         """The EPSS score, SSVC `automatable`/`technical_impact`, CWE, and every
@@ -227,13 +211,166 @@ class TestClassifyExploitation:
         parameters = inspect.signature(classify_exploitation).parameters
 
         assert list(parameters) == [
-            "kev_listed",
+            "kev_date_added",
             "ssvc_exploitation",
             "epss_percentile",
         ]
         assert all(
             p.kind is inspect.Parameter.KEYWORD_ONLY for p in parameters.values()
         )
+
+
+@pytest.mark.unit
+class TestDecidingEvidence:
+    """ticket-priority.md (Exploitation Level: deciding evidence;
+    `classify_exploitation()`; Testing Requirement 10). Each case transcribes
+    the specified level and its exact evidence, in the order KEV, SSVC,
+    EPSS."""
+
+    @pytest.mark.parametrize(
+        ("kev", "ssvc", "epss", "level", "evidence"),
+        [
+            pytest.param(
+                KEV_DATE, None, None, ExploitationLevel.KEV, (KEV,), id="kev-alone"
+            ),
+            pytest.param(
+                KEV_DATE,
+                "active",
+                0.99,
+                ExploitationLevel.KEV,
+                (KEV,),
+                id="kev-hides-active-and-epss",
+            ),
+            pytest.param(
+                KEV_DATE,
+                "poc",
+                0.95,
+                ExploitationLevel.KEV,
+                (KEV,),
+                id="kev-hides-poc-and-epss",
+            ),
+            pytest.param(
+                None,
+                "active",
+                None,
+                ExploitationLevel.ACTIVE,
+                (SSVC_ACTIVE,),
+                id="active-alone",
+            ),
+            pytest.param(
+                None,
+                "active",
+                0.95,
+                ExploitationLevel.ACTIVE,
+                (SSVC_ACTIVE,),
+                id="active-hides-epss",
+            ),
+            pytest.param(
+                None,
+                "poc",
+                None,
+                ExploitationLevel.LIKELY,
+                (SSVC_POC,),
+                id="poc-alone",
+            ),
+            pytest.param(
+                None,
+                "poc",
+                0.94,
+                ExploitationLevel.LIKELY,
+                (SSVC_POC,),
+                id="poc-with-epss-below",
+            ),
+            pytest.param(
+                None,
+                None,
+                0.95,
+                ExploitationLevel.LIKELY,
+                (_epss(0.95),),
+                id="epss-at-threshold",
+            ),
+            pytest.param(
+                None,
+                None,
+                0.97,
+                ExploitationLevel.LIKELY,
+                (_epss(0.97),),
+                id="epss-above",
+            ),
+            pytest.param(
+                None,
+                "none",
+                0.97,
+                ExploitationLevel.LIKELY,
+                (_epss(0.97),),
+                id="epss-with-ssvc-none",
+            ),
+            pytest.param(
+                None,
+                "poc",
+                0.97,
+                ExploitationLevel.LIKELY,
+                (SSVC_POC, _epss(0.97)),
+                id="poc-and-epss",
+            ),
+            pytest.param(
+                None,
+                None,
+                0.9499999,
+                ExploitationLevel.UNKNOWN,
+                (),
+                id="epss-just-below",
+            ),
+            pytest.param(
+                None,
+                "none",
+                0.5,
+                ExploitationLevel.UNKNOWN,
+                (),
+                id="ssvc-none-and-low-epss",
+            ),
+            pytest.param(
+                None, None, None, ExploitationLevel.UNKNOWN, (), id="no-evidence"
+            ),
+        ],
+    )
+    def test_level_and_exact_evidence(
+        self,
+        kev: date | None,
+        ssvc: str | None,
+        epss: float | None,
+        level: ExploitationLevel,
+        evidence: tuple[ExploitationEvidence, ...],
+    ) -> None:
+        assert classify_exploitation(
+            kev_date_added=kev, ssvc_exploitation=ssvc, epss_percentile=epss
+        ) == ExploitationClassification(level=level, evidence=evidence)
+
+    @pytest.mark.parametrize("kev", [None, KEV_DATE])
+    @pytest.mark.parametrize("ssvc", [None, "none", "poc", "active", "other"])
+    @pytest.mark.parametrize("epss", [None, 0.0, 0.9499999, 0.95, 1.0])
+    def test_unknown_exactly_without_evidence(
+        self, kev: date | None, ssvc: str | None, epss: float | None
+    ) -> None:
+        result = classify_exploitation(
+            kev_date_added=kev, ssvc_exploitation=ssvc, epss_percentile=epss
+        )
+
+        assert (result.level is ExploitationLevel.UNKNOWN) == (result.evidence == ())
+
+    def test_evidence_values_keep_their_persisted_types(self) -> None:
+        kev = classify_exploitation(
+            kev_date_added=KEV_DATE, ssvc_exploitation=None, epss_percentile=None
+        ).evidence
+        likely = classify_exploitation(
+            kev_date_added=None, ssvc_exploitation="poc", epss_percentile=0.97
+        ).evidence
+
+        assert [(type(e.kind), type(e.value)) for e in (*kev, *likely)] == [
+            (ExploitationEvidenceKind, date),
+            (ExploitationEvidenceKind, str),
+            (ExploitationEvidenceKind, float),
+        ]
 
 
 @pytest.mark.unit

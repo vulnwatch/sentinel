@@ -157,6 +157,7 @@ committed post-state.
 | `services/package_service.py` | `ticket_service` invokes package-owned projection behavior for Ticket detail and the synchronous eligibility boundary during manual-zone exits. `package_service` does not import `ticket_service`; both modules depend on `ticket_mutations` for status evaluation |
 | `services/cve_service.py` | `ticket_service` calls the lock-aware form of `ensure_cve_exists()` to resolve, create, and lock the CVE root for creation and association. `cve_service` in turn calls `create_ticket()` and other lifecycle compositions from `upsert_cve()` (see `cve-service.md`, Relationship with other modules); the Python import mechanism that keeps this mutual dependency cycle-safe is an implementation choice |
 | `services/cvss.py` | No direct dependency. CVSS resolution is delegated through `ticket_mutations.recalculate_cvss_chain()` where this service requires it |
+| `services/ticket_priority.py` | `list_tickets()` and `get_ticket_detail()` derive the automatic priority basis through `classify_exploitation()`; `ticket_service` never reimplements the classification |
 
 ## Scope Boundary
 
@@ -364,7 +365,11 @@ The result contains a collection of Ticket summary projections plus `total`,
    same value, including the distinction between resolved `None` and SQL NULL.
    Likewise derive the effective priority once per Ticket as
    `COALESCE(priority_override, priority_auto)`; priority filtering (`unresolved`
-   matching SQL NULL), sorting, and projection all use that value. Derive the
+   matching SQL NULL), sorting, and projection all use that value. Project
+   `priority_auto`, `priority_override`, and the automatic priority basis
+   ([ticket-priority.md](ticket-priority.md#automatic-priority-basis)) from the
+   same observation; the basis uses that resolved severity and the persisted
+   KEV, SSVC, and EPSS rows of the Ticket's current CVE. Derive the
    five Ticket-level due dates from that resolved severity, the status, and
    `created_at` through the service-owned SQL expressions in
    [ticket-deadlines.md](ticket-deadlines.md#read-ownership-and-query-integration);
@@ -424,7 +429,10 @@ The result is the semantic projection represented by `TicketDetail` in
    through the canonical visibility predicate. Missing, malformed, UUID, and
    inaccessible locators raise `TicketNotFoundError`.
 2. Projects the root fields (including `coordinated_release_at`), resolved
-   severity, effective, automatic, and override priority, the five Ticket-level
+   severity, effective, automatic, and override priority, the automatic
+   priority basis
+   ([ticket-priority.md](ticket-priority.md#automatic-priority-basis)) from that
+   resolved severity and the CVE evidence below, the five Ticket-level
    due dates from
    [ticket-deadlines.md](ticket-deadlines.md#due-dates), complete current
    assignee reference, and expanded current

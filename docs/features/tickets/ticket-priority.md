@@ -10,8 +10,9 @@ value.
 
 This specification is the authoritative source for priority semantics, the
 exploitation classification, the decision table, persistence of the automatic
-and manual values, the automatic refresh points, the manual override, the
-`priority_changed` audit contract, and the priority-related API surface.
+and manual values, the automatic refresh points, the basis of the automatic
+priority, the manual override, the `priority_changed` audit contract, and the
+priority-related API surface.
 
 ## Priority and Severity
 
@@ -48,8 +49,8 @@ serialization rule in [tickets.md](tickets.md#response-schemas). The
 
 ## Exploitation Level
 
-The exploitation level is an internal, non-persisted classification of the
-evidence attached to the Ticket's associated CVE. The first matching row wins:
+The exploitation level is a non-persisted classification of the evidence
+attached to the Ticket's associated CVE. The first matching row wins:
 
 | Level | Condition |
 |---|---|
@@ -57,6 +58,21 @@ evidence attached to the Ticket's associated CVE. The first matching row wins:
 | `active` | The CVE's `CVESSVCAssessment.exploitation` is `active` |
 | `likely` | The CVE's `CVESSVCAssessment.exploitation` is `poc`, or its `CVEEPSSScore.percentile` is greater than or equal to `0.95` |
 | `unknown` | Every other case, including SSVC `exploitation = none`, absent SSVC/EPSS/KEV rows, and a Ticket without a CVE |
+
+The **deciding evidence** of the selected level is the persisted evidence that
+satisfies its condition, in the order KEV, SSVC, EPSS:
+
+| Level | Deciding evidence |
+|---|---|
+| `kev` | The `CVEKEVEntry`, with its `date_added` |
+| `active` | SSVC `exploitation = active` |
+| `likely` | SSVC `exploitation = poc` when it holds, and the EPSS `percentile` when it is greater than or equal to `0.95`; both when both hold |
+| `unknown` | None |
+
+Evidence that satisfies only the condition of a lower level is not deciding
+evidence: with a KEV entry, an SSVC `active` assessment and a percentile of
+`0.95` or more are not listed, and with SSVC `active`, such a percentile is not
+listed. A percentile below `0.95` is never deciding evidence.
 
 Classification uses the persisted evidence as is. Evidence freshness follows
 each source's own refresh scope; for example, the periodic EPSS run refreshes
@@ -96,21 +112,34 @@ call, and they raise no exception for any value of their declared input types.
 ```python
 def classify_exploitation(
     *,
-    kev_listed: bool,
+    kev_date_added: date | None,
     ssvc_exploitation: str | None,
     epss_percentile: float | None,
-) -> ExploitationLevel:
+) -> ExploitationClassification:
 ```
 
-`kev_listed` states whether a `CVEKEVEntry` exists. `ssvc_exploitation` is the
-persisted SSVC `exploitation` value or `None` when no assessment exists.
-`epss_percentile` is the persisted EPSS percentile or `None` when no score
-exists. The function applies the [Exploitation Level](#exploitation-level)
-table in order. An SSVC value other than `active` or `poc` contributes no
-evidence.
+`kev_date_added` is the `date_added` of the persisted `CVEKEVEntry` or `None`
+when no entry exists. `ssvc_exploitation` is the persisted SSVC `exploitation`
+value or `None` when no assessment exists. `epss_percentile` is the persisted
+EPSS percentile or `None` when no score exists. The function applies the
+[Exploitation Level](#exploitation-level) table in order and returns the
+selected `level` together with its deciding `evidence`, an ordered sequence of
+`ExploitationEvidence` values. An SSVC value other than `active` or `poc`
+contributes no evidence.
 
-`ExploitationLevel` is a service-internal enum with the values `kev`,
-`active`, `likely`, and `unknown`; it is neither persisted nor serialized.
+Each `ExploitationEvidence` has a `kind` and the persisted `value` of that
+input:
+
+| `kind` | `value` |
+|---|---|
+| `kev` | `kev_date_added` (a date) |
+| `ssvc_exploitation` | `ssvc_exploitation` (`active` or `poc`) |
+| `epss_percentile` | `epss_percentile` (a number) |
+
+`ExploitationLevel` (`kev`, `active`, `likely`, `unknown`) and
+`ExploitationEvidenceKind` (`kev`, `ssvc_exploitation`, `epss_percentile`) are
+enums that are never persisted; the API serializes them only in the
+[Automatic Priority Basis](#automatic-priority-basis).
 
 ### `resolve_priority()`
 
@@ -173,9 +202,11 @@ status, like `CVE.severity`.
 1. Read the resolved severity from locked-current state: `CVE.severity` when
    `ticket.cve_id` is set, otherwise `ticket.severity_manual`. Every read
    observes the writes already made by the enclosing transaction.
-2. When the Ticket has a CVE, read whether its `CVEKEVEntry` exists, its SSVC
-   `exploitation`, and its EPSS `percentile`; otherwise use no evidence.
-3. Compute `resolve_priority(severity, classify_exploitation(...))`.
+2. When the Ticket has a CVE, read its `CVEKEVEntry.date_added`, its SSVC
+   `exploitation`, and its EPSS `percentile`, each `None` when the row does not
+   exist; otherwise use no evidence.
+3. Compute `resolve_priority(severity, level)`, where `level` is the level that
+   `classify_exploitation()` returns for that evidence.
 4. If the result equals `ticket.priority_auto`, return `False` with no write or
    event.
 5. Otherwise capture the old effective priority, persist the new
@@ -216,6 +247,39 @@ are never changed by reconciliation or by the CVE rejection lifecycle step.
 
 The default-CVSS impact preview does not project priority: priority is not part
 of its result, and no preview count reflects it.
+
+## Automatic Priority Basis
+
+The **automatic priority basis** states what the automatic priority of a Ticket
+is based on: the two inputs that select its [Decision Table](#decision-table)
+cell and the evidence that decided the exploitation level. Every Ticket has
+one:
+
+| Member | Content |
+|---|---|
+| `severity` | The resolved severity that selects the column (canonical cascade in [tickets.md](tickets.md#resolution-rules)), `NULL` when unresolved |
+| `exploitation` | The [exploitation level](#exploitation-level) that selects the row |
+| `evidence` | The deciding evidence of that level, in the order KEV, SSVC, EPSS, each with its kind and persisted value; empty for `unknown` |
+
+A Ticket without a CVE has `severity` equal to its `severity_manual`,
+`exploitation = unknown`, and no evidence. Because the Decision Table yields
+`NULL` only for severity `NULL` with `unknown`, the basis of a `NULL` automatic
+priority has `severity` `NULL`, `exploitation = unknown`, and no evidence.
+
+The basis is derived at read time and is never persisted. A read derives it
+from the same observation that supplies `priority_auto`: the resolved severity
+and the persisted KEV, SSVC, and EPSS rows of the Ticket's CVE, classified by
+`classify_exploitation()`, which `refresh_priority_auto()` also uses. Because
+every change of a priority input refreshes `priority_auto` in the same
+transaction ([Refresh Points](#refresh-points)), the Decision Table cell of the
+basis `severity` and `exploitation` equals `priority_auto` in that
+observation.
+
+The basis explains only the automatic priority. An override never changes it,
+and it is present whether or not an override is set. It states no threshold:
+an `epss_percentile` element is present only when the percentile met the
+threshold of the `likely` level. It is not an input of any decision, creates no
+audit event, and is not recorded in `priority_changed`.
 
 ## Manual Override
 
@@ -295,14 +359,16 @@ no event. Audit history is never an input to priority resolution.
 | Surface | Contract | Owner |
 |---|---|---|
 | `TicketSummary.priority`, `TicketDetail.priority` | Effective priority | [tickets.md](tickets.md#response-schemas) |
-| `TicketDetail.priority_automatic`, `TicketDetail.priority_override` | Persisted automatic and manual values | [tickets.md](tickets.md#ticketdetail) |
+| `priority_automatic`, `priority_override` of `TicketSummary` and `TicketDetail` | Persisted automatic and manual values | [tickets.md](tickets.md#response-schemas) |
+| `priority_automatic_basis` of `TicketSummary` and `TicketDetail` (`PriorityBasis`) | [Automatic Priority Basis](#automatic-priority-basis) | [tickets.md](tickets.md#shared-sub-schemas) |
 | `GET /api/v1/tickets` `priority` filter and `sort_by=priority` | Repeatable filter over effective priority, including `unresolved`; semantic ordering | [tickets.md](tickets.md#list-tickets), [api-spec.md](../../api-spec.md#semantic-sort-fields) |
 | `GET /api/v1/tickets` `sort_by=priority_then_current_due` | Effective priority in semantic ordering, then the due date of the Ticket's current phase | [ticket-deadlines.md](ticket-deadlines.md#current-due-date) |
 | `PATCH /api/v1/tickets/{ticket_id}/priority` | Set or clear the override | [tickets.md](tickets.md#set-priority-override) |
 | `CVEDetail` exploitation and weakness data; `GET /api/v1/cves/{cve_id}` | Evidence inputs, never a CVE priority | [tickets.md](tickets.md#shared-sub-schemas), [cve-tracking.md](cve-tracking.md#get-cve) |
 
-The derived exploitation level is not exposed; its inputs are visible in
-`CVEDetail`.
+The exploitation level and its deciding evidence are exposed only in the
+automatic priority basis. `CVEDetail` exposes every persisted evidence value,
+including values that decide no level.
 
 ## Testing Requirements
 
@@ -336,6 +402,21 @@ Tests MUST cover:
    `priority_auto` changes.
 9. API filter (`p1`–`p4`, `unresolved`, invalid values ignored), semantic
    sort with NULL last, and response fields.
+10. The automatic priority basis of `classify_exploitation()` and of
+    `TicketSummary` and `TicketDetail`: each level with its exact deciding
+    evidence, values, and order (KEV with `date_added`, alone when SSVC
+    `active` or `poc` or a percentile of at least `0.95` also exists; SSVC
+    `active`, alone when a percentile of at least `0.95` also exists; SSVC
+    `poc` alone; an EPSS percentile alone, exactly `0.95` and above it, also
+    with SSVC `none`; `poc` with a qualifying percentile listing both; a
+    percentile just below `0.95`, SSVC `none`, and no evidence, each yielding
+    `unknown` with no evidence), basis severity `none` distinct from `null`, a
+    Ticket without a CVE with and without `severity_manual`, a `NULL`
+    automatic priority, an override that leaves the basis unchanged, the
+    post-mutation basis in the responses of `POST /api/v1/tickets` with a
+    CVE, `POST .../associate-cve`, and `PATCH .../severity`, and each
+    Decision Table cell, reached at least once through any refresh point,
+    with a basis whose cell equals `priority_automatic` in the same response.
 
 Audit assertions follow `docs/features/platform/testing-strategy.md` (Audit
 Trail Testing).

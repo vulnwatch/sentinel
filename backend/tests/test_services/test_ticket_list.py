@@ -43,6 +43,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.enums import (
     CurrentPhase,
     DeliveryStatus,
+    ExploitationEvidenceKind,
+    ExploitationLevel,
     MilestonePhase,
     MilestoneStatus,
     PackageStatus,
@@ -68,8 +70,10 @@ from app.models.user import User
 from app.models.user_role import UserRole
 from app.services import ticket_service
 from app.services.ticket_deadlines import DueDates, TicketCurrentPhase
+from app.services.ticket_priority import ExploitationEvidence
 from app.services.ticket_service import (
     CVESummaryProjection,
+    PriorityBasisProjection,
     TicketPage,
     TicketSummaryProjection,
     TicketUserProjection,
@@ -185,6 +189,7 @@ class TestSummaryProjection:
         clock: Clock,
         ticket_factory: Factory,
         cve_factory: Factory,
+        cve_epss_score_factory: Factory,
         user_factory: Factory,
         ticket_package_factory: Factory,
     ) -> None:
@@ -200,6 +205,10 @@ class TestSummaryProjection:
             description="Fictional description",
             severity=Severity.MEDIUM.value,
         )
+        # Medium with `likely` (an EPSS percentile at or above 0.95) is the
+        # P3 cell, the persisted automatic priority below; the override P1
+        # is the effective priority and leaves the basis unchanged.
+        await cve_epss_score_factory(cve_id=cve.id, percentile=0.97)
         ticket: Ticket = await ticket_factory(
             cve_id=cve.id,
             assignee_id=assignee.id,
@@ -223,6 +232,17 @@ class TestSummaryProjection:
                 status=TicketStatus.DUPLICATED,
                 severity=Severity.MEDIUM,
                 priority=TicketPriority.P1,
+                priority_automatic=TicketPriority.P3,
+                priority_override=TicketPriority.P1,
+                priority_basis=PriorityBasisProjection(
+                    severity=Severity.MEDIUM,
+                    exploitation=ExploitationLevel.LIKELY,
+                    evidence=(
+                        ExploitationEvidence(
+                            ExploitationEvidenceKind.EPSS_PERCENTILE, 0.97
+                        ),
+                    ),
+                ),
                 assignee=TicketUserProjection(
                     id=assignee.id,
                     username="fictional.analyst",

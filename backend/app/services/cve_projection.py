@@ -235,6 +235,22 @@ def cve_detail_columns() -> tuple[ColumnElement[Any], ...]:
     )
 
 
+def cve_priority_evidence_columns() -> tuple[ColumnElement[Any], ...]:
+    """The persisted exploitation evidence of `CVE` that the automatic
+    priority basis classifies (`docs/features/tickets/ticket-priority.md`,
+    Automatic Priority Basis), labeled as in `cve_detail_columns()`.
+
+    For a statement that does not select `cve_detail_columns()`; it
+    requires `join_cve_evidence()`. Each value is `NULL` without its row,
+    including for a Ticket without a CVE.
+    """
+    return (
+        CVEKEVEntry.date_added.label("kev_date_added"),
+        CVESSVCAssessment.exploitation.label("ssvc_exploitation"),
+        CVEEPSSScore.percentile.label("epss_percentile"),
+    )
+
+
 def join_cve_evidence[*Ts](statement: Select[*Ts]) -> Select[*Ts]:
     """Outer-join the one-to-one KEV, EPSS, and SSVC rows of `CVE`.
 

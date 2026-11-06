@@ -52,6 +52,8 @@ from app.core.enums import (
     CVSSVersion,
     DeliveryStatus,
     EligibilitySource,
+    ExploitationEvidenceKind,
+    ExploitationLevel,
     FetcherAuditEventType,
     FetcherRunStatus,
     FetcherRunTriggeredBy,
@@ -604,6 +606,29 @@ class TestTicketPriorityEnum:
 
     def test_exact_values(self) -> None:
         assert [member.value for member in TicketPriority] == ["P1", "P2", "P3", "P4"]
+
+
+@pytest.mark.unit
+class TestExploitationEnums:
+    """ExploitationLevel and ExploitationEvidenceKind per ticket-priority.md
+    (Exploitation Level; `classify_exploitation()`): never persisted, and
+    serialized only in the automatic priority basis, so their values are
+    the lowercase wire values."""
+
+    def test_level_values_in_precedence_order(self) -> None:
+        assert [member.value for member in ExploitationLevel] == [
+            "kev",
+            "active",
+            "likely",
+            "unknown",
+        ]
+
+    def test_evidence_kind_values_in_evidence_order(self) -> None:
+        assert [member.value for member in ExploitationEvidenceKind] == [
+            "kev",
+            "ssvc_exploitation",
+            "epss_percentile",
+        ]
 
 
 @pytest.mark.unit

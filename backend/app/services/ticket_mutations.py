@@ -774,10 +774,12 @@ async def refresh_priority_auto(db: AsyncSession, *, ticket: Ticket) -> bool:
     Q3: (1) reads the resolved severity from locked-current state —
     `CVE.severity` when `cve_id` is set, otherwise `severity_manual`; the
     CVE read observes the enclosing transaction's writes (autoflush).
-    (2) For a CVE-associated Ticket, reads in the same statement whether a
-    `CVEKEVEntry` exists, the SSVC `exploitation`, and the EPSS
-    `percentile`; a CVE-less Ticket uses no evidence. (3) Computes
-    `resolve_priority(severity, classify_exploitation(...))`. (4) An
+    (2) For a CVE-associated Ticket, reads in the same statement the
+    `CVEKEVEntry.date_added`, the SSVC `exploitation`, and the EPSS
+    `percentile`, each `None` without its row; a CVE-less Ticket uses no
+    evidence. (3) Computes `resolve_priority()` for the severity and the
+    level of `classify_exploitation()`, the classification that the reads
+    of the automatic priority basis also use. (4) An
     unchanged result returns `False` with no write or event. (5) Otherwise
     persists the new `priority_auto`, and (6) creates one system
     `priority_changed` event with the old and new effective priorities
@@ -792,7 +794,7 @@ async def refresh_priority_auto(db: AsyncSession, *, ticket: Ticket) -> bool:
     Q6: raises nothing of its own. Database, audit, and flush exceptions
     propagate unchanged and roll back the caller's complete transaction.
     """
-    kev_listed = False
+    kev_date_added: date | None = None
     ssvc_exploitation: str | None = None
     epss_percentile: float | None = None
     if ticket.cve_id is not None:
@@ -800,7 +802,9 @@ async def refresh_priority_auto(db: AsyncSession, *, ticket: Ticket) -> bool:
             await db.execute(
                 select(
                     CVE.severity,
-                    exists().where(CVEKEVEntry.cve_id == CVE.id),
+                    select(CVEKEVEntry.date_added)
+                    .where(CVEKEVEntry.cve_id == CVE.id)
+                    .scalar_subquery(),
                     select(CVESSVCAssessment.exploitation)
                     .where(CVESSVCAssessment.cve_id == CVE.id)
                     .scalar_subquery(),
@@ -810,7 +814,7 @@ async def refresh_priority_auto(db: AsyncSession, *, ticket: Ticket) -> bool:
                 ).where(CVE.id == ticket.cve_id)
             )
         ).one()
-        severity_value, kev_listed, ssvc_exploitation, epss_percentile = row
+        severity_value, kev_date_added, ssvc_exploitation, epss_percentile = row
     else:
         severity_value = ticket.severity_manual
 
@@ -818,10 +822,10 @@ async def refresh_priority_auto(db: AsyncSession, *, ticket: Ticket) -> bool:
     resolved = resolve_priority(
         severity,
         classify_exploitation(
-            kev_listed=kev_listed,
+            kev_date_added=kev_date_added,
             ssvc_exploitation=ssvc_exploitation,
             epss_percentile=epss_percentile,
-        ),
+        ).level,
     )
     new_auto = resolved.value if resolved is not None else None
     if new_auto == ticket.priority_auto:

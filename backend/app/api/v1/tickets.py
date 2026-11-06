@@ -89,6 +89,7 @@ from app.schemas.errors import (
     ValidationErrorResponse,
 )
 from app.schemas.ticket import (
+    PriorityBasis,
     TicketAccessGrantDataResponse,
     TicketAccessGrantListResponse,
     TicketAccessGrantRequest,
@@ -120,6 +121,7 @@ from app.services.ticket_service import (
     AssigneeNotEligibleError,
     DuplicateConcurrentModificationError,
     DuplicateTargetIsDuplicatedError,
+    PriorityBasisProjection,
     ResolvedTicket,
     SelfDuplicateError,
     TicketConvergenceDispatchError,
@@ -372,6 +374,25 @@ def _lower(value: str | None) -> str | None:
     return value.lower() if value is not None else None
 
 
+def serialize_priority_basis(basis: PriorityBasisProjection) -> PriorityBasis:
+    """Map an automatic priority basis to its `PriorityBasis` schema.
+
+    Lowercases the severity; the level and the evidence kinds are already
+    their lowercase wire values. Each evidence element keeps its persisted
+    value, validated by the variant that its `kind` selects.
+    """
+    return PriorityBasis.model_validate(
+        {
+            "severity": _lower(basis.severity),
+            "exploitation": basis.exploitation,
+            "evidence": [
+                {"kind": evidence.kind.value, "value": evidence.value}
+                for evidence in basis.evidence
+            ],
+        }
+    )
+
+
 def serialize_ticket_summary(summary: TicketSummaryProjection) -> TicketSummary:
     """Map a Ticket summary projection to its `TicketSummary` schema.
 
@@ -386,6 +407,11 @@ def serialize_ticket_summary(summary: TicketSummaryProjection) -> TicketSummary:
             "status": summary.status.lower(),
             "severity": _lower(summary.severity),
             "priority": _lower(summary.priority),
+            "priority_automatic": _lower(summary.priority_automatic),
+            "priority_override": _lower(summary.priority_override),
+            "priority_automatic_basis": serialize_priority_basis(
+                summary.priority_basis
+            ),
             "assignee": (
                 UserReference.model_validate(summary.assignee)
                 if summary.assignee is not None
@@ -431,6 +457,7 @@ def serialize_ticket_detail(detail: TicketDetailProjection) -> TicketDetail:
             "priority": _lower(detail.priority),
             "priority_automatic": _lower(detail.priority_automatic),
             "priority_override": _lower(detail.priority_override),
+            "priority_automatic_basis": serialize_priority_basis(detail.priority_basis),
             "assignee": (
                 UserReference.model_validate(detail.assignee)
                 if detail.assignee is not None

@@ -232,9 +232,10 @@ layer.
 Every Ticket exposes an effective `priority` (`P1`–`P4`, or `null` when not yet
 prioritizable). It is derived automatically from the resolved severity above
 and the exploitation evidence of the associated CVE, and an authorized acting
-user may override it. Priority is informational only: it is not a gate input
-and never affects status, Product eligibility, or assignment. The complete
-contract is in [ticket-priority.md](ticket-priority.md).
+user may override it. Every Ticket also exposes its automatic priority, its
+override, and the basis of its automatic priority. Priority is informational
+only: it is not a gate input and never affects status, Product eligibility, or
+assignment. The complete contract is in [ticket-priority.md](ticket-priority.md).
 
 ## Remediation Deadlines
 
@@ -1391,6 +1392,32 @@ Both user references are complete because users are never physically deleted.
 Deactivation changes only the current `active` projection; it does not rewrite
 or remove grant provenance.
 
+**PriorityBasis** — what the automatic priority of a Ticket is based on (see
+[ticket-priority.md](ticket-priority.md#automatic-priority-basis)):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `severity` | string \| null | Resolved severity that selects the Decision Table column: `critical`, `high`, `medium`, `low`, `none`, or `null` when unresolved. Equal to the Ticket's `severity` |
+| `exploitation` | string | Exploitation level that selects the Decision Table row: `kev`, `active`, `likely`, or `unknown` |
+| `evidence` | PriorityEvidence[] | Persisted evidence that decided `exploitation`, ordered `kev`, `ssvc_exploitation`, `epss_percentile`; empty when `exploitation` is `unknown` |
+
+The Decision Table cell of `severity` and `exploitation` is the
+`priority_automatic` of the same response, also when a priority override is
+set. A client presents the basis from these fields alone: it needs neither the
+Decision Table nor the EPSS threshold.
+
+**PriorityEvidence** — one piece of deciding evidence, a union discriminated by
+`kind`:
+
+| `kind` | `value` type | `value` |
+|---|---|---|
+| `kev` | date | `date_added` of the CVE's CISA KEV catalog entry |
+| `ssvc_exploitation` | string | CISA SSVC exploitation decision point: `active` or `poc` |
+| `epss_percentile` | number | FIRST EPSS percentile rank (0.0–1.0), at or above the threshold of the `likely` level |
+
+`exploitation`, `kind`, and the `value` of a `ssvc_exploitation` element are
+response enums (`docs/api-spec.md`, Response Enums).
+
 **CVESummary** — compact CVE representation for list views:
 
 | Field | Type | Description |
@@ -1541,6 +1568,9 @@ views without the full package tree.
 | `status` | string | TicketStatus enum: `new`, `analysis`, `analyzed`, `resolved`, `ignored`, `duplicated` |
 | `severity` | string \| null | Resolved severity (CVSS-derived → manual fallback). Values: `critical`, `high`, `medium`, `low`, `none`, or `null` if unresolved. `null` = no CVSS data and no manual severity set. `"none"` = CVSS score 0.0 (informational) |
 | `priority` | string \| null | Effective priority (manual override, otherwise automatic): `p1`, `p2`, `p3`, `p4`, or `null` when not yet prioritizable. See [ticket-priority.md](ticket-priority.md) |
+| `priority_automatic` | string \| null | System-derived priority (`Ticket.priority_auto`): `p1`–`p4`, or `null` when not yet prioritizable |
+| `priority_override` | string \| null | Manual override (`Ticket.priority_override`): `p1`–`p4`, or `null` when no override is set |
+| `priority_automatic_basis` | PriorityBasis | What `priority_automatic` is based on |
 | `assignee` | UserSummary \| null | Current assignee, or `null` if unassigned |
 | `cve` | CVESummary \| null | Associated CVE summary, or `null` if no CVE |
 | `duplicate_of_ticket_id` | string \| null | Duplicate target Ticket identity (`SNTL-{n}`), or `null` |
@@ -1571,6 +1601,7 @@ projection with the full package tree, and uses expanded CVE data.
 | `priority` | string \| null | Effective priority: `priority_override` when set, otherwise `priority_automatic`. Values `p1`–`p4` or `null` |
 | `priority_automatic` | string \| null | System-derived priority (`Ticket.priority_auto`): `p1`–`p4`, or `null` when not yet prioritizable |
 | `priority_override` | string \| null | Manual override (`Ticket.priority_override`): `p1`–`p4`, or `null` when no override is set |
+| `priority_automatic_basis` | PriorityBasis | What `priority_automatic` is based on |
 | `assignee` | UserSummary \| null | Current assignee, or `null` if unassigned |
 | `cve` | CVEDetail \| null | Expanded CVE data with dates, or `null` if no CVE |
 | `duplicate_of_ticket_id` | string \| null | Duplicate target Ticket identity (`SNTL-{n}`), or `null` |

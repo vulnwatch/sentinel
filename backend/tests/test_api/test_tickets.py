@@ -32,9 +32,11 @@ from app.api.v1 import tickets as route
 from app.core.enums import (
     CurrentPhase,
     CveState,
+    ExploitationLevel,
     MilestoneStatus,
     Role,
     Severity,
+    SSVCExploitation,
     TicketPriority,
     TicketStatus,
 )
@@ -47,7 +49,10 @@ from app.models.user_role import UserRole
 from app.schemas import common, cve, ticket
 from app.services import ticket_service
 from app.services.ticket_deadlines import TicketCurrentPhase
-from app.services.ticket_service import TicketDetailProjection
+from app.services.ticket_service import (
+    PriorityBasisProjection,
+    TicketDetailProjection,
+)
 
 Factory = Callable[..., Awaitable[Any]]
 
@@ -74,6 +79,7 @@ _TICKET_DETAIL_FIELDS = {
     "priority",
     "priority_automatic",
     "priority_override",
+    "priority_automatic_basis",
     "assignee",
     "cve",
     "duplicate_of_ticket_id",
@@ -237,11 +243,14 @@ class TestGetTicketEndpoint:
             identifier="GHSA-abcd-efgh-ijkl",
             url="https://advisories.example.com/GHSA-abcd-efgh-ijkl",
         )
+        # High with a KEV entry is the P1 cell; the override P2 is the
+        # effective priority. The KEV entry alone decides the level: the
+        # SSVC `poc` and the high EPSS percentile are not listed.
         target: Ticket = await ticket_factory(
             cve_id=detail_cve.id,
             assignee_id=assignee.id,
-            priority_auto=TicketPriority.P2.value,
-            priority_override=TicketPriority.P1.value,
+            priority_auto=TicketPriority.P1.value,
+            priority_override=TicketPriority.P2.value,
             status=TicketStatus.ANALYSIS.value,
             coordinated_release_at=datetime(2026, 4, 1, 12, 0, tzinfo=UTC),
             created_at=_CREATED_AT,
@@ -264,9 +273,14 @@ class TestGetTicketEndpoint:
             "ticket_id": format_ticket_id(target.sequence_id),
             "status": "analysis",
             "severity": "high",
-            "priority": "p1",
-            "priority_automatic": "p2",
-            "priority_override": "p1",
+            "priority": "p2",
+            "priority_automatic": "p1",
+            "priority_override": "p2",
+            "priority_automatic_basis": {
+                "severity": "high",
+                "exploitation": "kev",
+                "evidence": [{"kind": "kev", "value": "2026-02-06"}],
+            },
             "assignee": {
                 "id": str(assignee.id),
                 "username": "fictional.analyst",
@@ -618,6 +632,10 @@ class TestSchemaEnumerations:
             (common.SeverityValue, {s.value.lower() for s in Severity}),
             (cve.CveStateValue, {s.value.lower() for s in CveState}),
             (
+                ticket.SSVCExploitationEvidenceValue,
+                {s.value for s in SSVCExploitation} - {SSVCExploitation.NONE.value},
+            ),
+            (
                 ticket.CurrentPhaseMilestoneValue,
                 {MilestoneStatus.PENDING.value, MilestoneStatus.OVERDUE.value},
             ),
@@ -640,6 +658,9 @@ class TestSerializer:
                 priority=None,
                 priority_automatic=None,
                 priority_override=None,
+                priority_basis=PriorityBasisProjection(
+                    severity=None, exploitation=ExploitationLevel.UNKNOWN, evidence=()
+                ),
                 assignee=None,
                 cve=None,
                 duplicate_of_ticket_id="SNTL-2",
@@ -684,9 +705,14 @@ class TestSerializer:
                 ticket_id="SNTL-1",
                 status=TicketStatus.ANALYZED,
                 severity=Severity.HIGH,
-                priority=None,
-                priority_automatic=None,
+                priority=TicketPriority.P3,
+                priority_automatic=TicketPriority.P3,
                 priority_override=None,
+                priority_basis=PriorityBasisProjection(
+                    severity=Severity.HIGH,
+                    exploitation=ExploitationLevel.UNKNOWN,
+                    evidence=(),
+                ),
                 assignee=None,
                 cve=None,
                 duplicate_of_ticket_id=None,

@@ -42,6 +42,7 @@ from app.core.enums import (
     CurrentPhase,
     CveState,
     DeliveryStatus,
+    ExploitationLevel,
     LifecyclePhase,
     MilestoneStatus,
     PackageStatus,
@@ -78,6 +79,7 @@ from app.services.cve_projection import (
 )
 from app.services.ticket_deadlines import DueDates, TicketCurrentPhase
 from app.services.ticket_service import (
+    PriorityBasisProjection,
     ResolvedTicket,
     TicketDetailProjection,
     TicketUserProjection,
@@ -307,9 +309,10 @@ class TestDetailProjection:
     async def test_cve_less_ticket_projects_every_root_field(
         self, db_session: AsyncSession, clock: Clock, ticket_factory: Factory
     ) -> None:
+        # Medium without a CVE uses the `unknown` row: the P4 cell.
         ticket: Ticket = await ticket_factory(
             severity_manual=Severity.MEDIUM.value,
-            priority_auto=TicketPriority.P3.value,
+            priority_auto=TicketPriority.P4.value,
             coordinated_release_at=CRD,
             created_at=CREATED_AT,
             updated_at=UPDATED_AT,
@@ -321,9 +324,14 @@ class TestDetailProjection:
             ticket_id=_sntl(ticket),
             status=TicketStatus.NEW,
             severity=Severity.MEDIUM,
-            priority=TicketPriority.P3,
-            priority_automatic=TicketPriority.P3,
+            priority=TicketPriority.P4,
+            priority_automatic=TicketPriority.P4,
             priority_override=None,
+            priority_basis=PriorityBasisProjection(
+                severity=Severity.MEDIUM,
+                exploitation=ExploitationLevel.UNKNOWN,
+                evidence=(),
+            ),
             assignee=None,
             cve=None,
             duplicate_of_ticket_id=None,

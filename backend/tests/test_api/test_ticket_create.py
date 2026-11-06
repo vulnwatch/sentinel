@@ -972,6 +972,12 @@ class TestCreateTicket:
             "priority": None,
             "priority_automatic": None,
             "priority_override": None,
+            # A placeholder CVE has no severity and no evidence yet.
+            "priority_automatic_basis": {
+                "severity": None,
+                "exploitation": "unknown",
+                "evidence": [],
+            },
             "assignee": assignee,
             "cve": _placeholder_cve(_NEW_CVE_ID),
             "duplicate_of_ticket_id": None,
@@ -1032,6 +1038,11 @@ class TestCreateTicket:
         assert data["severity"] == "high"
         assert data["priority"] == data["priority_automatic"] == "p3"
         assert data["priority_override"] is None
+        assert data["priority_automatic_basis"] == {
+            "severity": "high",
+            "exploitation": "unknown",
+            "evidence": [],
+        }
         assert data["is_confidential"] is False
         assert (await _counts(db_session))[1] == before_cves
         ticket_uuid = await _ticket_uuid(db_session, data["ticket_id"])
