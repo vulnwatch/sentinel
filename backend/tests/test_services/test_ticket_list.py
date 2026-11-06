@@ -10,7 +10,8 @@ Owning specifications:
   `total` before slicing, and one coherent PostgreSQL observation.
 - docs/features/tickets/tickets.md (Ticket Identification > Search;
   Severity Resolution; Duplicate Handling; Response Schemas >
-  TicketSummary; List Tickets, including the Duplicate filter).
+  TicketSummary; List Tickets, including the Duplicate and Embargo
+  filters).
 - docs/features/tickets/ticket-priority.md (Testing Requirement 9).
 - docs/features/tickets/ticket-deadlines.md (Evaluation Instant,
   Ticket-Level Overdue Filter, Ticket Current Phase, Sorting, Current Due
@@ -1326,6 +1327,196 @@ class TestDuplicateFilter:
 
 
 # ---------------------------------------------------------------------------
+# Embargo filters (tickets.md, List Tickets > Embargo filters)
+# ---------------------------------------------------------------------------
+
+EMBARGO_INSTANT = datetime(2026, 4, 1, 12, 0, 0, 500000, tzinfo=UTC)
+"""The controlled evaluation instant of the embargo tests, with a
+sub-second part so that a one-microsecond offset is representable."""
+
+
+@pytest.mark.integration
+class TestEmbargoFilters:
+    async def test_is_confidential_lists_exactly_each_value(
+        self, db_session: AsyncSession, clock: Clock, ticket_factory: Factory
+    ) -> None:
+        clock.instant = EMBARGO_INSTANT
+        confidential = [
+            await ticket_factory(is_confidential=True),
+            await ticket_factory(is_confidential=True, coordinated_release_at=CRD),
+            await ticket_factory(
+                is_confidential=True, status=TicketStatus.IGNORED.value
+            ),
+        ]
+        public = [
+            await ticket_factory(),
+            # A CRD retained after declassification does not make the Ticket
+            # confidential.
+            await ticket_factory(coordinated_release_at=CRD),
+        ]
+
+        assert set(await _ids(db_session, is_confidential=True)) == _set(confidential)
+        assert set(await _ids(db_session, is_confidential=False)) == _set(public)
+        assert (await _list(db_session, is_confidential=True, per_page=1)).total == 3
+
+    async def test_passed_crd_boundary_status_and_inert_values(
+        self, db_session: AsyncSession, clock: Clock, ticket_factory: Factory
+    ) -> None:
+        """`true` matches a confidential Ticket whose CRD is at or before the
+        one evaluation instant, in every status; `false` matches every other
+        Ticket, a confidential Ticket without a CRD and a CRD retained on a
+        non-confidential Ticket included."""
+        clock.instant = EMBARGO_INSTANT
+        at_instant = await ticket_factory(
+            is_confidential=True, coordinated_release_at=EMBARGO_INSTANT
+        )
+        passed = await ticket_factory(
+            is_confidential=True,
+            coordinated_release_at=EMBARGO_INSTANT - timedelta(days=30),
+        )
+        passed_in_other_statuses = [
+            await ticket_factory(
+                is_confidential=True,
+                status=status.value,
+                coordinated_release_at=EMBARGO_INSTANT - timedelta(days=1),
+            )
+            for status in (
+                TicketStatus.RESOLVED,
+                TicketStatus.IGNORED,
+                TicketStatus.DUPLICATED,
+            )
+        ]
+        just_after = await ticket_factory(
+            is_confidential=True,
+            coordinated_release_at=EMBARGO_INSTANT + timedelta(microseconds=1),
+        )
+        without_crd = await ticket_factory(is_confidential=True)
+        retained = await ticket_factory(
+            coordinated_release_at=EMBARGO_INSTANT - timedelta(days=1)
+        )
+        public = await ticket_factory()
+        expected_passed = _set([at_instant, passed, *passed_in_other_statuses])
+        # The Duplicated Ticket's original is a further non-confidential
+        # Ticket without a CRD.
+        everything = set(await _ids(db_session))
+
+        assert set(await _ids(db_session, coordinated_release_passed=True)) == (
+            expected_passed
+        )
+        not_passed = set(await _ids(db_session, coordinated_release_passed=False))
+        assert not_passed == everything - expected_passed
+        assert _set([just_after, without_crd, retained, public]) <= not_passed
+        assert (
+            await _list(db_session, coordinated_release_passed=True, per_page=1)
+        ).total == 5
+
+        # The comparison uses the captured instant: one microsecond earlier,
+        # a CRD equal to the former instant has not passed.
+        clock.instant = EMBARGO_INSTANT - timedelta(microseconds=1)
+        assert set(await _ids(db_session, coordinated_release_passed=True)) == (
+            expected_passed - _set([at_instant])
+        )
+        assert _sntl(at_instant) in await _ids(
+            db_session, coordinated_release_passed=False
+        )
+
+    async def test_filters_combine_with_each_other_and_other_filters_by_and(
+        self, db_session: AsyncSession, clock: Clock, ticket_factory: Factory
+    ) -> None:
+        clock.instant = EMBARGO_INSTANT
+        passed_high = await ticket_factory(
+            is_confidential=True,
+            severity_manual=Severity.HIGH.value,
+            coordinated_release_at=EMBARGO_INSTANT - timedelta(days=1),
+        )
+        passed_low = await ticket_factory(
+            is_confidential=True,
+            severity_manual=Severity.LOW.value,
+            coordinated_release_at=EMBARGO_INSTANT - timedelta(days=1),
+        )
+        coming = await ticket_factory(
+            is_confidential=True,
+            coordinated_release_at=EMBARGO_INSTANT + timedelta(days=1),
+        )
+        without_crd = await ticket_factory(is_confidential=True)
+        await ticket_factory(severity_manual=Severity.HIGH.value)
+
+        with _StatementRecorder(db_session) as recorder:
+            page = await _list(
+                db_session, is_confidential=True, coordinated_release_passed=False
+            )
+        assert len(recorder.statements) == 1
+        assert {item.ticket_id for item in page.items} == _set([coming, without_crd])
+        assert page.total == 2
+        assert await _ids(
+            db_session, coordinated_release_passed=True, severity=[Severity.HIGH]
+        ) == [_sntl(passed_high)]
+        assert set(
+            await _ids(
+                db_session, is_confidential=True, coordinated_release_passed=True
+            )
+        ) == _set([passed_high, passed_low])
+        assert (
+            await _ids(
+                db_session, is_confidential=False, coordinated_release_passed=True
+            )
+            == []
+        )
+
+    async def test_only_visible_confidential_tickets_are_listed_and_counted(
+        self,
+        db_session: AsyncSession,
+        clock: Clock,
+        ticket_factory: Factory,
+        user_factory: Factory,
+        ticket_access_grant_factory: Factory,
+        ticket_package_factory: Factory,
+        ticket_package_maintainer_factory: Factory,
+    ) -> None:
+        """The filters narrow the visible Tickets and require no capability:
+        a grant or package maintainership shows a confidential Ticket, and
+        an invisible one is neither listed nor counted by either value."""
+        clock.instant = EMBARGO_INSTANT
+        passed_crd = EMBARGO_INSTANT - timedelta(days=1)
+        caller_user: User = await user_factory()
+        restricted = TicketCaller.authenticated(caller_user.id, Scope.NON_CONFIDENTIAL)
+        granted = await ticket_factory(
+            is_confidential=True, coordinated_release_at=passed_crd
+        )
+        await ticket_access_grant_factory(ticket_id=granted.id, user_id=caller_user.id)
+        maintained = await ticket_factory(
+            is_confidential=True, coordinated_release_at=passed_crd
+        )
+        package = await ticket_package_factory(ticket_id=maintained.id)
+        await ticket_package_maintainer_factory(
+            ticket_package_id=package.id, user_id=caller_user.id
+        )
+        hidden = await ticket_factory(
+            is_confidential=True, coordinated_release_at=passed_crd
+        )
+        hidden_without_crd = await ticket_factory(is_confidential=True)
+        public = await ticket_factory()
+
+        expectations = {
+            ROLELESS_CALLER: ([], [public]),
+            restricted: ([granted, maintained], [public]),
+            ALL_SCOPE: ([granted, maintained, hidden], [public, hidden_without_crd]),
+        }
+        for caller, (passed, not_passed) in expectations.items():
+            for value, visible in ((True, passed), (False, not_passed)):
+                page = await _list(
+                    db_session, caller, coordinated_release_passed=value, per_page=1
+                )
+                assert page.total == len(visible), (caller, value)
+                assert set(
+                    await _ids(db_session, caller, coordinated_release_passed=value)
+                ) == _set(visible), (caller, value)
+            assert set(await _ids(db_session, caller, is_confidential=True)) == _set(
+                [t for t in (*passed, *not_passed) if t is not public]
+            ), caller
+
+
+# ---------------------------------------------------------------------------
 # Overdue filter (ticket-deadlines.md, Ticket-Level Overdue Filter)
 # ---------------------------------------------------------------------------
 
@@ -2017,6 +2208,73 @@ class TestSorting:
             *reversed(nulls),
         ]
 
+    async def test_coordinated_release_at_sorts_the_stored_date_with_null_last(
+        self, db_session: AsyncSession, clock: Clock, ticket_factory: Factory
+    ) -> None:
+        """tickets.md (List Tickets > Embargo filters): the stored CRD, one
+        retained on a non-confidential Ticket included, in both directions;
+        Tickets without a CRD sort last in both, and equal keys are
+        tie-broken by `Ticket.id` in the requested direction. The creation
+        order differs from the CRD order."""
+        clock.instant = EMBARGO_INSTANT
+        coming_crd = EMBARGO_INSTANT + timedelta(days=2)
+        coming = await ticket_factory(
+            is_confidential=True, coordinated_release_at=coming_crd
+        )
+        without_crd = await ticket_factory(is_confidential=True)
+        retained = await ticket_factory(
+            coordinated_release_at=EMBARGO_INSTANT - timedelta(days=5)
+        )
+        passed = await ticket_factory(
+            is_confidential=True,
+            coordinated_release_at=EMBARGO_INSTANT - timedelta(days=1),
+        )
+        twin = await ticket_factory(
+            is_confidential=True, coordinated_release_at=coming_crd
+        )
+        public = await ticket_factory()
+        ascending = [
+            _sntl(t)
+            for t in (retained, passed, *sorted([coming, twin], key=lambda t: t.id))
+        ]
+        nulls = [_sntl(t) for t in sorted([without_crd, public], key=lambda t: t.id)]
+        sort_by = TicketSortField.COORDINATED_RELEASE_AT
+
+        assert await _order(db_session, sort_by, SortOrder.ASC) == [*ascending, *nulls]
+        assert await _order(db_session, sort_by, SortOrder.DESC) == [
+            *reversed(ascending),
+            *reversed(nulls),
+        ]
+        pages = [
+            await _list(
+                db_session,
+                sort_by=sort_by,
+                sort_order=SortOrder.ASC,
+                page=n,
+                per_page=1,
+            )
+            for n in range(1, 7)
+        ]
+        assert [p.items[0].ticket_id for p in pages] == [*ascending, *nulls]
+        assert {p.total for p in pages} == {6}
+
+        # The Embargo view: the confidential Tickets, earliest CRD first, and
+        # those without one last; the order agrees with the rows.
+        page = await _list(
+            db_session, is_confidential=True, sort_by=sort_by, sort_order=SortOrder.ASC
+        )
+        assert [item.ticket_id for item in page.items] == [
+            _sntl(passed),
+            *ascending[2:],
+            _sntl(without_crd),
+        ]
+        assert [item.coordinated_release_at for item in page.items] == [
+            EMBARGO_INSTANT - timedelta(days=1),
+            coming_crd,
+            coming_crd,
+            None,
+        ]
+
     async def test_current_due_at_sorts_by_the_due_date_of_the_current_phase(
         self, db_session: AsyncSession, clock: Clock, deadline_world: DeadlineWorld
     ) -> None:
@@ -2246,6 +2504,7 @@ class TestSorting:
             TicketSortField.TRIAGE_DUE_AT,
             TicketSortField.CURRENT_DUE_AT,
             TicketSortField.PRIORITY_THEN_CURRENT_DUE,
+            TicketSortField.COORDINATED_RELEASE_AT,
         ],
     )
     async def test_equal_keys_page_deterministically_by_internal_id(
@@ -2406,6 +2665,7 @@ class TestVisibility:
             is_confidential=True,
             severity_manual=Severity.CRITICAL.value,
             created_at=CREATED_AT,
+            coordinated_release_at=CREATED_AT,
         )
         await ticket_package_factory(ticket_id=hidden.id, package_name="secret-pkg")
 
@@ -2414,7 +2674,10 @@ class TestVisibility:
             {"severity": [Severity.CRITICAL]},
             {"overdue": [MilestonePhase.TRIAGE]},
             {"current_phase": [CurrentPhase.TRIAGE]},
+            {"is_confidential": True},
+            {"coordinated_release_passed": True},
             {"sort_by": TicketSortField.SEVERITY},
+            {"sort_by": TicketSortField.COORDINATED_RELEASE_AT},
         ):
             page = await _list(db_session, ROLELESS_CALLER, **filters)
             assert page.items == ()
@@ -2473,6 +2736,7 @@ class TestBoundedRead:
             db_session,
             overdue=list(MilestonePhase),
             current_phase=list(CurrentPhase),
+            coordinated_release_passed=False,
             sort_by=TicketSortField.TRIAGE_DUE_AT,
         )
 

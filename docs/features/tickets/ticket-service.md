@@ -323,7 +323,9 @@ Conceptual semantic inputs are:
 | `product` | `str \| None` | `None` | Canonical Product CPE, exact match |
 | `track` | `str \| None` | `None` | Track reference, exact match |
 | `duplicate_of_ticket_id` | `str \| None` | `None` | Canonical `SNTL-{n}` of an original Ticket |
-| `sort_by` | `created_at`, `updated_at`, `severity`, `priority`, `status`, `ticket_id`, `triage_due_at`, `submission_due_at`, `um_due_at`, `qa_due_at`, `release_due_at`, `current_due_at`, or `priority_then_current_due` | `created_at` | Sort order before the tie-breaker |
+| `is_confidential` | `bool \| None` | `None` | Confidentiality value to match |
+| `coordinated_release_passed` | `bool \| None` | `None` | Whether the Ticket is confidential with a Coordinated Release Date at or before the evaluation instant |
+| `sort_by` | `created_at`, `updated_at`, `severity`, `priority`, `status`, `ticket_id`, `triage_due_at`, `submission_due_at`, `um_due_at`, `qa_due_at`, `release_due_at`, `current_due_at`, `priority_then_current_due`, or `coordinated_release_at` | `created_at` | Sort order before the tie-breaker |
 | `sort_order` | `asc` or `desc` | `desc` | Sort direction |
 | `page` | positive integer | `1` | One-indexed page |
 | `per_page` | integer 1–100 | `20` | Page size |
@@ -365,7 +367,12 @@ The result contains a collection of Ticket summary projections plus `total`,
    `n`, whatever the visibility of that Ticket, under List Tickets (Duplicate
    filter) in `tickets.md`; an unknown value yields an empty page. The API
    rejects a malformed value; given one, the operation raises `ValueError`
-   before any query.
+   before any query. `is_confidential` compares `Ticket.is_confidential`.
+   `coordinated_release_passed = True` matches a confidential Ticket whose
+   `coordinated_release_at` is not `NULL` and is at or before the evaluation
+   instant of step 1; `False` matches every Ticket that `True` does not, a
+   `NULL` `coordinated_release_at` included, under List Tickets (Embargo
+   filters) in `tickets.md`. Ticket status is not an input of either filter.
 4. Resolve severity exactly once per Ticket using the canonical Ticket severity
    cascade. Severity filtering, semantic sorting, and projection all use that
    same value, including the distinction between resolved `None` and SQL NULL.
@@ -400,7 +407,8 @@ The result contains a collection of Ticket summary projections plus `total`,
    the direction of `sort_order`. `ticket_id` sorting uses numeric
    `sequence_id`; status, severity, and priority use the semantic ranks and
    nullable rules in `docs/api-spec.md`; due dates, the current due date
-   included, use timestamp order with `NULL` last. `priority_then_current_due`
+   included, and the stored `coordinated_release_at` use timestamp order with
+   `NULL` last. `priority_then_current_due`
    orders by the priority rank and then by the current due date, each in the
    direction that
    [ticket-deadlines.md](ticket-deadlines.md#current-due-date) defines for
