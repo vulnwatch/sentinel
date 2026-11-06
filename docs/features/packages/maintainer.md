@@ -90,8 +90,8 @@ or any chronology synthesized from generic row timestamps or audit history.
 The submission deadline fields are not such a chronology: they are the
 remediation SLA projection defined by
 `docs/features/tickets/ticket-deadlines.md`, derived from the Ticket's
-immutable `created_at` and resolved severity, and they record no completion
-time. The deadline is projected only on rows that satisfy a workbench
+immutable `created_at` and resolved severity or, when the Ticket has one, its
+Coordinated Release Date, and they record no completion time. The deadline is projected only on rows that satisfy a workbench
 classification; a submission milestone that is overdue on a track outside every
 classification (for example `FIXED` with delivery `pending`, or a track still in
 `ANALYSIS`) remains visible through the track's `milestones` in the Ticket

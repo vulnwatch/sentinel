@@ -26,7 +26,7 @@ endpoint contract.
 | `manage_packages` | Add/remove packages from tickets, exclude/restore (package, track, product), change track affectedness to any non-`FIXED` status, set `FIXED` only on a locked-current CVE-less Ticket, override product eligibility |
 | `manage_cvss` | Add/edit/delete SUSE CVSS assessments |
 | `manage_references` | Add/edit/delete ticket references |
-| `manage_confidentiality` | Set ticket confidentiality flag, list/grant/revoke access grants, set/change/clear the Coordinated Release Date of a confidential ticket |
+| `manage_confidentiality` | Set ticket confidentiality flag, list/grant/revoke access grants, set the Coordinated Release Date of a confidential ticket and change/clear the Coordinated Release Date of a ticket that has one |
 
 #### Admin Capabilities
 
@@ -264,7 +264,7 @@ no response to a caller that the operation does not already admit.
 | Add/edit/delete ticket references | `manage_references` |
 | Set ticket confidentiality | `manage_confidentiality` |
 | Manage access grants on confidential tickets | `manage_confidentiality` |
-| Set/change/clear the Coordinated Release Date of a confidential ticket | `manage_confidentiality` |
+| Set the Coordinated Release Date of a confidential ticket; change/clear the Coordinated Release Date of a ticket that has one | `manage_confidentiality` |
 | Set track affectedness to `FIXED` from any status | `admin_ticket_ops` |
 | Rerun complete Ticket convergence | `triage_ticket` OR `manage_fetchers` |
 | List users and view complete user profiles | `manage_users` |

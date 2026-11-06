@@ -558,7 +558,8 @@ function.
 - `ticket_service.grant_access` and `ticket_service.revoke_access` — explicit
   visibility mutations valid in every Ticket status
 - `ticket_service.set_coordinated_release_date` — embargo-metadata mutation
-  valid in every Ticket status while the Ticket is confidential
+  valid in every Ticket status of a confidential Ticket or of one that retains
+  a CRD
 - `reference_service.create_reference`, `reference_service.update_reference`,
   and `reference_service.delete_reference` — supplementary editorial metadata
   mutations valid in every Ticket status

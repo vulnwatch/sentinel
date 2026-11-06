@@ -3153,16 +3153,26 @@ visibility predicate.
   grant returns 204 with no event.
 - The Coordinated Release Date endpoint exercises set, change, clear, an
   unchanged instant (including the same instant with a different offset),
-  naive input interpreted as UTC, a past instant, every Ticket status including
-  `Ignored` and `Duplicated`, a never-confidential Ticket, and a declassified
-  Ticket with a retained CRD (both `409 TICKET_NOT_CONFIDENTIAL`), `403`
-  without `manage_confidentiality`, and missing or inaccessible Tickets
-  (`404 TICKET_NOT_FOUND` before the confidentiality guard). `POST
-  /api/v1/tickets` with a CRD and `is_confidential` omitted or `false` returns
-  the global `422 VALIDATION_ERROR`. Declassification and reclassification
-  leave the CRD unchanged, and a CRD/declassification race follows
-  `set_coordinated_release_date()`'s serialized contract. The CRD never alters
-  status, gates, eligibility, assignment, deadlines, or accessibility.
+  naive input interpreted as UTC, a past instant at or after `created_at`, an
+  instant equal to `created_at`, an instant before `created_at`
+  (`422 TICKET_COORDINATED_RELEASE_BEFORE_CREATION`), every Ticket status
+  including `Ignored` and `Duplicated`, a change and a clear of the CRD that a
+  declassified Ticket retains (`200`), a never-confidential Ticket and a
+  declassified Ticket without a CRD for a set and for `null` (both
+  `409 TICKET_NOT_CONFIDENTIAL`, which precedes the `422`), `403` without
+  `manage_confidentiality`, and missing or inaccessible Tickets
+  (`404 TICKET_NOT_FOUND` before the confidentiality guard). Every success
+  returns the due dates of the coordinated release window, or of the SLA window
+  after a clear. `POST /api/v1/tickets` with a CRD and `is_confidential`
+  omitted or `false` returns the global `422 VALIDATION_ERROR`, and with a CRD
+  before the creation instant returns
+  `422 TICKET_COORDINATED_RELEASE_BEFORE_CREATION`. Declassification and
+  reclassification leave the CRD unchanged, and a CRD/declassification race
+  follows `set_coordinated_release_date()`'s serialized contract. The CRD
+  never alters status, gates, eligibility, assignment, or accessibility, and it
+  decides the deadlines only as `docs/features/tickets/ticket-deadlines.md`
+  (Coordinated Release Window) defines. The OpenAPI document publishes the
+  `422` code for both operations.
 - Every grant mutation proves Ticket accessibility is authoritative before a
   deferred target-not-found, inactive, confidentiality, or no-op result. Missing
   and inaccessible Tickets remain indistinguishable and disclose no target

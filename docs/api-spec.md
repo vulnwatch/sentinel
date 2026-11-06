@@ -883,7 +883,7 @@ Error codes are grouped by prefix:
 |--------|--------|----------|
 | `VALIDATION_*` | Input validation | `VALIDATION_ERROR` |
 | `AUTH_*` | Authentication and authorization | `AUTH_NOT_AUTHENTICATED`, `AUTH_INSUFFICIENT_PERMISSION`, `AUTH_API_KEY_NOT_FOUND`, `AUTH_API_KEY_NAME_CONFLICT`, `AUTH_API_KEY_NAME_INVALID`, `AUTH_API_KEY_INVALID_EXPIRY`, `AUTH_SESSION_REQUIRED`, `AUTH_INVALID_CREDENTIALS`, `AUTH_ACCOUNT_LOCKED`, `AUTH_LOGOUT_NOT_APPLICABLE`, `AUTH_CROSS_ORIGIN_REJECTED`; reserved: `AUTH_SSO_FAILED`, `AUTH_SSO_USER_NOT_FOUND`, `AUTH_SSO_USER_INACTIVE`, `AUTH_SSO_STATE_INVALID`, `AUTH_SSO_DISABLED` |
-| `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_INVALID_TRANSITION`, `TICKET_NOT_MUTABLE`, `TICKET_NOT_CONFIDENTIAL`, `TICKET_DUPLICATE_TARGET_DUPLICATED`, `TICKET_DUPLICATE_CONCURRENT_MODIFICATION`, `TICKET_SELF_DUPLICATE`, `TICKET_CVE_CONFLICT`, `TICKET_CVE_ALREADY_SET`, `TICKET_SEVERITY_DERIVED`, `TICKET_ASSIGNEE_NOT_ELIGIBLE`, `TICKET_ASSIGNEE_INACTIVE`, `TICKET_ASSIGNEE_NOT_CALLER`, `TICKET_ASSIGNEE_CHANGED` |
+| `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_INVALID_TRANSITION`, `TICKET_NOT_MUTABLE`, `TICKET_NOT_CONFIDENTIAL`, `TICKET_DUPLICATE_TARGET_DUPLICATED`, `TICKET_DUPLICATE_CONCURRENT_MODIFICATION`, `TICKET_SELF_DUPLICATE`, `TICKET_CVE_CONFLICT`, `TICKET_CVE_ALREADY_SET`, `TICKET_SEVERITY_DERIVED`, `TICKET_ASSIGNEE_NOT_ELIGIBLE`, `TICKET_ASSIGNEE_INACTIVE`, `TICKET_ASSIGNEE_NOT_CALLER`, `TICKET_ASSIGNEE_CHANGED`, `TICKET_COORDINATED_RELEASE_BEFORE_CREATION` |
 | `CVE_*` | CVE operations | `CVE_NOT_FOUND`, `CVE_FETCH_FAILED`, `CVE_INVALID_SOURCE`, `CVE_INVALID_FORMAT` |
 | `CVSS_*` | CVSS assessment and default-version operations | `CVSS_INVALID_VECTOR`, `CVSS_ASSESSMENT_NOT_FOUND`, `CVSS_RECALC_ALREADY_IN_PROGRESS`, `CVSS_PREVIEW_TIMEOUT` |
 | `RESOURCE_*` | Generic resource errors | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_NOT_EDITABLE` |
@@ -1216,8 +1216,8 @@ gate state.
   Ticket visibility state and neither assign nor reconcile or exit the manual
   zone;
 - `set_coordinated_release_date`, which changes only the embargo metadata of a
-  confidential Ticket and neither assigns nor reconciles or exits the manual
-  zone;
+  Ticket, and with it the informational remediation deadlines, and neither
+  assigns nor reconciles or exits the manual zone;
 - `create_reference`, `update_reference`, and `delete_reference`, which change
   only supplementary editorial metadata and do not assign, reconcile, change
   status, or exit the manual zone; and

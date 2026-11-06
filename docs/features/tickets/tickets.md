@@ -240,8 +240,10 @@ assignment. The complete contract is in [ticket-priority.md](ticket-priority.md)
 ## Remediation Deadlines
 
 Every Ticket exposes read-time due dates derived from its resolved severity and
-immutable `created_at`: one per actor phase (`triage_due_at`,
-`submission_due_at`, `um_due_at`, `qa_due_at`) and the final `release_due_at`.
+immutable `created_at` or, when it has a
+[Coordinated Release Date](#coordinated-release-date), from `created_at` and
+that date: one per actor phase (`triage_due_at`, `submission_due_at`,
+`um_due_at`, `qa_due_at`) and the final `release_due_at`.
 Each track additionally exposes per-phase milestone statuses and its
 `current_phase`. Each Ticket exposes its own `current_phase`, the earliest open
 phase of its remediation among the phases that Sentinel observes, and
@@ -1283,10 +1285,15 @@ authorized user may make the Ticket non-confidential.
 - `Ticket.coordinated_release_at` is a nullable `TIMESTAMPTZ` (date and time,
   UTC). It is optional even on a confidential Ticket; `NULL` means no CRD is
   known.
-- The CRD is informational embargo metadata. It is never an input to a status
-  gate, `reconcile_ticket_status()`, Product eligibility, affectedness,
-  delivery, assignment, auto-assignment, Ticket accessibility, priority, the
-  remediation deadlines in [ticket-deadlines.md](ticket-deadlines.md), or any
+- While a CRD is set, it is the final release deadline of the Ticket:
+  upstream and the other vendors publish at the CRD, so an update that SUSE
+  has not released by then leaves only SUSE customers exposed. The remediation
+  deadlines then divide the window from `created_at` to the CRD instead of
+  the SLA window, whether the CRD is before or after the SLA deadline
+  ([ticket-deadlines.md](ticket-deadlines.md#coordinated-release-window)).
+  Like those deadlines, the CRD is informational: it is never an input to a
+  status gate, `reconcile_ticket_status()`, Product eligibility, affectedness,
+  delivery, assignment, auto-assignment, Ticket accessibility, priority, or any
   fetcher scope. Sentinel never declassifies a Ticket or changes any state
   when the CRD passes. [List Tickets](#list-tickets) instead lists the
   confidential Tickets whose CRD has passed, and orders Tickets by their CRD
@@ -1294,12 +1301,20 @@ authorized user may make the Ticket non-confidential.
 - It is set at creation (`POST /api/v1/tickets` with `is_confidential: true`)
   or through
   [Set Coordinated Release Date](#set-coordinated-release-date) while the Ticket
-  is confidential. A value may be set, moved earlier or later, or cleared at any
-  time; a past instant is accepted.
+  is confidential. A set value may then be moved earlier or later, or cleared,
+  at any time, including after declassification and in every Ticket status.
+- A CRD is never before the Ticket's `created_at`: an earlier instant is
+  rejected with `422 TICKET_COORDINATED_RELEASE_BEFORE_CREATION`, and a
+  database CHECK enforces the invariant. An instant at or after `created_at`
+  is accepted even when it has already passed.
 - An effective `true` to `false` confidentiality transition leaves the CRD in
-  place. While the Ticket is non-confidential the retained value is read-only
-  and has no effect; if the Ticket becomes confidential again, it is editable
-  again.
+  place. The retained CRD keeps deciding the remediation deadlines, so an
+  update still unreleased after the CRD stays overdue once the issue is
+  public, and it stays editable: an authorized user may move or clear it, for
+  example when the embargo breaks before the CRD. A non-confidential Ticket
+  without a CRD cannot receive one. A retained CRD no longer marks an embargo:
+  the Embargo filters of [List Tickets](#list-tickets) match confidential
+  Tickets only.
 - Every effective change creates one `coordinated_release_changed` event (see
   [Audit Trail](#audit-trail)).
 
@@ -1529,11 +1544,11 @@ ascending Unicode code point of `cwe_id`:
 | `deleted_at` | datetime \| null | Direct manual-exclusion timestamp |
 | `actionable` | boolean | Whether the track has at least one actionable Product and is not manually excluded |
 | `non_actionable_reason` | string \| null | `package_excluded`, `track_excluded`, or `no_actionable_products`; `null` when actionable |
-| `triage_due_at` | datetime \| null | Due date of the VA triage milestone for this track; `null` when no SLA applies. See [ticket-deadlines.md](ticket-deadlines.md#due-dates) |
+| `triage_due_at` | datetime \| null | Due date of the VA triage milestone for this track; `null` when no SLA applies. The track due dates equal those of the Ticket, from the Coordinated Release Date when one is set. See [ticket-deadlines.md](ticket-deadlines.md#due-dates) |
 | `submission_due_at` | datetime \| null | Due date of the maintainer submission milestone |
 | `um_due_at` | datetime \| null | Due date of the UM (maintenance update team) release-request milestone |
 | `qa_due_at` | datetime \| null | Due date of the QA milestone; currently equal to `release_due_at` |
-| `release_due_at` | datetime \| null | Final deadline by which the update must be released; currently equal to `qa_due_at` |
+| `release_due_at` | datetime \| null | Final deadline by which the update must be released: the Coordinated Release Date when one is set, otherwise the SLA deadline; currently equal to `qa_due_at` |
 | `milestones` | TrackMilestones | Per-phase milestone status of this track |
 | `current_phase` | string \| null | First phase not yet completed: `triage`, `submission`, `um`, `qa`; `done` when every applicable phase is completed; `null` when no SLA applies or an unobservable (`null`) phase is reached before any pending or overdue phase. See [ticket-deadlines.md](ticket-deadlines.md#current-phase) |
 
@@ -1581,12 +1596,12 @@ views without the full package tree.
 | `cve` | CVESummary \| null | Associated CVE summary, or `null` if no CVE |
 | `duplicate_of_ticket_id` | string \| null | Duplicate target Ticket identity (`SNTL-{n}`), or `null` |
 | `is_confidential` | boolean | Whether the ticket is confidential |
-| `coordinated_release_at` | datetime \| null | Coordinated Release Date (embargo publication instant, UTC), or `null` when none is set. A retained value on a non-confidential Ticket is historical and inert. See [Coordinated Release Date](#coordinated-release-date) |
-| `triage_due_at` | datetime \| null | Due date of the VA triage milestone; `null` when no SLA applies (manual zone or severity `none`). See [ticket-deadlines.md](ticket-deadlines.md#due-dates) |
+| `coordinated_release_at` | datetime \| null | Coordinated Release Date (embargo publication instant, UTC), or `null` when none is set. When set and an SLA applies, it is `release_due_at` and the due dates divide the window from `created_at` to it, also on a non-confidential Ticket that retains it. See [Coordinated Release Date](#coordinated-release-date) |
+| `triage_due_at` | datetime \| null | Due date of the VA triage milestone; `null` when no SLA applies (manual zone or severity `none`). The due dates divide the window from `created_at` to the Coordinated Release Date when one is set, otherwise the SLA window. See [ticket-deadlines.md](ticket-deadlines.md#due-dates) |
 | `submission_due_at` | datetime \| null | Due date of the maintainer submission milestone |
 | `um_due_at` | datetime \| null | Due date of the UM (maintenance update team) release-request milestone |
 | `qa_due_at` | datetime \| null | Due date of the QA milestone; currently equal to `release_due_at` |
-| `release_due_at` | datetime \| null | Final deadline by which the update must be released; currently equal to `qa_due_at` |
+| `release_due_at` | datetime \| null | Final deadline by which the update must be released: the Coordinated Release Date when one is set, otherwise the SLA deadline; currently equal to `qa_due_at` |
 | `current_phase` | string \| null | Earliest open phase of the Ticket among the phases that Sentinel observes: `triage` (Ticket `new` or `analysis`), `submission`, `um`, or `qa` (the Ticket is not `resolved` and at least one track has that milestone `pending` or `overdue`). A phase that a track reports as `null` (not observable) does not hold it back. `null` when no SLA applies. Otherwise `done` when the Ticket is `resolved`, or when no phase is open and no track has an unobservable (`null`) milestone; `null` when no phase is open, the Ticket is not `resolved`, and a track has an unobservable milestone. Differs from the track `current_phase`. See [ticket-deadlines.md](ticket-deadlines.md#ticket-current-phase) |
 | `current_phase_milestone` | string \| null | Milestone status of `current_phase`: `overdue` when the Ticket matches the `overdue` filter value of its current phase, otherwise `pending`; `null` when `current_phase` is `done` or `null`. Values are exactly `pending` and `overdue`. Unrelated to `delivery_status = pending` |
 | `package_names` | string[] | Exact-deduplicated package names whose `TicketPackage.deleted_at IS NULL`, ordered by ascending Unicode code point (e.g., `["curl", "openssl-3"]`). Product lifecycle actionability does not remove an included package name |
@@ -1612,12 +1627,12 @@ projection with the full package tree, and uses expanded CVE data.
 | `cve` | CVEDetail \| null | Expanded CVE data with dates, or `null` if no CVE |
 | `duplicate_of_ticket_id` | string \| null | Duplicate target Ticket identity (`SNTL-{n}`), or `null` |
 | `is_confidential` | boolean | Whether the ticket is confidential |
-| `coordinated_release_at` | datetime \| null | Coordinated Release Date (embargo publication instant, UTC), or `null` when none is set. A retained value on a non-confidential Ticket is historical and inert. See [Coordinated Release Date](#coordinated-release-date) |
-| `triage_due_at` | datetime \| null | Due date of the VA triage milestone; `null` when no SLA applies (manual zone or severity `none`). See [ticket-deadlines.md](ticket-deadlines.md#due-dates) |
+| `coordinated_release_at` | datetime \| null | Coordinated Release Date (embargo publication instant, UTC), or `null` when none is set. When set and an SLA applies, it is `release_due_at` and the due dates divide the window from `created_at` to it, also on a non-confidential Ticket that retains it. See [Coordinated Release Date](#coordinated-release-date) |
+| `triage_due_at` | datetime \| null | Due date of the VA triage milestone; `null` when no SLA applies (manual zone or severity `none`). The due dates divide the window from `created_at` to the Coordinated Release Date when one is set, otherwise the SLA window. See [ticket-deadlines.md](ticket-deadlines.md#due-dates) |
 | `submission_due_at` | datetime \| null | Due date of the maintainer submission milestone |
 | `um_due_at` | datetime \| null | Due date of the UM (maintenance update team) release-request milestone |
 | `qa_due_at` | datetime \| null | Due date of the QA milestone; currently equal to `release_due_at` |
-| `release_due_at` | datetime \| null | Final deadline by which the update must be released; currently equal to `qa_due_at` |
+| `release_due_at` | datetime \| null | Final deadline by which the update must be released: the Coordinated Release Date when one is set, otherwise the SLA deadline; currently equal to `qa_due_at` |
 | `current_phase` | string \| null | Earliest open phase of the Ticket among the phases that Sentinel observes, as in `TicketSummary`. See [ticket-deadlines.md](ticket-deadlines.md#ticket-current-phase) |
 | `current_phase_milestone` | string \| null | Milestone status of `current_phase`, as in `TicketSummary` |
 | `packages` | PackageDetail[] | Full package/track/product tree, with the maintainers of each package |
@@ -1830,7 +1845,8 @@ declassification an authorized user has yet to perform:
   evaluation instant. `coordinated_release_passed=false` matches every Ticket
   that `true` does not match: a non-confidential Ticket, a confidential Ticket
   without a CRD, and one whose CRD lies after the instant. A CRD retained on a
-  non-confidential Ticket, which is inert, therefore never matches `true`.
+  non-confidential Ticket no longer marks an embargo, although it still
+  decides the due dates, and therefore never matches `true`.
 
 The boundary is inclusive because SUSE may publish from the CRD onward, while a
 due date is past only strictly before the instant. The comparison uses the one
@@ -1940,8 +1956,12 @@ Request body:
   `is_confidential` omitted or `false` fails schema validation with the global
   `422 VALIDATION_ERROR`. Omitting the field or sending `null` creates the
   Ticket without a CRD. A value without a UTC offset is interpreted as UTC; a
-  value with an offset is converted to UTC. Past instants are accepted.
-  Because the field requires `is_confidential: true`, it is covered by the same
+  value with an offset is converted to UTC. A value before the creation
+  instant of the Ticket, its `created_at`, and therefore every past instant,
+  is rejected with `422 TICKET_COORDINATED_RELEASE_BEFORE_CREATION`; this
+  check follows those of `TICKET_SEVERITY_DERIVED` and `CVE_INVALID_FORMAT`
+  and precedes that of `TICKET_CVE_CONFLICT`. Because the field requires
+  `is_confidential: true`, it is covered by the same
   `manage_confidentiality` requirement
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
@@ -1952,6 +1972,7 @@ Response: `TicketDetail` object in standard `{"data": ...}` envelope
 | Status | Code | Condition |
 |--------|------|-----------|
 | 422 | `CVE_INVALID_FORMAT` | `cve_id` provided but does not match `^CVE-[0-9]{4}-[0-9]{4,}$` or exceeds 20 characters |
+| 422 | `TICKET_COORDINATED_RELEASE_BEFORE_CREATION` | `coordinated_release_at` is before the creation instant of the Ticket |
 | 409 | `TICKET_CVE_CONFLICT` | CVE is already associated with another Ticket. Response includes `existing_ticket_id` (`SNTL-{n}`) |
 | 409 | `TICKET_SEVERITY_DERIVED` | Both `cve_id` and `severity` provided; severity is auto-derived from CVSS |
 
@@ -2411,7 +2432,8 @@ while the Ticket remains Ignored or Duplicated because it changes visibility,
 not workflow or gate state.
 
 An effective transition to non-confidential leaves `coordinated_release_at`
-unchanged (see [Coordinated Release Date](#coordinated-release-date)).
+unchanged; a retained CRD keeps deciding the remediation deadlines and stays
+editable (see [Coordinated Release Date](#coordinated-release-date)).
 
 An effective transition to confidential of a Ticket in `New`, `Analysis`, or
 `Analyzed` clears an assignee who is not eligible to be the assignee of a
@@ -2443,10 +2465,13 @@ PATCH /api/v1/tickets/{ticket_id}/coordinated-release-date
 **`Capability: manage_confidentiality`**
 - **Response schema**: `TicketDetail`
 
-Sets, changes, or clears the [Coordinated Release Date](#coordinated-release-date)
-of a confidential Ticket through
-`ticket_service.set_coordinated_release_date()` (see
-[ticket-service.md](ticket-service.md#set_coordinated_release_date)).
+Sets the [Coordinated Release Date](#coordinated-release-date) of a
+confidential Ticket, or changes or clears the CRD of a Ticket that has one,
+confidential or not, through `ticket_service.set_coordinated_release_date()`
+(see [ticket-service.md](ticket-service.md#set_coordinated_release_date)). A
+change moves the remediation deadlines of the Ticket, and a clear returns them
+to the SLA window
+([ticket-deadlines.md](ticket-deadlines.md#coordinated-release-window)).
 
 Request body:
 
@@ -2466,19 +2491,27 @@ To clear the CRD:
 
 - `coordinated_release_at` (datetime | null, required): a datetime sets or
   replaces the CRD; JSON `null` clears it. A value without a UTC offset is
-  interpreted as UTC; a value with an offset is converted to UTC. Past instants
-  are accepted. An omitted field or a non-datetime value produces the global
-  `422 VALIDATION_ERROR`
+  interpreted as UTC; a value with an offset is converted to UTC. A value
+  before the Ticket's `created_at` is rejected with
+  `422 TICKET_COORDINATED_RELEASE_BEFORE_CREATION`; a past instant at or after
+  `created_at` is accepted. An omitted field or a non-datetime value produces
+  the global `422 VALIDATION_ERROR`
 
-An unchanged request (the same UTC instant, or `null` when no CRD is set) is an
-idempotent success with no audit event. An effective change creates one
-`coordinated_release_changed` event. The operation never auto-assigns,
+A non-confidential Ticket without a CRD rejects every request, `null`
+included, with `409 TICKET_NOT_CONFIDENTIAL`: a CRD is set only on a
+confidential Ticket. The checks follow the locked-current accessibility check
+(`404 TICKET_NOT_FOUND`) in this order: confidentiality or a stored CRD
+(`409`), then the creation bound (`422`). A request that passes them and
+leaves the value unchanged (the same UTC instant, or `null` when no CRD is
+set) is an idempotent success with no audit event. An effective change creates
+one `coordinated_release_changed` event. The operation never auto-assigns,
 reconciles, or changes Ticket status.
 
 This endpoint is a genuine exception to the mutation-path derivation of
 `TICKET_NOT_MUTABLE`: it does not call `ensure_ticket_operable()` and is valid
-while the confidential Ticket remains Ignored or Duplicated, because it changes
-embargo metadata rather than workflow or gate state.
+while the Ticket remains Ignored or Duplicated, because it changes embargo
+metadata and the informational deadlines that derive from it rather than
+workflow or gate state.
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
@@ -2487,7 +2520,8 @@ Response: `TicketDetail` object in standard `{"data": ...}` envelope
 
 | Status | Code | Condition |
 |--------|------|-----------|
-| 409 | `TICKET_NOT_CONFIDENTIAL` | Ticket is not confidential |
+| 409 | `TICKET_NOT_CONFIDENTIAL` | Ticket is not confidential and has no CRD |
+| 422 | `TICKET_COORDINATED_RELEASE_BEFORE_CREATION` | `coordinated_release_at` is before the Ticket's `created_at` |
 
 ### Access Grant Management
 
@@ -2627,7 +2661,7 @@ table:
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record update timestamp |
 | is_confidential   | BOOLEAN       | NOT NULL, DEFAULT FALSE      | Confidentiality flag. See [Confidential Tickets](#confidential-tickets) |
-| coordinated_release_at | TIMESTAMPTZ | nullable                | Coordinated Release Date. See [Coordinated Release Date](#coordinated-release-date) |
+| coordinated_release_at | TIMESTAMPTZ | nullable, not before `created_at` (`chk_ticket_coordinated_release_not_before_creation`) | Coordinated Release Date. See [Coordinated Release Date](#coordinated-release-date) |
 
 ## Security
 
