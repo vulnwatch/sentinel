@@ -1313,29 +1313,14 @@ class TestDuplicateFilter:
             == []
         )
 
-    @pytest.mark.parametrize(
-        "value",
-        [
-            "sntl-1",
-            "Sntl-1",
-            " SNTL-1",
-            "SNTL-1 ",
-            "SNTL-0",
-            "SNTL-01",
-            "SNTL--1",
-            "SNTL-+1",
-            "SNTL-2147483648",
-            "SNTL-",
-            "1",
-            "",
-            "01994c20-7c00-7000-8000-000000000002",
-        ],
-    )
-    async def test_malformed_value_raises_before_any_query(self, value: str) -> None:
+    async def test_malformed_value_raises_before_any_query(self) -> None:
+        """A representative value: the grammar matrix belongs to the Core
+        parser (`tests/test_core/test_identifiers.py`) and the HTTP matrix
+        to `tests/test_api/test_ticket_list.py`."""
         db = AsyncMock(spec=AsyncSession)
 
         with pytest.raises(ValueError, match="duplicate_of_ticket_id"):
-            await list_tickets(db, caller=ALL_SCOPE, duplicate_of_ticket_id=value)
+            await list_tickets(db, caller=ALL_SCOPE, duplicate_of_ticket_id="sntl-1")
 
         db.execute.assert_not_awaited()
 
