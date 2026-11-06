@@ -497,6 +497,61 @@ class TestListEndpoint:
         ]
         spy.assert_not_awaited()
 
+    async def test_embargo_filters_and_crd_sort_reach_the_service(
+        self,
+        authenticated_client: AsyncClient,
+        authenticated_user: User,
+        fixed_clock: list[datetime],
+        ticket_factory: Factory,
+        user_role_factory: Factory,
+    ) -> None:
+        """tickets.md (List Tickets > Embargo filters): both boolean values
+        of each filter and the CRD sort over HTTP, against the server's one
+        evaluation instant."""
+        await user_role_factory(
+            user_id=authenticated_user.id, role=Role.VULNERABILITY_ANALYST.value
+        )
+        passed = await ticket_factory(
+            is_confidential=True, coordinated_release_at=_NOW - timedelta(days=1)
+        )
+        coming = await ticket_factory(
+            is_confidential=True, coordinated_release_at=_NOW + timedelta(days=1)
+        )
+        without_crd = await ticket_factory(is_confidential=True)
+        retained = await ticket_factory(coordinated_release_at=_NOW - timedelta(days=2))
+
+        assert set(await _ids(authenticated_client, is_confidential="true")) == {
+            _sntl(t) for t in (passed, coming, without_crd)
+        }
+        assert await _ids(authenticated_client, is_confidential="false") == [
+            _sntl(retained)
+        ]
+        assert await _ids(authenticated_client, coordinated_release_passed="true") == [
+            _sntl(passed)
+        ]
+        assert set(
+            await _ids(authenticated_client, coordinated_release_passed="false")
+        ) == {_sntl(t) for t in (coming, without_crd, retained)}
+
+        response = await authenticated_client.get(
+            _PATH,
+            params={
+                "is_confidential": "true",
+                "sort_by": "coordinated_release_at",
+                "sort_order": "asc",
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert [
+            (item["ticket_id"], item["coordinated_release_at"]) for item in body["data"]
+        ] == [
+            (_sntl(passed), _iso(_NOW - timedelta(days=1))),
+            (_sntl(coming), _iso(_NOW + timedelta(days=1))),
+            (_sntl(without_crd), None),
+        ]
+        assert body["meta"]["total"] == 3
+
     async def test_search_and_sort_reach_the_service(
         self,
         authenticated_client: AsyncClient,
@@ -556,6 +611,8 @@ class TestListEndpoint:
             ({"product": "cpe:/o:example\x00"}, "product"),
             ({"track": "slfo-main\x00"}, "track"),
             ({"status": ["new", "x" * 501]}, "status"),
+            ({"is_confidential": "maybe"}, "is_confidential"),
+            ({"coordinated_release_passed": "2"}, "coordinated_release_passed"),
         ],
     )
     async def test_invalid_pagination_sort_and_length_return_422(
@@ -891,12 +948,29 @@ class TestOpenApiContract:
             "product",
             "track",
             "duplicate_of_ticket_id",
+            "is_confidential",
+            "coordinated_release_passed",
             "page",
             "per_page",
             "sort_by",
             "sort_order",
         }
         assert [p for p in parameters if p["in"] == "path"] == []
+
+    def test_embargo_filters_are_optional_booleans(self) -> None:
+        """tickets.md (List Tickets > Embargo filters): published as plain
+        booleans, without `null` (docs/api-spec.md, Parameter Nullability)
+        and without a default, whose omission applies no filter."""
+        parameters = {p["name"]: p for p in self._operation()["parameters"]}
+
+        for name in ("is_confidential", "coordinated_release_passed"):
+            schema = parameters[name]["schema"]
+            assert parameters[name]["required"] is False, name
+            assert schema["type"] == "boolean", name
+            assert not {"anyOf", "default", "enum", "maxLength"} & set(schema), name
+        description = parameters["coordinated_release_passed"]["description"]
+        assert "at or before" in description
+        assert "never matches `true`" in description
 
     def test_duplicate_of_ticket_id_publishes_the_request_body_grammar(self) -> None:
         """tickets.md (List Tickets): the pattern and length bound of the

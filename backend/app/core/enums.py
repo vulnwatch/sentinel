@@ -397,6 +397,8 @@ class TicketSortField(StrEnum):
     `current_due_at` sorts by the current due date and
     `priority_then_current_due` by the effective priority, then the
     current due date (same document, Current Due Date).
+    `coordinated_release_at` sorts by the stored Coordinated Release Date
+    with `NULL` last (tickets.md, List Tickets > Embargo filters).
     """
 
     CREATED_AT = "created_at"
@@ -412,6 +414,7 @@ class TicketSortField(StrEnum):
     RELEASE_DUE_AT = "release_due_at"
     CURRENT_DUE_AT = "current_due_at"
     PRIORITY_THEN_CURRENT_DUE = "priority_then_current_due"
+    COORDINATED_RELEASE_AT = "coordinated_release_at"
 
 
 class PackageSortField(StrEnum):

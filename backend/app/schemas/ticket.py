@@ -361,7 +361,8 @@ class TicketListQuery(BaseModel):
     global `422 VALIDATION_ERROR` (Sort Parameter Validation). String
     parameters share the global 500-character limit;
     `duplicate_of_ticket_id` arrives already validated as a canonical
-    `SNTL-{n}` (`validate_duplicate_of_ticket_id()`).
+    `SNTL-{n}` (`validate_duplicate_of_ticket_id()`). The boolean embargo
+    filters are `None` when omitted (no filter).
     """
 
     search: str | None = None
@@ -375,6 +376,8 @@ class TicketListQuery(BaseModel):
     product: str | None = None
     track: str | None = None
     duplicate_of_ticket_id: str | None = None
+    is_confidential: bool | None = None
+    coordinated_release_passed: bool | None = None
     page: int = Field(default=1, ge=1, le=2_147_483_647)
     per_page: int = Field(default=20, ge=1, le=100)
     sort_by: TicketSortField = TicketSortField.CREATED_AT

@@ -297,7 +297,7 @@ class TestUserDirectorySortFieldEnum:
 
 @pytest.mark.unit
 class TestTicketSortFieldEnum:
-    """TicketSortField must have exactly the thirteen `sort_by` values of
+    """TicketSortField must have exactly the fourteen `sort_by` values of
     tickets.md (List Tickets)."""
 
     def test_exact_members(self) -> None:
@@ -315,6 +315,7 @@ class TestTicketSortFieldEnum:
             "release_due_at",
             "current_due_at",
             "priority_then_current_due",
+            "coordinated_release_at",
         }
 
 

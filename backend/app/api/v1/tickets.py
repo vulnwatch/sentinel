@@ -339,6 +339,29 @@ def _ticket_list_query(
         ),
         AfterValidator(validate_duplicate_of_ticket_id),
     ] = None,
+    is_confidential: Annotated[
+        bool | None,
+        Query(
+            description=(
+                "`true`: only confidential Tickets; `false`: only "
+                "non-confidential Tickets. Narrows the Tickets that the caller "
+                "can see."
+            )
+        ),
+    ] = None,
+    coordinated_release_passed: Annotated[
+        bool | None,
+        Query(
+            description=(
+                "`true`: only confidential Tickets whose Coordinated Release "
+                "Date (`coordinated_release_at`) is at or before the instant at "
+                "which the request is evaluated, whatever their status; "
+                "`false`: every other Ticket, including a confidential Ticket "
+                "without a Coordinated Release Date. A Coordinated Release Date "
+                "retained on a non-confidential Ticket never matches `true`."
+            )
+        ),
+    ] = None,
     page: Annotated[int, Query(ge=1, le=2_147_483_647, description="Page number.")] = 1,
     per_page: Annotated[
         int, Query(ge=1, le=100, description="Items per page; maximum 100.")
@@ -358,8 +381,9 @@ def _ticket_list_query(
                 "`priority_then_current_due` (the effective priority, then the "
                 "current due date: `desc` lists `p1` first and, within one "
                 "priority, the earliest current due date first; `asc` reverses "
-                "both keys). `null` values sort last in both directions, for "
-                "each key."
+                "both keys), or `coordinated_release_at` (the stored "
+                "Coordinated Release Date). `null` values sort last in both "
+                "directions, for each key."
             )
         ),
     ] = TicketSortField.CREATED_AT,
@@ -387,6 +411,8 @@ def _ticket_list_query(
         product=product,
         track=track,
         duplicate_of_ticket_id=duplicate_of_ticket_id,
+        is_confidential=is_confidential,
+        coordinated_release_passed=coordinated_release_passed,
         page=page,
         per_page=per_page,
         sort_by=sort_by,
@@ -512,8 +538,9 @@ def serialize_ticket_detail(detail: TicketDetailProjection) -> TicketDetail:
     description=(
         "Returns a paginated list of the Tickets visible to the caller, with "
         "multi-field search, repeatable status, severity, priority, overdue, and "
-        "current phase filters, assignee, maintainer, Product, track, and "
-        "duplicate-original filters, and sorting. "
+        "current phase filters, assignee, maintainer, Product, track, "
+        "duplicate-original, confidentiality, and passed Coordinated Release "
+        "Date filters, and sorting. "
         "Visibility is applied before every filter, sort, count, and page. Requires "
         "authentication (JWT session or API key); the caller's scope, grants, "
         "and package maintainership determine access to confidential Tickets."
@@ -544,6 +571,8 @@ async def list_tickets(
         product=query.product,
         track=query.track,
         duplicate_of_ticket_id=query.duplicate_of_ticket_id,
+        is_confidential=query.is_confidential,
+        coordinated_release_passed=query.coordinated_release_passed,
         sort_by=query.sort_by,
         sort_order=query.sort_order,
         page=query.page,

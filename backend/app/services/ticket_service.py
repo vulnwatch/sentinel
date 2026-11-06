@@ -79,6 +79,7 @@ from sqlalchemy import (
     false,
     func,
     literal,
+    not_,
     or_,
     select,
     true,
@@ -869,6 +870,27 @@ def _duplicate_of_condition(sequence_id: int) -> ColumnElement[bool]:
     return Ticket.duplicate_of_id == original
 
 
+def _coordinated_release_passed_condition(
+    passed: bool, *, evaluation_instant: datetime
+) -> ColumnElement[bool]:
+    """The `coordinated_release_passed` filter (tickets.md, List Tickets >
+    Embargo filters): `True` matches a confidential Ticket whose
+    Coordinated Release Date is at or before `evaluation_instant`, in any
+    status; `False` matches every other Ticket. A date retained on a
+    non-confidential Ticket is inert and never matches `True`.
+
+    The explicit `IS NOT NULL` keeps the predicate two-valued, so that its
+    negation also matches a confidential Ticket without a date instead of
+    evaluating to SQL `NULL`."""
+    instant = literal(evaluation_instant, DateTime(timezone=True))
+    has_passed = and_(
+        Ticket.is_confidential.is_(true()),
+        Ticket.coordinated_release_at.is_not(None),
+        Ticket.coordinated_release_at <= instant,
+    )
+    return has_passed if passed else not_(has_passed)
+
+
 def _user_filter_ids(identifier: str) -> Select[UUID]:
     """The `User.id` matching a UUID-or-username filter value (at most
     one), resolved inside the list statement through the user-domain
@@ -927,6 +949,10 @@ def _sort_keys(
                 _SortKey(case(_PRIORITY_RANK, value=priority)),
                 _SortKey(current_due, against_order=True),
             )
+        case TicketSortField.COORDINATED_RELEASE_AT:
+            # The stored value, a retained one of a non-confidential Ticket
+            # included (tickets.md, List Tickets > Embargo filters).
+            return (_SortKey(Ticket.coordinated_release_at.expression),)
 
 
 def _sort_label(index: int) -> str:
@@ -1049,6 +1075,8 @@ async def list_tickets(
     product: str | None = None,
     track: str | None = None,
     duplicate_of_ticket_id: str | None = None,
+    is_confidential: bool | None = None,
+    coordinated_release_passed: bool | None = None,
     sort_by: TicketSortField = TicketSortField.CREATED_AT,
     sort_order: SortOrder = SortOrder.DESC,
     page: int = 1,
@@ -1070,8 +1098,9 @@ async def list_tickets(
     literal `none`; `maintainer` a User UUID or exact username. `product`
     is a canonical Product CPE and `track` a track reference, each `None`
     when omitted. `duplicate_of_ticket_id` is the canonical `SNTL-{n}` of
-    an original Ticket, `None` when omitted. `page` is positive and
-    `per_page` is 1-100.
+    an original Ticket, `None` when omitted. `is_confidential` and
+    `coordinated_release_passed` are the values of the embargo filters,
+    each `None` when omitted. `page` is positive and `per_page` is 1-100.
 
     Q3: captures one UTC evaluation instant and derives the read
     `evaluation_date` from its UTC date. Then, in one SQL statement and
@@ -1091,7 +1120,11 @@ async def list_tickets(
        when both are supplied, and an unknown value matches nothing;
        `duplicate_of_ticket_id` matches the duplicates of the Ticket with
        that sequence, whatever that Ticket's visibility, and an unknown
-       value matches nothing;
+       value matches nothing; `is_confidential` matches the Ticket's
+       confidentiality; `coordinated_release_passed=True` matches a
+       confidential Ticket whose Coordinated Release Date is at or before
+       the one instant, and `False` every other Ticket, a `NULL` date
+       included; Ticket status is not an input of either;
     4. resolves severity once per Ticket through the canonical cascade,
        the effective priority as `COALESCE(priority_override,
        priority_auto)`, the automatic priority basis of the page rows from
@@ -1115,8 +1148,9 @@ async def list_tickets(
        (semantic ranks for status, severity, and priority; numeric
        `sequence_id` for `ticket_id`; for `priority_then_current_due`
        the priority rank in the direction of `sort_order`, then the
-       current due date in the opposite one), then by `Ticket.id` in the
-       direction of `sort_order`;
+       current due date in the opposite one; the stored date for
+       `coordinated_release_at`), then by `Ticket.id` in the direction of
+       `sort_order`;
     8. counts after visibility and every filter, before page slicing.
     Creates no event, acquires no lock, and never commits or rolls back.
 
@@ -1199,6 +1233,16 @@ async def list_tickets(
         conditions.append(_occurrence_condition(product, track))
     if duplicate_of_sequence_id is not None:
         conditions.append(_duplicate_of_condition(duplicate_of_sequence_id))
+    if is_confidential is not None:
+        conditions.append(
+            Ticket.is_confidential.is_(true() if is_confidential else false())
+        )
+    if coordinated_release_passed is not None:
+        conditions.append(
+            _coordinated_release_passed_condition(
+                coordinated_release_passed, evaluation_instant=evaluation_instant
+            )
+        )
 
     # Only the identity and the sort keys are materialized for every
     # candidate; the display projections (resolved severity, priority, due
