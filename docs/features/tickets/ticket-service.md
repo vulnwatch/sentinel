@@ -157,6 +157,7 @@ committed post-state.
 | `services/package_service.py` | `ticket_service` invokes package-owned projection behavior for Ticket detail and the synchronous eligibility boundary during manual-zone exits. `package_service` does not import `ticket_service`; both modules depend on `ticket_mutations` for status evaluation |
 | `services/cve_service.py` | `ticket_service` calls the lock-aware form of `ensure_cve_exists()` to resolve, create, and lock the CVE root for creation and association. `cve_service` in turn calls `create_ticket()` and other lifecycle compositions from `upsert_cve()` (see `cve-service.md`, Relationship with other modules); the Python import mechanism that keeps this mutual dependency cycle-safe is an implementation choice |
 | `services/cvss.py` | No direct dependency. CVSS resolution is delegated through `ticket_mutations.recalculate_cvss_chain()` where this service requires it |
+| `services/ticket_priority.py` | `list_tickets()` and `get_ticket_detail()` derive the automatic priority basis through `classify_exploitation()`; `ticket_service` never reimplements the classification |
 
 ## Scope Boundary
 

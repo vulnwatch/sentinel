@@ -262,8 +262,9 @@ one:
 | `evidence` | The deciding evidence of that level, in the order KEV, SSVC, EPSS, each with its kind and persisted value; empty for `unknown` |
 
 A Ticket without a CVE has `severity` equal to its `severity_manual`,
-`exploitation = unknown`, and no evidence. A Ticket whose automatic priority is
-`NULL` has `severity` `NULL`, `exploitation = unknown`, and no evidence.
+`exploitation = unknown`, and no evidence. Because the Decision Table yields
+`NULL` only for severity `NULL` with `unknown`, the basis of a `NULL` automatic
+priority has `severity` `NULL`, `exploitation = unknown`, and no evidence.
 
 The basis is derived at read time and is never persisted. A read derives it
 from the same observation that supplies `priority_auto`: the resolved severity
@@ -402,18 +403,20 @@ Tests MUST cover:
 9. API filter (`p1`–`p4`, `unresolved`, invalid values ignored), semantic
    sort with NULL last, and response fields.
 10. The automatic priority basis of `classify_exploitation()` and of
-    `TicketSummary` and `TicketDetail`, including mutation responses: each
-    level with its exact deciding evidence, values, and order (KEV with
-    `date_added`, alone when SSVC `active` or a percentile of at least `0.95`
-    also exists; SSVC `active`, alone when a percentile of at least `0.95`
-    also exists; SSVC `poc`;
-    EPSS percentile exactly `0.95` and above; `poc` with a qualifying
-    percentile listing both; a percentile just below `0.95`, SSVC `none`, and
-    no evidence, each yielding `unknown` with no evidence), a Ticket without a
-    CVE with and without `severity_manual`, a `NULL` automatic priority, an
-    override that leaves the basis unchanged, and, for every Decision Table
-    cell reached through the refresh points, a basis whose cell equals
-    `priority_automatic` in the same response.
+    `TicketSummary` and `TicketDetail`: each level with its exact deciding
+    evidence, values, and order (KEV with `date_added`, alone when SSVC
+    `active` or `poc` or a percentile of at least `0.95` also exists; SSVC
+    `active`, alone when a percentile of at least `0.95` also exists; SSVC
+    `poc` alone; an EPSS percentile alone, exactly `0.95` and above it, also
+    with SSVC `none`; `poc` with a qualifying percentile listing both; a
+    percentile just below `0.95`, SSVC `none`, and no evidence, each yielding
+    `unknown` with no evidence), basis severity `none` distinct from `null`, a
+    Ticket without a CVE with and without `severity_manual`, a `NULL`
+    automatic priority, an override that leaves the basis unchanged, the
+    post-mutation basis in the responses of `POST /api/v1/tickets` with a
+    CVE, `POST .../associate-cve`, and `PATCH .../severity`, and each
+    Decision Table cell, reached at least once through any refresh point,
+    with a basis whose cell equals `priority_automatic` in the same response.
 
 Audit assertions follow `docs/features/platform/testing-strategy.md` (Audit
 Trail Testing).

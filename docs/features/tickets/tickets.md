@@ -1415,10 +1415,8 @@ Decision Table nor the EPSS threshold.
 | `ssvc_exploitation` | string | CISA SSVC exploitation decision point: `active` or `poc` |
 | `epss_percentile` | number | FIRST EPSS percentile rank (0.0–1.0), at or above the threshold of the `likely` level |
 
-`exploitation` and `kind` are response enums under `docs/api-spec.md`
-(Response Enums; Client Tolerance of Non-Breaking Changes): a client presents
-a value that its contract does not list as received, for example the `kind`
-of a priority input that a later release adds.
+`exploitation`, `kind`, and the `value` of a `ssvc_exploitation` element are
+response enums (`docs/api-spec.md`, Response Enums).
 
 **CVESummary** — compact CVE representation for list views:
 
