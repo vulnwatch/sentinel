@@ -3042,6 +3042,19 @@ visibility predicate.
   filters by AND and never return or count a Ticket that the caller cannot
   see: a value that matches only an invisible Ticket produces the same
   response as an unknown value.
+- Ticket list `duplicate_of_ticket_id` tests cover a Ticket without duplicates
+  and one with several; the duplicates that Mark-as-Duplicate repoints, listed
+  under the new original and no longer under the previous one; a duplicate
+  that Revert Duplicate has cleared, no longer listed; a value that names a
+  Duplicated Ticket; and an unknown value, producing an empty page. A
+  confidential duplicate that the caller cannot see is neither listed nor
+  counted, one that the caller can see is listed, and an original that the
+  caller cannot see lists the duplicates that the caller can see; without such
+  duplicates it produces the same response as an unknown value. The filter
+  composes with another filter by AND. Every malformed shape of Ticket
+  Identifier Resolution in `docs/api-spec.md` produces the global `422
+  VALIDATION_ERROR`, the maximum `n` is accepted, and the OpenAPI document
+  publishes the parameter with its pattern and length bound.
 - Ticket list tests create one-to-many package, track, Product, maintainer, and
   external-ID fan-out and prove one row per Ticket plus an uninflated filtered
   total. They cover equal primary sort keys, semantic severity/status ordering,
