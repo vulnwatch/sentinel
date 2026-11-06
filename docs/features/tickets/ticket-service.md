@@ -361,11 +361,11 @@ The result contains a collection of Ticket summary projections plus `total`,
    one such track. An unknown value yields an empty page. Lifecycle,
    eligibility, affectedness, delivery, Product release, and Ticket status are
    not inputs of these two filters. `duplicate_of_ticket_id` matches the
-   Tickets whose `duplicate_of_id` is the Ticket with that `sequence_id`,
-   whatever the visibility of that Ticket, under List Tickets (Duplicate
-   filter) in `tickets.md`; an unknown value yields an empty page. The API rejects a
-   malformed value; given one, the operation raises `ValueError` before any
-   query.
+   Tickets whose `duplicate_of_id` is the Ticket whose `sequence_id` is its
+   `n`, whatever the visibility of that Ticket, under List Tickets (Duplicate
+   filter) in `tickets.md`; an unknown value yields an empty page. The API
+   rejects a malformed value; given one, the operation raises `ValueError`
+   before any query.
 4. Resolve severity exactly once per Ticket using the canonical Ticket severity
    cascade. Severity filtering, semantic sorting, and projection all use that
    same value, including the distinction between resolved `None` and SQL NULL.

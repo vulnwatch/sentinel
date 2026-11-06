@@ -1738,10 +1738,11 @@ Query parameters:
   that value, the duplicates of that Ticket (see Duplicate filter below). A
   value outside the canonical grammar and range of `docs/api-spec.md` (Ticket
   Identifier Resolution) produces the global `422 VALIDATION_ERROR`, like the
-  request-body member of [Mark Ticket as Duplicate](#mark-ticket-as-duplicate).
-  A canonical value that identifies no Ticket, or a Ticket that the caller
-  cannot see, is not an error and never returns 404: an unknown value returns
-  an empty result.
+  request-body member of [Mark Ticket as Duplicate](#mark-ticket-as-duplicate),
+  whose pattern and length bound the parameter also publishes. A canonical
+  value that identifies no Ticket, or a Ticket that the caller cannot see, is
+  not an error and never returns 404: an unknown value returns an empty
+  result, and the visibility of the named Ticket has no effect.
 - `page` (integer, optional): page number for pagination (default: 1).
 - `per_page` (integer, optional): items per page (default: 20).
 - `sort_by` (string, optional): field to sort by (default: `created_at`).
@@ -1789,9 +1790,9 @@ finds the Tickets of a Product whichever track delivers the package to it.
 named Ticket, each in status `duplicated`. The filter reads the current link:
 it lists the duplicates that a Mark-as-Duplicate repoint has moved to the named
 Ticket (Mark-as-Duplicate Operation, step 6), and no longer lists a Ticket
-under an original that a repoint has moved it away from or after Revert
-Duplicate has cleared its link. A value that names a Duplicated Ticket returns
-an empty result. Every other filter combines with it by AND.
+under an original that a repoint has moved it away from, nor a Ticket whose
+link Revert Duplicate has cleared. A value that names a Duplicated Ticket
+returns an empty result. Every other filter combines with it by AND.
 
 The filter narrows the Tickets that the caller can see and changes no
 visibility rule ([Confidentiality Filtering](#confidentiality-filtering)): a
@@ -1802,9 +1803,10 @@ the identifier of its original as `duplicate_of_ticket_id`
 filter discloses no identifier, and an original that the caller cannot see and
 that has no duplicate visible to the caller returns the same response as an
 unknown value. The repoint of Mark-as-Duplicate also moves the duplicates of
-the source that the caller cannot see, so a client that names the duplicates
-of a Ticket before marking it as duplicate, for example in the confirmation of
-that operation, names the visible ones only.
+the source that the caller cannot see
+([ticket-service.md](ticket-service.md#mark_as_duplicate)), so a client that
+names the duplicates of a Ticket before marking it as duplicate, for example
+in the confirmation of that operation, names the visible ones only.
 
 Response: paginated `TicketSummary` array in standard
 `{"data": [...], "meta": {...}}` envelope (200 OK).

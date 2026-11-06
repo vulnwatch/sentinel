@@ -3054,7 +3054,9 @@ visibility predicate.
   composes with another filter by AND. Every malformed shape of Ticket
   Identifier Resolution in `docs/api-spec.md` produces the global `422
   VALIDATION_ERROR`, the maximum `n` is accepted, and the OpenAPI document
-  publishes the parameter with its pattern and length bound.
+  publishes the parameter with the pattern and length bound of the
+  request-body `duplicate_of_ticket_id`. `list_tickets()` given a malformed
+  value raises `ValueError` before any query.
 - Ticket list tests create one-to-many package, track, Product, maintainer, and
   external-ID fan-out and prove one row per Ticket plus an uninflated filtered
   total. They cover equal primary sort keys, semantic severity/status ordering,
