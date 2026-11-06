@@ -3,7 +3,7 @@
 ## Purpose
 
 Define the internal **remediation SLA** of a Ticket and the cumulative
-**milestones** that divide the SLA window among the actors who produce a
+**milestones** that divide its deadline window among the actors who produce a
 security update. Each actor starts from the previous actor's output, so without
 per-actor milestones an early actor could consume the complete window and leave
 later actors with little time.
@@ -15,8 +15,8 @@ applicability, and status rules, the track and Ticket `current_phase`, the
 current due date, and the pure functions and read-query ownership that
 implement them. The Coordinated Release Date (CRD), owned by
 [tickets.md](tickets.md#coordinated-release-date), replaces the SLA deadline
-of a Ticket that has one: its phases then divide the window up to the CRD
-([Coordinated Release Window](#coordinated-release-window)).
+of a Ticket that has a CRD: the phases of that Ticket then divide the window
+up to the CRD ([Coordinated Release Window](#coordinated-release-window)).
 
 ## Actors and Phases
 
@@ -63,9 +63,9 @@ start never moves. On a Ticket with a Coordinated Release Date the tier does
 not move any due date: only the `None` label, which removes every due date,
 still depends on severity ([Null Due Dates](#null-due-dates)). The tiers are
 specification constants, not settings: changing them requires a new
-deployment. There is no manual deadline override: the Coordinated Release
-Date, which an authorized user agrees with external parties and every change
-of which is audited, is the one user-set instant that decides due dates.
+deployment. Apart from the Coordinated Release Date, which is agreed with
+external parties, recorded by an authorized user, and audited at every
+change, there is no manual deadline override.
 
 Sentinel applies one SLA to every Product. The track and Ticket dates below are
 defined through "the SLA applicable to the track" so that a stricter SLA for a
@@ -77,8 +77,9 @@ property of the Ticket and applies to every track of it.
 
 ## Phase Shares
 
-Each phase receives a fixed integer percentage of the SLA window. The shares
-are specification constants and apply to every tier:
+Each phase receives a fixed integer percentage of the
+[deadline window](#deadline-window). The shares are specification constants
+and apply to every tier and to the coordinated release window:
 
 | Phase | Share (%) | Cumulative milestone (%) |
 |---|---|---|
@@ -119,9 +120,10 @@ equals `release_due_at`; a test asserts this. `release_due_at` is exposed
 separately so consumers do not need to know that the QA milestone is the final
 deadline. Its OpenAPI description states that it is the final release
 deadline, that it is the Coordinated Release Date when one is set, and that it
-currently equals `qa_due_at`. A client tells the two windows apart by
-`coordinated_release_at` of the same response, which is set exactly when the
-due dates of a Ticket with an SLA derive from it.
+currently equals `qa_due_at`. A client tells the two windows apart by the
+Ticket's `coordinated_release_at` (`TicketSummary`, `TicketDetail`), which is
+set exactly when the due dates of a Ticket with an SLA derive from it; the
+track due dates and the maintainer workbench rows do not carry it.
 
 In both windows the due dates are non-decreasing in phase order: no phase is
 due before an earlier phase. A short coordinated release window can give
@@ -163,8 +165,10 @@ due_at = created_at + ⌊w × c / 100⌋ microseconds
 is rounded down to a whole microsecond, the resolution of a timestamp, so a due
 date is less than one microsecond before the exact proportion of the window,
 and the `qa` milestone (`c` = 100) is the Coordinated Release Date exactly. Due
-dates are `datetime` values in UTC; unlike those of the SLA window, they do not
-keep the time of day of `created_at`.
+dates are `datetime` values in UTC; unlike those of the SLA window, they need
+not keep the time of day of `created_at`. The arithmetic is exact, and cannot
+overflow, for every instant that the API accepts as a Coordinated Release
+Date, up to `9999-12-31T23:59:59.999999Z`.
 
 | Field | Cumulative milestone | CRD 7 days after `created_at` | CRD 120 days after `created_at` |
 |---|---|---|---|
@@ -655,8 +659,9 @@ the SQL expressions and the pure functions MUST produce identical results; a
 test asserts this. In both windows the SQL due dates use the exact integer
 arithmetic of the pure functions, whole seconds for the SLA window and whole
 microseconds rounded down for the coordinated release window, as elapsed
-durations independent of the session `TimeZone`. The
-[current due date](#current-due-date) has an SQL
+durations independent of the session `TimeZone` and without overflow for every
+accepted Coordinated Release Date. The [current due date](#current-due-date)
+has an SQL
 expression and no pure function, because no response projects it: it selects
 among the SQL due dates by the SQL Ticket `current_phase`, and a test asserts
 over the shared multi-track input matrix that it equals the date that the rule
@@ -788,8 +793,9 @@ Tests MUST cover:
     both orders with the `current_phase` and due dates of the returned rows.
 17. The coordinated release window: exact offsets with a CRD before, equal
     to, and after each SLA milestone of every tier, including SQL `NULL`
-    severity, and with a CRD equal to `created_at`; the rounding down to a
-    whole microsecond for a window that the shares do not divide, with
+    severity, with a CRD equal to `created_at`, and with the latest accepted
+    CRD, `9999-12-31T23:59:59.999999Z`; the rounding down to a whole
+    microsecond for a window that the shares do not divide, with
     `qa_due_at` and `release_due_at` equal to the CRD; no due-date change on a
     severity change between tiers; `null` values with a CRD for the `None`
     label and the manual zone; the window applying to a confidential Ticket

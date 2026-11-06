@@ -539,8 +539,9 @@ mapping location is an implementation choice.
   database access, like the `ingestion_source` mismatch above
 - A supplied `coordinated_release_at` must not be before the creation instant
   of the Ticket: its `created_at`, which the database assigns as the start
-  time of the caller's transaction (`now()`). After the input-only guards
-  below and before step 1, the function reads that instant from the database
+  time of the caller's transaction (`now()`). After every input-only guard of
+  these preconditions and before step 1, the function reads that instant from
+  the database
   and raises `CoordinatedReleaseBeforeCreationError` when the CRD is before
   it, with no lock, write, or event. The check therefore precedes
   `TicketCVEConflictError`. The Ticket CHECK
@@ -1823,9 +1824,10 @@ result from the state observed after waiting. If declassification wins, the
 waiter proceeds when the Ticket has a stored CRD and is otherwise rejected with
 `TicketNotConfidentialError`; if the CRD change wins, a later declassification
 retains the new value. Two concurrent CRD changes each create one event in
-serialization order with true locked old values; a waiter that observes its
-requested value is a no-op, and a waiter that observes a clear on a
-non-confidential Ticket is rejected by step 3.
+serialization order with true locked old values. A waiter that observes a
+clear on a non-confidential Ticket is rejected by step 3, also when it
+requested a clear; any other waiter that observes its requested value is a
+no-op.
 
 **reconcile_ticket_status**: NOT called — the CRD is not gate-relevant.
 
@@ -2278,15 +2280,20 @@ behavior of `ticket_service` operations:
     the operation succeeds in every Ticket status including `Ignored` and
     `Duplicated` without assignment, reconciliation, or status change;
     independent-session races with declassification (with and without a
-    stored CRD) and with another CRD change serialize as specified; and audit
+    stored CRD) and with another CRD change serialize as specified, including
+    a change or a clear that waits behind a winning clear on a
+    non-confidential Ticket and raises `TicketNotConfidentialError` with no
+    event; and audit
     or flush failure rolls back value and event together. Manual creation with
     a CRD records the event after optional `severity_changed` and before
     optional `cve_associated`; creation with a CRD without confidential
     creation, or through the ingestion source, raises `ValueError` before
     database access; creation with a CRD before the creation instant raises
     `CoordinatedReleaseBeforeCreationError` before any lock, write, or event,
-    also when the CVE is already associated with another Ticket, and a direct
-    write of such a value violates the Ticket CHECK
+    also when the CVE is already associated with another Ticket, while a CRD
+    equal to the transaction's `now()` is accepted and equals the stored
+    `created_at`; and a direct write of a CRD before `created_at` violates the
+    Ticket CHECK
 21. **Self-unassignment**: `unassign_ticket()` clears the caller's own
     assignment in `Analysis`, `Analyzed`, and `Resolved` without changing the
     status, with one `assignment` event (`user_id` the caller, `old_value` the

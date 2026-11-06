@@ -3161,9 +3161,10 @@ visibility predicate.
   declassified Ticket without a CRD for a set and for `null` (both
   `409 TICKET_NOT_CONFIDENTIAL`, which precedes the `422`), `403` without
   `manage_confidentiality`, and missing or inaccessible Tickets
-  (`404 TICKET_NOT_FOUND` before the confidentiality guard). Every success
-  returns the due dates of the coordinated release window, or of the SLA window
-  after a clear. `POST /api/v1/tickets` with a CRD and `is_confidential`
+  (`404 TICKET_NOT_FOUND` before the confidentiality guard). Every success on a
+  Ticket with an SLA returns the due dates of the coordinated release window,
+  or of the SLA window after a clear; in the manual zone and for the `None`
+  severity label they stay `null`. `POST /api/v1/tickets` with a CRD and `is_confidential`
   omitted or `false` returns the global `422 VALIDATION_ERROR`, and with a CRD
   before the creation instant returns
   `422 TICKET_COORDINATED_RELEASE_BEFORE_CREATION`. Declassification and

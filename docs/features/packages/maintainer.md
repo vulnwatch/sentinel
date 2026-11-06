@@ -88,13 +88,13 @@ or derive a submission chain, an effective SR, a proving RR, `analyzed_at`,
 `first_sr_created_at`, an authoritative completion timestamp, waiting duration,
 or any chronology synthesized from generic row timestamps or audit history.
 The submission deadline fields are not such a chronology: they are the
-remediation SLA projection defined by
+remediation deadline projection defined by
 `docs/features/tickets/ticket-deadlines.md`, derived from the Ticket's
 immutable `created_at` and resolved severity or, when the Ticket has one, its
-Coordinated Release Date, and they record no completion time. The deadline is projected only on rows that satisfy a workbench
-classification; a submission milestone that is overdue on a track outside every
-classification (for example `FIXED` with delivery `pending`, or a track still in
-`ANALYSIS`) remains visible through the track's `milestones` in the Ticket
+Coordinated Release Date, and they record no completion time. The deadline is
+projected only on rows that satisfy a workbench classification; a submission
+milestone that is overdue on a track outside every classification (for example
+`FIXED` with delivery `pending`, or a track still in `ANALYSIS`) remains visible through the track's `milestones` in the Ticket
 package tree and, unless the Ticket is `Resolved`
 (`docs/features/tickets/ticket-deadlines.md`, Ticket-Level Overdue Filter),
 the `overdue` filter of `GET /api/v1/tickets`.
@@ -189,8 +189,8 @@ Field Ordering). `package` orders `package_name` by Unicode code point,
 independent of database collation. The internal deterministic pagination
 tie-breaker required by `docs/api-spec.md` (Deterministic Pagination Ordering)
 is `TicketPackageTrack.id`. `submission_due_at` uses timestamp order with
-`NULL` last under Nullable Sort Field Ordering. Apart from that SLA deadline,
-the lists expose no temporal filter or sort: `days`, `waiting`, `since`, and
+`NULL` last under Nullable Sort Field Ordering. Apart from that submission
+deadline, the lists expose no temporal filter or sort: `days`, `waiting`, `since`, and
 `released` are not declared query parameters.
 
 Each global list returns the standard paginated envelope:

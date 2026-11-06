@@ -1287,9 +1287,9 @@ authorized user may make the Ticket non-confidential.
   known.
 - While a CRD is set, it is the final release deadline of the Ticket:
   upstream and the other vendors publish at the CRD, so an update that SUSE
-  has not released by then leaves only SUSE customers exposed. The remediation
-  deadlines then divide the window from `created_at` to the CRD instead of
-  the SLA window, whether the CRD is before or after the SLA deadline
+  has not released by then leaves only SUSE customers exposed. When an SLA
+  applies, the remediation deadlines then divide the window from `created_at`
+  to the CRD instead of the SLA window
   ([ticket-deadlines.md](ticket-deadlines.md#coordinated-release-window)).
   Like those deadlines, the CRD is informational: it is never an input to a
   status gate, `reconcile_ticket_status()`, Product eligibility, affectedness,
@@ -1548,7 +1548,7 @@ ascending Unicode code point of `cwe_id`:
 | `submission_due_at` | datetime \| null | Due date of the maintainer submission milestone |
 | `um_due_at` | datetime \| null | Due date of the UM (maintenance update team) release-request milestone |
 | `qa_due_at` | datetime \| null | Due date of the QA milestone; currently equal to `release_due_at` |
-| `release_due_at` | datetime \| null | Final deadline by which the update must be released: the Coordinated Release Date when one is set, otherwise the SLA deadline; currently equal to `qa_due_at` |
+| `release_due_at` | datetime \| null | Final deadline by which the update must be released; `null` when no SLA applies, otherwise the Coordinated Release Date when one is set and the SLA deadline when none is; currently equal to `qa_due_at` |
 | `milestones` | TrackMilestones | Per-phase milestone status of this track |
 | `current_phase` | string \| null | First phase not yet completed: `triage`, `submission`, `um`, `qa`; `done` when every applicable phase is completed; `null` when no SLA applies or an unobservable (`null`) phase is reached before any pending or overdue phase. See [ticket-deadlines.md](ticket-deadlines.md#current-phase) |
 
@@ -1601,7 +1601,7 @@ views without the full package tree.
 | `submission_due_at` | datetime \| null | Due date of the maintainer submission milestone |
 | `um_due_at` | datetime \| null | Due date of the UM (maintenance update team) release-request milestone |
 | `qa_due_at` | datetime \| null | Due date of the QA milestone; currently equal to `release_due_at` |
-| `release_due_at` | datetime \| null | Final deadline by which the update must be released: the Coordinated Release Date when one is set, otherwise the SLA deadline; currently equal to `qa_due_at` |
+| `release_due_at` | datetime \| null | Final deadline by which the update must be released; `null` when no SLA applies, otherwise the Coordinated Release Date when one is set and the SLA deadline when none is; currently equal to `qa_due_at` |
 | `current_phase` | string \| null | Earliest open phase of the Ticket among the phases that Sentinel observes: `triage` (Ticket `new` or `analysis`), `submission`, `um`, or `qa` (the Ticket is not `resolved` and at least one track has that milestone `pending` or `overdue`). A phase that a track reports as `null` (not observable) does not hold it back. `null` when no SLA applies. Otherwise `done` when the Ticket is `resolved`, or when no phase is open and no track has an unobservable (`null`) milestone; `null` when no phase is open, the Ticket is not `resolved`, and a track has an unobservable milestone. Differs from the track `current_phase`. See [ticket-deadlines.md](ticket-deadlines.md#ticket-current-phase) |
 | `current_phase_milestone` | string \| null | Milestone status of `current_phase`: `overdue` when the Ticket matches the `overdue` filter value of its current phase, otherwise `pending`; `null` when `current_phase` is `done` or `null`. Values are exactly `pending` and `overdue`. Unrelated to `delivery_status = pending` |
 | `package_names` | string[] | Exact-deduplicated package names whose `TicketPackage.deleted_at IS NULL`, ordered by ascending Unicode code point (e.g., `["curl", "openssl-3"]`). Product lifecycle actionability does not remove an included package name |
@@ -1632,7 +1632,7 @@ projection with the full package tree, and uses expanded CVE data.
 | `submission_due_at` | datetime \| null | Due date of the maintainer submission milestone |
 | `um_due_at` | datetime \| null | Due date of the UM (maintenance update team) release-request milestone |
 | `qa_due_at` | datetime \| null | Due date of the QA milestone; currently equal to `release_due_at` |
-| `release_due_at` | datetime \| null | Final deadline by which the update must be released: the Coordinated Release Date when one is set, otherwise the SLA deadline; currently equal to `qa_due_at` |
+| `release_due_at` | datetime \| null | Final deadline by which the update must be released; `null` when no SLA applies, otherwise the Coordinated Release Date when one is set and the SLA deadline when none is; currently equal to `qa_due_at` |
 | `current_phase` | string \| null | Earliest open phase of the Ticket among the phases that Sentinel observes, as in `TicketSummary`. See [ticket-deadlines.md](ticket-deadlines.md#ticket-current-phase) |
 | `current_phase_milestone` | string \| null | Milestone status of `current_phase`, as in `TicketSummary` |
 | `packages` | PackageDetail[] | Full package/track/product tree, with the maintainers of each package |
@@ -1845,8 +1845,8 @@ declassification an authorized user has yet to perform:
   evaluation instant. `coordinated_release_passed=false` matches every Ticket
   that `true` does not match: a non-confidential Ticket, a confidential Ticket
   without a CRD, and one whose CRD lies after the instant. A CRD retained on a
-  non-confidential Ticket no longer marks an embargo, although it still
-  decides the due dates, and therefore never matches `true`.
+  non-confidential Ticket no longer marks an embargo and therefore never
+  matches `true`, although it still decides the due dates.
 
 The boundary is inclusive because SUSE may publish from the CRD onward, while a
 due date is past only strictly before the instant. The comparison uses the one
@@ -1957,8 +1957,8 @@ Request body:
   `422 VALIDATION_ERROR`. Omitting the field or sending `null` creates the
   Ticket without a CRD. A value without a UTC offset is interpreted as UTC; a
   value with an offset is converted to UTC. A value before the creation
-  instant of the Ticket, its `created_at`, and therefore every past instant,
-  is rejected with `422 TICKET_COORDINATED_RELEASE_BEFORE_CREATION`; this
+  instant of the Ticket, its `created_at`, is rejected with
+  `422 TICKET_COORDINATED_RELEASE_BEFORE_CREATION`; this
   check follows those of `TICKET_SEVERITY_DERIVED` and `CVE_INVALID_FORMAT`
   and precedes that of `TICKET_CVE_CONFLICT`. Because the field requires
   `is_confidential: true`, it is covered by the same
@@ -2661,7 +2661,7 @@ table:
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record update timestamp |
 | is_confidential   | BOOLEAN       | NOT NULL, DEFAULT FALSE      | Confidentiality flag. See [Confidential Tickets](#confidential-tickets) |
-| coordinated_release_at | TIMESTAMPTZ | nullable, not before `created_at` (`chk_ticket_coordinated_release_not_before_creation`) | Coordinated Release Date. See [Coordinated Release Date](#coordinated-release-date) |
+| coordinated_release_at | TIMESTAMPTZ | nullable                | Coordinated Release Date, never before `created_at` (`chk_ticket_coordinated_release_not_before_creation`). See [Coordinated Release Date](#coordinated-release-date) |
 
 ## Security
 
