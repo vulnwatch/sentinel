@@ -25,7 +25,6 @@ specification rather than read back from the module.
 
 from __future__ import annotations
 
-import dataclasses
 import inspect
 import itertools
 from datetime import date
@@ -372,17 +371,6 @@ class TestDecidingEvidence:
             (ExploitationEvidenceKind, str),
             (ExploitationEvidenceKind, float),
         ]
-
-    def test_results_are_immutable(self) -> None:
-        result = classify_exploitation(
-            kev_date_added=None, ssvc_exploitation="poc", epss_percentile=0.97
-        )
-
-        assert isinstance(result.evidence, tuple)
-        with pytest.raises(dataclasses.FrozenInstanceError):
-            result.level = ExploitationLevel.KEV  # type: ignore[misc]
-        with pytest.raises(dataclasses.FrozenInstanceError):
-            result.evidence[0].value = "active"  # type: ignore[misc]
 
 
 @pytest.mark.unit

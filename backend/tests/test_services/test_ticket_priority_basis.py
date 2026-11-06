@@ -263,6 +263,51 @@ class TestDecidingEvidenceInBothReads:
 
 
 @pytest.mark.integration
+class TestListPageWithSeveralTickets:
+    async def test_each_row_reads_the_evidence_of_its_own_cve(
+        self,
+        db_session: AsyncSession,
+        cve_ticket: Callable[..., Awaitable[Ticket]],
+        ticket_factory: Factory,
+    ) -> None:
+        """The list joins the evidence into the page statement: each row
+        reads only its own CVE's rows, and the joins neither multiply rows
+        nor change `total`."""
+        kev = await cve_ticket(severity=Severity.HIGH, evidence=Evidence(kev=KEV_DATE))
+        likely = await cve_ticket(
+            severity=Severity.LOW, evidence=Evidence(ssvc="poc", epss=0.97)
+        )
+        bare = await cve_ticket(severity=Severity.CRITICAL)
+        cveless: Ticket = await ticket_factory(severity_manual=Severity.MEDIUM.value)
+
+        page = await list_tickets(db_session, caller=ALL_SCOPE, per_page=100)
+
+        assert page.total == len(page.items) == 4
+        assert {item.ticket_id: item.priority_basis for item in page.items} == {
+            format_ticket_id(kev.sequence_id): PriorityBasisProjection(
+                severity=Severity.HIGH,
+                exploitation=ExploitationLevel.KEV,
+                evidence=(KEV,),
+            ),
+            format_ticket_id(likely.sequence_id): PriorityBasisProjection(
+                severity=Severity.LOW,
+                exploitation=ExploitationLevel.LIKELY,
+                evidence=(SSVC_POC, _epss(0.97)),
+            ),
+            format_ticket_id(bare.sequence_id): PriorityBasisProjection(
+                severity=Severity.CRITICAL,
+                exploitation=ExploitationLevel.UNKNOWN,
+                evidence=(),
+            ),
+            format_ticket_id(cveless.sequence_id): PriorityBasisProjection(
+                severity=Severity.MEDIUM,
+                exploitation=ExploitationLevel.UNKNOWN,
+                evidence=(),
+            ),
+        }
+
+
+@pytest.mark.integration
 class TestBasisSeverity:
     @pytest.mark.parametrize(
         "severity", [Severity.NONE, None], ids=["none-label", "sql-null"]
