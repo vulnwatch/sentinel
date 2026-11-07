@@ -45,6 +45,8 @@ from app.core.enums import (
     CurrentPhase,
     CVESourceSortField,
     DeliveryStatus,
+    ExploitationEvidenceKind,
+    ExploitationLevel,
     LifecyclePhase,
     MilestonePhase,
     MilestoneStatus,
@@ -337,7 +339,13 @@ AGED_PUBLISHED_DAYS: Final = {
 """Aged Tickets: the published date of the CVE of an aged Ticket, in days
 before `T`; every other CVE is published `T - n` days."""
 MITRE_INGESTED: Final = frozenset(
-    {"CVE-2099-0006", "CVE-2099-0008", "CVE-2099-0009", "CVE-2099-0010"}
+    {
+        "CVE-2099-0006",
+        "CVE-2099-0008",
+        "CVE-2099-0009",
+        "CVE-2099-0010",
+        "CVE-2099-0013",
+    }
 )
 """CVEs with a MITRE ingestion (first or further), which supplies the title."""
 REJECTED_CVE: Final = "CVE-2099-0008"
@@ -345,7 +353,8 @@ REJECTED_CVE: Final = "CVE-2099-0008"
 EPSS: Final = {
     "CVE-2099-0001": (0.94, 0.99),
     "CVE-2099-0002": (0.12, 0.85),
-    "CVE-2099-0010": (0.02, 0.40),
+    "CVE-2099-0007": (0.45, 0.97),
+    "CVE-2099-0010": (0.38, 0.96),
     "CVE-2099-0018": (0.31, 0.92),
 }
 """EPSS: score and percentile, each assessed `D - 1`."""
@@ -416,6 +425,41 @@ TICKETS: Final[
 }
 """Tickets: `SNTL-n` -> (CVE, status, assignee, confidential, resolved
 severity; `None` is unresolved)."""
+
+PRIORITIES: Final[
+    dict[
+        int,
+        tuple[
+            str, tuple[tuple[str, float | int | str], ...], str, tuple[str, str] | None
+        ],
+    ]
+] = {
+    1: ("kev", (("kev", -2),), "P1", None),
+    7: ("likely", (("epss_percentile", 0.97),), "P2", None),
+    10: (
+        "likely",
+        (("ssvc_exploitation", "poc"), ("epss_percentile", 0.96)),
+        "P3",
+        None,
+    ),
+    12: ("unknown", (), "P3", ("P1", "bwilson")),
+    13: ("active", (("ssvc_exploitation", "active"),), "P1", ("P3", "asmith")),
+}
+"""Priorities: the Tickets with deciding evidence or an override, `SNTL-n` ->
+(exploitation level, deciding evidence as (kind, value), automatic priority,
+override and its setter). The value of `kev` is its date added in days from
+`D`."""
+
+UNKNOWN_PRIORITIES: Final[dict[Severity | None, str | None]] = {
+    CRITICAL: "P2",
+    HIGH: "P3",
+    MEDIUM: "P4",
+    LOW: "P4",
+    NONE: "P4",
+    None: None,
+}
+"""Priorities: the automatic and effective priority of every other Ticket,
+the `unknown` cell of its severity."""
 
 AGED: Final = {7: 5, 12: 20, 13: 25, 26: 35, 27: 12}
 """Aged Tickets: `SNTL-n` -> age in days."""
@@ -830,6 +874,7 @@ ATTRIBUTED_TICKET_EVENTS: Final = frozenset(
         (13, "package_added", "asmith"),
         (13, "track_status_changed", "asmith"),
         (13, "cvss_assessment_changed", "asmith"),
+        (13, "priority_changed", "asmith"),
         (14, "package_added", "asmith"),
         (14, "track_status_changed", "asmith"),
         (14, "cvss_assessment_changed", "asmith"),
@@ -883,6 +928,8 @@ ENUM_EXCEPTIONS: Final[dict[str, frozenset[str]]] = {
     "WorkflowType": frozenset(),
     "Severity": frozenset(),
     "LifecyclePhase": frozenset(),
+    "ExploitationLevel": frozenset(),
+    "ExploitationEvidenceKind": frozenset(),
 }
 
 
@@ -1586,7 +1633,8 @@ class TestCVEs:
             for cve_id, (score, percentile) in EPSS.items()
         )
         assert data["ssvc"] == [
-            ("CVE-2099-0010", "poc", "no", "partial", "2.0.3", loaded.ago(3))
+            ("CVE-2099-0010", "poc", "no", "partial", "2.0.3", loaded.ago(3)),
+            ("CVE-2099-0013", "active", "yes", "partial", "2.0.3", loaded.ago(4)),
         ]
         assert data["affected"] == [
             (
@@ -1681,6 +1729,7 @@ class TestTickets:
             int, tuple[str | None, str | None, datetime | None, int | None]
         ] = dict.fromkeys(TICKETS, (None, None, None, None))
         expected[12] = (None, "P1", None, None)
+        expected[13] = (None, "P3", None, None)
         for n, days in COORDINATED_RELEASE_DAYS.items():
             expected[n] = (None, None, loaded.now + timedelta(days=days), None)
         expected[21] = ("High", None, None, None)
@@ -1689,35 +1738,114 @@ class TestTickets:
         # The access grant of `cwhite` on SNTL-18; none on SNTL-19.
         assert grants == {(18, "cwhite", "asmith")}
 
-    def test_priority_override_provenance(self, loaded: Loaded) -> None:
-        """Tickets (Ticket work): the override of SNTL-12 names `bwilson`
-        and the time of the operation, the `created_at` of its
-        `priority_changed` event, which the aging does not change."""
+    def test_priorities_and_their_basis(self, loaded: Loaded) -> None:
+        """Priorities: the automatic priority, its basis, the override, and
+        the effective priority of every Ticket in the List Tickets
+        projection; every Ticket without deciding evidence or an override
+        has the `unknown` cell of its severity."""
+
+        async def reader(db: AsyncSession) -> dict[int, tuple[Any, ...]]:
+            page = await ticket_service.list_tickets(
+                db, caller=await _caller(db, "jdoe"), per_page=100
+            )
+            return {
+                int(item.ticket_id.removeprefix("SNTL-")): (
+                    item.priority_basis.severity,
+                    item.priority_basis.exploitation,
+                    tuple(
+                        (evidence.kind, evidence.value)
+                        for evidence in item.priority_basis.evidence
+                    ),
+                    item.priority_automatic,
+                    item.priority_override,
+                    None
+                    if item.priority_override_by is None
+                    else item.priority_override_by.username,
+                    item.priority,
+                )
+                for item in page.items
+            }
+
+        priorities = read(loaded.url, reader)
+
+        expected: dict[int, tuple[Any, ...]] = {}
+        for n, (*_, severity) in TICKETS.items():
+            exploitation, evidence, automatic, override = PRIORITIES.get(
+                n, ("unknown", (), UNKNOWN_PRIORITIES[severity], None)
+            )
+            expected[n] = (
+                severity,
+                exploitation,
+                tuple(
+                    (kind, loaded.day(int(value)) if kind == "kev" else value)
+                    for kind, value in evidence
+                ),
+                automatic,
+                *((None, None) if override is None else override),
+                automatic if override is None else override[0],
+            )
+        assert priorities == expected
+
+    def test_priority_overrides_and_their_events(self, loaded: Loaded) -> None:
+        """Priorities: the only override operations are those of SNTL-12,
+        above its automatic priority, and SNTL-13, below it and after the
+        system event of the rise of its automatic priority. Each override
+        names its setter and the time of the operation, the `created_at` of
+        its `priority_changed` event, which the aging does not change."""
 
         async def reader(
             db: AsyncSession,
-        ) -> tuple[list[tuple[int, str, datetime | None]], list[datetime]]:
-            setter = aliased(User)
+        ) -> tuple[
+            list[tuple[int, str, datetime | None]],
+            list[tuple[int, str | None, Any, Any, Any, datetime]],
+        ]:
+            setter, actor = aliased(User), aliased(User)
             overridden = await db.execute(
                 select(Ticket.sequence_id, setter.username, Ticket.priority_override_at)
                 .join(setter, setter.id == Ticket.priority_override_by_id)
                 .order_by(Ticket.sequence_id)
             )
-            events = await db.scalars(
-                select(TicketAuditEvent.created_at)
-                .join(Ticket, Ticket.id == TicketAuditEvent.ticket_id)
-                .where(
-                    Ticket.sequence_id == 12,
-                    TicketAuditEvent.event_type == "priority_changed",
-                    # The override event; an automatic one has no actor.
-                    TicketAuditEvent.user_id.is_not(None),
+            events = await db.execute(
+                select(
+                    Ticket.sequence_id,
+                    actor.username,
+                    TicketAuditEvent.old_value,
+                    TicketAuditEvent.new_value,
+                    TicketAuditEvent.detail,
+                    TicketAuditEvent.created_at,
                 )
+                .join(Ticket, Ticket.id == TicketAuditEvent.ticket_id)
+                .outerjoin(actor, actor.id == TicketAuditEvent.user_id)
+                .where(TicketAuditEvent.event_type == "priority_changed")
+                .order_by(TicketAuditEvent.created_at)
             )
-            return [(n, name, at) for n, name, at in overridden], list(events)
+            return (
+                [(n, name, at) for n, name, at in overridden],
+                [
+                    (n, name, old, new, detail, at)
+                    for n, name, old, new, detail, at in events
+                ],
+            )
 
-        overridden, (event_at,) = read(loaded.url, reader)
+        overridden, events = read(loaded.url, reader)
+        set_events = [
+            (n, name, old, new, detail)
+            for n, name, old, new, detail, _ in events
+            if name is not None
+        ]
+        set_at = {n: at for n, name, *_, at in events if name is not None}
+        [rise_at] = [
+            at
+            for n, name, old, new, _, at in events
+            if (n, name, old, new) == (13, None, "P3", "P1")
+        ]
 
-        assert overridden == [(12, "bwilson", event_at)]
+        assert set_events == [
+            (12, "bwilson", "P3", "P1", {"override_action": "set"}),
+            (13, "asmith", "P1", "P3", {"override_action": "set"}),
+        ]
+        assert overridden == [(12, "bwilson", set_at[12]), (13, "asmith", set_at[13])]
+        assert rise_at < set_at[13]
 
     def test_ticket_audit_events(self, loaded: Loaded) -> None:
         async def reader(
@@ -2368,6 +2496,10 @@ class Covered:
     workflow_types: set[str]
     severities: set[str | None]
     phases: set[LifecyclePhase | None]
+    exploitation_levels: set[str]
+    evidence_kinds: set[str]
+    """The exploitation levels and evidence kinds of the automatic priority
+    bases of the Tickets."""
 
 
 def test_dataset_covers_every_table_and_enumeration(loaded: Loaded) -> None:
@@ -2384,6 +2516,14 @@ def test_dataset_covers_every_table_and_enumeration(loaded: Loaded) -> None:
         bot_accounts = await db.scalar(
             select(func.count()).select_from(User).where(User.bot.is_(True))
         )
+        bases = [
+            item.priority_basis
+            for item in (
+                await ticket_service.list_tickets(
+                    db, caller=await _caller(db, "jdoe"), per_page=100
+                )
+            ).items
+        ]
         return Covered(
             tables=await table_counts(db),
             roles=await values(UserRole.role),
@@ -2403,6 +2543,10 @@ def test_dataset_covers_every_table_and_enumeration(loaded: Loaded) -> None:
                     reactive_support_end_date=product.reactive_support_end_date,
                 )
                 for product in products
+            },
+            exploitation_levels={basis.exploitation.value for basis in bases},
+            evidence_kinds={
+                evidence.kind.value for basis in bases for evidence in basis.evidence
             },
         )
 
@@ -2447,6 +2591,16 @@ def test_dataset_covers_every_table_and_enumeration(loaded: Loaded) -> None:
             members(LifecyclePhase),
             {p.value for p in covered.phases if p is not None},
             ENUM_EXCEPTIONS["LifecyclePhase"],
+        ),
+        "ExploitationLevel": coverage_violations(
+            members(ExploitationLevel),
+            covered.exploitation_levels,
+            ENUM_EXCEPTIONS["ExploitationLevel"],
+        ),
+        "ExploitationEvidenceKind": coverage_violations(
+            members(ExploitationEvidenceKind),
+            covered.evidence_kinds,
+            ENUM_EXCEPTIONS["ExploitationEvidenceKind"],
         ),
     }
     assert violations == {name: [] for name in violations}

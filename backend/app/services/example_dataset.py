@@ -422,13 +422,14 @@ _NVD_AFTER_MANUAL: Final = (
     "CVE-2099-0020",
     "CVE-2099-0025",
 )
-_MITRE_FURTHER: Final = ("CVE-2099-0009", "CVE-2099-0010")
+_MITRE_FURTHER: Final = ("CVE-2099-0009", "CVE-2099-0010", "CVE-2099-0013")
 _KEV_ADDED: Final = {"CVE-2099-0001": -2}
 """KEV date added, in days from `D`."""
 _EPSS: Final = {
     "CVE-2099-0001": ("0.94", "0.99"),
     "CVE-2099-0002": ("0.12", "0.85"),
-    "CVE-2099-0010": ("0.02", "0.40"),
+    "CVE-2099-0007": ("0.45", "0.97"),
+    "CVE-2099-0010": ("0.38", "0.96"),
     "CVE-2099-0018": ("0.31", "0.92"),
 }
 """EPSS score and percentile, assessed `D - 1`."""
@@ -816,6 +817,14 @@ def _mitre_payload(cve: _CVE, now: datetime) -> CVEIngestPayload:
             technical_impact=SSVCTechnicalImpact.PARTIAL,
             version="2.0.3",
             assessed_at=now - timedelta(days=3),
+        )
+    elif cve.cve_id == "CVE-2099-0013":
+        fields["ssvc_assessment"] = SSVCEntry(
+            exploitation=SSVCExploitation.ACTIVE,
+            automatable=SSVCAutomatable.YES,
+            technical_impact=SSVCTechnicalImpact.PARTIAL,
+            version="2.0.3",
+            assessed_at=now - timedelta(days=4),
         )
     if cve.rejected:
         fields["date_rejected"] = now - timedelta(days=2)
@@ -1441,6 +1450,24 @@ class _Load:
 
         await self.run(create)
 
+    async def priority_override(
+        self, number: int, priority: TicketPriority, actor: str
+    ) -> None:
+        """`set_priority_override()` of `priority` on `SNTL-{number}` by
+        `actor`."""
+        ticket_id = self.ticket_ids[number]
+
+        async def prioritize(db: AsyncSession) -> None:
+            await ticket_service.set_priority_override(
+                db,
+                ticket_id=ticket_id,
+                priority=priority,
+                acting_user_id=self.user_ids[actor],
+                caller=await self.caller(db, actor),
+            )
+
+        await self.run(prioritize)
+
     async def age(self, number: int, days: int) -> None:
         """Set the creation time of `SNTL-{number}` to `T - days` under its
         lock; no other value but `updated_at` changes and no event is
@@ -1498,17 +1525,8 @@ class _Load:
                 caller=await self.caller(db, "bwilson"),
             )
 
-        async def prioritize(db: AsyncSession) -> None:
-            await ticket_service.set_priority_override(
-                db,
-                ticket_id=sntl_12,
-                priority=TicketPriority.P1,
-                acting_user_id=self.user_ids["bwilson"],
-                caller=await self.caller(db, "bwilson"),
-            )
-
         await self.run(assign)
-        await self.run(prioritize)
+        await self.priority_override(12, TicketPriority.P1, "bwilson")
         await self.manual_reference(12, _MANUAL_REFERENCE, "asmith")
         await self.add_package("fictional-openssl")
         await self.track_status("fictional-openssl", _SP7_UPDATE, affected, "asmith")
@@ -1519,6 +1537,7 @@ class _Load:
         await self.add_package("fictional-httpd")
         await self.track_status("fictional-httpd", _SP7_UPDATE, affected, "asmith")
         await self.suse_assessment("CVE-2099-0013")
+        await self.priority_override(13, TicketPriority.P3, "asmith")
         await self.ibs_observations("fictional-httpd")
         # SNTL-14
         await self.add_package("fictional-libxml")
