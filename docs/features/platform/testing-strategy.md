@@ -5021,15 +5021,16 @@ and the dedicated database starts its Ticket identifiers at `SNTL-1`.
   Every member of `Role`, `TicketStatus`, `PackageStatus`, `DeliveryStatus`,
   `WorkflowType`, `Severity`, and `LifecyclePhase` occurs in the dataset, as
   do a user without roles, a bot account, an unresolved Ticket severity, and
-  an unavailable lifecycle phase, and every member of `ExploitationLevel` and
+  an unavailable lifecycle phase. Every member of `ExploitationLevel` and
   `ExploitationEvidenceKind` occurs in the automatic priority basis of a
   Ticket (`docs/features/tickets/ticket-priority.md`, Automatic Priority
-  Basis), except the members of the test's per-enumeration exception lists,
-  which are empty. Each exception list is checked in both directions: a
-  covered item that an exception list names fails the test, as does an
-  exception that names no current table or member. The tables and members
-  come from the code, so a new table or member fails the test until the
-  dataset covers it or the exception list names it with its reason.
+  Basis). Both requirements exclude the members of the test's
+  per-enumeration exception lists, which are empty. Each exception list is
+  checked in both directions: a covered item that an exception list names
+  fails the test, as does an exception that names no current table or
+  member. The tables and members come from the code, so a new table or
+  member fails the test until the dataset covers it or the exception list
+  names it with its reason.
 
 The command itself is verified by the CLI Commands scenarios above.
 
