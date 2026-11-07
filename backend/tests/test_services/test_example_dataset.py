@@ -1689,6 +1689,36 @@ class TestTickets:
         # The access grant of `cwhite` on SNTL-18; none on SNTL-19.
         assert grants == {(18, "cwhite", "asmith")}
 
+    def test_priority_override_provenance(self, loaded: Loaded) -> None:
+        """Tickets (Ticket work): the override of SNTL-12 names `bwilson`
+        and the time of the operation, the `created_at` of its
+        `priority_changed` event, which the aging does not change."""
+
+        async def reader(
+            db: AsyncSession,
+        ) -> tuple[list[tuple[int, str, datetime | None]], list[datetime]]:
+            setter = aliased(User)
+            overridden = await db.execute(
+                select(Ticket.sequence_id, setter.username, Ticket.priority_override_at)
+                .join(setter, setter.id == Ticket.priority_override_by_id)
+                .order_by(Ticket.sequence_id)
+            )
+            events = await db.scalars(
+                select(TicketAuditEvent.created_at)
+                .join(Ticket, Ticket.id == TicketAuditEvent.ticket_id)
+                .where(
+                    Ticket.sequence_id == 12,
+                    TicketAuditEvent.event_type == "priority_changed",
+                    # The override event; an automatic one has no actor.
+                    TicketAuditEvent.user_id.is_not(None),
+                )
+            )
+            return [(n, name, at) for n, name, at in overridden], list(events)
+
+        overridden, (event_at,) = read(loaded.url, reader)
+
+        assert overridden == [(12, "bwilson", event_at)]
+
     def test_ticket_audit_events(self, loaded: Loaded) -> None:
         async def reader(
             db: AsyncSession,

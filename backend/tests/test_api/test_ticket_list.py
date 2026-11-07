@@ -82,6 +82,8 @@ _TICKET_SUMMARY_FIELDS = {
     "priority",
     "priority_automatic",
     "priority_override",
+    "priority_override_by",
+    "priority_override_at",
     "priority_automatic_basis",
     "assignee",
     "cve",
@@ -180,6 +182,8 @@ class TestListEndpoint:
             "priority": "p2",
             "priority_automatic": "p2",
             "priority_override": None,
+            "priority_override_by": None,
+            "priority_override_at": None,
             "priority_automatic_basis": {
                 "severity": "critical",
                 "exploitation": "unknown",
@@ -850,6 +854,14 @@ class TestSerializer:
                 priority=TicketPriority.P4,
                 priority_automatic=TicketPriority.P3,
                 priority_override=TicketPriority.P4,
+                priority_override_by=TicketUserProjection(
+                    id=uuid.UUID(int=2),
+                    username="fictional.lead",
+                    full_name="Fictional Lead",
+                    active=True,
+                    bot=True,
+                ),
+                priority_override_at=_UPDATED_AT,
                 priority_basis=PriorityBasisProjection(
                     severity=Severity.LOW,
                     exploitation=ExploitationLevel.ACTIVE,
@@ -891,6 +903,15 @@ class TestSerializer:
             "p3",
             "p4",
         )
+        assert serialized.priority_override_by is not None
+        assert serialized.priority_override_by.model_dump(mode="json") == {
+            "id": str(uuid.UUID(int=2)),
+            "username": "fictional.lead",
+            "full_name": "Fictional Lead",
+            "active": True,
+            "bot": True,
+        }
+        assert serialized.priority_override_at == _UPDATED_AT
         assert serialized.priority_automatic_basis.model_dump(mode="json") == {
             "severity": "low",
             "exploitation": "active",
@@ -1081,6 +1102,8 @@ class TestOpenApiContract:
             "priority",
             "priority_automatic",
             "priority_override",
+            "priority_override_by",
+            "priority_override_at",
             "priority_automatic_basis",
             "ticket_id",
             "status",

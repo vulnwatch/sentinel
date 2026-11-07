@@ -62,6 +62,7 @@ from tests.support.ticket_mutations import (
     VAUser,
     cveless,
     lock_ticket,
+    override_provenance,
     ticket_events,
 )
 
@@ -346,11 +347,15 @@ class TestOverrideMasking:
             priority_auto=old_auto,
             priority_override=override,
         )
+        provenance = await override_provenance(db_session, ticket.id)
 
         assert await _refresh(db_session, ticket) is True
 
         assert await _persisted(db_session, ticket) == ("P1", override)
         assert await ticket_events(db_session, ticket) == []
+        # The refresh never writes the override provenance.
+        assert await override_provenance(db_session, ticket.id) == provenance
+        assert provenance[0] is not None
 
 
 # ---------------------------------------------------------------------------

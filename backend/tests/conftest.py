@@ -125,6 +125,7 @@ from tests.support.parallel import (
     worker_database_url,
     worker_id,
 )
+from tests.support.ticket_mutations import PRIORITY_OVERRIDE_SET_AT
 
 # The runtime keeps CPython's default integer-string conversion limit
 # (docs/deployment.md, Python Interpreter Limits); pin it so that an
@@ -1638,7 +1639,10 @@ Release Date (`ticket_factory`): before every CRD of the test suite."""
 
 
 @pytest.fixture
-def ticket_factory(db_session: AsyncSession) -> Callable[..., Awaitable[Ticket]]:
+def ticket_factory(
+    db_session: AsyncSession,
+    user_factory: Callable[..., Awaitable[User]],
+) -> Callable[..., Awaitable[Ticket]]:
     """Factory fixture for `Ticket` model instances.
 
     See docs/features/platform/testing-strategy.md (Model Factory
@@ -1652,8 +1656,9 @@ def ticket_factory(db_session: AsyncSession) -> Callable[..., Awaitable[Ticket]]
       overridden.
     - Every other column uses its model default: `status` is `New`,
       `is_confidential` is `False`, and `cve_id`, `severity_manual`,
-      `priority_auto`, `priority_override`, `assignee_id`,
-      `duplicate_of_id`, and `coordinated_release_at` are `NULL`. With
+      `priority_auto`, `priority_override` with its provenance,
+      `assignee_id`, `duplicate_of_id`, and `coordinated_release_at` are
+      `NULL`. With
       `cve_id` and `severity_manual` both `NULL` by default, overriding
       either one alone satisfies `chk_ticket_severity_manual_cve_exclusive`.
     - `chk_ticket_duplicate_status_coherence`: overriding `duplicate_of_id`
@@ -1663,9 +1668,17 @@ def ticket_factory(db_session: AsyncSession) -> Callable[..., Awaitable[Ticket]]
       `coordinated_release_at` and not `created_at` defaults `created_at` to
       the earlier of the CRD and `_CRD_TICKET_CREATED_AT`, a fixed instant,
       so the CRD is not before the creation whatever the wall clock.
+    - `chk_ticket_priority_override_provenance`: overriding
+      `priority_override` with a value defaults `priority_override_by_id`
+      to a freshly created User and `priority_override_at` to
+      `PRIORITY_OVERRIDE_SET_AT`, each unless overridden.
     """
 
     async def _create(**overrides: Any) -> Ticket:
+        if overrides.get("priority_override") is not None:
+            if "priority_override_by_id" not in overrides:
+                overrides["priority_override_by_id"] = (await user_factory()).id
+            overrides.setdefault("priority_override_at", PRIORITY_OVERRIDE_SET_AT)
         crd = overrides.get("coordinated_release_at")
         if crd is not None and "created_at" not in overrides:
             overrides["created_at"] = min(crd, _CRD_TICKET_CREATED_AT)

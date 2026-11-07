@@ -30,7 +30,9 @@ from __future__ import annotations
 
 import asyncio
 import re
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -57,7 +59,13 @@ from tests.support.suse_cvss_races import (
     SessionStatementRecorder,
     prepare_loss,
 )
-from tests.support.ticket_mutations import EVAL, EventRow, ticket_events_by_id
+from tests.support.ticket_mutations import (
+    EVAL,
+    EventRow,
+    override_provenance,
+    priority_event_times,
+    ticket_events_by_id,
+)
 
 Factory = Callable[[], Awaitable[AsyncSession]]
 
@@ -167,6 +175,18 @@ async def _committed(
     return state, events
 
 
+async def _committed_provenance(
+    world: CommittedWorld, ticket: Ticket
+) -> tuple[tuple[uuid.UUID | None, datetime | None], list[datetime]]:
+    """The committed override provenance of a Ticket and the `created_at`
+    of its `priority_changed` events, read through a fresh session."""
+    probe = await world.open_session()
+    provenance = await override_provenance(probe, ticket.id)
+    times = await priority_event_times(probe, ticket.id)
+    await probe.rollback()
+    return provenance, times
+
+
 # ---------------------------------------------------------------------------
 # TR 7: override against an automatic refresh, both orderings
 # ---------------------------------------------------------------------------
@@ -236,6 +256,11 @@ class TestOverrideAndManualSeverityRace:
                 _manual_severity_event(owner, "High"),
             ],
         )
+        # The masked refresh keeps the provenance of the override (TR 4).
+        provenance, (override_at,) = await _committed_provenance(
+            committed_world, ticket
+        )
+        assert provenance == (overrider.id, override_at)
 
 
 @pytest.mark.integration
@@ -347,6 +372,9 @@ class TestOverrideWinnerAndLoser:
             (TicketStatus.ANALYSIS, owner.id, "P3", "P1", "High"),
             [_override_event(first, "P3", "P1", "set")],
         )
+        # The loser's unchanged request keeps the winner's provenance.
+        provenance, (first_at,) = await _committed_provenance(committed_world, ticket)
+        assert provenance == (first.id, first_at)
 
     async def test_differing_loser_changes_from_the_winner_value(
         self, committed_world: CommittedWorld
@@ -377,6 +405,13 @@ class TestOverrideWinnerAndLoser:
                 _override_event(second, "P1", "P2", "changed"),
             ],
         )
+        # The change by another user in a later transaction records that
+        # user and the time of its own event.
+        provenance, (first_at, second_at) = await _committed_provenance(
+            committed_world, ticket
+        )
+        assert provenance == (second.id, second_at)
+        assert second_at > first_at
 
 
 # ---------------------------------------------------------------------------

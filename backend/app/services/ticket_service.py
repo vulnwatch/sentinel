@@ -29,7 +29,8 @@ factory and publishes only after its commit.
 
 Ticket detail. Both modes run one SQL statement, and therefore observe
 one PostgreSQL snapshot, that selects the Ticket root, its resolved
-severity and priority fields, the current assignee, the expanded CVE with
+severity and priority fields, the override setter, the current assignee,
+the expanded CVE with
 its KEV, EPSS, SSVC, CWE, and external-identifier evidence, the duplicate
 target's `sequence_id`, and the package-owned complete tree
 (`package_service.ticket_package_tree_column()`). The consumer mode
@@ -42,10 +43,10 @@ layer.
 
 Ticket list. `list_tickets()` also runs one SQL statement (a CTE chain:
 visible and filtered Tickets, their total, the requested page, then the
-page's one-to-one assignee, CVE with its KEV, SSVC, and EPSS evidence, and
-duplicate target plus the included package names), so rows, total,
-resolved users, severity, the priority basis, sorting, and pagination
-derive from one PostgreSQL observation. Due dates, milestone
+page's one-to-one assignee, override setter, CVE with its KEV, SSVC, and
+EPSS evidence, and duplicate target plus the included package names), so
+rows, total, resolved users, severity, the priority basis, sorting, and
+pagination derive from one PostgreSQL observation. Due dates, milestone
 statuses, the Ticket current phase, and resolved severity come from the
 shared SQL expressions of `ticket_deadline_expressions` and
 `ticket_severity`; User filters use the user-domain matching condition of
@@ -186,6 +187,7 @@ logger = structlog.get_logger(__name__)
 _CODE_POINT_COLLATION: Final = "C"
 
 _ASSIGNEE = aliased(User, name="detail_assignee")
+_OVERRIDE_SETTER = aliased(User, name="detail_override_setter")
 _DUPLICATE_TARGET = aliased(Ticket, name="detail_duplicate_target")
 
 
@@ -243,8 +245,10 @@ class TicketDetailProjection:
     `ticket_id` is the public `SNTL-{n}` identity; the internal Ticket
     UUID is deliberately absent. `severity` is the resolved severity
     (tickets.md, Severity Resolution). `priority` is the effective
-    priority `COALESCE(priority_override, priority_automatic)`, and
-    `priority_basis` what `priority_automatic` is based on.
+    priority `COALESCE(priority_override, priority_automatic)`,
+    `priority_override_by` and `priority_override_at` the override
+    provenance (both `None` without an override), and `priority_basis`
+    what `priority_automatic` is based on.
     `due_dates` is `None` when no SLA applies (every Ticket-level due
     date is then `null`). `current_phase` is the Ticket current phase and
     its milestone status, derived from the tree's track milestones.
@@ -259,6 +263,8 @@ class TicketDetailProjection:
     priority: TicketPriority | None
     priority_automatic: TicketPriority | None
     priority_override: TicketPriority | None
+    priority_override_by: TicketUserProjection | None
+    priority_override_at: datetime | None
     priority_basis: PriorityBasisProjection
     assignee: TicketUserProjection | None
     cve: CVEDetailProjection | None
@@ -293,8 +299,10 @@ class TicketSummaryProjection:
     `ticket_id` is the public `SNTL-{n}` identity; the internal Ticket
     UUID is deliberately absent. `severity` is the resolved severity and
     `priority` the effective priority, the same values the list filtered
-    and sorted by; `priority_basis` is what `priority_automatic` is based
-    on. `due_dates` is `None` when no SLA applies.
+    and sorted by; `priority_override_by` and `priority_override_at` are
+    the override provenance, and `priority_basis` is what
+    `priority_automatic` is based on. `due_dates` is `None` when no SLA
+    applies.
     `current_phase` is the Ticket current phase and its milestone status,
     the values the list filtered by. `package_names` are the directly
     included package names in ascending Unicode code-point order.
@@ -306,6 +314,8 @@ class TicketSummaryProjection:
     priority: TicketPriority | None
     priority_automatic: TicketPriority | None
     priority_override: TicketPriority | None
+    priority_override_by: TicketUserProjection | None
+    priority_override_at: datetime | None
     priority_basis: PriorityBasisProjection
     assignee: TicketUserProjection | None
     cve: CVESummaryProjection | None
@@ -348,9 +358,10 @@ def _utc_now() -> datetime:
 def _detail_statement(evaluation_date: date) -> Select[*tuple[Any, ...]]:
     """The single detail statement rooted at `Ticket`, without a filter.
 
-    Every joined relation is at most one row per Ticket (`User.id`,
-    `Ticket.id`, and `CVE.id` are keys; KEV, EPSS, and SSVC are unique by
-    `cve_id`), and every collection is a correlated scalar subquery, so
+    Every joined relation is at most one row per Ticket (`User.id` of the
+    assignee and of the override setter, `Ticket.id`, and `CVE.id` are
+    keys; KEV, EPSS, and SSVC are unique by `cve_id`), and every collection
+    is a correlated scalar subquery, so
     the statement yields exactly one row per selected Ticket. The
     duplicate target contributes only its `sequence_id`. The caller adds
     the `WHERE` clause that owns the Ticket selection.
@@ -364,6 +375,7 @@ def _detail_statement(evaluation_date: date) -> Select[*tuple[Any, ...]]:
             func.coalesce(Ticket.priority_override, Ticket.priority_auto).label(
                 "priority"
             ),
+            *_override_provenance_columns(_OVERRIDE_SETTER),
             Ticket.is_confidential.label("is_confidential"),
             Ticket.coordinated_release_at.label("coordinated_release_at"),
             Ticket.updated_at.label("updated_at"),
@@ -379,6 +391,9 @@ def _detail_statement(evaluation_date: date) -> Select[*tuple[Any, ...]]:
         )
         .select_from(Ticket)
         .outerjoin(_ASSIGNEE, _ASSIGNEE.id == Ticket.assignee_id)
+        .outerjoin(
+            _OVERRIDE_SETTER, _OVERRIDE_SETTER.id == Ticket.priority_override_by_id
+        )
         .outerjoin(_DUPLICATE_TARGET, _DUPLICATE_TARGET.id == Ticket.duplicate_of_id)
         .outerjoin(CVE, CVE.id == Ticket.cve_id)
     )
@@ -392,6 +407,35 @@ def _detail_statement(evaluation_date: date) -> Select[*tuple[Any, ...]]:
 
 def _priority(value: str | None) -> TicketPriority | None:
     return TicketPriority(value) if value is not None else None
+
+
+def _override_provenance_columns(setter: Any) -> tuple[ColumnElement[Any], ...]:
+    """The override provenance columns of the detail and list statements:
+    `priority_override_at` and the current profile of the `setter` alias,
+    which the caller outer-joins on `Ticket.priority_override_by_id`
+    (ticket-priority.md, Persistence and Effective Priority)."""
+    return (
+        Ticket.priority_override_at.label("priority_override_at"),
+        setter.id.label("override_by_id"),
+        setter.username.label("override_by_username"),
+        setter.full_name.label("override_by_full_name"),
+        setter.active.label("override_by_active"),
+        setter.bot.label("override_by_bot"),
+    )
+
+
+def _override_setter(row: Row[*tuple[Any, ...]]) -> TicketUserProjection | None:
+    """The current profile of the User who set the row's override, or
+    `None` without an override. Pure."""
+    if row.override_by_id is None:
+        return None
+    return TicketUserProjection(
+        id=row.override_by_id,
+        username=row.override_by_username,
+        full_name=row.override_by_full_name,
+        active=row.override_by_active,
+        bot=row.override_by_bot,
+    )
 
 
 def _priority_basis(
@@ -454,6 +498,8 @@ def _project(
         priority=_priority(row.priority),
         priority_automatic=_priority(row.priority_automatic),
         priority_override=_priority(row.priority_override),
+        priority_override_by=_override_setter(row),
+        priority_override_at=row.priority_override_at,
         priority_basis=_priority_basis(context.severity, row),
         assignee=assignee,
         cve=cve_detail_from_row(row),
@@ -660,6 +706,7 @@ _STATUS_RANK: Final[dict[str, int]] = {
 }
 
 _LIST_ASSIGNEE = aliased(User, name="list_assignee")
+_LIST_OVERRIDE_SETTER = aliased(User, name="list_override_setter")
 _LIST_DUPLICATE_TARGET = aliased(Ticket, name="list_duplicate_target")
 _LIST_ORIGINAL = aliased(Ticket, name="list_original")
 
@@ -1000,6 +1047,8 @@ def _summary(row: Row[*tuple[Any, ...]]) -> TicketSummaryProjection:
         priority=_priority(row.priority),
         priority_automatic=_priority(row.priority_automatic),
         priority_override=_priority(row.priority_override),
+        priority_override_by=_override_setter(row),
+        priority_override_at=row.priority_override_at,
         priority_basis=_priority_basis(severity, row),
         assignee=(
             TicketUserProjection(
@@ -1128,9 +1177,11 @@ async def list_tickets(
        included; Ticket status is not an input of either;
     4. resolves severity once per Ticket through the canonical cascade,
        the effective priority as `COALESCE(priority_override,
-       priority_auto)`, the automatic priority basis of the page rows from
-       that severity and the CVE's KEV, SSVC, and EPSS rows (unique per
-       CVE) through `classify_exploitation()`, and the five due dates through
+       priority_auto)`, the override provenance of the page rows with the
+       current profile of its setter, the automatic priority basis of the
+       page rows from that severity and the CVE's KEV, SSVC, and EPSS rows
+       (unique per CVE) through `classify_exploitation()`, and the five due
+       dates through
        `ticket_due_date_expressions()`; filters, the sort keys, and the
        projection use these same expressions; `overdue` applies the
        Ticket-level rules at the one instant with existence semantics;
@@ -1303,6 +1354,7 @@ async def list_tickets(
             effective_priority.label("priority"),
             Ticket.priority_auto.label("priority_automatic"),
             Ticket.priority_override.label("priority_override"),
+            *_override_provenance_columns(_LIST_OVERRIDE_SETTER),
             *cve_priority_evidence_columns(),
             Ticket.is_confidential,
             Ticket.coordinated_release_at,
@@ -1330,6 +1382,10 @@ async def list_tickets(
         .outerjoin(page_rows, true())
         .outerjoin(Ticket, Ticket.id == page_rows.c.id)
         .outerjoin(_LIST_ASSIGNEE, _LIST_ASSIGNEE.id == Ticket.assignee_id)
+        .outerjoin(
+            _LIST_OVERRIDE_SETTER,
+            _LIST_OVERRIDE_SETTER.id == Ticket.priority_override_by_id,
+        )
         .outerjoin(
             _LIST_DUPLICATE_TARGET,
             _LIST_DUPLICATE_TARGET.id == Ticket.duplicate_of_id,
@@ -2155,18 +2211,21 @@ async def set_priority_override(
     override (including `None` without an override) is a no-op with no
     assignment, write, event, or reconciliation; (5) `auto_assign_actor()`
     with the stabilized User; (6) classifies `set`, `changed`, or
-    `cleared` from the locked pre-state and persists `priority_override`;
-    (7) creates one `priority_changed` attributed to the acting user with
-    the old and new effective priorities
-    (`COALESCE(priority_override, priority_auto)`, possibly equal) and
-    `detail = {"override_action": ...}`; (8) exactly one
+    `cleared` from the locked pre-state and persists `priority_override`
+    with its provenance: `acting_user_id` and the transaction's `now()` for
+    `set` and `changed`, both `None` for `cleared`; (7) creates one
+    `priority_changed` attributed to the acting user with the old and new
+    effective priorities (`COALESCE(priority_override, priority_auto)`,
+    possibly equal) and `detail = {"override_action": ...}`, whose
+    `created_at` is the same `now()`; (8) exactly one
     `reconcile_ticket_status()` with the one date (required by the
     auto-assignment rule; priority is not a gate input). Never writes
     `priority_auto`, reads audit history, or commits.
 
     Q4: returns the locked Ticket in its post-mutation state.
 
-    Q5: re-invocation with the same value is the step-4 no-op.
+    Q5: re-invocation with the same value is the step-4 no-op, which keeps
+    the provenance of the earlier change whoever sends it.
 
     Q6: raises `ValueError` before any database operation when `caller`
     does not identify `acting_user_id`. Raises `TicketNotFoundError` for
@@ -2195,7 +2254,18 @@ async def set_priority_override(
     automatic = ticket.priority_auto
     old_effective = old_override if old_override is not None else automatic
     new_effective = new_override if new_override is not None else automatic
+    # The transaction's `now()`, which is also the `created_at` of the event
+    # below (ticket-priority.md, `set_priority_override()`). Read before the
+    # override is assigned, so that its autoflush never writes the override
+    # without its provenance.
+    set_at = (
+        None
+        if new_override is None
+        else (await db.execute(select(func.now()))).scalar_one()
+    )
     ticket.priority_override = new_override
+    ticket.priority_override_by_id = None if new_override is None else acting_user_id
+    ticket.priority_override_at = set_at
     await TicketAuditLog.log_event(
         db,
         ticket_id=ticket.id,

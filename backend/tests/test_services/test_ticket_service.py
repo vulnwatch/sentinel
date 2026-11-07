@@ -329,6 +329,8 @@ class TestDetailProjection:
             priority=TicketPriority.P4,
             priority_automatic=TicketPriority.P4,
             priority_override=None,
+            priority_override_by=None,
+            priority_override_at=None,
             priority_basis=PriorityBasisProjection(
                 severity=Severity.MEDIUM,
                 exploitation=ExploitationLevel.UNKNOWN,
@@ -1079,6 +1081,8 @@ class TestMutationAssembly:
         ticket: Ticket = await ticket_factory()
         assignee = await user_factory()
         ticket.priority_override = TicketPriority.P1.value
+        ticket.priority_override_by_id = assignee.id
+        ticket.priority_override_at = UPDATED_AT
         ticket.assignee_id = assignee.id
         await db_session.flush()
         package = TicketPackage(ticket_id=ticket.id, package_name="example-new")
@@ -1095,6 +1099,9 @@ class TestMutationAssembly:
         )
 
         assert detail.priority is TicketPriority.P1
+        assert detail.priority_override_by is not None
+        assert detail.priority_override_by.id == assignee.id
+        assert detail.priority_override_at == UPDATED_AT
         assert detail.assignee is not None
         assert detail.assignee.id == assignee.id
         assert [p.package_name for p in detail.packages] == ["example-new"]
@@ -1541,7 +1548,11 @@ class TestDetailReadRaces:
             writer,
             update(Ticket)
             .where(Ticket.id == ticket.id)
-            .values(priority_override=TicketPriority.P1.value),
+            .values(
+                priority_override=TicketPriority.P1.value,
+                priority_override_by_id=granter.id,
+                priority_override_at=UPDATED_AT,
+            ),
             update(TicketPackageTrack)
             .where(TicketPackageTrack.id == track.id)
             .values(delivery_status=DeliveryStatus.IN_PROGRESS.value),
@@ -1549,6 +1560,8 @@ class TestDetailReadRaces:
 
         after = await _detail(reader, ticket, caller)
         assert after.priority is TicketPriority.P1
+        assert after.priority_override_by is not None
+        assert after.priority_override_by.id == granter.id
         assert after.cve is not None
         assert after.cve.kev == CVEKEVProjection(
             date_added=date(2026, 3, 9), reference_url=None

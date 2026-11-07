@@ -73,6 +73,8 @@ TICKET_DETAIL_FIELDS = {
     "priority",
     "priority_automatic",
     "priority_override",
+    "priority_override_by",
+    "priority_override_at",
     "priority_automatic_basis",
     "assignee",
     "cve",
@@ -152,6 +154,8 @@ async def ticket_row(db: AsyncSession, ticket_id: uuid.UUID) -> dict[str, Any]:
                 Ticket.assignee_id,
                 Ticket.priority_auto,
                 Ticket.priority_override,
+                Ticket.priority_override_by_id,
+                Ticket.priority_override_at,
                 Ticket.duplicate_of_id,
                 Ticket.updated_at,
             ).where(Ticket.id == ticket_id)

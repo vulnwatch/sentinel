@@ -79,6 +79,8 @@ _TICKET_DETAIL_FIELDS = {
     "priority",
     "priority_automatic",
     "priority_override",
+    "priority_override_by",
+    "priority_override_at",
     "priority_automatic_basis",
     "assignee",
     "cve",
@@ -213,6 +215,12 @@ class TestGetTicketEndpoint:
         assignee = await user_factory(
             username="fictional.analyst", full_name="Fictional Analyst"
         )
+        # The deactivated setter keeps the provenance and is projected from
+        # its current profile (ticket-priority.md, Persistence and Effective
+        # Priority).
+        setter = await user_factory(
+            username="fictional.lead", full_name="Fictional Lead", active=False
+        )
         detail_cve = await cve_factory(
             cve_id="CVE-2099-50001",
             title="Fictional overflow",
@@ -251,6 +259,8 @@ class TestGetTicketEndpoint:
             assignee_id=assignee.id,
             priority_auto=TicketPriority.P1.value,
             priority_override=TicketPriority.P2.value,
+            priority_override_by_id=setter.id,
+            priority_override_at=datetime(2026, 3, 10, 15, 30, tzinfo=UTC),
             status=TicketStatus.ANALYSIS.value,
             coordinated_release_at=datetime(2026, 4, 1, 12, 0, tzinfo=UTC),
             created_at=_CREATED_AT,
@@ -276,6 +286,14 @@ class TestGetTicketEndpoint:
             "priority": "p2",
             "priority_automatic": "p1",
             "priority_override": "p2",
+            "priority_override_by": {
+                "id": str(setter.id),
+                "username": "fictional.lead",
+                "full_name": "Fictional Lead",
+                "active": False,
+                "bot": False,
+            },
+            "priority_override_at": "2026-03-10T15:30:00Z",
             "priority_automatic_basis": {
                 "severity": "high",
                 "exploitation": "kev",
@@ -661,6 +679,8 @@ class TestSerializer:
                 priority=None,
                 priority_automatic=None,
                 priority_override=None,
+                priority_override_by=None,
+                priority_override_at=None,
                 priority_basis=PriorityBasisProjection(
                     severity=None, exploitation=ExploitationLevel.UNKNOWN, evidence=()
                 ),
@@ -711,6 +731,8 @@ class TestSerializer:
                 priority=TicketPriority.P3,
                 priority_automatic=TicketPriority.P3,
                 priority_override=None,
+                priority_override_by=None,
+                priority_override_at=None,
                 priority_basis=PriorityBasisProjection(
                     severity=Severity.HIGH,
                     exploitation=ExploitationLevel.UNKNOWN,
@@ -795,6 +817,31 @@ class TestOpenApiContract:
         assert any(ref.endswith("/UserReference") for ref in assignee_refs)
         cve_refs = {item.get("$ref", "") for item in properties["cve"]["anyOf"]}
         assert any(ref.endswith("/CVEDetail") for ref in cve_refs)
+
+    @pytest.mark.parametrize("schema", ["TicketDetail", "TicketSummary"])
+    def test_override_provenance_is_published_as_nullable_fields(
+        self, schema: str
+    ) -> None:
+        """tickets.md (TicketSummary; TicketDetail): who set the current
+        override, as a user reference, and when, both `null` without one."""
+        component = self._schemas()[schema]
+        properties = component["properties"]
+
+        assert {"priority_override_by", "priority_override_at"} <= set(
+            component["required"]
+        )
+        assert properties["priority_override_by"]["anyOf"] == [
+            {"$ref": "#/components/schemas/UserReference"},
+            {"type": "null"},
+        ]
+        assert properties["priority_override_at"]["anyOf"] == [
+            {"type": "string", "format": "date-time"},
+            {"type": "null"},
+        ]
+        assert "deactivated" in properties["priority_override_by"]["description"]
+        assert (
+            "`priority_changed`" in (properties["priority_override_at"]["description"])
+        )
 
     def test_required_consumer_guidance_is_documented(self) -> None:
         properties = self._schemas()["TicketDetail"]["properties"]

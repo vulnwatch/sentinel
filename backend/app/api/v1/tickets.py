@@ -138,6 +138,7 @@ from app.services.ticket_service import (
     TicketDetailProjection,
     TicketNotConfidentialError,
     TicketSummaryProjection,
+    TicketUserProjection,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["Tickets"])
@@ -425,6 +426,10 @@ def _lower(value: str | None) -> str | None:
     return value.lower() if value is not None else None
 
 
+def _user_reference(user: TicketUserProjection | None) -> UserReference | None:
+    return UserReference.model_validate(user) if user is not None else None
+
+
 def serialize_priority_basis(basis: PriorityBasisProjection) -> PriorityBasis:
     """Map an automatic priority basis to its `PriorityBasis` schema.
 
@@ -460,14 +465,12 @@ def serialize_ticket_summary(summary: TicketSummaryProjection) -> TicketSummary:
             "priority": _lower(summary.priority),
             "priority_automatic": _lower(summary.priority_automatic),
             "priority_override": _lower(summary.priority_override),
+            "priority_override_by": _user_reference(summary.priority_override_by),
+            "priority_override_at": summary.priority_override_at,
             "priority_automatic_basis": serialize_priority_basis(
                 summary.priority_basis
             ),
-            "assignee": (
-                UserReference.model_validate(summary.assignee)
-                if summary.assignee is not None
-                else None
-            ),
+            "assignee": _user_reference(summary.assignee),
             "cve": (
                 CVESummary(
                     cve_id=cve.cve_id, title=cve.title, description=cve.description
@@ -508,12 +511,10 @@ def serialize_ticket_detail(detail: TicketDetailProjection) -> TicketDetail:
             "priority": _lower(detail.priority),
             "priority_automatic": _lower(detail.priority_automatic),
             "priority_override": _lower(detail.priority_override),
+            "priority_override_by": _user_reference(detail.priority_override_by),
+            "priority_override_at": detail.priority_override_at,
             "priority_automatic_basis": serialize_priority_basis(detail.priority_basis),
-            "assignee": (
-                UserReference.model_validate(detail.assignee)
-                if detail.assignee is not None
-                else None
-            ),
+            "assignee": _user_reference(detail.assignee),
             "cve": serialize_cve_detail(detail.cve) if detail.cve is not None else None,
             "duplicate_of_ticket_id": detail.duplicate_of_ticket_id,
             "is_confidential": detail.is_confidential,

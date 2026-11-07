@@ -79,12 +79,15 @@ from tests.support.cvss_chain import eligibility, ticket_state
 from tests.support.database import rollback_test_scope
 from tests.support.ticket_mutations import (
     EVAL,
+    PRIORITY_OVERRIDE_SET_AT,
     EventRow,
     StatementRecorder,
     TicketFactory,
     TreeBuilder,
     VAUser,
     cveless,
+    override_provenance,
+    priority_event_times,
     status_event,
     ticket_events,
     ticket_events_by_id,
@@ -282,6 +285,15 @@ class TestEffectiveOverride:
         assert await ticket_events(db_session, ticket) == [
             _override_event(actor, old_effective, new_effective, action)
         ]
+        # `set` and `changed` record the actor and the time of the event,
+        # replacing the factory provenance of an earlier override; `cleared`
+        # clears both.
+        (event_at,) = await priority_event_times(db_session, ticket.id)
+        expected = (actor.id, event_at) if new is not None else (None, None)
+        assert await override_provenance(db_session, ticket.id) == expected
+        assert (result.priority_override_by_id, result.priority_override_at) == (
+            expected
+        )
 
     async def test_never_commits(
         self,
@@ -333,6 +345,7 @@ class TestNoOp:
             ticket_factory, status=TicketStatus.NEW, override=current
         )
         await tree_for(TicketStatus.RESOLVED, ticket, tree)
+        provenance = await override_provenance(db_session, ticket.id)
         assign = _Spy(monkeypatch, "auto_assign_actor")
         reconcile = _Spy(monkeypatch, "reconcile_ticket_status")
 
@@ -351,6 +364,14 @@ class TestNoOp:
         )
         assert await ticket_events(db_session, ticket) == []
         assert pending_ticket_convergence_effects(db_session) == ()
+        # Another user's unchanged request keeps the earlier provenance.
+        assert await override_provenance(db_session, ticket.id) == provenance
+        assert provenance == (
+            (None, None)
+            if current is None
+            else (ticket.priority_override_by_id, PRIORITY_OVERRIDE_SET_AT)
+        )
+        assert provenance[0] != actor.id
 
 
 # ---------------------------------------------------------------------------
@@ -555,6 +576,7 @@ class TestMaskedAutomaticChange:
         ticket = await _ticket(
             ticket_factory, severity=None, override="P1", assignee_id=actor.id
         )
+        provenance = await override_provenance(db_session, ticket.id)
         await set_severity_manual(
             db_session,
             ticket_id=ticket.id,
@@ -563,6 +585,10 @@ class TestMaskedAutomaticChange:
             caller=TicketCaller.authenticated(actor.id, Scope.ALL),
             evaluation_date=EVAL,
         )
+        # The masked refresh changed `priority_auto` (TR 4), never the
+        # provenance of the override.
+        assert (await ticket_state(db_session, ticket.id))[2:4] == ("P3", "P1")
+        assert await override_provenance(db_session, ticket.id) == provenance
 
         await _set(db_session, ticket.id, None, actor)
 
@@ -573,6 +599,7 @@ class TestMaskedAutomaticChange:
             None,
             "High",
         )
+        assert await override_provenance(db_session, ticket.id) == (None, None)
         assert await ticket_events(db_session, ticket) == [
             EventRow("severity_changed", actor.id, None, "High", None, None),
             _override_event(actor, "P1", "P3", "cleared"),
@@ -912,3 +939,35 @@ class TestRollback:
         )
         assert await ticket_events(db_session, ticket) == []
         assert pending_ticket_convergence_effects(db_session) == ()
+
+    @pytest.mark.parametrize("requested", [TicketPriority.P1, None], ids=str)
+    async def test_failure_restores_the_earlier_override_and_provenance(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+        monkeypatch: pytest.MonkeyPatch,
+        requested: TicketPriority | None,
+    ) -> None:
+        """A rolled-back change or clear leaves the earlier override with
+        the provenance of the change that set it."""
+        actor = await va_user()
+        actor_id = actor.id
+        ticket = await _ticket(ticket_factory, override="P2", assignee_id=actor_id)
+        provenance = await override_provenance(db_session, ticket.id)
+
+        async with rollback_test_scope(db_session):
+
+            async def failing_log(*args: Any, **kwargs: Any) -> None:
+                raise RuntimeError("injected audit failure")
+
+            monkeypatch.setattr(TicketAuditLog, "log_event", failing_log)
+            with pytest.raises(RuntimeError, match="injected"):
+                await _set(db_session, ticket.id, requested, actor)
+        monkeypatch.undo()
+
+        await db_session.refresh(ticket)
+        assert (await ticket_state(db_session, ticket.id))[3] == "P2"
+        assert await override_provenance(db_session, ticket.id) == provenance
+        assert provenance[0] is not None
+        assert provenance[0] != actor_id
