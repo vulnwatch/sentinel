@@ -1960,8 +1960,10 @@ Request body:
   instant of the Ticket, its `created_at`, is rejected with
   `422 TICKET_COORDINATED_RELEASE_BEFORE_CREATION`; this
   check follows those of `TICKET_SEVERITY_DERIVED` and `CVE_INVALID_FORMAT`
-  and precedes that of `TICKET_CVE_CONFLICT`. Because the field requires
-  `is_confidential: true`, it is covered by the same
+  and precedes that of `TICKET_CVE_CONFLICT`. The value has the bounds of
+  [Set Coordinated Release Date](#set-coordinated-release-date), whose
+  latest accepted instant is `9999-12-31T23:59:59.999998Z`. Because the field
+  requires `is_confidential: true`, it is covered by the same
   `manage_confidentiality` requirement
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
@@ -2494,8 +2496,11 @@ To clear the CRD:
   interpreted as UTC; a value with an offset is converted to UTC. A value
   before the Ticket's `created_at` is rejected with
   `422 TICKET_COORDINATED_RELEASE_BEFORE_CREATION`; a past instant at or after
-  `created_at` is accepted. An omitted field or a non-datetime value produces
-  the global `422 VALIDATION_ERROR`
+  `created_at` is accepted. The latest accepted instant is
+  `9999-12-31T23:59:59.999998Z`: the last microsecond of year 9999, which the
+  database driver stores as `infinity`, and an offset value whose UTC
+  conversion leaves the representable range produce the global
+  `422 VALIDATION_ERROR`, like an omitted field or a non-datetime value
 
 A non-confidential Ticket without a CRD rejects every request, `null`
 included, with `409 TICKET_NOT_CONFIDENTIAL`: a CRD is set only on a

@@ -3155,7 +3155,9 @@ visibility predicate.
   unchanged instant (including the same instant with a different offset),
   naive input interpreted as UTC, a past instant at or after `created_at`, an
   instant equal to `created_at`, an instant before `created_at`
-  (`422 TICKET_COORDINATED_RELEASE_BEFORE_CREATION`), every Ticket status
+  (`422 TICKET_COORDINATED_RELEASE_BEFORE_CREATION`), the latest accepted
+  instant `9999-12-31T23:59:59.999998Z` and the next one
+  (`422 VALIDATION_ERROR`), every Ticket status
   including `Ignored` and `Duplicated`, a change and a clear of the CRD that a
   declassified Ticket retains (`200`), a never-confidential Ticket and a
   declassified Ticket without a CRD for a set and for `null` (both

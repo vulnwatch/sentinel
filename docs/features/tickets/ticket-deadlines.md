@@ -168,7 +168,8 @@ and the `qa` milestone (`c` = 100) is the Coordinated Release Date exactly. Due
 dates are `datetime` values in UTC; unlike those of the SLA window, they need
 not keep the time of day of `created_at`. The arithmetic is exact, and cannot
 overflow, for every instant that the API accepts as a Coordinated Release
-Date, up to `9999-12-31T23:59:59.999999Z`.
+Date, up to the latest, `9999-12-31T23:59:59.999998Z`
+([tickets.md](tickets.md#set-coordinated-release-date)).
 
 | Field | Cumulative milestone | CRD 7 days after `created_at` | CRD 120 days after `created_at` |
 |---|---|---|---|
@@ -794,7 +795,7 @@ Tests MUST cover:
 17. The coordinated release window: exact offsets with a CRD before, equal
     to, and after each SLA milestone of every tier, including SQL `NULL`
     severity, with a CRD equal to `created_at`, and with the latest accepted
-    CRD, `9999-12-31T23:59:59.999999Z`; the rounding down to a whole
+    CRD, `9999-12-31T23:59:59.999998Z`; the rounding down to a whole
     microsecond for a window that the shares do not divide, with
     `qa_due_at` and `release_due_at` equal to the CRD; no due-date change on a
     severity change between tiers; `null` values with a CRD for the `None`
