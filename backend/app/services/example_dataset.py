@@ -410,12 +410,18 @@ _CVES: Final = (
     _CVE("CVE-2099-0022", _NVD, "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"),
     _CVE("CVE-2099-0023", _NVD, "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N"),
     _CVE("CVE-2099-0024", _NVD, "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N"),
+    _CVE("CVE-2099-0025", None, "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"),
 )
 _CVE_DATA: Final = {cve.cve_id: cve for cve in _CVES}
 
 _FIRST_BEFORE_MANUAL: Final = tuple(f"CVE-2099-{n:04d}" for n in range(1, 18))
 _FIRST_AFTER_MANUAL: Final = tuple(f"CVE-2099-{n:04d}" for n in range(21, 25))
-_NVD_AFTER_MANUAL: Final = ("CVE-2099-0018", "CVE-2099-0019", "CVE-2099-0020")
+_NVD_AFTER_MANUAL: Final = (
+    "CVE-2099-0018",
+    "CVE-2099-0019",
+    "CVE-2099-0020",
+    "CVE-2099-0025",
+)
 _MITRE_FURTHER: Final = ("CVE-2099-0009", "CVE-2099-0010")
 _KEV_ADDED: Final = {"CVE-2099-0001": -2}
 """KEV date added, in days from `D`."""
@@ -484,17 +490,27 @@ class _ManualTicket:
     creator: str
     cve_id: str | None = None
     severity: Severity | None = None
+    confidential: bool = False
     coordinated_release_days: int | None = None
-    """Confidential with a coordinated release date `T + days`."""
+    """A confidential creation's coordinated release date `T + days`."""
 
 
 _MANUAL_TICKETS: Final = (
-    _ManualTicket(18, "asmith", "CVE-2099-0018", coordinated_release_days=30),
+    _ManualTicket(
+        18, "asmith", "CVE-2099-0018", confidential=True, coordinated_release_days=14
+    ),
     _ManualTicket(19, "bwilson", "CVE-2099-0019"),
     _ManualTicket(20, "cwhite", "CVE-2099-0020"),
     _ManualTicket(21, "asmith", severity=Severity.HIGH),
     _ManualTicket(22, "bwilson"),
 )
+"""The manual creations between the first ingestions (CVEs, step 4)."""
+_LAST_MANUAL_TICKET: Final = _ManualTicket(
+    27, "asmith", "CVE-2099-0025", confidential=True
+)
+"""The manual creation after the first ingestions (CVEs, step 6). Its
+coordinated release date precedes the creation instant, so the Ticket work
+sets it after the aging (Aged Tickets)."""
 
 
 def _ticket_number(cve_id: str) -> int:
@@ -624,6 +640,13 @@ _PACKAGES: Final = {
             (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
             ("ghill",),
         ),
+        _Package(
+            27,
+            "fictional-bind",
+            "asmith",
+            (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
+            (),
+        ),
     )
 }
 
@@ -634,18 +657,24 @@ _SUSE_ASSESSMENTS: Final = {
     "CVE-2099-0016": ("CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N", "asmith"),
     "CVE-2099-0012": ("CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H", "asmith"),
     "CVE-2099-0024": ("CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N", "bwilson"),
+    "CVE-2099-0025": ("CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H", "asmith"),
 }
 
-_AGED_TICKETS: Final = ((7, 5), (12, 20), (13, 25), (26, 35))
+_AGED_TICKETS: Final = ((7, 5), (12, 20), (13, 25), (26, 35), (27, 12))
 """Aged Tickets: `(SNTL number, age in days)`, in the order of their
 operations."""
 _AGED_PUBLISHED_DAYS: Final = {
     "CVE-2099-0012": 21,
     "CVE-2099-0013": 26,
     "CVE-2099-0024": 36,
+    "CVE-2099-0025": 2,
 }
 """Aged Tickets: the published date of the CVE of an aged Ticket, in days
 before `T`, where it replaces `T - n`."""
+_EXPIRED_EMBARGO: Final = (27, "asmith", 2)
+"""Aged Tickets: `(SNTL number, actor, days before T)` of the coordinated
+release date that the last operation of the Ticket work sets, after the
+aging."""
 _SUSE_PROVIDER: Final = "SUSE"
 
 _MANUAL_REFERENCE: Final = ManualReferenceCreateInput(
@@ -674,6 +703,8 @@ _IBS_REQUESTS: Final = {
     900005: (_MR, 90002, 2),
     900006: (_MI, 90003, 30),
     900007: (_MR, 90003, 20),
+    900008: (_MI, 90004, 11),
+    900009: (_MR, 90004, 7),
 }
 _REVIEW, _NEW = IBSRequestState.REVIEW, IBSRequestState.NEW
 _ACCEPTED, _DECLINED = IBSRequestState.ACCEPTED, IBSRequestState.DECLINED
@@ -703,6 +734,10 @@ _OBSERVATIONS: Final[
             DeliveryStatus.IN_PROGRESS,
             ((900006, _ACCEPTED, 27), (900007, _REVIEW, 19)),
         ),
+    ),
+    "fictional-bind": (
+        (DeliveryStatus.IN_PROGRESS, ((900008, _REVIEW, 10),)),
+        (DeliveryStatus.IN_PROGRESS, ((900008, _ACCEPTED, 8), (900009, _REVIEW, 6))),
     ),
 }
 """The complete observations of each package's SP7 track, in order (IBS
@@ -1209,7 +1244,7 @@ class _Load:
                 acting_user_id=self.user_ids[ticket.creator],
                 cve_id=ticket.cve_id,
                 severity_manual=ticket.severity,
-                is_confidential=ticket.coordinated_release_days is not None,
+                is_confidential=ticket.confidential,
                 coordinated_release_at=None
                 if ticket.coordinated_release_days is None
                 else self.now + timedelta(days=ticket.coordinated_release_days),
@@ -1234,6 +1269,7 @@ class _Load:
             await self.manual_ticket(ticket)
         for cve_id in _FIRST_AFTER_MANUAL:
             await self.first_ingestion(cve_id)
+        await self.manual_ticket(_LAST_MANUAL_TICKET)
         for cve_id in _NVD_AFTER_MANUAL:
             await self.ingest(cve_id, _NVD, _nvd_payload(_CVE_DATA[cve_id], self.now))
         for cve_id in _MITRE_FURTHER:
@@ -1563,9 +1599,29 @@ class _Load:
         await self.track_status("fictional-glibc", _SP7_UPDATE, affected, "bwilson")
         await self.suse_assessment("CVE-2099-0024")
         await self.ibs_observations("fictional-glibc")
+        # SNTL-27
+        await self.add_package("fictional-bind")
+        await self.track_status("fictional-bind", _SP7_UPDATE, affected, "asmith")
+        await self.suse_assessment("CVE-2099-0025")
+        await self.ibs_observations("fictional-bind")
         # Aged Tickets, after the Ticket work.
         for number, days in _AGED_TICKETS:
             await self.age(number, days)
+        # Then the expired embargo, which must not precede the aged
+        # creation time (tickets.md, Coordinated Release Date).
+        number, actor, days_ago = _EXPIRED_EMBARGO
+        expired = self.ticket_ids[number]
+
+        async def expire(db: AsyncSession) -> None:
+            await ticket_service.set_coordinated_release_date(
+                db,
+                ticket_id=expired,
+                coordinated_release_at=self.now - timedelta(days=days_ago),
+                acting_user_id=self.user_ids[actor],
+                caller=await self.caller(db, actor),
+            )
+
+        await self.run(expire)
 
 
 # ---------------------------------------------------------------------------

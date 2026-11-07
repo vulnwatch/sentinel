@@ -110,6 +110,7 @@ from app.services.ticket_convergence_registry import (
     pending_ticket_convergence_effects,
     register_ticket_convergence,
 )
+from app.services.ticket_deadlines import DueDates, TicketCurrentPhase
 from app.services.ticket_severity import resolved_severity_expression
 from app.services.ticket_visibility import TicketCaller
 from tests.support.example_dataset import (
@@ -299,6 +300,7 @@ NVD_VECTORS: Final = {
     "CVE-2099-0022": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
     "CVE-2099-0023": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N",
     "CVE-2099-0024": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N",
+    "CVE-2099-0025": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H",
 }
 """CVEs: the NVD CVSS vector of every CVE that an NVD ingestion supplies."""
 
@@ -309,6 +311,7 @@ SUSE_VECTORS: Final = {
     "CVE-2099-0016": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N",
     "CVE-2099-0012": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
     "CVE-2099-0024": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N",
+    "CVE-2099-0025": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H",
 }
 """CVEs: the SUSE assessments."""
 
@@ -324,11 +327,12 @@ CWES: Final = {
     "CVE-2099-0018": "CWE-287",
 }
 
-CVE_IDS: Final = tuple(f"CVE-2099-{n:04d}" for n in range(1, 25))
+CVE_IDS: Final = tuple(f"CVE-2099-{n:04d}" for n in range(1, 26))
 AGED_PUBLISHED_DAYS: Final = {
     "CVE-2099-0012": 21,
     "CVE-2099-0013": 26,
     "CVE-2099-0024": 36,
+    "CVE-2099-0025": 2,
 }
 """Aged Tickets: the published date of the CVE of an aged Ticket, in days
 before `T`; every other CVE is published `T - n` days."""
@@ -408,16 +412,25 @@ TICKETS: Final[
     24: ("CVE-2099-0022", NEW, None, False, HIGH),
     25: ("CVE-2099-0023", NEW, None, False, MEDIUM),
     26: ("CVE-2099-0024", ANALYZED, "bwilson", False, HIGH),
+    27: ("CVE-2099-0025", ANALYZED, "asmith", True, HIGH),
 }
 """Tickets: `SNTL-n` -> (CVE, status, assignee, confidential, resolved
 severity; `None` is unresolved)."""
 
-AGED: Final = {7: 5, 12: 20, 13: 25, 26: 35}
+AGED: Final = {7: 5, 12: 20, 13: 25, 26: 35, 27: 12}
 """Aged Tickets: `SNTL-n` -> age in days."""
 
-OVERDUE: Final = {"triage": {7}, "submission": {12}, "um": {13}, "qa": {26}}
+OVERDUE: Final = {"triage": {7}, "submission": {12}, "um": {13}, "qa": {26, 27}}
 """Aged Tickets: the Tickets that each `overdue` value lists after the load,
 each also the Ticket's current phase, past due."""
+
+COORDINATED_RELEASE_DAYS: Final = {18: 14, 27: -2}
+"""Tickets and Aged Tickets: `SNTL-n` -> coordinated release date in days
+from `T`."""
+
+SHARES: Final = {"triage": 10, "submission": 60, "um": 70, "qa": 100, "release": 100}
+"""ticket-deadlines.md, Phase Shares: the cumulative milestone of each due
+date, in percent of the deadline window."""
 
 GIT_16: Final = "fles-16.0"
 SP7_UPDATE: Final = "SUSE:FLES-15-SP7:Update"
@@ -538,6 +551,12 @@ TRACKS: Final[
         P_IN_PROGRESS,
         {SERVER_15_SP7: (True, "")},
     ),
+    (27, "fictional-bind", SP7_UPDATE): (
+        IBS,
+        AFFECTED,
+        P_IN_PROGRESS,
+        {SERVER_15_SP7: (True, "")},
+    ),
 }
 """Packages, Tracks, and Maintainers: track -> (workflow, status, delivery,
 Products as CPE -> (eligible, `RELEASED` or "" for unreleased))."""
@@ -568,6 +587,8 @@ IBS_REQUESTS: Final[dict[int, tuple[str, int, int, str, int]]] = {
     900005: (MR, 18, 2, "new", 2),
     900006: (MI, 26, 30, "accepted", 27),
     900007: (MR, 26, 20, "review", 19),
+    900008: (MI, 27, 11, "accepted", 8),
+    900009: (MR, 27, 7, "review", 6),
 }
 """IBS Requests: number -> (type, SNTL number, upstream created in days
 before `T`, final state, upstream update of the final state in days before
@@ -695,6 +716,32 @@ IBS_ACTIONS: Final[
         None,
         None,
     ),
+    900008: (
+        MI,
+        BRANCHES,
+        "fictional-bind.SUSE_FLES-15-SP7_Update",
+        "SUSE:Maintenance:90004",
+        "fictional-bind.SUSE_FLES-15-SP7_Update",
+        SP7_UPDATE,
+        "fictional-bind",
+        SP7_UPDATE,
+        90004,
+        "1",
+        "00000000000000000000000000900008",
+    ),
+    900009: (
+        MR,
+        "SUSE:Maintenance:90004",
+        "fictional-bind.SUSE_FLES-15-SP7_Update",
+        SP7_UPDATE,
+        "fictional-bind.90004",
+        None,
+        "fictional-bind",
+        SP7_UPDATE,
+        90004,
+        None,
+        None,
+    ),
 }
 """IBS Requests: the one action of each request as (type, source project,
 source package, target project, target package, target release project,
@@ -766,6 +813,7 @@ ATTRIBUTED_TICKET_EVENTS: Final = frozenset(
         (20, "assignment", "cwhite"),
         (21, "ticket_created", "asmith"),
         (22, "ticket_created", "bwilson"),
+        (27, "ticket_created", "asmith"),
         (18, "coordinated_release_changed", "asmith"),
         # Ticket work: the direct event of each operation, by its actor.
         (9, "assignment", "eblack"),
@@ -803,6 +851,11 @@ ATTRIBUTED_TICKET_EVENTS: Final = frozenset(
         (26, "package_added", "bwilson"),
         (26, "track_status_changed", "bwilson"),
         (26, "cvss_assessment_changed", "bwilson"),
+        (27, "package_added", "asmith"),
+        (27, "track_status_changed", "asmith"),
+        (27, "cvss_assessment_changed", "asmith"),
+        # Aged Tickets: the coordinated release date set after the aging.
+        (27, "coordinated_release_changed", "asmith"),
         # Maintainership is system-attributed (ticket-audit-log.md).
         *((n, "package_maintainer_added", None) for n in (11, 12, 13, 14, 18, 26)),
     }
@@ -1628,7 +1681,8 @@ class TestTickets:
             int, tuple[str | None, str | None, datetime | None, int | None]
         ] = dict.fromkeys(TICKETS, (None, None, None, None))
         expected[12] = (None, "P1", None, None)
-        expected[18] = (None, None, loaded.now + timedelta(days=30), None)
+        for n, days in COORDINATED_RELEASE_DAYS.items():
+            expected[n] = (None, None, loaded.now + timedelta(days=days), None)
         expected[21] = ("High", None, None, None)
         expected[22] = (None, None, None, 21)
         assert attributes == expected
@@ -1672,7 +1726,7 @@ class TestAgedTickets:
 
         async def reader(
             db: AsyncSession,
-        ) -> tuple[dict[int, datetime], datetime, datetime, list[int]]:
+        ) -> tuple[dict[int, datetime], datetime, datetime, list[int], list[str]]:
             created = dict(
                 (await db.execute(select(Ticket.sequence_id, Ticket.created_at))).all()
             )
@@ -1682,32 +1736,57 @@ class TestAgedTickets:
             assert first_event is not None
             # The aging is the last write of an aged Ticket and sets its
             # `updated_at`; an event of the aging would share that time.
+            # SNTL-27, whose coordinated release date follows its aging, is
+            # checked below.
             at_or_after_aging = await db.scalars(
                 select(Ticket.sequence_id)
                 .join(TicketAuditEvent, TicketAuditEvent.ticket_id == Ticket.id)
                 .where(
-                    Ticket.sequence_id.in_(list(AGED)),
+                    Ticket.sequence_id.in_([n for n in AGED if n != 27]),
                     TicketAuditEvent.created_at >= Ticket.updated_at,
                 )
             )
-            return created, first_user, first_event, list(at_or_after_aging)
+            # SNTL-27 is aged after SNTL-26, whose aging is its last write.
+            sntl_26_aged = await db.scalar(
+                select(Ticket.updated_at).where(Ticket.sequence_id == 26)
+            )
+            assert sntl_26_aged is not None
+            sntl_27_after_aging = await db.scalars(
+                select(TicketAuditEvent.event_type)
+                .join(Ticket, Ticket.id == TicketAuditEvent.ticket_id)
+                .where(
+                    Ticket.sequence_id == 27,
+                    TicketAuditEvent.created_at >= sntl_26_aged,
+                )
+            )
+            return (
+                created,
+                first_user,
+                first_event,
+                list(at_or_after_aging),
+                list(sntl_27_after_aging),
+            )
 
-        created, first_user, first_event, at_or_after_aging = read(loaded.url, reader)
+        created, first_user, first_event, at_or_after_aging, sntl_27_after_aging = read(
+            loaded.url, reader
+        )
 
         assert {n: created[n] for n in AGED} == {
             n: loaded.ago(days) for n, days in AGED.items()
         }
-        # Aging creates no Ticket event (ticket-audit-log.md, No-Event Matrix).
+        # Aging creates no Ticket event (ticket-audit-log.md, No-Event Matrix);
+        # after its aging, SNTL-27 receives only its coordinated release date.
         assert at_or_after_aging == []
+        assert sntl_27_after_aging == ["coordinated_release_changed"]
         # Database times of the load: later than the first operation.
         assert all(created[n] >= first_user for n in TICKETS if n not in AGED)
         assert first_event >= first_user
 
-    def test_each_overdue_value_lists_one_aged_ticket_in_that_phase(
+    def test_each_overdue_value_lists_the_aged_tickets_in_that_phase(
         self, loaded: Loaded
     ) -> None:
         """ticket-deadlines.md, Relation to the Overdue Filter: right after
-        the load, `overdue=X` lists exactly the aged Ticket whose current
+        the load, `overdue=X` lists exactly the aged Tickets whose current
         phase is `X`, past due."""
 
         async def reader(
@@ -1719,20 +1798,23 @@ class TestAgedTickets:
                 page = await ticket_service.list_tickets(
                     db, caller=caller, overdue=[MilestonePhase(phase)], per_page=100
                 )
-                listed[phase] = [
+                listed[phase] = sorted(
                     (
                         int(item.ticket_id.removeprefix("SNTL-")),
                         item.current_phase.phase,
                         item.current_phase.milestone,
                     )
                     for item in page.items
-                ]
+                )
             return listed
 
         listed = read(loaded.url, reader)
 
         assert listed == {
-            phase: [(n, CurrentPhase(phase), MilestoneStatus.OVERDUE) for n in numbers]
+            phase: [
+                (n, CurrentPhase(phase), MilestoneStatus.OVERDUE)
+                for n in sorted(numbers)
+            ]
             for phase, numbers in OVERDUE.items()
         }
 
@@ -1773,6 +1855,95 @@ class TestAgedTickets:
                 "Unassigned from eblack: user deactivated",
             ),
         ]
+
+
+class TestEmbargoes:
+    def test_due_dates_divide_the_coordinated_release_window(
+        self, loaded: Loaded
+    ) -> None:
+        """Embargoes: the due dates of `SNTL-18` and `SNTL-27` divide the
+        window from `created_at` to the coordinated release date
+        (ticket-deadlines.md, Coordinated Release Window), not the SLA
+        window, and their current phases."""
+
+        async def reader(
+            db: AsyncSession,
+        ) -> dict[int, tuple[datetime, DueDates | None, TicketCurrentPhase]]:
+            caller = await _caller(db, "jdoe")
+            details = {}
+            for n in COORDINATED_RELEASE_DAYS:
+                detail = await ticket_service.get_ticket_detail(
+                    db, ticket_id=f"SNTL-{n}", caller=caller
+                )
+                details[n] = (detail.created_at, detail.due_dates, detail.current_phase)
+            return details
+
+        details = read(loaded.url, reader)
+
+        def window_dates(created: datetime, release: datetime) -> DueDates:
+            window = (release - created) // timedelta(microseconds=1)
+            return DueDates(
+                **{
+                    phase: created + timedelta(microseconds=window * share // 100)
+                    for phase, share in SHARES.items()
+                }
+            )
+
+        created_18, due_18, phase_18 = details[18]
+        assert due_18 == window_dates(created_18, loaded.now + timedelta(days=14))
+        # A tenth of about 14 days: shorter than the 3 days of its SLA.
+        assert due_18 is not None
+        assert due_18.triage - created_18 < timedelta(days=3)
+        assert phase_18 == TicketCurrentPhase(
+            CurrentPhase.TRIAGE, MilestoneStatus.PENDING
+        )
+        _, due_27, phase_27 = details[27]
+        assert due_27 == DueDates(
+            triage=loaded.ago(11),
+            submission=loaded.ago(6),
+            um=loaded.ago(5),
+            qa=loaded.ago(2),
+            release=loaded.ago(2),
+        )
+        assert phase_27 == TicketCurrentPhase(CurrentPhase.QA, MilestoneStatus.OVERDUE)
+
+    @pytest.mark.parametrize(
+        ("caller", "confidential"),
+        [
+            pytest.param("jdoe", {"SNTL-18", "SNTL-19", "SNTL-27"}, id="all-scope"),
+            # Through the access grant and the maintainership of SNTL-18.
+            pytest.param("cwhite", {"SNTL-18"}, id="grant"),
+            pytest.param("dbrown", {"SNTL-18"}, id="maintainer"),
+        ],
+    )
+    def test_embargo_filters(
+        self, loaded: Loaded, caller: str, confidential: set[str]
+    ) -> None:
+        """Embargoes: right after the load, `is_confidential=true` and
+        `coordinated_release_passed=true` (tickets.md, List Tickets, Embargo
+        filters) list the visible confidential Tickets and, of them, the
+        expired embargo `SNTL-27`, which only the `all` scope sees."""
+
+        async def reader(
+            db: AsyncSession,
+        ) -> tuple[tuple[set[str], int], tuple[set[str], int]]:
+            ticket_caller = await _caller(db, caller)
+            listed = await ticket_service.list_tickets(
+                db, caller=ticket_caller, is_confidential=True, per_page=100
+            )
+            passed = await ticket_service.list_tickets(
+                db, caller=ticket_caller, coordinated_release_passed=True, per_page=100
+            )
+            return (
+                ({item.ticket_id for item in listed.items}, listed.total),
+                ({item.ticket_id for item in passed.items}, passed.total),
+            )
+
+        (listed, total), (passed, passed_total) = read(loaded.url, reader)
+
+        assert (listed, total) == (confidential, len(confidential))
+        expired = {"SNTL-27"} & confidential
+        assert (passed, passed_total) == (expired, len(expired))
 
 
 class TestPackages:

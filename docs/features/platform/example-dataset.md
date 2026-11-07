@@ -44,8 +44,8 @@ Out of scope:
 | `docs/features/platform/fetcher-infrastructure.md` (FetcherConfig; Data Model, FetcherRun) and `docs/features/platform/fetcher-operations.md` (`update_fetcher_config`) | Fetcher configuration bootstrap and disabling; the run records of Fetcher Runs |
 | `docs/features/packages/product-catalog.md` (Catalog Publication Boundaries) | Product, lifecycle, and threshold publication |
 | `docs/features/tickets/cve-service.md` and `docs/features/tickets/ticket-references.md` | CVE ingestion, CVE source records (`record_source_status()`), and automatic references |
-| `docs/features/tickets/ticket-deadlines.md` | The due dates and current phases of the Aged Tickets |
-| `docs/features/tickets/ticket-service.md`, `docs/features/tickets/ticket-mutations.md`, and `docs/features/tickets/ticket-priority.md` | Ticket creation, assignment, ignore, duplicate, confidentiality, access grants, SUSE assessments, and priority override |
+| `docs/features/tickets/ticket-deadlines.md` | The due dates and current phases of the Aged Tickets and the Embargoes |
+| `docs/features/tickets/ticket-service.md`, `docs/features/tickets/ticket-mutations.md`, and `docs/features/tickets/ticket-priority.md` | Ticket creation, assignment, ignore, duplicate, confidentiality, coordinated release date, access grants, SUSE assessments, and priority override |
 | `docs/features/packages/package-service.md` | Package records, track status, and Product release |
 | `docs/features/packages/ibs-submission-tracking.md` (Trusted Observation Application) | IBS request evidence and delivery status |
 | `docs/features/platform/testing-strategy.md` (Mandatory Test Scenarios → Example Dataset) | Load and coverage tests that keep the dataset aligned with Sentinel |
@@ -155,7 +155,7 @@ A load runs these steps in this order:
 | `Fetchers` | Fetchers, with the earlier runs of Fetcher Runs and CVE Source Records |
 | `Product catalog` | Product Catalog |
 | `CVEs and tickets` | CVEs, the last run of `sync_nvd_cves` and the CVE source records of Fetcher Runs and CVE Source Records, and the creation of every Ticket (Tickets) |
-| `Ticket work` | The Ticket work of Tickets, Packages, Tracks, and Maintainers, IBS Requests, and References, then the aging of Aged Tickets |
+| `Ticket work` | The Ticket work of Tickets, Packages, Tracks, and Maintainers, IBS Requests, and References, then the aging and the coordinated release date of Aged Tickets |
 
 Each operation of a step — one call of a service function named in Dataset
 Content; one write of the load named in Fetcher Runs and CVE Source Records or
@@ -279,8 +279,8 @@ The persisted creation, update, and audit timestamps are the database times of
 the operations, shortly after `T`. The load backdates only two kinds of value,
 so that a dataset backend shows past due dates and a run history:
 
-- the creation time of each aged Ticket, which the last operations of the
-  `Ticket work` step set to `T − a` days for its age `a` (Aged Tickets); and
+- the creation time of each aged Ticket, which the `Ticket work` step sets to
+  `T − a` days for its age `a` (Aged Tickets); and
 - the times of the earlier fetcher runs, which lie before `T` (Fetcher Runs
   and CVE Source Records).
 
@@ -290,10 +290,10 @@ history is never rewritten
 history of an aged Ticket begins after its creation time. Remediation
 deadlines, which derive from the Ticket creation time, advance with the age of
 the dataset (`docs/features/tickets/ticket-deadlines.md`); the deadlines of
-`SNTL-18`, which is not aged, also derive from its coordinated release date
-`T + 30d`. After a load the due date of the current phase of each aged Ticket
-is already past, and further due dates pass as the dataset ages. The lifecycle
-dates of Product Catalog keep
+`SNTL-18`, which is not aged, and of the aged `SNTL-27` also derive from their
+coordinated release dates `T + 14d` and `T − 2d` (Embargoes). After a load the
+due date of the current phase of each aged Ticket is already past, and further
+due dates pass as the dataset ages. The lifecycle dates of Product Catalog keep
 every listed lifecycle phase during the first 180 days from `D`.
 
 ## Service
@@ -445,7 +445,7 @@ The rest of this document names each Product by its display name without the
 
 Every CVE is first ingested from the source in the "First" column, which
 creates its Ticket (`docs/features/tickets/tickets.md`, Automatic: CVE
-Ingestion), except the three CVEs created by a manual Ticket creation
+Ingestion), except the four CVEs created by a manual Ticket creation
 (Tickets). An NVD ingestion supplies the description `Fictional vulnerability
 {CVE ID} of the Sentinel example dataset.`, the state `PUBLISHED`, the
 published date `T − n` days, where `n` is the number that ends the CVE ID
@@ -482,6 +482,7 @@ EPSS, or GHSA ingestion supplies only the data of the table.
 | `CVE-2099-0022` | NVD | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H` | high | — | — |
 | `CVE-2099-0023` | NVD | `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N` | medium | — | — |
 | `CVE-2099-0024` | NVD | `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N` | high | — | — |
+| `CVE-2099-0025` | Manual Ticket creation | `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H` | high | — | NVD after the Ticket creation |
 
 The Severity column is the resolved Ticket severity after the load
 (`docs/features/tickets/cvss-scoring.md`, Severity Resolution Cascade).
@@ -496,10 +497,12 @@ references (References). The `CVEs and tickets` step runs:
    `CVE-2099-0008` (Fetcher Runs and CVE Source Records);
 3. `update_fetcher_config()` with `enabled = false` by `jdoe` for
    `sync_nvd_cves`;
-4. the manual Ticket creations of Tickets, in order;
-5. the first ingestion of `CVE-2099-0021` to `CVE-2099-0024`, in order; and
-6. the further ingestions: NVD for `CVE-2099-0018` to `CVE-2099-0020`, then
-   MITRE, KEV, EPSS, and GHSA, each in ascending CVE order.
+4. the manual Ticket creations of `SNTL-18` to `SNTL-22` (Tickets), in order;
+5. the first ingestion of `CVE-2099-0021` to `CVE-2099-0024`, in order;
+6. the manual Ticket creation of `SNTL-27`; and
+7. the further ingestions: NVD for `CVE-2099-0018` to `CVE-2099-0020` and
+   `CVE-2099-0025`, then MITRE, KEV, EPSS, and GHSA, each in ascending CVE
+   order.
 
 The affected-version entry of `CVE-2099-0009` has the version type `semver`
 and the status `affected`. The automatic references of References are applied
@@ -515,6 +518,7 @@ The SUSE assessments are part of the Ticket work:
 | `CVE-2099-0016` | `CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N` | `asmith` |
 | `CVE-2099-0012` | `CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H` | `asmith` |
 | `CVE-2099-0024` | `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N` | `bwilson` |
+| `CVE-2099-0025` | `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H` | `asmith` |
 
 Each is one `upsert_cvss_assessment()` with the `MANUAL_SUSE` caller.
 
@@ -574,9 +578,10 @@ record.
 ### Tickets
 
 On a newly created database the Tickets receive the identifiers `SNTL-1` to
-`SNTL-26` in this order. Every Ticket with a CVE is created by the first
-ingestion of its CVE, except `SNTL-18` to `SNTL-20`; every Ticket without a CVE
-is created manually. The table states the final state after the load.
+`SNTL-27` in this order. Every Ticket with a CVE is created by the first
+ingestion of its CVE, except `SNTL-18` to `SNTL-20` and `SNTL-27`; every
+Ticket without a CVE is created manually. The table states the final state
+after the load.
 
 The dataset holds more than one page of Tickets at the default page size of
 20 (`docs/api-spec.md`) for every caller: 24 Tickets are not confidential and
@@ -595,20 +600,25 @@ are visible to every authenticated user.
 | `SNTL-15` | `CVE-2099-0015` | Ingestion | `Resolved` | `bwilson` | No | medium |
 | `SNTL-16` | `CVE-2099-0016` | Ingestion | `Resolved` | `asmith` | No | medium |
 | `SNTL-17` | `CVE-2099-0017` | Ingestion | `Ignored` | `bwilson` | No | medium |
-| `SNTL-18` | `CVE-2099-0018` | `asmith` | `Analysis` | `asmith` | Yes, with a coordinated release date `T + 30d` and an access grant to `cwhite` | critical |
+| `SNTL-18` | `CVE-2099-0018` | `asmith` | `Analysis` | `asmith` | Yes, with a coordinated release date `T + 14d` and an access grant to `cwhite` | critical |
 | `SNTL-19` | `CVE-2099-0019` | `bwilson` | `Analysis` | `bwilson` | Yes, without access grant | high |
 | `SNTL-20` | `CVE-2099-0020` | `cwhite` | `Analysis` | `cwhite` | No | medium |
 | `SNTL-21` | — | `asmith`, with the manual severity high | `Analysis` | `asmith` | No | high |
 | `SNTL-22` | — | `bwilson` | `Duplicated`, a duplicate of `SNTL-21` | `bwilson` | No | unresolved |
 | `SNTL-23` to `SNTL-25` | `CVE-2099-0021` to `CVE-2099-0023` | Ingestion | `New` | — | No | As CVEs |
 | `SNTL-26` | `CVE-2099-0024` | Ingestion | `Analyzed` | `bwilson` | No | high |
+| `SNTL-27` | `CVE-2099-0025` | `asmith` | `Analyzed` | `asmith` | Yes, with a coordinated release date `T − 2d`, without access grant | high |
 
 The manual Ticket creations are `create_ticket()` calls with the `manual`
 source by the creator of the table, with the CVE and the manual severity of
-the table. Only `SNTL-18` is created confidential, with its coordinated
-release date; `SNTL-19` is created non-confidential and made confidential by
-the Ticket work. Every creator is eligible to be the assignee of the Ticket
-that they create, so each is assigned and each Ticket starts in `Analysis`
+the table. `SNTL-18` and `SNTL-27` are created confidential, `SNTL-18` with
+its coordinated release date and `SNTL-27` without one: a creation rejects a
+coordinated release date before the creation instant
+(`docs/features/tickets/tickets.md`, Coordinated Release Date), so the Ticket
+work sets that of `SNTL-27` after its aging (Aged Tickets). `SNTL-19` is
+created non-confidential and made confidential by the Ticket work. Every
+creator is eligible to be the assignee of the Ticket that they create, so each
+is assigned and each Ticket starts in `Analysis`
 (`docs/features/tickets/tickets.md`, Manual Creation). This includes `cwhite`,
 a restricted analyst who is not a bot account, for the non-confidential
 `SNTL-20` (`docs/features/identity/rbac.md`, Business Rule 10). The access
@@ -634,6 +644,7 @@ named user is a system operation (Attribution).
 | `SNTL-19` | `bwilson` makes the Ticket confidential |
 | `SNTL-22` | `bwilson` marks the Ticket as a duplicate of `SNTL-21` |
 | `SNTL-26` | `bwilson` adds `fictional-glibc`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-26` are applied in order |
+| `SNTL-27` | `asmith` adds `fictional-bind`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-27` are applied in order |
 
 The operations use `assign_ticket()`, `deactivate_user()`,
 `add_package_records()`, `set_track_status()`, `upsert_cvss_assessment()`,
@@ -641,7 +652,9 @@ The operations use `assign_ticket()`, `deactivate_user()`,
 `grant_access()`, `set_confidentiality()`, `mark_as_duplicate()`,
 `set_product_released_at()`, and `apply_ibs_request_observation()`. Track
 release detection is `set_track_status()` with `FIXED` and no acting user.
-After these operations, the step ages the Tickets of Aged Tickets.
+After these operations, the step ages the Tickets of Aged Tickets and then
+sets the coordinated release date of `SNTL-27` through
+`set_coordinated_release_date()` (Aged Tickets).
 
 The resulting states follow the gates of `docs/features/tickets/tickets.md`:
 
@@ -651,8 +664,8 @@ The resulting states follow the gates of `docs/features/tickets/tickets.md`:
   Architectural Invariant).
 - `SNTL-11` stays in `Analysis` because its `SUSE:FLES-15-SP7:Update` track is
   in `ANALYSIS`.
-- `SNTL-12`, `SNTL-13`, and `SNTL-26` are `Analyzed`: each has an `AFFECTED`
-  track with the eligible, unreleased Product `Server 15 SP7`.
+- `SNTL-12`, `SNTL-13`, `SNTL-26`, and `SNTL-27` are `Analyzed`: each has an
+  `AFFECTED` track with the eligible, unreleased Product `Server 15 SP7`.
 - `SNTL-14` is `Resolved` through a `FIXED` track whose only eligible Product
   is released.
 - `SNTL-15` is `Resolved` through `NOT_AFFECTED` and `WONT_FIX` tracks.
@@ -666,15 +679,17 @@ The resulting states follow the gates of `docs/features/tickets/tickets.md`:
 
 ### Aged Tickets
 
-The last operations of the `Ticket work` step age these Tickets, one operation
-each in this order. Each operation locks the Ticket and sets its `created_at`
-to `T − a` days; it changes no other value of the Ticket, except `updated_at`,
-which records the write, and creates no audit event
-(`docs/features/tickets/ticket-audit-log.md`, Canonical Mutation and No-Event
-Matrix). The NVD ingestion of the CVE of an aged Ticket supplies the published
-date of the table, which precedes the Ticket's creation time. Like the audit
-events, the CVE of an aged Ticket, its CVE source records, and the run that
-ingested it keep the times of the load.
+The `Ticket work` step ages these Tickets after the operations of its table in
+Tickets and before its last operation, one operation each in this order. Each
+operation locks the Ticket and sets its `created_at` to `T − a` days; it
+changes no other value of the Ticket, except `updated_at`, which records the
+write, and creates no audit event (`docs/features/tickets/ticket-audit-log.md`,
+Canonical Mutation and No-Event Matrix). The NVD ingestion of the CVE of an
+aged Ticket supplies the published date of the table. It precedes the Ticket's
+creation time, except for `SNTL-27`, whose CVE is published at the end of its
+embargo, its coordinated release date. Like the audit events, the CVE of an
+aged Ticket, its CVE source records, and the run that ingested it keep the
+times of the load.
 
 | Ticket | Age `a` | Published date of its CVE | Current phase after the load | Past due date of that phase |
 |---|---|---|---|---|
@@ -682,16 +697,64 @@ ingested it keep the times of the load.
 | `SNTL-12` | 20 days | `T − 21d` | `submission`, on the `fictional-openssl` track | `submission_due_at`, `T − 2d` |
 | `SNTL-13` | 25 days | `T − 26d` | `um`, on the `fictional-httpd` track | `um_due_at`, `T − 4d` |
 | `SNTL-26` | 35 days | `T − 36d` | `qa`, on the `fictional-glibc` track | `qa_due_at`, `T − 5d` |
+| `SNTL-27` | 12 days | `T − 2d` | `qa`, on the `fictional-bind` track | `qa_due_at`, `T − 2d` |
 
-Each aged Ticket has the 30-day SLA tier of its severity, so its current phase
-is past due and `current_phase_milestone` is `overdue`
+The last operation of the `Ticket work` step is
+`set_coordinated_release_date()` by `asmith`, which sets the coordinated
+release date of `SNTL-27` to `T − 2d`: after the creation time that its aging
+set, as every coordinated release date must be
+(`docs/features/tickets/tickets.md`, Coordinated Release Date). It creates one
+`coordinated_release_changed` event.
+
+The aged Tickets other than `SNTL-27` have the 30-day SLA tier of their
+severity, and `SNTL-27` the coordinated release window of Embargoes, so the
+current phase of each is past due and `current_phase_milestone` is `overdue`
 (`docs/features/tickets/ticket-deadlines.md`, Ticket Current Phase). Right
 after a load the aged Tickets are the only Tickets that match an `overdue`
-value of `GET /api/v1/tickets`, each the value of its current phase: every
-other Ticket was created at the load, and no due date of a phase that is still
-open has passed. The submission milestone of `SNTL-26` and `SNTL-13` is done
-through their delivery, and the `um` milestone of `SNTL-26` through its release
-request (IBS Requests).
+value of `GET /api/v1/tickets`, each the value of its current phase:
+`overdue=qa` lists `SNTL-26` and `SNTL-27`, and each other value one Ticket.
+Every other Ticket was created at the load, and no due date of a phase that is
+still open has passed, also on `SNTL-18`, whose due dates derive from its
+coordinated release date. The submission milestone of `SNTL-13`, `SNTL-26`,
+and `SNTL-27` is done through their delivery, and the `um` milestone of
+`SNTL-26` and `SNTL-27` through their release requests (IBS Requests).
+
+### Embargoes
+
+Two confidential Tickets have a coordinated release date, so that a client can
+show an embargo that is still running and one that has expired
+(`docs/features/tickets/tickets.md`, Coordinated Release Date). With a
+coordinated release date, the due dates of a Ticket divide the window from its
+`created_at` to that date instead of the SLA window
+(`docs/features/tickets/ticket-deadlines.md`, Coordinated Release Window), so
+both Tickets have due dates that differ from those of their SLA tier:
+
+| Ticket | Coordinated release date | `triage_due_at` | `submission_due_at` | `um_due_at` | `qa_due_at` and `release_due_at` |
+|---|---|---|---|---|---|
+| `SNTL-18`, critical | `T + 14d`, still running | About 1 day 9 h 36 min after `created_at` (SLA: 3 days) | About 8 days 9 h 36 min after (SLA: 18 days) | About 9 days 19 h 12 min after (SLA: 21 days) | `T + 14d` (SLA: 30 days after `created_at`) |
+| `SNTL-27`, high | `T − 2d`, expired | `T − 11d` (SLA: `T − 9d`) | `T − 6d` (SLA: `T + 6d`) | `T − 5d` (SLA: `T + 9d`) | `T − 2d` (SLA: `T + 18d`) |
+
+The window of `SNTL-18` begins at its creation time, the database time of its
+creation shortly after `T`, so it is slightly shorter than 14 days and each of
+its due dates is that share of it after `created_at`, rounded down to a whole
+microsecond. The window of `SNTL-27` is exactly 10 days. Right after a load
+the current phase of `SNTL-18` is `triage`, which is `pending` until its due
+date passes as the dataset ages, and that of `SNTL-27` is `qa`, `overdue` (Aged
+Tickets).
+
+Right after a load, for a caller whose effective scope is `all`, the Embargo
+filters of `GET /api/v1/tickets` (`docs/features/tickets/tickets.md`, List
+Tickets) list:
+
+| Filter | Tickets |
+|---|---|
+| `is_confidential=true` | `SNTL-18`, `SNTL-19`, and `SNTL-27` |
+| `coordinated_release_passed=true` | `SNTL-27` |
+
+`SNTL-19` has no coordinated release date, and that of `SNTL-18` has not
+passed. `SNTL-27` has no access grant and its package no maintainer, so only
+the users whose effective scope is `all` see it, and it changes no maintainer
+workbench (`docs/features/identity/rbac.md`).
 
 ### Packages, Tracks, and Maintainers
 
@@ -715,6 +778,7 @@ status is `PENDING` unless IBS Requests changes it.
 | | | `ibs` | `SUSE:FLES-15-SP3:Update` | `Server 15 SP3`, EOL | `ANALYSIS` | `PENDING` | |
 | `SNTL-18` | `fictional-openssh` | `ibs` | `SUSE:FLES-15-SP7:Update` | `Server 15 SP7` | `AFFECTED` | `IN_PROGRESS` | `dbrown` |
 | `SNTL-26` | `fictional-glibc` | `ibs` | `SUSE:FLES-15-SP7:Update` | `Server 15 SP7` | `AFFECTED` | `IN_PROGRESS` | `ghill` |
+| `SNTL-27` | `fictional-bind` | `ibs` | `SUSE:FLES-15-SP7:Update` | `Server 15 SP7` | `AFFECTED` | `IN_PROGRESS` | — |
 
 A Product is eligible unless the table states otherwise
 (`docs/features/packages/package-model.md`, Axis 2: Eligibility): `Server LTSS
@@ -750,6 +814,8 @@ two maintainers. The maintainer workbenches
 | `900005` | `maintenance_release` | `SNTL-18` | `90002` | `T − 2d` | `new` |
 | `900006` | `maintenance_incident` | `SNTL-26` | `90003` | `T − 30d` | `accepted` |
 | `900007` | `maintenance_release` | `SNTL-26` | `90003` | `T − 20d` | `review` |
+| `900008` | `maintenance_incident` | `SNTL-27` | `90004` | `T − 11d` | `accepted` |
+| `900009` | `maintenance_release` | `SNTL-27` | `90004` | `T − 7d` | `review` |
 
 The evidence arrives as the sequence of complete observations that the shared
 reconciliation would make over the history of the requests
@@ -769,6 +835,8 @@ state, with that state's upstream update time:
 | `SNTL-18` | 2 | `900004` `accepted` (`T − 8d`); `900005` `new` (`T − 2d`) | `IN_PROGRESS` |
 | `SNTL-26` | 1 | `900006` `review` (`T − 29d`) | `IN_PROGRESS` |
 | `SNTL-26` | 2 | `900006` `accepted` (`T − 27d`); `900007` `review` (`T − 19d`) | `IN_PROGRESS` |
+| `SNTL-27` | 1 | `900008` `review` (`T − 10d`) | `IN_PROGRESS` |
+| `SNTL-27` | 2 | `900008` `accepted` (`T − 8d`); `900009` `review` (`T − 6d`) | `IN_PROGRESS` |
 
 A `review` SR, an effective accepted SR, and a `new` or `review` RR establish
 progress, a proven release establishes `RELEASED`, and a later observation
