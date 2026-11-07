@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.19.0](https://github.com/vulnwatch/sentinel/compare/v0.18.0...v0.19.0) (2026-11-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* derive the Ticket deadlines from the Coordinated Release Date ([#1232](https://github.com/vulnwatch/sentinel/issues/1232))
+
+### Features
+
+* add expired and running embargoes to the example dataset ([#1234](https://github.com/vulnwatch/sentinel/issues/1234)) ([ccbf2d9](https://github.com/vulnwatch/sentinel/commit/ccbf2d9ce8f8340b0938ba72bfaa7ebc219b27a5))
+* derive the Ticket deadlines from the Coordinated Release Date ([#1232](https://github.com/vulnwatch/sentinel/issues/1232)) ([126c0f9](https://github.com/vulnwatch/sentinel/commit/126c0f94c795d85a3b717e1cb867c8c8fc38f9c9))
+* expose the basis of the automatic Ticket priority ([#1221](https://github.com/vulnwatch/sentinel/issues/1221)) ([1fd3e86](https://github.com/vulnwatch/sentinel/commit/1fd3e86869a77ce9890071814dd3bb872a81da11))
+* filter and sort the Ticket list by embargo ([#1229](https://github.com/vulnwatch/sentinel/issues/1229)) ([1276962](https://github.com/vulnwatch/sentinel/commit/127696280301a5b101a9d4d8669ac3e06325c3b9))
+* list the Tickets that duplicate a Ticket ([#1223](https://github.com/vulnwatch/sentinel/issues/1223)) ([c58fdb5](https://github.com/vulnwatch/sentinel/commit/c58fdb591fa1ecb705ea80f0542beff566224254))
+
+
+### Bug Fixes
+
+* **deps:** Update python:3.14-slim Docker digest to af8a5aa ([#1217](https://github.com/vulnwatch/sentinel/issues/1217)) ([9ccc3d6](https://github.com/vulnwatch/sentinel/commit/9ccc3d6ae796f07045bc1c51d55844262afb87ed))
+* finalize a fetcher run when the soft time limit fires in an await ([#1224](https://github.com/vulnwatch/sentinel/issues/1224)) ([c6d3c2b](https://github.com/vulnwatch/sentinel/commit/c6d3c2b52f050e323e53883895d36f83983f226f))
+
 ## [0.18.0](https://github.com/vulnwatch/sentinel/compare/v0.17.0...v0.18.0) (2026-11-05)
 
 
