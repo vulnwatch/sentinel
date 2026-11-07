@@ -1696,7 +1696,7 @@ class TestTickets:
         async def reader(
             db: AsyncSession,
         ) -> tuple[
-            dict[int, tuple[str | None, str | None, datetime | None, int | None]],
+            dict[int, tuple[str | None, datetime | None, int | None]],
             set[tuple[int, str, str]],
         ]:
             names = await usernames(db)
@@ -1705,7 +1705,6 @@ class TestTickets:
             attributes = {
                 ticket.sequence_id: (
                     ticket.severity_manual,
-                    ticket.priority_override,
                     ticket.coordinated_release_at,
                     None
                     if ticket.duplicate_of_id is None
@@ -1725,15 +1724,13 @@ class TestTickets:
 
         attributes, grants = read(loaded.url, reader)
 
-        expected: dict[
-            int, tuple[str | None, str | None, datetime | None, int | None]
-        ] = dict.fromkeys(TICKETS, (None, None, None, None))
-        expected[12] = (None, "P1", None, None)
-        expected[13] = (None, "P3", None, None)
+        expected: dict[int, tuple[str | None, datetime | None, int | None]] = (
+            dict.fromkeys(TICKETS, (None, None, None))
+        )
         for n, days in COORDINATED_RELEASE_DAYS.items():
-            expected[n] = (None, None, loaded.now + timedelta(days=days), None)
-        expected[21] = ("High", None, None, None)
-        expected[22] = (None, None, None, 21)
+            expected[n] = (None, loaded.now + timedelta(days=days), None)
+        expected[21] = ("High", None, None)
+        expected[22] = (None, None, 21)
         assert attributes == expected
         # The access grant of `cwhite` on SNTL-18; none on SNTL-19.
         assert grants == {(18, "cwhite", "asmith")}
