@@ -79,7 +79,9 @@ class MaintainerWorkItem(BaseModel):
             "Due date (UTC) of the submission milestone of this track: the "
             "date by which the maintainer, who prepares the fix and submits it "
             "to IBS (submission request, SR), should complete the submission "
-            "phase of the remediation SLA. `null` when no SLA applies."
+            "phase of the remediation SLA, or of the window up to the Ticket's "
+            "Coordinated Release Date when one is set. `null` when no SLA "
+            "applies."
         )
     )
     submission_milestone: MilestoneStatusValue | None = Field(

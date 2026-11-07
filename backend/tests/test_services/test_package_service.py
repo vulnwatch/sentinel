@@ -1038,6 +1038,7 @@ class TestComposedMode:
             status=TicketStatus.NEW,
             has_cve=False,
             severity=Severity.LOW,
+            coordinated_release_at=None,
         )
         projected = assemble_ticket_packages(
             row.packages, ticket=context, evaluation_instant=BEFORE_ANY_DUE
@@ -1075,12 +1076,51 @@ class TestComposedMode:
             contexts[unresolved.id].severity,
         ) == (False, None)
 
+    async def test_context_columns_select_the_coordinated_release_date(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: Factory,
+        ticket_package_factory: Factory,
+        ticket_package_track_factory: Factory,
+        ticket_package_product_factory: Factory,
+    ) -> None:
+        """The tree's due dates divide the coordinated release window, also
+        for a non-confidential Ticket that retains its CRD."""
+        crd = CREATED_AT + timedelta(days=10)
+        retained: Ticket = await ticket_factory(
+            severity_manual=Severity.LOW.value,
+            created_at=CREATED_AT,
+            coordinated_release_at=crd,
+        )
+        package = await ticket_package_factory(ticket_id=retained.id)
+        track = await ticket_package_track_factory(ticket_package_id=package.id)
+        await ticket_package_product_factory(ticket_package_track_id=track.id)
+
+        (row,) = (
+            await db_session.execute(
+                select(
+                    *ticket_tree_context_columns(),
+                    ticket_package_tree_column(Ticket.id, BEFORE_ANY_DUE.date()).label(
+                        "packages"
+                    ),
+                ).where(Ticket.id == retained.id)
+            )
+        ).all()
+
+        context = ticket_tree_context_from_row(row)
+        assert context.coordinated_release_at == crd
+        (projected,) = assemble_ticket_packages(
+            row.packages, ticket=context, evaluation_instant=BEFORE_ANY_DUE
+        )
+        assert projected.tracks[0].due_dates == _due_dates((1, 6, 7, 10, 10))
+
     def test_assembly_rejects_naive_instant(self) -> None:
         context = TicketTreeContext(
             created_at=CREATED_AT,
             status=TicketStatus.NEW,
             has_cve=False,
             severity=None,
+            coordinated_release_at=None,
         )
 
         with pytest.raises(ValueError, match="evaluation_instant"):

@@ -53,6 +53,7 @@ from app.services.ticket_convergence_registry import (
     pending_ticket_convergence_effects,
 )
 from app.services.ticket_service import (
+    CoordinatedReleaseBeforeCreationError,
     TicketCreationSource,
     TicketCVEConflictError,
     TicketServiceError,
@@ -85,10 +86,11 @@ Factory = Callable[..., Awaitable[Any]]
 MANUAL = TicketCreationSource.MANUAL
 INGESTION = TicketCreationSource.CVE_INGESTION
 
-CRD_UTC = datetime(2026, 10, 6, 14, 0, tzinfo=UTC)
-CRD_UTC_VALUE = "2026-10-06T14:00:00Z"
-CRD_OFFSET = datetime(2026, 10, 6, 16, 0, tzinfo=timezone(timedelta(hours=2)))
-"""The same instant as `CRD_UTC`, supplied with a `+02:00` offset."""
+CRD_UTC = datetime(2099, 10, 6, 14, 0, tzinfo=UTC)
+CRD_UTC_VALUE = "2099-10-06T14:00:00Z"
+CRD_OFFSET = datetime(2099, 10, 6, 16, 0, tzinfo=timezone(timedelta(hours=2)))
+"""The same instant as `CRD_UTC`, supplied with a `+02:00` offset. Both are
+after every creation instant of the test run, as a CRD must be."""
 
 NEW_CVE_ID = "CVE-2099-0101"
 """A CVE-ID with no row: creation inserts a placeholder."""
@@ -545,20 +547,60 @@ class TestEventContract:
             creator_id=creator.id, coordinated_release=CRD_UTC_VALUE
         )
 
-    async def test_past_crd_is_accepted(
+    async def test_crd_equal_to_the_creation_instant_is_accepted(
         self, db_session: AsyncSession, va_user: VAUser
     ) -> None:
+        """The creation instant is the transaction's `now()`, which the
+        INSERT assigns to `created_at`, not a later application clock."""
         creator = await va_user(roles=(Role.RESTRICTED_ANALYST,))
-        past = datetime(2020, 1, 2, 3, 4, 5, tzinfo=UTC)
+        now = (await db_session.execute(select(func.now()))).scalar_one()
 
         ticket = await _manual(
-            db_session, creator, is_confidential=True, coordinated_release_at=past
+            db_session, creator, is_confidential=True, coordinated_release_at=now
         )
 
-        assert (await _state(db_session, ticket.id))["coordinated_release_at"] == past
-        assert (await ticket_events(db_session, ticket))[-1].new_value == (
-            "2020-01-02T03:04:05Z"
+        created_at = await db_session.scalar(
+            select(Ticket.created_at).where(Ticket.id == ticket.id)
         )
+        assert created_at == now
+        assert (await _state(db_session, ticket.id))["coordinated_release_at"] == now
+
+    @pytest.mark.parametrize("cve_kind", [None, "conflicting"])
+    async def test_crd_before_the_creation_instant_is_rejected_before_any_lock(
+        self,
+        db_session: AsyncSession,
+        va_user: VAUser,
+        ticket_factory: TicketFactory,
+        cve_factory: Factory,
+        cve_kind: str | None,
+    ) -> None:
+        """`CoordinatedReleaseBeforeCreationError` before the User and CVE
+        locks, with no write or event, and before `TicketCVEConflictError`
+        for a CVE that another Ticket tracks."""
+        creator = await va_user()
+        cve_id: str | None = None
+        if cve_kind == "conflicting":
+            cve: CVE = await cve_factory(cve_id="CVE-2099-0104")
+            await ticket_factory(cve_id=cve.id)
+            cve_id = cve.cve_id
+        now = (await db_session.execute(select(func.now()))).scalar_one()
+        tickets_before = await _count(db_session, Ticket)
+
+        with (
+            StatementRecorder(db_session) as recorder,
+            pytest.raises(CoordinatedReleaseBeforeCreationError),
+        ):
+            await _manual(
+                db_session,
+                creator,
+                cve_id=cve_id,
+                is_confidential=True,
+                coordinated_release_at=now - timedelta(microseconds=1),
+            )
+
+        assert recorder.writes() == []
+        assert recorder.row_locks() == []
+        assert await _count(db_session, Ticket) == tickets_before
 
     async def test_confidential_creation_without_crd_has_no_crd_event(
         self, db_session: AsyncSession, va_user: VAUser

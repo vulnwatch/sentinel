@@ -430,6 +430,7 @@ def _project(
         created_at=context.created_at,
         severity=context.severity,
         ticket_status=context.status,
+        coordinated_release_at=context.coordinated_release_at,
     )
     packages = package_service.assemble_ticket_packages(
         row.packages, ticket=context, evaluation_instant=evaluation_instant
@@ -1460,11 +1461,24 @@ class DuplicateConcurrentModificationError(TicketServiceError):
 
 class TicketNotConfidentialError(TicketServiceError):
     """The operation requires a confidential Ticket, but the locked-current
-    Ticket is not confidential. Maps to `409 TICKET_NOT_CONFIDENTIAL`. The
-    message is static."""
+    Ticket is not confidential (for the Coordinated Release Date: neither
+    confidential nor carrying a CRD). Maps to `409 TICKET_NOT_CONFIDENTIAL`.
+    The message is static."""
 
     def __init__(self) -> None:
         super().__init__("Operation requires a confidential Ticket.")
+
+
+class CoordinatedReleaseBeforeCreationError(TicketServiceError):
+    """The requested Coordinated Release Date is before the Ticket's
+    creation instant (`created_at`). Maps to
+    `422 TICKET_COORDINATED_RELEASE_BEFORE_CREATION`. The message is
+    static."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "The Coordinated Release Date must not be before the Ticket's creation."
+        )
 
 
 async def _ensure_cve_unassociated(db: AsyncSession, cve: CVE) -> None:
@@ -1613,8 +1627,10 @@ async def create_ticket(
     without a CVE or marked confidential; `SeverityDerivedError` when both
     `cve_id` and `severity_manual` are given; `CVEIdFormatError` (from
     `cve_service`) for a malformed `cve_id`, which the lock-aware
-    `ensure_cve_exists()` would also reject. Raises
-    `TicketCVEConflictError` with the conflicting Ticket's `SNTL-{n}`
+    `ensure_cve_exists()` would also reject. Then, before any lock,
+    raises `CoordinatedReleaseBeforeCreationError` when the CRD is before
+    the transaction's `now()`, the `created_at` the INSERT receives.
+    Raises `TicketCVEConflictError` with the conflicting Ticket's `SNTL-{n}`
     (even an inaccessible one) when the CVE is already associated. A
     `Ticket.cve_id` unique violation is an invariant failure and escapes
     untranslated; the caller rolls back without further queries. Audit,
@@ -1632,6 +1648,12 @@ async def create_ticket(
         source=source,
         ingestion_source=ingestion_source,
     )
+    if coordinated_release_at is not None:
+        # `created_at` is the transaction's `now()` (its server default),
+        # so the check and the Ticket CHECK compare the same instant.
+        creation_instant = (await db.execute(select(func.now()))).scalar_one()
+        if coordinated_release_at < creation_instant:
+            raise CoordinatedReleaseBeforeCreationError()
 
     acting_user: User | None = None
     if acting_user_id is not None:
@@ -2955,8 +2977,8 @@ async def set_coordinated_release_date(
     acting_user_id: UUID,
     caller: TicketCaller,
 ) -> Ticket:
-    """Set, change, or clear the Coordinated Release Date of a confidential
-    Ticket.
+    """Set the Coordinated Release Date of a confidential Ticket, or change
+    or clear the CRD of a Ticket that has one.
 
     Category A embargo-metadata consumer mutation (ticket-service.md,
     `set_coordinated_release_date`; tickets.md, Coordinated Release Date,
@@ -2965,10 +2987,10 @@ async def set_coordinated_release_date(
     Q1: `ticket_id` is the internal Ticket UUID (the API resolves the
     public `SNTL-{n}` locator first). `coordinated_release_at` is a
     timezone-aware instant (the API normalizes it to UTC), or `None` to
-    clear the CRD; a past instant is valid. `acting_user_id` is the
-    authenticated acting user (there is no system caller); `caller` is
-    the request-resolved caller information whose `user_id` must identify
-    `acting_user_id`.
+    clear the CRD; a past instant at or after the Ticket's `created_at`
+    is valid. `acting_user_id` is the authenticated acting user (there is
+    no system caller); `caller` is the request-resolved caller
+    information whose `user_id` must identify `acting_user_id`.
 
     Q2: the caller has verified `manage_confidentiality` and owns the
     transaction. Locks only the Ticket `FOR UPDATE` (no User lock: the
@@ -2976,28 +2998,34 @@ async def set_coordinated_release_date(
     valid in every Ticket status, including `Ignored` and `Duplicated`.
 
     Q3: (2) revalidates accessibility from locked-current state; (3)
-    rejects a non-confidential Ticket, including one declassified with a
-    retained CRD; (4) a request equal to the stored value (both `NULL`, or
-    the same instant regardless of UTC offset) is a no-op with no write
-    or event; (5) persists the requested value and creates one
+    rejects, whatever the requested value, a Ticket that is neither
+    confidential nor carrying a stored CRD: a CRD retained after
+    declassification can be changed or cleared, but a non-confidential
+    Ticket cannot receive one; (4) rejects an instant before the locked
+    `created_at`; (5) a request equal to the stored value (both `NULL`,
+    or the same instant regardless of UTC offset) is a no-op with no
+    write or event; (6) persists the requested value and creates one
     acting-user `coordinated_release_changed` whose old and new values
     are the preserved and requested instants in UTC ISO 8601 (`Z`
     suffix), `NULL` for an absent side, with `comment` and `detail`
-    `NULL`; (6) the event insert flushes the column and event. Never
+    `NULL`; (7) the event insert flushes the column and event. Never
     assigns, reconciles, changes status, registers a post-commit effect,
-    reads audit history, or commits. The CRD is informational: it is not
-    an input to gates, eligibility, deadlines, priority, or visibility.
+    reads audit history, or commits. The CRD decides only the read-time
+    remediation deadlines (ticket-deadlines.md, Coordinated Release
+    Window); it is not an input to gates, eligibility, priority, or
+    visibility.
 
     Q4: returns the locked Ticket in its post-mutation state.
 
-    Q5: re-invocation with the same instant is the step-4 no-op.
+    Q5: re-invocation with the same instant is the step-5 no-op.
 
     Q6: raises `ValueError` before any database operation when `caller`
     does not identify `acting_user_id` or `coordinated_release_at` is
     naive. Raises `TicketNotFoundError` for a missing or inaccessible
-    Ticket before any other decision, then `TicketNotConfidentialError`.
-    Audit, database, and flush exceptions propagate and roll back the
-    value and the event together.
+    Ticket before any other decision, then `TicketNotConfidentialError`,
+    then `CoordinatedReleaseBeforeCreationError`. Audit, database, and
+    flush exceptions propagate and roll back the value and the event
+    together.
     """
     if caller.user_id != acting_user_id:
         raise ValueError("caller must identify the acting user.")
@@ -3005,9 +3033,12 @@ async def set_coordinated_release_date(
         raise ValueError("coordinated_release_at must be timezone-aware.")
 
     ticket = await lock_accessible_ticket(db, ticket_id, caller)
-    if not ticket.is_confidential:
-        raise TicketNotConfidentialError()
     old_value = ticket.coordinated_release_at
+    if not ticket.is_confidential and old_value is None:
+        raise TicketNotConfidentialError()
+    requested = coordinated_release_at
+    if requested is not None and requested < ticket.created_at:
+        raise CoordinatedReleaseBeforeCreationError()
     if old_value == coordinated_release_at:
         return ticket
 

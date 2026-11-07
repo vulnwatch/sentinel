@@ -1654,9 +1654,17 @@ def ticket_factory(db_session: AsyncSession) -> Callable[..., Awaitable[Ticket]]
     - `chk_ticket_duplicate_status_coherence`: overriding `duplicate_of_id`
       alone defaults `status` to `Duplicated`; overriding
       `status="Duplicated"` alone links to a freshly created target Ticket.
+    - `chk_ticket_coordinated_release_not_before_creation`: overriding
+      `coordinated_release_at` with a past instant and not `created_at`
+      defaults `created_at` to that instant, so the CRD is not before the
+      creation; a later CRD keeps the database `now()`.
     """
 
     async def _create(**overrides: Any) -> Ticket:
+        crd = overrides.get("coordinated_release_at")
+        past_crd = crd is not None and crd < datetime.now(UTC)
+        if past_crd and "created_at" not in overrides:
+            overrides["created_at"] = crd
         if overrides.get("duplicate_of_id") is not None:
             overrides.setdefault("status", TicketStatus.DUPLICATED.value)
         elif (

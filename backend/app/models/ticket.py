@@ -78,6 +78,12 @@ class Ticket(Base):
             "severity_manual IS NULL OR cve_id IS NULL",
             name="chk_ticket_severity_manual_cve_exclusive",
         ),
+        # The coordinated release window of the deadlines is never negative
+        # (docs/features/tickets/ticket-deadlines.md).
+        CheckConstraint(
+            "coordinated_release_at IS NULL OR coordinated_release_at >= created_at",
+            name="chk_ticket_coordinated_release_not_before_creation",
+        ),
         Index(
             "ix_ticket_duplicate_of_id",
             "duplicate_of_id",

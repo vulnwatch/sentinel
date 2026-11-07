@@ -46,6 +46,7 @@ PERSISTED_INPUT_FIELDS: Final = frozenset(
         "products",
         "requests",
         "created_at",
+        "coordinated_release_at",
     }
 )
 """`DeadlineCase` input fields that `DeadlineWorld.build()` persists.
@@ -147,7 +148,11 @@ class DeadlineWorld:
     async def ticket(self, case: DeadlineCase) -> Ticket:
         """Persist only the Ticket (and its CVE) of `case`."""
         severity = case.severity.value if case.severity is not None else None
-        common = {"status": case.ticket_status.value, "created_at": case.created_at}
+        common = {
+            "status": case.ticket_status.value,
+            "created_at": case.created_at,
+            "coordinated_release_at": case.coordinated_release_at,
+        }
         if case.ticket_has_cve:
             cve = await self._f["cve_factory"](severity=severity)
             ticket: Ticket = await self._f["ticket_factory"](cve_id=cve.id, **common)

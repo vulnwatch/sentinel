@@ -322,11 +322,14 @@ class TestGetTicketEndpoint:
             "duplicate_of_ticket_id": None,
             "is_confidential": False,
             "coordinated_release_at": "2026-04-01T12:00:00Z",
-            "triage_due_at": "2026-03-13T14:37:21Z",
-            "submission_due_at": "2026-03-28T14:37:21Z",
-            "um_due_at": "2026-03-31T14:37:21Z",
-            "qa_due_at": "2026-04-09T14:37:21Z",
-            "release_due_at": "2026-04-09T14:37:21Z",
+            # The CRD retained on this non-confidential Ticket ends the
+            # deadline window of 1 891 359 seconds (ticket-deadlines.md,
+            # Coordinated Release Window): 10, 60, 70, and 100 % of it.
+            "triage_due_at": "2026-03-12T19:09:36.900000Z",
+            "submission_due_at": "2026-03-23T17:50:56.400000Z",
+            "um_due_at": "2026-03-25T22:23:12.300000Z",
+            "qa_due_at": "2026-04-01T12:00:00Z",
+            "release_due_at": "2026-04-01T12:00:00Z",
             # An `Analysis` Ticket is in Ticket-level triage, not yet due.
             "current_phase": "triage",
             "current_phase_milestone": "pending",

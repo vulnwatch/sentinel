@@ -57,6 +57,7 @@ from app.models.user import User
 from app.services import ticket_mutations, ticket_service, user_service
 from app.services.session_service import create_session
 from app.services.ticket_service import TicketDetailProjection
+from tests.support.deadline_matrix import crd_window_offsets
 from tests.support.ticket_creation import creation_events
 from tests.support.ticket_mutations import (
     StatementRecorder,
@@ -93,8 +94,9 @@ _LITERAL_MESSAGE = "Input should be 'critical', 'high', 'medium', 'low' or 'none
 
 _NEW_CVE_ID = "CVE-2099-0201"
 """A CVE-ID with no row: a successful creation inserts a placeholder."""
-_CRD = "2026-10-06T14:00:00Z"
-_CRD_INSTANT = datetime(2026, 10, 6, 14, 0, tzinfo=UTC)
+_CRD = "2099-10-06T14:00:00Z"
+_CRD_INSTANT = datetime(2099, 10, 6, 14, 0, tzinfo=UTC)
+"""After every creation instant of the test run, as a CRD must be."""
 
 # ticket-deadlines.md (Due Dates): field -> cumulative milestone percent.
 _DUE_MILESTONES = {
@@ -149,6 +151,16 @@ def _due_dates(created_at: str, sla_days: int | None) -> dict[str, datetime | No
         field: start
         + timedelta(seconds=sla_days * _SECONDS_PER_DAY_PERCENT * milestone)
         for field, milestone in _DUE_MILESTONES.items()
+    }
+
+
+def _window_due_dates(created_at: str, crd: str) -> dict[str, datetime | None]:
+    """The five Ticket due dates of the coordinated release window."""
+    start = _parse(created_at)
+    offsets = crd_window_offsets(_parse(crd) - start)
+    return {
+        field: start + offset
+        for field, offset in zip(_DUE_MILESTONES, offsets, strict=True)
     }
 
 
@@ -994,8 +1006,8 @@ class TestCreateTicket:
             "packages": [],
         }
         assert re.fullmatch(r"SNTL-[1-9][0-9]*", ticket_id)
-        # An unresolved severity uses the worst-case 30-day tier.
-        assert _response_due_dates(due) == _due_dates(created_at, 30)
+        # The CRD ends the window whatever the (unresolved) severity.
+        assert _response_due_dates(due) == _window_due_dates(created_at, _CRD)
 
         cve = await _cve_row(db_session, _NEW_CVE_ID)
         assert cve is not None
@@ -1102,9 +1114,13 @@ class TestCoordinatedReleaseDate:
         ("supplied", "expected"),
         [
             pytest.param(_CRD, _CRD, id="utc-z"),
-            pytest.param("2026-10-06T14:00:00", _CRD, id="naive-is-utc"),
-            pytest.param("2026-10-06T16:00:00+02:00", _CRD, id="offset"),
-            pytest.param("2020-01-02T03:04:05Z", "2020-01-02T03:04:05Z", id="past"),
+            pytest.param("2099-10-06T14:00:00", _CRD, id="naive-is-utc"),
+            pytest.param("2099-10-06T16:00:00+02:00", _CRD, id="offset"),
+            pytest.param(
+                "9999-12-31T23:59:59.999998Z",
+                "9999-12-31T23:59:59.999998Z",
+                id="latest-accepted",
+            ),
         ],
     )
     async def test_crd_is_stored_returned_and_audited_as_the_utc_instant(
@@ -1132,6 +1148,55 @@ class TestCoordinatedReleaseDate:
             assignee_username=va_user.username,
             coordinated_release=expected,
         )
+        assert data["release_due_at"] == expected
+
+    @pytest.mark.parametrize("cve", [None, "conflicting"])
+    async def test_past_crd_is_rejected_before_the_cve_conflict(
+        self,
+        cve: str | None,
+        authenticated_client: AsyncClient,
+        va_user: User,
+        db_session: AsyncSession,
+        cve_factory: Factory,
+        ticket_factory: Factory,
+    ) -> None:
+        """A past instant is before the creation instant: `422
+        TICKET_COORDINATED_RELEASE_BEFORE_CREATION`, which precedes `409
+        TICKET_CVE_CONFLICT`, and nothing is created."""
+        body: dict[str, Any] = {
+            "is_confidential": True,
+            "coordinated_release_at": "2020-01-02T03:04:05Z",
+        }
+        if cve is not None:
+            existing = await cve_factory(cve_id="CVE-2099-0105")
+            await ticket_factory(cve_id=existing.id)
+            body["cve_id"] = "CVE-2099-0105"
+        before = await _counts(db_session)
+
+        response = await authenticated_client.post(_PATH, json=body)
+
+        assert response.status_code == 422
+        assert response.json() == {
+            "code": "TICKET_COORDINATED_RELEASE_BEFORE_CREATION",
+            "detail": (
+                "The Coordinated Release Date must not be before the Ticket's creation."
+            ),
+        }
+        assert await _counts(db_session) == before
+
+    async def test_unstorable_instant_is_a_validation_error(
+        self, authenticated_client: AsyncClient, va_user: User
+    ) -> None:
+        response = await authenticated_client.post(
+            _PATH,
+            json={
+                "is_confidential": True,
+                "coordinated_release_at": "9999-12-31T23:59:59.999999Z",
+            },
+        )
+
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
 
 
 # ---------------------------------------------------------------------------
@@ -1424,6 +1489,10 @@ class TestOpenApiContract:
             "ValidationErrorResponse",
         ]
         assert "CVE_INVALID_FORMAT" in responses["422"]["description"]
+        assert (
+            "TICKET_COORDINATED_RELEASE_BEFORE_CREATION"
+            in responses["422"]["description"]
+        )
 
     def test_conflict_schema_requires_the_existing_ticket_identifier(self) -> None:
         schema = self._schema("TicketCVEConflictErrorResponse")

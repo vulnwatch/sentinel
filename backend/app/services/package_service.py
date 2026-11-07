@@ -278,12 +278,15 @@ class TicketTreeContext:
 
     `severity` is the resolved severity (`None` is SQL `NULL`,
     unresolved; `Severity.NONE` is the resolved `None` label).
+    `coordinated_release_at` is the stored Coordinated Release Date, which
+    replaces the SLA window of the due dates when set.
     """
 
     created_at: datetime
     status: TicketStatus
     has_cve: bool
     severity: Severity | None
+    coordinated_release_at: datetime | None
 
 
 # ---------------------------------------------------------------------------
@@ -469,14 +472,16 @@ def ticket_tree_context_columns(
 ) -> tuple[ColumnElement[Any], ...]:
     """The labeled Ticket columns read by `ticket_tree_context_from_row()`.
 
-    Selects `created_at`, `status`, CVE presence, and the resolved
-    severity (`resolved_severity_expression()`) of `ticket`.
+    Selects `created_at`, `status`, CVE presence, the resolved severity
+    (`resolved_severity_expression()`), and `coordinated_release_at` of
+    `ticket`.
     """
     return (
         ticket.created_at.label("tree_ticket_created_at"),
         ticket.status.label("tree_ticket_status"),
         ticket.cve_id.is_not(None).label("tree_ticket_has_cve"),
         resolved_severity_expression(ticket).label("tree_ticket_severity"),
+        ticket.coordinated_release_at.label("tree_ticket_coordinated_release_at"),
     )
 
 
@@ -488,6 +493,7 @@ def ticket_tree_context_from_row(row: Row[*tuple[Any, ...]]) -> TicketTreeContex
         status=TicketStatus(row.tree_ticket_status),
         has_cve=row.tree_ticket_has_cve,
         severity=Severity(severity) if severity is not None else None,
+        coordinated_release_at=row.tree_ticket_coordinated_release_at,
     )
 
 
@@ -613,6 +619,7 @@ def assemble_ticket_packages(
         created_at=ticket.created_at,
         severity=ticket.severity,
         ticket_status=ticket.status,
+        coordinated_release_at=ticket.coordinated_release_at,
     )
     packages: list[PackageProjection] = []
     for raw in raw_tree:

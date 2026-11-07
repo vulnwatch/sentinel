@@ -125,6 +125,7 @@ from app.services.ticket_service import (
     AssigneeInactiveError,
     AssigneeNotCallerError,
     AssigneeNotEligibleError,
+    CoordinatedReleaseBeforeCreationError,
     DuplicateConcurrentModificationError,
     DuplicateTargetIsDuplicatedError,
     PriorityBasisProjection,
@@ -603,7 +604,8 @@ def _severity_derived_error() -> AppError:
         "Creates a Ticket manually, optionally associated with a CVE (an "
         "unknown CVE is created as a placeholder record), with an initial "
         "manual severity (only without a CVE), as confidential, and with an "
-        "initial Coordinated Release Date (only when confidential). A creator "
+        "initial Coordinated Release Date (only when confidential, and not "
+        "before the creation instant of the Ticket). A creator "
         "eligible to be the assignee of the new Ticket (active, not a bot "
         "account, holding `triage_ticket`, and with scope `all` when the "
         "Ticket is confidential) is assigned and the Ticket starts in "
@@ -628,6 +630,9 @@ def _severity_derived_error() -> AppError:
             "description": (
                 "`CVE_INVALID_FORMAT`: `cve_id` does not match "
                 "`^CVE-[0-9]{4}-[0-9]{4,}$` or exceeds 20 characters. "
+                "`TICKET_COORDINATED_RELEASE_BEFORE_CREATION`: "
+                "`coordinated_release_at` is before the creation instant of the "
+                "Ticket (checked before `TICKET_CVE_CONFLICT`). "
                 "`VALIDATION_ERROR`: the body is invalid, including a "
                 "`coordinated_release_at` without `is_confidential: true`."
             ),
@@ -678,6 +683,8 @@ async def create_ticket(
         )
     except SeverityDerivedError:
         raise _severity_derived_error() from None
+    except CoordinatedReleaseBeforeCreationError:
+        raise _coordinated_release_before_creation_error() from None
     except TicketCVEConflictError as exc:
         raise ticket_cve_conflict_error(exc.existing_ticket_id) from None
     except CVEIdFormatError:
@@ -686,6 +693,14 @@ async def create_ticket(
         db, ticket_id=ticket.id, evaluation_date=evaluation_date
     )
     return TicketDetailResponse(data=serialize_ticket_detail(detail))
+
+
+def _coordinated_release_before_creation_error() -> AppError:
+    return AppError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code=ErrorCode.TICKET_COORDINATED_RELEASE_BEFORE_CREATION,
+        detail="The Coordinated Release Date must not be before the Ticket's creation.",
+    )
 
 
 @router.get(
@@ -1678,15 +1693,19 @@ async def set_ticket_confidentiality(
     response_model=TicketDetailResponse,
     summary="Set Coordinated Release Date",
     description=(
-        "Sets, changes, or clears the Coordinated Release Date (embargo "
-        "publication instant) of a confidential Ticket. An ISO 8601 date-time "
-        "sets or replaces it (a value without a UTC offset is interpreted as "
-        "UTC; past instants are accepted); JSON `null` clears it. Valid in "
-        "every Ticket status, including `ignored` and `duplicated`; it never "
-        "assigns the Ticket or changes its status. An unchanged request (the "
-        "same instant, or `null` when none is set) is an idempotent success. "
-        "Returns the post-mutation Ticket detail. Requires "
-        "`manage_confidentiality`."
+        "Sets the Coordinated Release Date (embargo publication instant) of a "
+        "confidential Ticket, or changes or clears the date of a Ticket that "
+        "has one, including a Ticket made non-confidential that retains it. "
+        "While set, the date is the final release deadline: the due dates "
+        "divide the window from the Ticket's creation to it; clearing it "
+        "returns them to the SLA. An ISO 8601 date-time sets or replaces it (a "
+        "value without a UTC offset is interpreted as UTC; a past instant is "
+        "accepted when it is not before the creation of the Ticket); JSON "
+        "`null` clears it. Valid in every Ticket status, including `ignored` "
+        "and `duplicated`; it never assigns the Ticket or changes its status. "
+        "An unchanged request (the same instant, or `null` when none is set) "
+        "is an idempotent success. Returns the post-mutation Ticket detail. "
+        "Requires `manage_confidentiality`."
     ),
     responses={
         404: {
@@ -1699,8 +1718,18 @@ async def set_ticket_confidentiality(
         409: {
             "model": ErrorResponse,
             "description": (
-                "`TICKET_NOT_CONFIDENTIAL`: the Ticket is not confidential "
-                "(including a declassified Ticket that retains its date)."
+                "`TICKET_NOT_CONFIDENTIAL`: the Ticket is neither confidential "
+                "nor carrying a Coordinated Release Date, for every request "
+                "including `null`."
+            ),
+        },
+        422: {
+            "model": ValidationErrorResponse | ErrorResponse,
+            "description": (
+                "`TICKET_COORDINATED_RELEASE_BEFORE_CREATION`: "
+                "`coordinated_release_at` is before the Ticket's `created_at` "
+                "(checked after `TICKET_NOT_CONFIDENTIAL`). `VALIDATION_ERROR`: "
+                "the body is invalid."
             ),
         },
     },
@@ -1744,6 +1773,8 @@ async def set_ticket_coordinated_release_date(
         raise ticket_not_found_error() from None
     except TicketNotConfidentialError:
         raise _ticket_not_confidential_error() from None
+    except CoordinatedReleaseBeforeCreationError:
+        raise _coordinated_release_before_creation_error() from None
     detail = await ticket_service.assemble_ticket_detail(
         db, ticket_id=ticket.id, evaluation_date=evaluation_date
     )

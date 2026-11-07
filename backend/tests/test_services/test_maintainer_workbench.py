@@ -264,6 +264,29 @@ class TestProjection:
         assert item.severity is None
         assert item.submission_due_at == RECENT + SUBMISSION_OFFSET_30
 
+    @pytest.mark.parametrize("confidential", [True, False])
+    async def test_coordinated_release_date_moves_the_submission_deadline(
+        self,
+        db_session: AsyncSession,
+        seed: WorkbenchSeed,
+        owner: User,
+        confidential: bool,
+    ) -> None:
+        """ticket-deadlines.md, Coordinated Release Window: a CRD ten days
+        after creation puts the submission milestone at +6 days, past at
+        `INSTANT`, where the 30-day SLA (+18 days) is not; a CRD that a
+        non-confidential Ticket retains counts as well."""
+        ticket = await seed.ticket(
+            confidential=confidential,
+            coordinated_release_at=RECENT + timedelta(days=10),
+        )
+        await seed.work(owner, ticket=ticket)
+
+        (item,) = (await _list(db_session, "pending", owner_caller(owner))).items
+
+        assert item.submission_due_at == RECENT + timedelta(days=6)
+        assert item.submission_milestone is MilestoneStatus.OVERDUE
+
     async def test_none_label_is_distinct_from_unresolved_and_has_no_sla(
         self, db_session: AsyncSession, seed: WorkbenchSeed, owner: User
     ) -> None:

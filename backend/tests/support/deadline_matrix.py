@@ -132,18 +132,25 @@ class RequestEvidence:
     correlated: bool = True
 
 
+Offset = int | timedelta
+"""A due-date offset from `created_at`: whole days, or an exact duration."""
+
+
 @dataclass(frozen=True, slots=True)
 class DeadlineCase:
     """One matrix row: persisted evidence and expected results.
 
     `expected_offsets_days` is `None` when no due dates exist; otherwise
-    the (triage, submission, um, qa, release) offsets from `created_at`.
-    `expected_statuses` are the (triage, submission, um, qa) milestone
-    statuses.
+    the (triage, submission, um, qa, release) offsets from `created_at`,
+    in whole days or, for a coordinated release window, as exact
+    durations. `expected_statuses` are the (triage, submission, um, qa)
+    milestone statuses. `coordinated_release_at` is the persisted
+    Coordinated Release Date, which the Ticket can carry whatever its
+    confidentiality.
     """
 
     id: str
-    expected_offsets_days: tuple[int, int, int, int, int] | None
+    expected_offsets_days: tuple[Offset, Offset, Offset, Offset, Offset] | None
     expected_statuses: Statuses
     expected_current_phase: CurrentPhase | None
     severity: Severity | None = Severity.HIGH
@@ -158,6 +165,7 @@ class DeadlineCase:
     requests: tuple[RequestEvidence, ...] = ()
     evaluation_instant: datetime = BEFORE_ANY_DUE
     created_at: datetime = field(default=CREATED_AT)
+    coordinated_release_at: datetime | None = None
 
     # --- Oracle: derived inputs of `resolve_track_milestones()` -----------
 
@@ -208,6 +216,7 @@ class DeadlineCase:
             "created_at": self.created_at,
             "severity": self.severity,
             "ticket_status": self.ticket_status,
+            "coordinated_release_at": self.coordinated_release_at,
         }
 
     def milestone_kwargs(self) -> dict[str, Any]:
@@ -229,8 +238,9 @@ class DeadlineCase:
         if self.expected_offsets_days is None:
             return None
         return tuple(
-            self.created_at + timedelta(days=days)
-            for days in self.expected_offsets_days
+            self.created_at
+            + (offset if isinstance(offset, timedelta) else timedelta(days=offset))
+            for offset in self.expected_offsets_days
         )
 
 
@@ -240,6 +250,40 @@ EXPECTATION_FIELDS: Final = frozenset(
 """`DeadlineCase` fields that are not inputs."""
 
 _T30 = TIER_30_OFFSETS_DAYS
+_US = timedelta(microseconds=1)
+
+LATEST_CRD: Final = datetime(9999, 12, 31, 23, 59, 59, 999998, tzinfo=UTC)
+"""The latest instant that the API accepts as a Coordinated Release Date
+(tickets.md, Create Ticket and Set Coordinated Release Date)."""
+
+_CUMULATIVE_PERCENTS: Final = (10, 60, 70, 100)
+"""Transcribed from ticket-deadlines.md (Phase Shares)."""
+
+
+def crd_window_offsets(
+    window: timedelta,
+) -> tuple[timedelta, timedelta, timedelta, timedelta, timedelta]:
+    """Expected (triage, submission, um, qa, release) offsets of a
+    coordinated release window of length `window`, transcribed from
+    ticket-deadlines.md (Coordinated Release Window): each milestone is
+    `floor(w * c / 100)` microseconds for `w` in whole microseconds, and
+    `release` is the CRD itself."""
+    window_us = window // _US
+    triage, submission, um, qa = (
+        timedelta(microseconds=window_us * percent // 100)
+        for percent in _CUMULATIVE_PERCENTS
+    )
+    return (triage, submission, um, qa, window)
+
+
+_TIER_OFFSETS_BY_SEVERITY: Final = (
+    (Severity.HIGH, TIER_30_OFFSETS_DAYS),
+    (Severity.MEDIUM, TIER_90_OFFSETS_DAYS),
+    (Severity.LOW, TIER_180_OFFSETS_DAYS),
+    (None, TIER_30_OFFSETS_DAYS),
+)
+_CRD_SLA_MILESTONE_PHASES: Final = ("triage", "submission", "um", "qa")
+_CRD_NEIGHBOURS: Final = (("before", -_US), ("equal_to", timedelta()), ("after", _US))
 _UNRELEASED = ProductEvidence()
 _RELEASED = ProductEvidence(released=True)
 _NOT_ELIGIBLE = ProductEvidence(eligible=False)
@@ -767,6 +811,148 @@ DEADLINE_CASES: tuple[DeadlineCase, ...] = (
         expected_statuses=(O, N, N, N),
         expected_current_phase=CurrentPhase.TRIAGE,
     ),
+    # --- Coordinated release window -------------------------------------------
+    # A CRD before, equal to, and one microsecond after each SLA milestone of
+    # every tier: the window ignores the tier.
+    *(
+        DeadlineCase(
+            id=(
+                f"crd_{label}_{phase}_sla_milestone_"
+                f"{severity.value.lower() if severity else 'unresolved'}"
+            ),
+            severity=severity,
+            coordinated_release_at=CREATED_AT + timedelta(days=days) + delta,
+            evaluation_instant=CREATED_AT,
+            expected_offsets_days=crd_window_offsets(timedelta(days=days) + delta),
+            expected_statuses=(D, P, P, P),
+            expected_current_phase=CurrentPhase.SUBMISSION,
+        )
+        for severity, offsets in _TIER_OFFSETS_BY_SEVERITY
+        for phase, days in zip(_CRD_SLA_MILESTONE_PHASES, offsets, strict=False)
+        for label, delta in _CRD_NEIGHBOURS
+    ),
+    DeadlineCase(
+        id="crd_seven_days_earlier_than_sla",
+        coordinated_release_at=CREATED_AT + timedelta(days=7),
+        evaluation_instant=CREATED_AT + timedelta(days=4, hours=12),
+        expected_offsets_days=(
+            timedelta(hours=16, minutes=48),
+            timedelta(days=4, hours=4, minutes=48),
+            timedelta(days=4, hours=21, minutes=36),
+            timedelta(days=7),
+            timedelta(days=7),
+        ),
+        expected_statuses=(D, O, P, P),
+        expected_current_phase=CurrentPhase.SUBMISSION,
+    ),
+    DeadlineCase(
+        # Past the 30-day SLA deadline, but the CRD 120 days after creation
+        # keeps every phase on time.
+        id="crd_later_than_sla_keeps_phases_pending",
+        coordinated_release_at=CREATED_AT + timedelta(days=120),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_offsets_days=(12, 72, 84, 120, 120),
+        expected_statuses=(D, P, P, P),
+        expected_current_phase=CurrentPhase.SUBMISSION,
+    ),
+    DeadlineCase(
+        id="crd_earlier_than_180_day_tier_makes_triage_overdue",
+        severity=Severity.LOW,
+        track_status=PackageStatus.ANALYSIS,
+        coordinated_release_at=CREATED_AT + timedelta(days=10),
+        evaluation_instant=CREATED_AT + timedelta(days=8),
+        expected_offsets_days=(1, 6, 7, 10, 10),
+        expected_statuses=(O, O, O, P),
+        expected_current_phase=CurrentPhase.TRIAGE,
+    ),
+    DeadlineCase(
+        id="crd_with_unresolved_severity",
+        severity=None,
+        ticket_status=TicketStatus.NEW,
+        track_status=PackageStatus.ANALYSIS,
+        coordinated_release_at=CREATED_AT + timedelta(days=60),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_offsets_days=(6, 36, 42, 60, 60),
+        expected_statuses=(O, P, P, P),
+        expected_current_phase=CurrentPhase.TRIAGE,
+    ),
+    DeadlineCase(
+        id="crd_rounds_down_to_a_whole_microsecond",
+        coordinated_release_at=CREATED_AT + timedelta(days=1, microseconds=7),
+        expected_offsets_days=(
+            timedelta(hours=2, minutes=24),
+            timedelta(hours=14, minutes=24, microseconds=4),
+            timedelta(hours=16, minutes=48, microseconds=4),
+            timedelta(days=1, microseconds=7),
+            timedelta(days=1, microseconds=7),
+        ),
+        expected_statuses=(D, O, O, P),
+        expected_current_phase=CurrentPhase.SUBMISSION,
+    ),
+    DeadlineCase(
+        id="crd_equal_to_created_at_every_phase_due_at_creation",
+        coordinated_release_at=CREATED_AT,
+        expected_offsets_days=(0, 0, 0, 0, 0),
+        expected_statuses=(D, O, O, O),
+        expected_current_phase=CurrentPhase.SUBMISSION,
+    ),
+    DeadlineCase(
+        id="crd_equal_to_created_at_is_pending_at_creation",
+        coordinated_release_at=CREATED_AT,
+        evaluation_instant=CREATED_AT,
+        expected_offsets_days=(0, 0, 0, 0, 0),
+        expected_statuses=(D, P, P, P),
+        expected_current_phase=CurrentPhase.SUBMISSION,
+    ),
+    DeadlineCase(
+        id="crd_qa_due_equal_to_instant_is_pending",
+        requests=(_ACTIVE_RR,),
+        coordinated_release_at=CREATED_AT + timedelta(days=7),
+        evaluation_instant=CREATED_AT + timedelta(days=7),
+        expected_offsets_days=crd_window_offsets(timedelta(days=7)),
+        expected_statuses=(D, D, D, P),
+        expected_current_phase=CurrentPhase.QA,
+    ),
+    DeadlineCase(
+        id="crd_qa_due_one_microsecond_before_instant_is_overdue",
+        requests=(_ACTIVE_RR,),
+        coordinated_release_at=CREATED_AT + timedelta(days=7),
+        evaluation_instant=CREATED_AT + timedelta(days=7, microseconds=1),
+        expected_offsets_days=crd_window_offsets(timedelta(days=7)),
+        expected_statuses=(D, D, D, O),
+        expected_current_phase=CurrentPhase.QA,
+    ),
+    DeadlineCase(
+        id="crd_latest_accepted_instant",
+        coordinated_release_at=LATEST_CRD,
+        expected_offsets_days=(
+            timedelta(days=291237, seconds=37935, microseconds=887654),
+            timedelta(days=1747424, seconds=54815, microseconds=325925),
+            timedelta(days=2038662, seconds=6351, microseconds=213579),
+            timedelta(days=2912374, seconds=33758, microseconds=876542),
+            timedelta(days=2912374, seconds=33758, microseconds=876542),
+        ),
+        expected_statuses=(D, P, P, P),
+        expected_current_phase=CurrentPhase.SUBMISSION,
+    ),
+    DeadlineCase(
+        id="crd_no_sla_severity_none_label",
+        severity=Severity.NONE,
+        coordinated_release_at=CREATED_AT + timedelta(days=7),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_offsets_days=None,
+        expected_statuses=(N, N, N, N),
+        expected_current_phase=None,
+    ),
+    DeadlineCase(
+        id="crd_no_sla_manual_zone",
+        ticket_status=TicketStatus.IGNORED,
+        coordinated_release_at=CREATED_AT + timedelta(days=7),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_offsets_days=None,
+        expected_statuses=(N, N, N, N),
+        expected_current_phase=None,
+    ),
 )
 """Every matrix row. Case ids are unique."""
 
@@ -808,6 +994,7 @@ class TicketPhaseCase:
     ticket_has_cve: bool = True
     evaluation_instant: datetime = BEFORE_ANY_DUE
     created_at: datetime = field(default=CREATED_AT)
+    coordinated_release_at: datetime | None = None
 
     def ticket_case(self) -> DeadlineCase:
         """This Ticket's inputs as a `DeadlineCase` (track fields unused)."""
@@ -821,6 +1008,7 @@ class TicketPhaseCase:
             ticket_has_cve=self.ticket_has_cve,
             evaluation_instant=self.evaluation_instant,
             created_at=self.created_at,
+            coordinated_release_at=self.coordinated_release_at,
         )
 
     def track_cases(self) -> tuple[DeadlineCase, ...]:
@@ -1096,6 +1284,59 @@ TICKET_PHASE_CASES: tuple[TicketPhaseCase, ...] = (
         tracks=(_EXCLUDED_OPEN, _NON_ACTIONABLE_UNOBSERVABLE, _ALL_DONE_AFFECTED),
         evaluation_instant=AFTER_ALL_DUE,
         expected_phase=CurrentPhase.DONE,
+        expected_milestone=None,
+    ),
+    # --- Coordinated release window -------------------------------------------
+    TicketPhaseCase(
+        # A window of 7 microseconds gives `submission` and `um` the same due
+        # date (4 µs): both are past, and the earliest open phase is current.
+        id="crd_short_window_shares_a_due_date",
+        tracks=(_OPEN_UM, _OPEN_SUBMISSION),
+        coordinated_release_at=CREATED_AT + timedelta(microseconds=7),
+        evaluation_instant=CREATED_AT + timedelta(microseconds=5),
+        expected_phase=CurrentPhase.SUBMISSION,
+        expected_milestone=O,
+    ),
+    TicketPhaseCase(
+        id="crd_short_window_later_phase_alone",
+        tracks=(_OPEN_UM,),
+        coordinated_release_at=CREATED_AT + timedelta(microseconds=7),
+        evaluation_instant=CREATED_AT + timedelta(microseconds=5),
+        expected_phase=CurrentPhase.UM,
+        expected_milestone=O,
+    ),
+    TicketPhaseCase(
+        id="crd_later_than_sla_keeps_qa_pending",
+        tracks=(_OPEN_QA,),
+        coordinated_release_at=CREATED_AT + timedelta(days=120),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_phase=CurrentPhase.QA,
+        expected_milestone=P,
+    ),
+    TicketPhaseCase(
+        id="crd_earlier_than_sla_makes_triage_overdue",
+        severity=Severity.LOW,
+        ticket_status=TicketStatus.NEW,
+        coordinated_release_at=CREATED_AT + timedelta(days=10),
+        evaluation_instant=CREATED_AT + timedelta(days=2),
+        expected_phase=CurrentPhase.TRIAGE,
+        expected_milestone=O,
+    ),
+    TicketPhaseCase(
+        id="crd_unobservable_track_without_open_phase_is_null",
+        tracks=(_ALL_DONE, _UNOBSERVABLE),
+        coordinated_release_at=CREATED_AT + timedelta(days=7),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_phase=None,
+        expected_milestone=None,
+    ),
+    TicketPhaseCase(
+        id="crd_no_sla_severity_none_label",
+        severity=Severity.NONE,
+        tracks=(_OPEN_SUBMISSION,),
+        coordinated_release_at=CREATED_AT + timedelta(days=7),
+        evaluation_instant=AFTER_ALL_DUE,
+        expected_phase=None,
         expected_milestone=None,
     ),
 )

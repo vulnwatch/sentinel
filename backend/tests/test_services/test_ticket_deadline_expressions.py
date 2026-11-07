@@ -435,13 +435,18 @@ class TestSharedMatrixStructure:
         self,
     ) -> None:
         """At least one case evaluates a later phase exactly at its due
-        date and expects `pending`."""
+        date and expects `pending`, and no case expects `overdue` there.
+        Phases that share a due date (a short coordinated release window)
+        are each checked; a completed phase is `done` whatever its date."""
         boundary: list[MilestoneStatus | None] = []
         for case in DEADLINE_CASES:
             due = case.expected_due_dates()
-            if due is not None and case.evaluation_instant in due[1:4]:
-                phase_index = due.index(case.evaluation_instant)
-                boundary.append(case.expected_statuses[phase_index])
+            if due is None:
+                continue
+            for phase_index in range(1, 4):
+                status = case.expected_statuses[phase_index]
+                if due[phase_index] == case.evaluation_instant and status is not D:
+                    boundary.append(status)
 
         assert boundary
         assert set(boundary) == {P}

@@ -29,8 +29,9 @@ modules, so `ticket_service` (Ticket list) and `package_service` (package
 tree, maintainer workbench) can both use it without a dependency cycle.
 
 Time handling follows `docs/conventions.md` (Timestamps & Timezones):
-every offset is an exact number of seconds added to the `TIMESTAMPTZ`
-start (never a calendar `day` interval), so neither the session
+every offset is an exact number of seconds, or of hours and microseconds
+for the coordinated release window, added to the `TIMESTAMPTZ` start
+(never a calendar `day` interval), so neither the session
 `TimeZone` nor a daylight-saving transition shifts a due date; the
 evaluation instant is a bound timezone-aware parameter and a naive
 instant is rejected.
@@ -45,14 +46,17 @@ from datetime import date, datetime
 from typing import Any, Final, cast
 
 from sqlalchemy import (
+    BigInteger,
     ColumnElement,
     DateTime,
     Integer,
     Interval,
+    Numeric,
     Select,
     and_,
     case,
     exists,
+    extract,
     func,
     literal,
     literal_column,
@@ -60,6 +64,7 @@ from sqlalchemy import (
     or_,
     select,
 )
+from sqlalchemy import cast as sql_cast
 from sqlalchemy.orm import aliased
 from sqlalchemy.orm.util import AliasedClass
 
@@ -104,7 +109,10 @@ type PackageEntity = type[TicketPackage] | AliasedClass[TicketPackage]
 type TrackEntity = type[TicketPackageTrack] | AliasedClass[TicketPackageTrack]
 
 _ONE_SECOND: Final = literal_column("INTERVAL '1 second'", Interval)
+_ONE_MICROSECOND: Final = literal_column("INTERVAL '1 microsecond'", Interval)
 _SECONDS_PER_DAY: Final = SECONDS_PER_DAY_PERCENT * 100
+_MICROSECONDS_PER_SECOND: Final = 1_000_000
+_MICROSECONDS_PER_HOUR: Final = 3600 * _MICROSECONDS_PER_SECOND
 _LATER_PHASES: Final = (MilestonePhase.SUBMISSION, MilestonePhase.UM, MilestonePhase.QA)
 
 
@@ -134,7 +142,9 @@ def _sorted_values(members: Iterable[str]) -> list[str]:
 class TicketDueDateExpressions:
     """The five Ticket-level due-date expressions of one Ticket entity.
 
-    Each member is a nullable `TIMESTAMPTZ` expression, NULL exactly when
+    Each member is a nullable `TIMESTAMPTZ` expression over the Ticket's
+    deadline window (the SLA window, or the coordinated release window
+    when `coordinated_release_at` is set), NULL exactly when
     `compute_due_dates()` returns `None` (manual zone or the `None`
     severity label). Usable in `SELECT`, `WHERE`, and `ORDER BY`.
     """
@@ -193,30 +203,76 @@ def ticket_due_date_expressions(
 ) -> TicketDueDateExpressions:
     """Build the five Ticket-level due-date expressions of `ticket`.
 
-    `ticket` and `severity` are as in `sla_days_expression()`. For SLA
-    tier `d` and cumulative phase share `c`, each milestone is
-    `ticket.created_at + d * 864 * c` seconds and `release` is
-    `ticket.created_at + d * 86400` seconds (ticket-deadlines.md,
-    Formula): exact offsets that preserve the time of day of `created_at`
-    and are independent of the session `TimeZone`. Every member is NULL
-    when `sla_days_expression()` is NULL. Raises no exception.
+    `ticket` and `severity` are as in `sla_days_expression()`. Every
+    member is NULL when `sla_days_expression()` is NULL, with or without a
+    Coordinated Release Date (ticket-deadlines.md, Null Due Dates).
+
+    Without a CRD (SLA window, Formula), for SLA tier `d` and cumulative
+    phase share `c`, each milestone is `ticket.created_at + d * 864 * c`
+    seconds and `release` is `ticket.created_at + d * 86400` seconds:
+    exact offsets that preserve the time of day of `created_at`.
+
+    With `ticket.coordinated_release_at` set (Coordinated Release Window),
+    each milestone is `ticket.created_at + floor(w * c / 100)`
+    microseconds for the window length `w` in whole microseconds, and
+    `release` is the CRD itself. The arithmetic is exact `numeric`
+    integer arithmetic on the epoch microseconds, identical to the pure
+    `compute_due_dates()`: `w` is never negative (the Ticket CHECK), so
+    the truncating `div()` is the floor. The offset is added as whole
+    hours (`make_interval()`, integer arithmetic) plus the remaining
+    microseconds, so no `float8` factor exceeds its exact integer range
+    and no step overflows for any CRD that the API accepts.
+
+    Both windows add elapsed durations without a calendar `day` part, so
+    neither the session `TimeZone` nor a daylight-saving transition
+    shifts a due date. Raises no exception.
     """
     days = sla_days_expression(ticket=ticket, severity=severity)
+    crd = ticket.coordinated_release_at
+    window_us = (extract("epoch", crd) - extract("epoch", ticket.created_at)) * literal(
+        _MICROSECONDS_PER_SECOND, Numeric
+    )
 
-    def offset(seconds_per_tier_day: int) -> ColumnElement[datetime | None]:
+    def sla_offset(seconds_per_tier_day: int) -> ColumnElement[datetime | None]:
         # NULL propagates from `days` through the multiplication and sum.
         return cast(
             ColumnElement[datetime | None],
             ticket.created_at + days * seconds_per_tier_day * _ONE_SECOND,
         )
 
-    shares = _CUMULATIVE_SHARES
+    def crd_offset(cumulative: int) -> ColumnElement[datetime | None]:
+        offset_us = func.div(window_us * cumulative, literal(100, Numeric))
+        hours = func.div(offset_us, literal(_MICROSECONDS_PER_HOUR, Numeric))
+        remainder_us = func.mod(offset_us, literal(_MICROSECONDS_PER_HOUR, Numeric))
+        return cast(
+            ColumnElement[datetime | None],
+            ticket.created_at
+            + func.make_interval(0, 0, 0, 0, sql_cast(hours, Integer))
+            + sql_cast(remainder_us, BigInteger) * _ONE_MICROSECOND,
+        )
+
+    def due_at(
+        sla: ColumnElement[datetime | None], window: ColumnElement[datetime | None]
+    ) -> ColumnElement[datetime | None]:
+        # Evaluated lazily: a Ticket without a CRD computes only `sla`.
+        due: ColumnElement[datetime | None] = case(
+            (crd.is_(None), sla), (days.is_(None), null()), else_=window
+        )
+        return due
+
+    def milestone(phase: MilestonePhase) -> ColumnElement[datetime | None]:
+        share = _CUMULATIVE_SHARES[phase]
+        return due_at(sla_offset(SECONDS_PER_DAY_PERCENT * share), crd_offset(share))
+
     return TicketDueDateExpressions(
-        triage=offset(SECONDS_PER_DAY_PERCENT * shares[MilestonePhase.TRIAGE]),
-        submission=offset(SECONDS_PER_DAY_PERCENT * shares[MilestonePhase.SUBMISSION]),
-        um=offset(SECONDS_PER_DAY_PERCENT * shares[MilestonePhase.UM]),
-        qa=offset(SECONDS_PER_DAY_PERCENT * shares[MilestonePhase.QA]),
-        release=offset(_SECONDS_PER_DAY),
+        triage=milestone(MilestonePhase.TRIAGE),
+        submission=milestone(MilestonePhase.SUBMISSION),
+        um=milestone(MilestonePhase.UM),
+        qa=milestone(MilestonePhase.QA),
+        release=due_at(
+            sla_offset(_SECONDS_PER_DAY),
+            cast(ColumnElement[datetime | None], crd),
+        ),
     )
 
 

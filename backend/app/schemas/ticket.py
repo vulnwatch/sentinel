@@ -22,7 +22,7 @@ lowercase.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Final, Literal, Self
 from uuid import UUID
 
 from pydantic import MISSING, BaseModel, Field, field_validator, model_validator
@@ -119,13 +119,16 @@ _DUPLICATE_OF_DESCRIPTION = (
 _IS_CONFIDENTIAL_DESCRIPTION = "Whether the Ticket is confidential."
 _COORDINATED_RELEASE_DESCRIPTION = (
     "Coordinated Release Date (embargo publication instant, UTC), or `null` when "
-    "none is set. A retained value on a non-confidential Ticket is historical "
-    "and inert."
+    "none is set. When set and an SLA applies, it is `release_due_at` and the "
+    "due dates divide the window from `created_at` to it, also on a "
+    "non-confidential Ticket that retains it."
 )
 _TRIAGE_DUE_DESCRIPTION = (
     "Due date (UTC) of the triage milestone, in which the VA (Vulnerability "
     "Analyst) decides affectedness; `null` when no SLA applies (Ticket "
-    "`ignored` or `duplicated`, or severity `none`)."
+    "`ignored` or `duplicated`, or severity `none`). The due dates divide the "
+    "window from `created_at` to the Coordinated Release Date when one is set "
+    "(`coordinated_release_at`), otherwise the SLA window."
 )
 _SUBMISSION_DUE_DESCRIPTION = (
     "Due date (UTC) of the submission milestone, in which the maintainer "
@@ -142,8 +145,9 @@ _QA_DUE_DESCRIPTION = (
     "`release_due_at`."
 )
 _RELEASE_DUE_DESCRIPTION = (
-    "Final deadline (UTC) by which the update must be released; currently "
-    "equal to `qa_due_at`."
+    "Final deadline (UTC) by which the update must be released; `null` when no "
+    "SLA applies, otherwise the Coordinated Release Date when one is set and "
+    "the SLA deadline when none is; currently equal to `qa_due_at`."
 )
 _CURRENT_PHASE_DESCRIPTION = (
     "Earliest open remediation phase of the Ticket among the phases that "
@@ -172,6 +176,13 @@ _CREATED_AT_DESCRIPTION = "Creation timestamp (UTC)."
 _UPDATED_AT_DESCRIPTION = "Last modification timestamp (UTC)."
 
 
+_CRD_OUT_OF_RANGE: Final = (
+    "coordinated_release_at is out of the representable datetime range."
+)
+_UNSTORABLE_INSTANT: Final = datetime.max.replace(tzinfo=UTC)
+"""The instant that asyncpg stores as `infinity` and reads back naive."""
+
+
 def parse_coordinated_release_at(value: object) -> datetime | None:
     """Parse a Coordinated Release Date request value (tickets.md, Create
     Ticket, Set Coordinated Release Date).
@@ -182,8 +193,10 @@ def parse_coordinated_release_at(value: object) -> datetime | None:
     offset to UTC (`docs/conventions.md`, Timestamps & Timezones). A date
     without a time component, a number, and any other non-string input
     are rejected, so no implicit midnight or Unix timestamp
-    interpretation applies. Errors raise `ValueError`, rendered as the
-    global `422 VALIDATION_ERROR`.
+    interpretation applies. The last microsecond of year 9999, which the
+    database driver stores as `infinity`, is outside the representable
+    range like an instant whose UTC conversion overflows. Errors raise
+    `ValueError`, rendered as the global `422 VALIDATION_ERROR`.
     """
     if value is None:
         return None
@@ -201,14 +214,17 @@ def parse_coordinated_release_at(value: object) -> datetime | None:
         raise ValueError(
             "coordinated_release_at must be a valid ISO 8601 datetime."
         ) from exc
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
     try:
-        return parsed.astimezone(UTC)
+        instant = (
+            parsed.replace(tzinfo=UTC)
+            if parsed.tzinfo is None
+            else parsed.astimezone(UTC)
+        )
     except OverflowError as exc:
-        raise ValueError(
-            "coordinated_release_at is out of the representable datetime range."
-        ) from exc
+        raise ValueError(_CRD_OUT_OF_RANGE) from exc
+    if instant == _UNSTORABLE_INSTANT:
+        raise ValueError(_CRD_OUT_OF_RANGE)
+    return instant
 
 
 type SSVCExploitationEvidenceValue = Literal["active", "poc"]
@@ -648,8 +664,11 @@ class TicketCreateRequest(BaseModel):
             "Initial Coordinated Release Date (embargo publication instant), "
             "an ISO 8601 date-time. Accepted only with `is_confidential: "
             "true`. A value without a UTC offset is interpreted as UTC; an "
-            "offset is converted to UTC. Past instants are accepted. Omitted "
-            "or `null` creates the Ticket without a CRD."
+            "offset is converted to UTC. A value before the creation instant "
+            "of the Ticket is rejected with "
+            "`422 TICKET_COORDINATED_RELEASE_BEFORE_CREATION`. The latest "
+            "accepted instant is `9999-12-31T23:59:59.999998Z`. Omitted or "
+            "`null` creates the Ticket without a CRD."
         ),
         examples=["2026-10-06T14:00:00Z"],
     )
@@ -708,8 +727,11 @@ class TicketCoordinatedReleaseDateUpdateRequest(BaseModel):
         description=(
             "Coordinated Release Date (embargo publication instant), an ISO "
             "8601 date-time, or JSON `null` to clear it. A value without a UTC "
-            "offset is interpreted as UTC; an offset is converted to UTC. Past "
-            "instants are accepted. Required."
+            "offset is interpreted as UTC; an offset is converted to UTC. A "
+            "past instant is accepted when it is not before the Ticket's "
+            "`created_at` (otherwise "
+            "`422 TICKET_COORDINATED_RELEASE_BEFORE_CREATION`). The latest "
+            "accepted instant is `9999-12-31T23:59:59.999998Z`. Required."
         ),
         examples=["2026-10-06T14:00:00Z", None],
     )
