@@ -190,9 +190,7 @@ profile.
 No data backfill accompanies these columns. Every Ticket receives its
 automatic value at its next refresh point. The provenance has no source
 outside audit history, so the migration that adds it fails, and leaves the
-database at its previous revision, when a Ticket holds an override. Such a
-database has its overrides cleared through `set_priority_override()` before
-the upgrade, or is recreated.
+database at its previous revision, when a Ticket holds an override.
 
 ## Automatic Refresh
 
