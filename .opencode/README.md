@@ -108,7 +108,7 @@ summaries brief while preserving scope, limitations, evidence, and verdicts.
 | `@data-model-reviewer` | Reviewer | Guardrail 8 | Reviews data model changes for simplicity, consistency, conventions, and access-path index coverage |
 | `@design-reviewer` | Reviewer | Guardrail 26 | Applies a simplicity-first review to new or substantially modified feature specs |
 | `@docs-placement-reviewer` | Reviewer | Guardrail 21 | Verifies rules and patterns are placed in the most appropriate location (not misplaced or duplicated) |
-| `@docs-reviewer` | Reviewer | Guardrail 9 | Reviews documentation completeness and coherence with implementation |
+| `@docs-reviewer` | Reviewer | Guardrail 9 | Reviews documentation completeness and coherence with implementation, and whether the example dataset shows new client-visible values |
 | `@external-contract-verifier` | Reviewer | On-demand | Verifies external structures and documented destination-field mappings against recorded or live upstream contracts |
 | `@fetcher-compliance-reviewer` | Reviewer | Guardrail 14 | Verifies scheduled fetchers use the applicable BaseFetcher, BaseCVEFetcher, or BaseGitFetcher lifecycle, metrics, request-delay, and registry contracts |
 | `@security-reviewer` | Reviewer | Guardrail 10 | Reviews code for security vulnerabilities and insecure patterns |

@@ -1,8 +1,9 @@
 ---
 description: >
-  Reviews documentation completeness, accuracy, and implementation coherence.
-  Use after significant API, feature-spec, model, service-contract,
-  architecture, integration, or multi-document changes. Read-only.
+  Reviews documentation completeness, accuracy, and implementation coherence,
+  and whether the example dataset shows new client-visible values. Use after
+  significant API, feature-spec, model, service-contract, architecture,
+  integration, or multi-document changes. Read-only.
 mode: subagent
 permission:
   edit: deny
@@ -208,6 +209,30 @@ structural complexity without presenting it to the user for a decision.
 - When a document references an API endpoint, does the endpoint exist in its
   owning feature spec and in the Endpoint Permission Map?
 
+### Example dataset coverage
+
+The example dataset lets a client be developed, tested, and shown against a
+backend that holds every case it presents
+(`docs/features/platform/example-dataset.md`, Purpose; Drift Protection). Apply
+this check only when the reviewed change adds or changes a client-visible
+value: a response field, a member of a response enum, or a case that the owning
+specification distinguishes for a client, such as a `null` versus a set value.
+
+- Read the Dataset Content sections of
+  `docs/features/platform/example-dataset.md` that hold the affected records.
+  Does at least one record show each new value? Require one occurrence per
+  value, not combinations of values
+- Do not require what the Scope of that specification excludes, or an error
+  response. The loader stands in for external sources (Attribution), so a
+  value that comes from an external source is not excluded
+- Report the values that no record shows as one **Low** finding, with the
+  smallest dataset addition for each: the record and the operation or
+  ingestion that produces the value. Recommend the addition in the same pull
+  request when the change already modifies the dataset specification or the
+  addition is small; otherwise recommend a follow-up issue, created before the
+  change merges
+- This finding never makes the verdict worse than **Minor issues**
+
 ## Output
 
 Provide a structured summary with these sections:
@@ -221,7 +246,9 @@ Provide a structured summary with these sections:
 4. **Inconsistencies**: discrepancies between different documentation files,
    or between docs and code
 5. **Style issues**: language, formatting, or structural convention problems
-6. **Verdict**: one of:
+6. **Example dataset coverage**: the new client-visible values that the
+   example dataset does not show, with their smallest additions
+7. **Verdict**: one of:
    - **Clean** — documentation is complete, accurate, and consistent
    - **Minor issues** — small gaps or inconsistencies that should be fixed
      but do not block
