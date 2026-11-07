@@ -4989,11 +4989,13 @@ and the dedicated database starts its Ticket identifiers at `SNTL-1`.
   Products with their lifecycle phases and thresholds; the CVEs with their
   source data and CVE source records, and the failure drill-down of the last
   NVD run; the Tickets with their identifiers, status, assignee,
-  confidentiality, access grant, coordinated release date, severity, and
-  priority override with its provenance; the aged Tickets with their creation
-  times, current phases, and the Tickets that each `overdue` value lists; the
-  due dates and current phases of the Tickets with a coordinated release date
-  and the Tickets that the Embargo filters list; the packages, tracks, Products,
+  confidentiality, access grant, coordinated release date, and severity; the
+  priorities of every Ticket: the automatic priority with its basis, the
+  priority override with its provenance and its `priority_changed` event, and
+  the effective priority; the aged Tickets with their creation times, current
+  phases, and the Tickets that each `overdue` value lists; the due dates and
+  current phases of the Tickets with a coordinated release date and the
+  Tickets that the Embargo filters list; the packages, tracks, Products,
   eligibility, release, and maintainers; the IBS requests, actions,
   correlations, and delivery statuses; the references; the maintainer
   workbenches of `dbrown` and `ghill`; at least one `confidentiality_changed`
@@ -5019,13 +5021,15 @@ and the dedicated database starts its Ticket identifiers at `SNTL-1`.
   Every member of `Role`, `TicketStatus`, `PackageStatus`, `DeliveryStatus`,
   `WorkflowType`, `Severity`, and `LifecyclePhase` occurs in the dataset, as
   do a user without roles, a bot account, an unresolved Ticket severity, and
-  an unavailable lifecycle phase, except the members of the test's
-  per-enumeration exception lists, which are empty. Each exception list is
-  checked in both directions: a covered item that an exception list names
-  fails the test, as does an exception that names no current table or
-  member. The tables and members come from the code, so a new table or
-  member fails the test until the dataset covers it or the exception list
-  names it with its reason.
+  an unavailable lifecycle phase, and every member of `ExploitationLevel` and
+  `ExploitationEvidenceKind` occurs in the automatic priority basis of a
+  Ticket (`docs/features/tickets/ticket-priority.md`, Automatic Priority
+  Basis), except the members of the test's per-enumeration exception lists,
+  which are empty. Each exception list is checked in both directions: a
+  covered item that an exception list names fails the test, as does an
+  exception that names no current table or member. The tables and members
+  come from the code, so a new table or member fails the test until the
+  dataset covers it or the exception list names it with its reason.
 
 The command itself is verified by the CLI Commands scenarios above.
 

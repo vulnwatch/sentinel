@@ -45,7 +45,7 @@ Out of scope:
 | `docs/features/packages/product-catalog.md` (Catalog Publication Boundaries) | Product, lifecycle, and threshold publication |
 | `docs/features/tickets/cve-service.md` and `docs/features/tickets/ticket-references.md` | CVE ingestion, CVE source records (`record_source_status()`), and automatic references |
 | `docs/features/tickets/ticket-deadlines.md` | The due dates and current phases of the Aged Tickets and the Embargoes |
-| `docs/features/tickets/ticket-service.md`, `docs/features/tickets/ticket-mutations.md`, and `docs/features/tickets/ticket-priority.md` | Ticket creation, assignment, ignore, duplicate, confidentiality, coordinated release date, access grants, SUSE assessments, and priority override |
+| `docs/features/tickets/ticket-service.md`, `docs/features/tickets/ticket-mutations.md`, and `docs/features/tickets/ticket-priority.md` | Ticket creation, assignment, ignore, duplicate, confidentiality, coordinated release date, access grants, SUSE assessments, automatic priority and its basis, and priority override |
 | `docs/features/packages/package-service.md` | Package records, track status, and Product release |
 | `docs/features/packages/ibs-submission-tracking.md` (Trusted Observation Application) | IBS request evidence and delivery status |
 | `docs/features/platform/testing-strategy.md` (Mandatory Test Scenarios → Example Dataset) | Load and coverage tests that keep the dataset aligned with Sentinel |
@@ -276,7 +276,7 @@ Dataset Content is computed from them: `T − 3d` is three days before the load
 instant, and `D + 365` is 365 days after the load date.
 
 The persisted creation, update, and audit timestamps, and the time at which
-the priority override of `SNTL-12` was set, are the database times of the
+each priority override was set (Priorities), are the database times of the
 operations, shortly after `T`. The load backdates only two kinds of value,
 so that a dataset backend shows past due dates and a run history:
 
@@ -465,13 +465,13 @@ EPSS, or GHSA ingestion supplies only the data of the table.
 | `CVE-2099-0004` | NVD | `CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:L/I:N/A:N` | low | — | — |
 | `CVE-2099-0005` | NVD | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N` | none | — | — |
 | `CVE-2099-0006` | MITRE | — | unresolved | — | — (no source supplies CVSS data) |
-| `CVE-2099-0007` | NVD | `CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N` | critical | — | — |
+| `CVE-2099-0007` | NVD | `CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N` | critical | — | EPSS: score `0.45`, percentile `0.97`, assessed `D − 1` |
 | `CVE-2099-0008` | MITRE | — | unresolved | — | The first ingestion supplies the state `REJECTED`, rejected at `T − 2d` |
 | `CVE-2099-0009` | NVD | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N` | high | `CWE-22` | MITRE: title, and one `cna` affected-version scope: vendor `Example`, product `fictional-tar`, versions from `1.0` up to but excluding `1.5` affected |
-| `CVE-2099-0010` | NVD | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N` | medium | — | MITRE: title, and SSVC exploitation `poc`, automatable `no`, technical impact `partial`, version `2.0.3`, assessed `T − 3d`. GHSA: external identifier `GHSA-2c4f-7h9j-mqrv`. EPSS: score `0.02`, percentile `0.40`, assessed `D − 1` |
+| `CVE-2099-0010` | NVD | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N` | medium | — | MITRE: title, and SSVC exploitation `poc`, automatable `no`, technical impact `partial`, version `2.0.3`, assessed `T − 3d`. GHSA: external identifier `GHSA-2c4f-7h9j-mqrv`. EPSS: score `0.38`, percentile `0.96`, assessed `D − 1` |
 | `CVE-2099-0011` | NVD | `CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H` | high | `CWE-416` | — |
 | `CVE-2099-0012` | NVD | `CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H` | high | — | — |
-| `CVE-2099-0013` | NVD | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H` | high | `CWE-400` | — |
+| `CVE-2099-0013` | NVD | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H` | high | `CWE-400` | MITRE: title, and SSVC exploitation `active`, automatable `yes`, technical impact `partial`, version `2.0.3`, assessed `T − 4d` |
 | `CVE-2099-0014` | NVD | `CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H` | high | `CWE-787` | — |
 | `CVE-2099-0015` | NVD | `CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N` | medium | — | — |
 | `CVE-2099-0016` | NVD | `CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H` | medium, from its SUSE assessment | `CWE-125` | — |
@@ -636,7 +636,7 @@ named user is a system operation (Attribution).
 | `SNTL-10` | `security-scanner` adds the manual reference of `SNTL-10` (References) |
 | `SNTL-11` | `bwilson` adds `fictional-curl` (Packages, Tracks, and Maintainers). `bwilson` sets the `fles-16.0` track to `AFFECTED`. `bwilson` adds the eleven further packages of `SNTL-11`, in the order of their table |
 | `SNTL-12` | `bwilson` assigns the Ticket to `asmith`. `bwilson` sets the priority override `P1`. `asmith` adds the manual reference of `SNTL-12` (References). `asmith` adds `fictional-openssl` and `fictional-zlib`, sets the track of each to `AFFECTED`, and adds the SUSE assessment |
-| `SNTL-13` | `asmith` adds `fictional-httpd`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-13` are applied in order (IBS Requests) |
+| `SNTL-13` | `asmith` adds `fictional-httpd`, sets its track to `AFFECTED`, adds the SUSE assessment, and sets the priority override `P3`. The IBS observations of `SNTL-13` are applied in order (IBS Requests) |
 | `SNTL-14` | `asmith` adds `fictional-libxml`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-14` are applied in order. Track release detection sets the track to `FIXED`. Product release detection confirms the release of `Server 15 SP7` at `T − 2d` with the advisory `SUSE-SU-2099:0001-1` |
 | `SNTL-15` | `bwilson` adds `fictional-sudo`, sets the `fles-16.0` track to `NOT_AFFECTED` and the `SUSE:FLES-15-SP4:Update` track to `WONT_FIX`, and adds the SUSE assessment |
 | `SNTL-16` | `asmith` adds `fictional-kernel`, sets the `SUSE:FLES-15-SP5:Update` track to `AFFECTED`, and adds the SUSE assessment |
@@ -656,12 +656,6 @@ release detection is `set_track_status()` with `FIXED` and no acting user.
 After these operations, the step ages the Tickets of Aged Tickets and then
 sets the coordinated release date of `SNTL-27` through
 `set_coordinated_release_date()` (Aged Tickets).
-
-`SNTL-12` is the only Ticket with a priority override: `P1`, set by `bwilson`.
-Its override provenance names `bwilson` and the time of that operation, the
-`created_at` of its `priority_changed` event
-(`docs/features/tickets/ticket-priority.md`, Persistence and Effective
-Priority); the aging of `SNTL-12` does not change it.
 
 The resulting states follow the gates of `docs/features/tickets/tickets.md`:
 
@@ -762,6 +756,44 @@ Tickets) list:
 passed. `SNTL-27` has no access grant and its package no maintainer, so only
 the users whose effective scope is `all` see it, and it changes no maintainer
 workbench (`docs/features/identity/rbac.md`).
+
+### Priorities
+
+The priorities of the Tickets follow from their resolved severities (Tickets)
+and the exploitation evidence of their CVEs (CVEs) under
+`docs/features/tickets/ticket-priority.md`. A client can therefore show every
+exploitation level and every kind of deciding evidence in an automatic
+priority basis (`docs/features/tickets/ticket-priority.md`, Automatic Priority
+Basis), two pieces of evidence together, and an override above and one below
+the automatic priority. These Tickets have deciding evidence or a priority
+override:
+
+| Ticket | Basis severity | Exploitation | Deciding evidence | Automatic | Override | Effective |
+|---|---|---|---|---|---|---|
+| `SNTL-1` | critical | `kev` | `kev`, added `D − 2` | `P1` | — | `P1` |
+| `SNTL-7` | critical | `likely` | `epss_percentile` `0.97` | `P2` | — | `P2` |
+| `SNTL-10` | medium | `likely` | `ssvc_exploitation` `poc`, then `epss_percentile` `0.96` | `P3` | — | `P3` |
+| `SNTL-12` | high | `unknown` | — | `P3` | `P1`, set by `bwilson` | `P1` |
+| `SNTL-13` | high | `active` | `ssvc_exploitation` `active` | `P1` | `P3`, set by `asmith` | `P3` |
+
+Every other Ticket has the exploitation level `unknown`, no deciding evidence,
+and no override; its automatic and effective priority is the `unknown` cell
+of its severity: `P2` for critical (`SNTL-18`), `P3` for high, `P4` for
+medium, low, and none, and no priority for an unresolved severity (`SNTL-6`,
+`SNTL-8`, and `SNTL-22`). The EPSS percentiles of `CVE-2099-0002` and
+`CVE-2099-0018` are below the threshold of the `likely` level, and that of
+`CVE-2099-0001` is not deciding evidence, because the KEV entry decides its
+level.
+
+The override provenance of each override names the user who set it and the
+time of that operation, the `created_at` of its `priority_changed` event
+(`docs/features/tickets/ticket-priority.md`, Persistence and Effective
+Priority); the aging of `SNTL-12` and `SNTL-13` does not change it. The
+override of `SNTL-13` lies below its automatic priority: before the Ticket
+work, the MITRE ingestion of `CVE-2099-0013` raises the automatic priority of
+`SNTL-13` from `P3` to `P1` with a system `priority_changed` event, and the
+override of `asmith` returns the effective priority to `P3` with its own
+`priority_changed` event.
 
 ### Packages, Tracks, and Maintainers
 
