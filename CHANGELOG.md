@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.20.0](https://github.com/vulnwatch/sentinel/compare/v0.19.0...v0.20.0) (2026-11-07)
+
+
+### Features
+
+* cover every automatic priority basis in the example dataset ([#1240](https://github.com/vulnwatch/sentinel/issues/1240)) ([0f882cf](https://github.com/vulnwatch/sentinel/commit/0f882cf1690365b77a513c665d4926890c213a0c))
+* expose who set the priority override of a Ticket and when ([#1237](https://github.com/vulnwatch/sentinel/issues/1237)) ([8799d8b](https://github.com/vulnwatch/sentinel/commit/8799d8b608f0f770d603a8f44164ec4735cf61f0))
+
 ## [0.19.0](https://github.com/vulnwatch/sentinel/compare/v0.18.0...v0.19.0) (2026-11-07)
 
 
