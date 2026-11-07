@@ -279,8 +279,8 @@ The persisted creation, update, and audit timestamps are the database times of
 the operations, shortly after `T`. The load backdates only two kinds of value,
 so that a dataset backend shows past due dates and a run history:
 
-- the creation time of each aged Ticket, which the last operations of the
-  `Ticket work` step set to `T − a` days for its age `a` (Aged Tickets); and
+- the creation time of each aged Ticket, which the `Ticket work` step sets to
+  `T − a` days for its age `a` (Aged Tickets); and
 - the times of the earlier fetcher runs, which lie before `T` (Fetcher Runs
   and CVE Source Records).
 
@@ -617,8 +617,8 @@ coordinated release date before the creation instant
 (`docs/features/tickets/tickets.md`, Coordinated Release Date), so the Ticket
 work sets that of `SNTL-27` after its aging (Aged Tickets). `SNTL-19` is
 created non-confidential and made confidential by the Ticket work. Every
-creator is eligible to be the assignee of the Ticket
-that they create, so each is assigned and each Ticket starts in `Analysis`
+creator is eligible to be the assignee of the Ticket that they create, so each
+is assigned and each Ticket starts in `Analysis`
 (`docs/features/tickets/tickets.md`, Manual Creation). This includes `cwhite`,
 a restricted analyst who is not a bot account, for the non-confidential
 `SNTL-20` (`docs/features/identity/rbac.md`, Business Rule 10). The access
@@ -679,16 +679,17 @@ The resulting states follow the gates of `docs/features/tickets/tickets.md`:
 
 ### Aged Tickets
 
-After the other operations of the `Ticket work` step, one operation each ages
-these Tickets in this order. Each operation locks the Ticket and sets its
-`created_at` to `T − a` days; it changes no other value of the Ticket, except
-`updated_at`, which records the write, and creates no audit event
-(`docs/features/tickets/ticket-audit-log.md`, Canonical Mutation and No-Event
-Matrix). The NVD ingestion of the CVE of an aged Ticket supplies the published
-date of the table. It precedes the Ticket's creation time, except for
-`SNTL-27`, whose CVE is published at the end of its embargo, its coordinated
-release date. Like the audit events, the CVE of an aged Ticket, its CVE source
-records, and the run that ingested it keep the times of the load.
+The `Ticket work` step ages these Tickets after the operations of its table in
+Tickets and before its last operation, one operation each in this order. Each
+operation locks the Ticket and sets its `created_at` to `T − a` days; it
+changes no other value of the Ticket, except `updated_at`, which records the
+write, and creates no audit event (`docs/features/tickets/ticket-audit-log.md`,
+Canonical Mutation and No-Event Matrix). The NVD ingestion of the CVE of an
+aged Ticket supplies the published date of the table. It precedes the Ticket's
+creation time, except for `SNTL-27`, whose CVE is published at the end of its
+embargo, its coordinated release date. Like the audit events, the CVE of an
+aged Ticket, its CVE source records, and the run that ingested it keep the
+times of the load.
 
 | Ticket | Age `a` | Published date of its CVE | Current phase after the load | Past due date of that phase |
 |---|---|---|---|---|

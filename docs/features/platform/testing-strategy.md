@@ -4993,12 +4993,11 @@ and the dedicated database starts its Ticket identifiers at `SNTL-1`.
   priority override; the aged Tickets with their creation times, current
   phases, and the Tickets that each `overdue` value lists; the due dates and
   current phases of the Tickets with a coordinated release date and the
-  Tickets that the Embargo filters list; the packages,
-  tracks, Products, eligibility, release, and maintainers; the IBS requests,
-  actions, correlations, and delivery statuses; the references; the
-  maintainer workbenches of `dbrown` and `ghill`; at least one
-  `confidentiality_changed` event; and at least one event in every audit
-  trail of the Audit Trail Index.
+  Tickets that the Embargo filters list; the packages, tracks, Products,
+  eligibility, release, and maintainers; the IBS requests, actions,
+  correlations, and delivery statuses; the references; the maintainer
+  workbenches of `dbrown` and `ghill`; at least one `confidentiality_changed`
+  event; and at least one event in every audit trail of the Audit Trail Index.
 - **Isolation**: during the load, no Celery task is published, no Redis
   command is issued, no outbound HTTP request is made, and no transaction
   commits with a registered post-commit effect.
