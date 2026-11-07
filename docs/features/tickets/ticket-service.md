@@ -379,9 +379,9 @@ The result contains a collection of Ticket summary projections plus `total`,
    Likewise derive the effective priority once per Ticket as
    `COALESCE(priority_override, priority_auto)`; priority filtering (`unresolved`
    matching SQL NULL), sorting, and projection all use that value. Project
-   `priority_auto`, `priority_override` with its provenance (the complete
-   current User reference of `priority_override_by_id` and
-   `priority_override_at`), and the automatic priority basis
+   `priority_auto`, `priority_override` with its provenance
+   (`priority_override_at` and the complete current User reference of
+   `priority_override_by_id`), and the automatic priority basis
    ([ticket-priority.md](ticket-priority.md#automatic-priority-basis)) from the
    same observation; the basis uses that resolved severity and the persisted
    KEV, SSVC, and EPSS rows of the Ticket's current CVE. Derive the

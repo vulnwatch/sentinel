@@ -176,21 +176,23 @@ is the value exposed as `priority` in API responses, filtered, sorted, and
 recorded in audit events. It is derived at read time and is not stored in a
 third column. No override reason or comment is stored.
 
-The override provenance is current state of the override, not its history: it
-names the change that set the current value, so that a reader of the Ticket
-knows whom to ask about the override and whether it was set before the
-current evidence of the automatic priority, which an override masks without
-an audit event ([`refresh_priority_auto()`](#refresh_priority_auto), step 6).
-Earlier overrides of the Ticket remain only in its `priority_changed` events.
-The provenance is never derived from audit history, and neither automatic
-processing nor a user lifecycle or profile mutation, such as deactivation or
-a rename, changes it; a response shows the setter's current profile.
+The override provenance is the current state of the override, not its
+history: it names the change that set the current value, so that a reader of
+the Ticket knows whom to ask about the override and whether it was set before
+the current evidence of the automatic priority, which an override masks
+without an audit event ([`refresh_priority_auto()`](#refresh_priority_auto),
+step 6). Earlier overrides of the Ticket remain only in its `priority_changed`
+events. The provenance is never derived from audit history, and neither
+automatic processing nor a user lifecycle or profile mutation, such as
+deactivation or a rename, changes it; a response shows the setter's current
+profile.
 
-These columns are introduced without a data backfill because no live or
-production database exists: every Ticket receives its automatic value at its
-next refresh point, and the provenance has no source outside audit history.
-The migration that adds the provenance therefore fails on a database in which
-a Ticket holds an override.
+No data backfill accompanies these columns. Every Ticket receives its
+automatic value at its next refresh point. The provenance has no source
+outside audit history, so the migration that adds it fails, and leaves the
+database at its previous revision, when a Ticket holds an override. Such a
+database has its overrides cleared through `set_priority_override()` before
+the upgrade, or is recreated.
 
 ## Automatic Refresh
 
@@ -454,10 +456,12 @@ Tests MUST cover:
     CVE, `POST .../associate-cve`, and `PATCH .../severity`, and each
     Decision Table cell, reached at least once through any refresh point,
     with a basis whose cell equals `priority_automatic` in the same response.
-11. `chk_ticket_priority_override_provenance` rejecting an override without
-    either provenance column and either provenance column without an
+11. `chk_ticket_priority_override_provenance` rejecting an override missing
+    either provenance column and either provenance column set without an
     override, and the migration that adds the provenance succeeding on
-    Tickets without an override and failing on a Ticket that holds one.
+    Tickets without an override and failing on a Ticket that holds one,
+    which leaves the database at the previous revision with its rows
+    unchanged.
 
 Audit assertions follow `docs/features/platform/testing-strategy.md` (Audit
 Trail Testing).

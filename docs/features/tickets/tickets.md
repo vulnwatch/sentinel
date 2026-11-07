@@ -234,9 +234,9 @@ prioritizable). It is derived automatically from the resolved severity above
 and the exploitation evidence of the associated CVE, and an authorized acting
 user may override it. Every Ticket also exposes its automatic priority, its
 override with who set it and when, and the basis of its automatic priority.
-Priority is informational
-only: it is not a gate input and never affects status, Product eligibility, or
-assignment. The complete contract is in [ticket-priority.md](ticket-priority.md).
+Priority is informational only: it is not a gate input and never affects
+status, Product eligibility, or assignment. The complete contract is in
+[ticket-priority.md](ticket-priority.md).
 
 ## Remediation Deadlines
 
