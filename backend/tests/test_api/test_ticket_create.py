@@ -989,6 +989,8 @@ class TestCreateTicket:
             "priority": None,
             "priority_automatic": None,
             "priority_override": None,
+            "priority_override_by": None,
+            "priority_override_at": None,
             # A placeholder CVE has no severity and no evidence yet.
             "priority_automatic_basis": {
                 "severity": None,

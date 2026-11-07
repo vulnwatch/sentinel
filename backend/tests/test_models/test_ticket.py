@@ -24,12 +24,14 @@ from app.core.enums import Severity, TicketPriority, TicketStatus
 from app.models.cve import CVE
 from app.models.ticket import Ticket
 from app.models.user import User
+from tests.support.ticket_mutations import PRIORITY_OVERRIDE_SET_AT
 
 TicketFactory = Callable[..., Awaitable[Ticket]]
 CVEFactory = Callable[..., Awaitable[CVE]]
 UserFactory = Callable[..., Awaitable[User]]
 
 _NON_DUPLICATED_STATUSES = [s for s in TicketStatus if s != TicketStatus.DUPLICATED]
+_OVERRIDE_SET_AT = datetime(2026, 3, 10, 15, 30, tzinfo=UTC)
 
 
 @pytest.mark.integration
@@ -46,6 +48,8 @@ class TestTicketCreation:
         assert ticket.severity_manual is None
         assert ticket.priority_auto is None
         assert ticket.priority_override is None
+        assert ticket.priority_override_by_id is None
+        assert ticket.priority_override_at is None
         assert ticket.assignee_id is None
         assert ticket.duplicate_of_id is None
         assert ticket.coordinated_release_at is None
@@ -61,12 +65,15 @@ class TestTicketCreation:
     ) -> None:
         cve = await cve_factory()
         assignee = await user_factory()
+        setter = await user_factory()
         crd = datetime(2099, 6, 1, 12, 0, tzinfo=UTC)
         ticket = await ticket_factory(
             cve_id=cve.id,
             status=TicketStatus.ANALYZED.value,
             priority_auto=TicketPriority.P2.value,
             priority_override=TicketPriority.P1.value,
+            priority_override_by_id=setter.id,
+            priority_override_at=_OVERRIDE_SET_AT,
             assignee_id=assignee.id,
             is_confidential=True,
             coordinated_release_at=crd,
@@ -77,6 +84,8 @@ class TestTicketCreation:
         assert ticket.status == "Analyzed"
         assert ticket.priority_auto == "P2"
         assert ticket.priority_override == "P1"
+        assert ticket.priority_override_by_id == setter.id
+        assert ticket.priority_override_at == _OVERRIDE_SET_AT
         assert ticket.assignee_id == assignee.id
         assert ticket.is_confidential is True
         assert ticket.coordinated_release_at == crd
@@ -195,6 +204,7 @@ class TestTicketForeignKeys:
             ("cve_id", "ticket_cve_id_fkey"),
             ("assignee_id", "ticket_assignee_id_fkey"),
             ("duplicate_of_id", "ticket_duplicate_of_id_fkey"),
+            ("priority_override_by_id", "ticket_priority_override_by_id_fkey"),
         ],
     )
     async def test_nonexistent_reference_rejected(
@@ -203,6 +213,9 @@ class TestTicketForeignKeys:
         overrides: dict[str, object] = {column: uuid.uuid7()}
         if column == "duplicate_of_id":
             overrides["status"] = TicketStatus.DUPLICATED.value
+        if column == "priority_override_by_id":
+            overrides["priority_override"] = TicketPriority.P1.value
+            overrides["priority_override_at"] = _OVERRIDE_SET_AT
         db_session.add(Ticket(**overrides))
         with pytest.raises(IntegrityError, match=constraint):
             await db_session.flush()
@@ -243,6 +256,24 @@ class TestTicketNoDeletionPropagation:
 
         await db_session.delete(assignee)
         with pytest.raises(IntegrityError, match="ticket_assignee_id_fkey"):
+            await db_session.flush()
+
+    async def test_deleting_override_setter_raises(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        """`ON DELETE RESTRICT`: Users are never deleted, so the
+        provenance of an override never loses its setter."""
+        setter = await user_factory()
+        await ticket_factory(
+            priority_override=TicketPriority.P1.value,
+            priority_override_by_id=setter.id,
+        )
+
+        await db_session.delete(setter)
+        with pytest.raises(IntegrityError, match="ticket_priority_override_by_id_fkey"):
             await db_session.flush()
 
     async def test_deleting_duplicate_target_raises(
@@ -472,6 +503,46 @@ class TestTicketPriorityColumns:
 
 
 @pytest.mark.integration
+class TestTicketPriorityOverrideProvenance:
+    """`chk_ticket_priority_override_provenance`: the override and both
+    provenance columns are all `NULL` or all set (docs/data-model.md,
+    Ticket, CHECK constraints; ticket-priority.md, Testing Requirements,
+    item 11)."""
+
+    @pytest.mark.parametrize(
+        ("override", "with_setter", "with_time"),
+        [
+            pytest.param(True, False, False, id="override-without-provenance"),
+            pytest.param(True, True, False, id="override-without-time"),
+            pytest.param(True, False, True, id="override-without-setter"),
+            pytest.param(False, True, True, id="provenance-without-override"),
+            pytest.param(False, True, False, id="setter-without-override"),
+            pytest.param(False, False, True, id="time-without-override"),
+        ],
+    )
+    async def test_incoherent_row_violates_the_check(
+        self,
+        db_session: AsyncSession,
+        user_factory: UserFactory,
+        override: bool,
+        with_setter: bool,
+        with_time: bool,
+    ) -> None:
+        setter = await user_factory()
+        db_session.add(
+            Ticket(
+                priority_override=TicketPriority.P1.value if override else None,
+                priority_override_by_id=setter.id if with_setter else None,
+                priority_override_at=_OVERRIDE_SET_AT if with_time else None,
+            )
+        )
+        with pytest.raises(
+            IntegrityError, match="chk_ticket_priority_override_provenance"
+        ):
+            await db_session.flush()
+
+
+@pytest.mark.integration
 class TestTicketConfidentiality:
     async def test_crd_on_non_confidential_ticket_not_enforced_by_database(
         self, db_session: AsyncSession, ticket_factory: TicketFactory
@@ -695,6 +766,15 @@ class TestTicketFactory:
         target = await ticket_factory()
         duplicate = await ticket_factory(duplicate_of_id=target.id)
         assert duplicate.status == TicketStatus.DUPLICATED
+
+    async def test_priority_override_defaults_its_provenance(
+        self, db_session: AsyncSession, ticket_factory: TicketFactory
+    ) -> None:
+        ticket = await ticket_factory(priority_override=TicketPriority.P3.value)
+
+        assert ticket.priority_override_at == PRIORITY_OVERRIDE_SET_AT
+        assert ticket.priority_override_by_id is not None
+        assert await db_session.get(User, ticket.priority_override_by_id) is not None
 
     async def test_duplicated_status_override_creates_target(
         self, db_session: AsyncSession, ticket_factory: TicketFactory

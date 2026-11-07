@@ -57,8 +57,10 @@ from tests.support.ticket_api import (
     event_count,
     locator,
     ticket_row,
+    user_reference,
     validation_error,
 )
+from tests.support.ticket_mutations import priority_event_times
 
 Factory = Callable[..., Awaitable[Any]]
 
@@ -356,9 +358,11 @@ class TestSetPriority:
             _url(target), json={"priority": "p2"}
         )
         after_set = await authenticated_client.get(f"/api/v1/tickets/{locator(target)}")
+        listed = await authenticated_client.get("/api/v1/tickets")
         clear_response = await authenticated_client.patch(
             _url(target), json={"priority": None}
         )
+        listed_after_clear = await authenticated_client.get("/api/v1/tickets")
 
         assert set_response.status_code == clear_response.status_code == 200
         assert set(set_response.json()) == {"data"}
@@ -374,18 +378,40 @@ class TestSetPriority:
             "p3",
             "p2",
         )
+        # The provenance names the caller and the time of its event, in the
+        # mutation response, the detail, and the list alike.
+        (set_at, _cleared_at) = await priority_event_times(db_session, target.id)
+        assert data["priority_override_by"] == user_reference(va_user)
+        assert datetime.fromisoformat(data["priority_override_at"]) == set_at
+        (summary,) = listed.json()["data"]
+        assert (summary["priority_override_by"], summary["priority_override_at"]) == (
+            data["priority_override_by"],
+            data["priority_override_at"],
+        )
         cleared = clear_response.json()["data"]
         assert (
             cleared["priority"],
             cleared["priority_automatic"],
             cleared["priority_override"],
-        ) == ("p3", "p3", None)
+            cleared["priority_override_by"],
+            cleared["priority_override_at"],
+        ) == ("p3", "p3", None, None, None)
+        (cleared_summary,) = listed_after_clear.json()["data"]
+        assert (
+            cleared_summary["priority_override_by"],
+            cleared_summary["priority_override_at"],
+        ) == (None, None)
         # The override never changes what the automatic priority is based on.
         basis = {"severity": "high", "exploitation": "unknown", "evidence": []}
         assert data["priority_automatic_basis"] == basis
         assert cleared["priority_automatic_basis"] == basis
         state = await ticket_row(db_session, target.id)
-        assert (state["priority_auto"], state["priority_override"]) == ("P3", None)
+        assert (
+            state["priority_auto"],
+            state["priority_override"],
+            state["priority_override_by_id"],
+            state["priority_override_at"],
+        ) == ("P3", None, None, None)
         assert await event_count(db_session, target.id) == 2
 
     async def test_same_value_returns_the_unchanged_detail_without_event(

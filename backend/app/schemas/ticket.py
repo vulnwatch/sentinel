@@ -109,6 +109,16 @@ _PRIORITY_AUTOMATIC_DESCRIPTION = (
 _PRIORITY_OVERRIDE_DESCRIPTION = (
     "Manual priority override: `p1`-`p4`, or `null` when no override is set."
 )
+_PRIORITY_OVERRIDE_BY_DESCRIPTION = (
+    "Current profile of the user who set the current priority override, "
+    "including `active = false` when deactivated; `null` when no override is "
+    "set."
+)
+_PRIORITY_OVERRIDE_AT_DESCRIPTION = (
+    "When the current priority override was set (UTC): the time of the change "
+    "that set its current value, equal to the `created_at` of that change's "
+    "`priority_changed` audit event; `null` when no override is set."
+)
 _PRIORITY_BASIS_DESCRIPTION = "What `priority_automatic` is based on."
 _ASSIGNEE_DESCRIPTION = "Current assignee, or `null` if unassigned."
 _DUPLICATE_OF_DESCRIPTION = (
@@ -320,6 +330,12 @@ class TicketSummary(BaseModel):
     priority_override: TicketPriorityValue | None = Field(
         description=_PRIORITY_OVERRIDE_DESCRIPTION
     )
+    priority_override_by: UserReference | None = Field(
+        description=_PRIORITY_OVERRIDE_BY_DESCRIPTION
+    )
+    priority_override_at: datetime | None = Field(
+        description=_PRIORITY_OVERRIDE_AT_DESCRIPTION
+    )
     priority_automatic_basis: PriorityBasis = Field(
         description=_PRIORITY_BASIS_DESCRIPTION
     )
@@ -418,6 +434,12 @@ class TicketDetail(BaseModel):
     )
     priority_override: TicketPriorityValue | None = Field(
         description=_PRIORITY_OVERRIDE_DESCRIPTION
+    )
+    priority_override_by: UserReference | None = Field(
+        description=_PRIORITY_OVERRIDE_BY_DESCRIPTION
+    )
+    priority_override_at: datetime | None = Field(
+        description=_PRIORITY_OVERRIDE_AT_DESCRIPTION
     )
     priority_automatic_basis: PriorityBasis = Field(
         description=_PRIORITY_BASIS_DESCRIPTION

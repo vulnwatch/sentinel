@@ -108,6 +108,7 @@ Factory = Callable[..., Awaitable[Any]]
 ALL_SCOPE = TicketCaller.authenticated(uuid.uuid4(), Scope.ALL)
 UPDATED_AT = datetime(2026, 3, 10, 18, 5, tzinfo=UTC)
 CRD = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
+OVERRIDE_SET_AT = datetime(2026, 3, 10, 17, 40, tzinfo=UTC)
 EXCLUDED_AT = datetime(2026, 3, 11, 9, 0, tzinfo=UTC)
 LATER_PHASE_INDEX = {
     MilestonePhase.SUBMISSION: 1,
@@ -202,6 +203,11 @@ class TestSummaryProjection:
         assignee: User = await user_factory(
             username="fictional.analyst", full_name=None, active=False, bot=True
         )
+        # The override setter differs from the assignee in every projected
+        # field, so neither user reference can be filled from the other.
+        setter: User = await user_factory(
+            username="fictional.lead", full_name="Fictional Lead"
+        )
         target: Ticket = await ticket_factory()
         cve: CVE = await cve_factory(
             cve_id="CVE-2099-40001",
@@ -221,6 +227,8 @@ class TestSummaryProjection:
             coordinated_release_at=CRD,
             priority_auto=TicketPriority.P3.value,
             priority_override=TicketPriority.P1.value,
+            priority_override_by_id=setter.id,
+            priority_override_at=OVERRIDE_SET_AT,
             created_at=CREATED_AT,
             updated_at=UPDATED_AT,
         )
@@ -238,6 +246,14 @@ class TestSummaryProjection:
                 priority=TicketPriority.P1,
                 priority_automatic=TicketPriority.P3,
                 priority_override=TicketPriority.P1,
+                priority_override_by=TicketUserProjection(
+                    id=setter.id,
+                    username="fictional.lead",
+                    full_name="Fictional Lead",
+                    active=True,
+                    bot=False,
+                ),
+                priority_override_at=OVERRIDE_SET_AT,
                 priority_basis=PriorityBasisProjection(
                     severity=Severity.MEDIUM,
                     exploitation=ExploitationLevel.LIKELY,

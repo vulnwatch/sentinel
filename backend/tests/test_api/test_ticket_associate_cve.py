@@ -1556,6 +1556,8 @@ class TestAssociateCve:
             "priority": "p1",
             "priority_automatic": "p1",
             "priority_override": None,
+            "priority_override_by": None,
+            "priority_override_at": None,
             # The post-association basis: the CVE's severity and its KEV
             # entry replace the manual Medium with no evidence (P4).
             "priority_automatic_basis": {
@@ -1701,6 +1703,8 @@ class TestAssociateCve:
             "priority": None,
             "priority_automatic": None,
             "priority_override": None,
+            "priority_override_by": None,
+            "priority_override_at": None,
             "priority_automatic_basis": {
                 "severity": None,
                 "exploitation": "unknown",

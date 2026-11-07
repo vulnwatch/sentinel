@@ -379,7 +379,9 @@ The result contains a collection of Ticket summary projections plus `total`,
    Likewise derive the effective priority once per Ticket as
    `COALESCE(priority_override, priority_auto)`; priority filtering (`unresolved`
    matching SQL NULL), sorting, and projection all use that value. Project
-   `priority_auto`, `priority_override`, and the automatic priority basis
+   `priority_auto`, `priority_override` with its provenance
+   (`priority_override_at` and the complete current User reference of
+   `priority_override_by_id`), and the automatic priority basis
    ([ticket-priority.md](ticket-priority.md#automatic-priority-basis)) from the
    same observation; the basis uses that resolved severity and the persisted
    KEV, SSVC, and EPSS rows of the Ticket's current CVE. Derive the
@@ -444,8 +446,10 @@ The result is the semantic projection represented by `TicketDetail` in
    through the canonical visibility predicate. Missing, malformed, UUID, and
    inaccessible locators raise `TicketNotFoundError`.
 2. Projects the root fields (including `coordinated_release_at`), resolved
-   severity, effective, automatic, and override priority, the automatic
-   priority basis
+   severity, effective, automatic, and override priority, the override
+   provenance with the complete current reference of the User who set it
+   ([ticket-priority.md](ticket-priority.md#persistence-and-effective-priority)),
+   the automatic priority basis
    ([ticket-priority.md](ticket-priority.md#automatic-priority-basis)) from that
    resolved severity and the CVE evidence below, the five Ticket-level
    due dates from
@@ -998,7 +1002,8 @@ post-mutation Ticket under [`get_ticket_detail()`](#get_ticket_detail).
 
 ### set_priority_override
 
-Sets, changes, or clears `Ticket.priority_override`. The complete Category A
+Sets, changes, or clears `Ticket.priority_override` and its provenance
+(`priority_override_by_id`, `priority_override_at`). The complete Category A
 contract is owned by
 [ticket-priority.md](ticket-priority.md#set_priority_override); this is a
 cross-reference overview.
@@ -1007,9 +1012,11 @@ cross-reference overview.
 - **Guards**: locked-current accessibility (`TicketNotFoundError`), then
   `ensure_ticket_operable()` (`TicketNotMutableError`); an unchanged override is
   a no-op before assignment.
-- **Effects**: `auto_assign_actor()`, the override write, one acting-user
-  `priority_changed` with `override_action` `set`, `changed`, or `cleared`, then
-  exactly one `reconcile_ticket_status()`. `priority_auto` is not modified.
+- **Effects**: `auto_assign_actor()`, the override write with its provenance
+  (the acting user and the transaction's `now()`, or both `NULL` when
+  cleared), one acting-user `priority_changed` with `override_action` `set`,
+  `changed`, or `cleared`, then exactly one `reconcile_ticket_status()`.
+  `priority_auto` is not modified.
 - **Audit order**: optional `assignment` and system `New → Analysis`,
   `priority_changed`, then at most one final gate-derived `status_change`.
 

@@ -55,8 +55,10 @@ class Ticket(Base):
     B columns validated by the writing service; `NULL` in each means "not
     set" and is distinct from every label. The effective priority
     `COALESCE(priority_override, priority_auto)` is derived at read time and
-    not stored. Tickets are never deleted (`docs/data-model.md`, Ticket,
-    Deletion policy).
+    not stored. `priority_override_by_id` and `priority_override_at` are the
+    override provenance, set exactly when `priority_override` is
+    (`chk_ticket_priority_override_provenance`). Tickets are never deleted
+    (`docs/data-model.md`, Ticket, Deletion policy).
     """
 
     __tablename__ = "ticket"
@@ -83,6 +85,17 @@ class Ticket(Base):
         CheckConstraint(
             "coordinated_release_at IS NULL OR coordinated_release_at >= created_at",
             name="chk_ticket_coordinated_release_not_before_creation",
+        ),
+        # An override always has its provenance, and no provenance exists
+        # without one (docs/features/tickets/ticket-priority.md, Persistence
+        # and Effective Priority).
+        CheckConstraint(
+            "(priority_override IS NULL AND priority_override_by_id IS NULL "
+            "AND priority_override_at IS NULL) "
+            "OR (priority_override IS NOT NULL "
+            "AND priority_override_by_id IS NOT NULL "
+            "AND priority_override_at IS NOT NULL)",
+            name="chk_ticket_priority_override_provenance",
         ),
         Index(
             "ix_ticket_duplicate_of_id",
@@ -115,6 +128,14 @@ class Ticket(Base):
     severity_manual: Mapped[str | None] = mapped_column(String(20), nullable=True)
     priority_auto: Mapped[str | None] = mapped_column(String(10), nullable=True)
     priority_override: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # Not indexed: Users are never deleted and no documented query selects
+    # Tickets by it (docs/data-model.md, Ticket).
+    priority_override_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="RESTRICT"), nullable=True
+    )
+    priority_override_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     assignee_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("user.id"), nullable=True
     )

@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -100,6 +100,9 @@ Eligibility Sanitization)."""
 
 ONE_RECONCILIATION = [{"evaluation_date": EVAL}]
 """One final `reconcile_ticket_status()` call with the unit's date."""
+
+OVERRIDE_SET_AT = datetime(2026, 3, 1, 9, 0, tzinfo=UTC)
+"""The provenance time of a Ticket written with a priority override."""
 
 CHAIN_EVENT_TYPES = {
     "severity_changed",
@@ -163,7 +166,12 @@ async def _ticket(
         target = await h.world.ticket(cve_id=None)
         values.update(status=status.value, duplicate_of_id=target.id)
     if priority_override is not None:
-        values["priority_override"] = priority_override
+        setter = await h.world.user(role=Role.VULNERABILITY_ANALYST)
+        values.update(
+            priority_override=priority_override,
+            priority_override_by_id=setter.id,
+            priority_override_at=OVERRIDE_SET_AT,
+        )
     if values:
         await _write(h, update(Ticket).where(Ticket.id == ticket.id).values(**values))
     return ticket

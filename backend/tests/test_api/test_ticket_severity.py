@@ -657,6 +657,8 @@ class TestSetSeverity:
             "priority": "p3",
             "priority_automatic": "p3",
             "priority_override": None,
+            "priority_override_by": None,
+            "priority_override_at": None,
             # The post-mutation basis: the new manual severity selects the
             # column; a Ticket without a CVE has no evidence.
             "priority_automatic_basis": {

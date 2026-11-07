@@ -10,7 +10,10 @@ Consumers:
 - `tests/test_services/test_recalculate_cvss_chain.py` and
   `tests/test_services/test_recalculate_cvss_chain_atomicity.py`
   (`recalculate_cvss_chain()`, with the chain-specific helpers of
-  `tests/support/cvss_chain.py`).
+  `tests/support/cvss_chain.py`);
+- `tests/test_services/test_set_priority_override.py` and
+  `tests/test_services/test_set_priority_override_atomicity.py`
+  (`set_priority_override()` and its override provenance).
 
 Consumers import these plain helpers directly. The shared `va_user` and
 `tree` fixtures live in the separate plugin module
@@ -50,6 +53,10 @@ AFTER_EVAL = EVAL + timedelta(days=365)
 """A General Support end after `EVAL`: the Product is in support on `EVAL`."""
 
 RELEASED_AT = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+
+PRIORITY_OVERRIDE_SET_AT = datetime(2001, 2, 3, 4, 5, 6, tzinfo=UTC)
+"""Default `priority_override_at` of a `ticket_factory` Ticket created with
+a priority override (`tests/conftest.py`)."""
 
 TicketFactory = Callable[..., Awaitable[Ticket]]
 UserFactory = Callable[..., Awaitable[User]]
@@ -133,6 +140,40 @@ async def ticket_events_by_id(db: AsyncSession, ticket_id: uuid.UUID) -> list[Ev
         EventRow(r.event_type, r.user_id, r.old_value, r.new_value, r.comment, r.detail)
         for r in rows
     ]
+
+
+async def override_provenance(
+    db: AsyncSession, ticket_id: uuid.UUID
+) -> tuple[uuid.UUID | None, datetime | None]:
+    """The persisted `(priority_override_by_id, priority_override_at)` of a
+    Ticket (ticket-priority.md, Persistence and Effective Priority)."""
+    row = (
+        await db.execute(
+            select(Ticket.priority_override_by_id, Ticket.priority_override_at).where(
+                Ticket.id == ticket_id
+            )
+        )
+    ).one()
+    return row.priority_override_by_id, row.priority_override_at
+
+
+async def priority_event_times(
+    db: AsyncSession, ticket_id: uuid.UUID
+) -> list[datetime]:
+    """The `created_at` of the Ticket's `priority_changed` events in
+    insertion (UUIDv7 `id`) order."""
+    return list(
+        (
+            await db.execute(
+                select(TicketAuditEvent.created_at)
+                .where(
+                    TicketAuditEvent.ticket_id == ticket_id,
+                    TicketAuditEvent.event_type == "priority_changed",
+                )
+                .order_by(TicketAuditEvent.id)
+            )
+        ).scalars()
+    )
 
 
 def status_event(old: str, new: str) -> EventRow:
