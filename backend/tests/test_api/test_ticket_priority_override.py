@@ -33,14 +33,13 @@ from unittest.mock import AsyncMock
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
-from sqlalchemy import select, update
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1 import tickets as route
-from app.core.enums import Role, TicketAuditEventType, TicketPriority, TicketStatus
+from app.core.enums import Role, TicketPriority, TicketStatus
 from app.main import app
 from app.models.ticket import Ticket
-from app.models.ticket_audit_event import TicketAuditEvent
 from app.models.user import User
 from app.services import ticket_mutations, ticket_service, user_service
 from app.services.ticket_service import TicketDetailProjection
@@ -61,6 +60,7 @@ from tests.support.ticket_api import (
     user_reference,
     validation_error,
 )
+from tests.support.ticket_mutations import priority_event_times
 
 Factory = Callable[..., Awaitable[Any]]
 
@@ -71,25 +71,6 @@ _LITERAL_MESSAGE = "Input should be 'p1', 'p2', 'p3' or 'p4'"
 def _url(target: Ticket | str) -> str:
     return _PATH.format(
         ticket_id=target if isinstance(target, str) else locator(target)
-    )
-
-
-async def priority_events(
-    db: AsyncSession, ticket_id: uuid.UUID
-) -> list[TicketAuditEvent]:
-    """The Ticket's `priority_changed` events in insertion order."""
-    return list(
-        (
-            await db.scalars(
-                select(TicketAuditEvent)
-                .where(
-                    TicketAuditEvent.ticket_id == ticket_id,
-                    TicketAuditEvent.event_type
-                    == TicketAuditEventType.PRIORITY_CHANGED.value,
-                )
-                .order_by(TicketAuditEvent.id)
-            )
-        ).all()
     )
 
 
@@ -399,11 +380,9 @@ class TestSetPriority:
         )
         # The provenance names the caller and the time of its event, in the
         # mutation response, the detail, and the list alike.
-        (set_event, _clear_event) = await priority_events(db_session, target.id)
+        (set_at, _cleared_at) = await priority_event_times(db_session, target.id)
         assert data["priority_override_by"] == user_reference(va_user)
-        assert datetime.fromisoformat(data["priority_override_at"]) == (
-            set_event.created_at
-        )
+        assert datetime.fromisoformat(data["priority_override_at"]) == set_at
         (summary,) = listed.json()["data"]
         assert (summary["priority_override_by"], summary["priority_override_at"]) == (
             data["priority_override_by"],

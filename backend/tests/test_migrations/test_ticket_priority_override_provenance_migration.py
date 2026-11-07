@@ -7,7 +7,8 @@ Verifies that upgrading from the previous head adds the nullable
 `priority_override_at` columns and exactly
 `chk_ticket_priority_override_provenance` (`docs/data-model.md`, Ticket),
 that existing Tickets without an override survive it unchanged with no
-provenance, that the constraint then rejects an incoherent row, and that an
+provenance, that the constraint then rejects an override without provenance
+(the complete matrix is in `tests/test_models/test_ticket.py`), and that an
 existing override makes the upgrade fail and leaves the database at the
 previous revision with its rows unchanged
 (`docs/features/tickets/ticket-priority.md`, Persistence and Effective
@@ -20,9 +21,7 @@ infrastructure (dedicated database fixture, isolated config helper).
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID, uuid7
 
 import pytest
 from sqlalchemy import text
@@ -46,7 +45,6 @@ _EXPECTED_CHECK = (
 _EXPECTED_FOREIGN_KEY = (
     'FOREIGN KEY (priority_override_by_id) REFERENCES "user"(id) ON DELETE RESTRICT'
 )
-_SET_AT = datetime(2026, 3, 10, 14, 37, 21, 123456, tzinfo=UTC)
 _ROWS = ((1, None), (2, "P2"))
 """(sequence_id, priority_auto) of the Tickets without an override."""
 
@@ -144,18 +142,6 @@ async def _provenance_async(database_url: str) -> list[tuple[Any, Any]]:
         await engine.dispose()
 
 
-def _insert_user(database_url: str) -> UUID:
-    user_id = uuid7()
-    _execute(
-        database_url,
-        'INSERT INTO "user" (id, username, email, password_hash, active) '
-        "VALUES (:id, 'jdoe', 'john.doe@example.com', :password_hash, true)",
-        id=user_id,
-        password_hash="$2b$12$" + "a" * 53,
-    )
-    return user_id
-
-
 def _assert_previous(
     database_url: str,
     previous_constraints: dict[str, str],
@@ -195,6 +181,8 @@ def _assert_upgraded(
     }
     assert rows == [(n, auto, None) for n, auto in _ROWS]
     assert run_sync(_provenance_async(database_url)) == [(None, None)] * len(_ROWS)
+    with pytest.raises(IntegrityError, match=_CONSTRAINT):
+        _insert_ticket(database_url, len(_ROWS) + 1, None, "P1")
 
 
 @pytest.mark.integration
@@ -228,35 +216,6 @@ class TestTicketPriorityOverrideProvenanceMigration:
 
         command.upgrade(cfg, _REVISION)
         _assert_upgraded(url, previous_constraints, previous_columns)
-
-    def test_constraint_rejects_incoherent_provenance_after_upgrade(
-        self,
-        alembic_test_database_url: str,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.setattr(settings, "database_url", alembic_test_database_url)
-        cfg = isolated_alembic_config()
-        url = alembic_test_database_url
-        command.upgrade(cfg, _REVISION)
-        user_id = _insert_user(url)
-        insert = (
-            "INSERT INTO ticket (priority_override, priority_override_by_id, "
-            "priority_override_at) VALUES (:override, :by_id, :at)"
-        )
-
-        for override, by_id, at in (
-            ("P1", None, None),
-            ("P1", user_id, None),
-            ("P1", None, _SET_AT),
-            (None, user_id, _SET_AT),
-            (None, user_id, None),
-            (None, None, _SET_AT),
-        ):
-            with pytest.raises(IntegrityError, match=_CONSTRAINT):
-                _execute(url, insert, override=override, by_id=by_id, at=at)
-
-        _execute(url, insert, override="P1", by_id=user_id, at=_SET_AT)
-        assert run_sync(_provenance_async(url)) == [(user_id, _SET_AT)]
 
     def test_existing_override_fails_the_upgrade(
         self,

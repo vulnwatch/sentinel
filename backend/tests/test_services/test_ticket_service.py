@@ -1080,8 +1080,9 @@ class TestMutationAssembly:
     ) -> None:
         ticket: Ticket = await ticket_factory()
         assignee = await user_factory()
+        setter = await user_factory()
         ticket.priority_override = TicketPriority.P1.value
-        ticket.priority_override_by_id = assignee.id
+        ticket.priority_override_by_id = setter.id
         ticket.priority_override_at = UPDATED_AT
         ticket.assignee_id = assignee.id
         await db_session.flush()
@@ -1100,7 +1101,7 @@ class TestMutationAssembly:
 
         assert detail.priority is TicketPriority.P1
         assert detail.priority_override_by is not None
-        assert detail.priority_override_by.id == assignee.id
+        assert detail.priority_override_by.id == setter.id
         assert detail.priority_override_at == UPDATED_AT
         assert detail.assignee is not None
         assert detail.assignee.id == assignee.id

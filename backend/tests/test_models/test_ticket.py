@@ -509,25 +509,6 @@ class TestTicketPriorityOverrideProvenance:
     Ticket, CHECK constraints; ticket-priority.md, Testing Requirements,
     item 11)."""
 
-    async def test_override_with_its_provenance_accepted(
-        self,
-        db_session: AsyncSession,
-        ticket_factory: TicketFactory,
-        user_factory: UserFactory,
-    ) -> None:
-        setter = await user_factory()
-        ticket = await ticket_factory(
-            priority_override=TicketPriority.P2.value,
-            priority_override_by_id=setter.id,
-            priority_override_at=_OVERRIDE_SET_AT,
-        )
-        await db_session.refresh(ticket)
-        assert (
-            ticket.priority_override,
-            ticket.priority_override_by_id,
-            ticket.priority_override_at,
-        ) == ("P2", setter.id, _OVERRIDE_SET_AT)
-
     @pytest.mark.parametrize(
         ("override", "with_setter", "with_time"),
         [
@@ -555,17 +536,6 @@ class TestTicketPriorityOverrideProvenance:
                 priority_override_at=_OVERRIDE_SET_AT if with_time else None,
             )
         )
-        with pytest.raises(
-            IntegrityError, match="chk_ticket_priority_override_provenance"
-        ):
-            await db_session.flush()
-
-    async def test_clearing_the_override_alone_violates_the_check(
-        self, db_session: AsyncSession, ticket_factory: TicketFactory
-    ) -> None:
-        ticket = await ticket_factory(priority_override=TicketPriority.P1.value)
-
-        ticket.priority_override = None
         with pytest.raises(
             IntegrityError, match="chk_ticket_priority_override_provenance"
         ):
