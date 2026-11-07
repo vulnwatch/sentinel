@@ -27,12 +27,14 @@ only what needs independent sessions:
   touches no grant, and opposing effective toggles each create one event
   with their true locked old value in commit order;
 - CRD/declassification in both serialization orders: declassification
-  first rejects the waiting CRD change with `TicketNotConfidentialError`
-  (also for a request that would otherwise be a no-op or a clear); a CRD
-  change first is retained by the waiting declassification;
+  first lets the waiter change, clear, or leave the retained CRD, and
+  rejects with `TicketNotConfidentialError` a waiter on a Ticket without a
+  CRD (also for `null`); a CRD change first is retained by the waiting
+  declassification;
 - CRD/CRD: two changes create one event each in serialization order, the
   second with the first's new value as its old value; a waiter requesting
-  the winner's instant is a no-op (audit TR 23);
+  the winner's instant is a no-op (audit TR 23); on a non-confidential
+  Ticket, a waiter behind a winning clear is rejected, also for a clear;
 - locked-current accessibility races (ATR 15) for both operations. The
   denial must precede no-op classification and the confidentiality guard:
   the no-op requests would otherwise succeed without effect, and for the
@@ -119,6 +121,9 @@ Committed = tuple[tuple[bool, datetime | None], list[uuid.UUID], list[EventRow]]
 """The committed `(is_confidential, coordinated_release_at)`, grant user
 IDs in UUID order, and audit events of a Ticket."""
 
+CREATED_AT = datetime(2026, 9, 1, 8, 0, tzinfo=UTC)
+"""Creation of every Ticket: before each CRD (Ticket CHECK
+`chk_ticket_coordinated_release_not_before_creation`)."""
 CRD_0 = datetime(2026, 10, 1, 8, 0, tzinfo=UTC)
 CRD_1 = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 CRD_1_PLUS_2 = datetime(2026, 10, 15, 14, 0, tzinfo=timezone(timedelta(hours=2)))
@@ -163,6 +168,7 @@ async def _ticket(
         status=TicketStatus.ANALYSIS.value,
         is_confidential=confidential,
         coordinated_release_at=crd,
+        created_at=CREATED_AT,
     )
     world.session.add(ticket)
     await world.session.flush()
@@ -392,27 +398,63 @@ class TestConfidentialityRaces:
 
 @pytest.mark.integration
 class TestCoordinatedReleaseAndDeclassificationRaces:
-    """A confidential Ticket with the CRD `CRD_0` and two grants."""
+    """A confidential Ticket with two grants, with or without a CRD."""
+
+    @pytest.mark.parametrize(
+        ("requested", "events"),
+        [
+            pytest.param(CRD_1, [(ISO_0, ISO_1)], id="change"),
+            pytest.param(None, [(ISO_0, None)], id="clear"),
+            pytest.param(CRD_0, [], id="no-op"),
+        ],
+    )
+    async def test_declassification_first_lets_the_waiter_edit_the_retained_crd(
+        self,
+        world: CommittedWorld,
+        probe: AsyncSession,
+        requested: datetime | None,
+        events: list[tuple[str | None, str | None]],
+    ) -> None:
+        """The declassified Ticket retains `CRD_0`, so the waiter observes a
+        stored CRD and changes, clears, or leaves it."""
+        declassifier = await world.user(role=Role.VULNERABILITY_ANALYST)
+        crd_actor = await world.user(role=Role.VULNERABILITY_ANALYST)
+        ticket = await _ticket(world, confidential=True, crd=CRD_0)
+        await _grants(world, ticket, 2)
+
+        waiter, _recorder, task = await _serialize(
+            world,
+            ticket,
+            _confidentiality(ticket, False, declassifier),
+            _crd(ticket, requested, crd_actor),
+        )
+
+        assert task.result().coordinated_release_at == requested
+        await waiter.commit()
+        assert await _committed(probe, ticket) == (
+            (False, requested),
+            [],
+            [
+                _conf_event(declassifier, "true", "false"),
+                *(_crd_event(crd_actor, old, new) for old, new in events),
+            ],
+        )
 
     @pytest.mark.parametrize(
         "requested",
-        [
-            pytest.param(CRD_1, id="change"),
-            pytest.param(None, id="clear"),
-            pytest.param(CRD_0, id="otherwise-no-op"),
-        ],
+        [pytest.param(CRD_1, id="set"), pytest.param(None, id="otherwise-no-op")],
     )
-    async def test_declassification_first_rejects_the_waiting_crd_change(
+    async def test_declassification_first_rejects_a_waiter_without_stored_crd(
         self,
         world: CommittedWorld,
         probe: AsyncSession,
         requested: datetime | None,
     ) -> None:
-        """`otherwise-no-op`: the confidentiality guard precedes the no-op
-        classification of an equal instant."""
+        """Without a CRD the declassified Ticket cannot receive one: the
+        confidentiality guard precedes the no-op classification of `null`."""
         declassifier = await world.user(role=Role.VULNERABILITY_ANALYST)
         crd_actor = await world.user(role=Role.VULNERABILITY_ANALYST)
-        ticket = await _ticket(world, confidential=True, crd=CRD_0)
+        ticket = await _ticket(world, confidential=True)
         await _grants(world, ticket, 2)
 
         waiter, recorder, task = await _serialize(
@@ -427,7 +469,7 @@ class TestCoordinatedReleaseAndDeclassificationRaces:
         assert recorder.writes() == []
         await waiter.rollback()
         assert await _committed(probe, ticket) == (
-            (False, CRD_0),
+            (False, None),
             [],
             [_conf_event(declassifier, "true", "false")],
         )
@@ -542,6 +584,40 @@ class TestCoordinatedReleaseRaces:
             (True, CRD_1),
             [],
             [_crd_event(first_actor, ISO_0, ISO_1)],
+        )
+
+    @pytest.mark.parametrize(
+        "requested",
+        [pytest.param(None, id="clear"), pytest.param(CRD_1, id="change")],
+    )
+    async def test_waiter_behind_a_clear_of_a_retained_crd_is_rejected(
+        self,
+        world: CommittedWorld,
+        probe: AsyncSession,
+        requested: datetime | None,
+    ) -> None:
+        """On a non-confidential Ticket that retains `CRD_0`, a winning
+        clear leaves no CRD: the waiter is rejected by the confidentiality
+        guard, also when it requested a clear itself."""
+        first_actor = await world.user(role=Role.VULNERABILITY_ANALYST)
+        second_actor = await world.user(role=Role.VULNERABILITY_ANALYST)
+        ticket = await _ticket(world, confidential=False, crd=CRD_0)
+
+        waiter, recorder, task = await _serialize(
+            world,
+            ticket,
+            _crd(ticket, None, first_actor),
+            _crd(ticket, requested, second_actor),
+        )
+
+        with pytest.raises(TicketNotConfidentialError):
+            task.result()
+        assert recorder.writes() == []
+        await waiter.rollback()
+        assert await _committed(probe, ticket) == (
+            (False, None),
+            [],
+            [_crd_event(first_actor, ISO_0, None)],
         )
 
 

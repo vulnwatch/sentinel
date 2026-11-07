@@ -2208,31 +2208,75 @@ class TestSorting:
             *reversed(nulls),
         ]
 
+    @pytest.mark.parametrize(
+        ("sort_by", "ascending_names"),
+        [
+            (TicketSortField.TRIAGE_DUE_AT, ["low_crd10", "high_sla", "high_crd60"]),
+            (TicketSortField.RELEASE_DUE_AT, ["low_crd10", "high_sla", "high_crd60"]),
+            (TicketSortField.CURRENT_DUE_AT, ["low_crd10", "high_sla", "high_crd60"]),
+        ],
+    )
+    async def test_due_date_sorts_follow_the_coordinated_release_window(
+        self,
+        db_session: AsyncSession,
+        clock: Clock,
+        ticket_factory: Factory,
+        sort_by: TicketSortField,
+        ascending_names: list[str],
+    ) -> None:
+        """Requirement 17: a `Low` Ticket with a CRD 10 days after creation
+        (+1 and +10 days) sorts before a `High` Ticket on its 30-day SLA (+3
+        and +30), which sorts before a `High` Ticket whose CRD, retained on
+        a non-confidential Ticket, is 60 days after creation (+6 and +60).
+        The Tickets are `New`, so the current due date is the triage one."""
+        clock.instant = CREATED_AT
+        tickets = {
+            name: await ticket_factory(
+                severity_manual=severity.value,
+                created_at=CREATED_AT,
+                is_confidential=confidential,
+                coordinated_release_at=crd,
+            )
+            for name, severity, confidential, crd in (
+                ("high_crd60", Severity.HIGH, False, CREATED_AT + timedelta(days=60)),
+                ("high_sla", Severity.HIGH, False, None),
+                ("low_crd10", Severity.LOW, True, CREATED_AT + timedelta(days=10)),
+            )
+        }
+        ascending = [_sntl(tickets[name]) for name in ascending_names]
+
+        assert await _order(db_session, sort_by, SortOrder.ASC) == ascending
+        assert await _order(db_session, sort_by, SortOrder.DESC) == ascending[::-1]
+
     async def test_coordinated_release_at_sorts_the_stored_date_with_null_last(
         self, db_session: AsyncSession, clock: Clock, ticket_factory: Factory
     ) -> None:
         """tickets.md (List Tickets > Embargo filters): the stored CRD, one
         retained on a non-confidential Ticket included, in both directions;
         Tickets without a CRD sort last in both, and equal keys are
-        tie-broken by `Ticket.id` in the requested direction. The creation
-        order differs from the CRD order."""
+        tie-broken by `Ticket.id` in the requested direction. The Tickets
+        share one creation instant and the insertion order differs from the
+        CRD order."""
         clock.instant = EMBARGO_INSTANT
         coming_crd = EMBARGO_INSTANT + timedelta(days=2)
+        # Equal creation instants, before every CRD: no `created_at` order.
+        created = {"created_at": EMBARGO_INSTANT - timedelta(days=30)}
         coming = await ticket_factory(
-            is_confidential=True, coordinated_release_at=coming_crd
+            is_confidential=True, coordinated_release_at=coming_crd, **created
         )
-        without_crd = await ticket_factory(is_confidential=True)
+        without_crd = await ticket_factory(is_confidential=True, **created)
         retained = await ticket_factory(
-            coordinated_release_at=EMBARGO_INSTANT - timedelta(days=5)
+            coordinated_release_at=EMBARGO_INSTANT - timedelta(days=5), **created
         )
         passed = await ticket_factory(
             is_confidential=True,
             coordinated_release_at=EMBARGO_INSTANT - timedelta(days=1),
+            **created,
         )
         twin = await ticket_factory(
-            is_confidential=True, coordinated_release_at=coming_crd
+            is_confidential=True, coordinated_release_at=coming_crd, **created
         )
-        public = await ticket_factory()
+        public = await ticket_factory(**created)
         ascending = [
             _sntl(t)
             for t in (retained, passed, *sorted([coming, twin], key=lambda t: t.id))

@@ -62,6 +62,11 @@ class TestParseCoordinatedReleaseAt:
                 datetime(2020, 1, 2, 3, 4, 5, tzinfo=UTC),
                 id="past",
             ),
+            pytest.param(
+                "9999-12-31T23:59:59.999998Z",
+                datetime(9999, 12, 31, 23, 59, 59, 999998, tzinfo=UTC),
+                id="latest-accepted",
+            ),
         ],
     )
     def test_datetime_is_returned_as_the_aware_utc_instant(
@@ -88,6 +93,15 @@ class TestParseCoordinatedReleaseAt:
             pytest.param("2026-13-01T00:00:00Z", _INVALID, id="invalid-month"),
             pytest.param("0001-01-01T00:00:00+01:00", _OUT_OF_RANGE, id="underflow"),
             pytest.param("9999-12-31T23:59:59-01:00", _OUT_OF_RANGE, id="overflow"),
+            pytest.param(
+                "9999-12-31T23:59:59.999999Z", _OUT_OF_RANGE, id="stored-as-infinity"
+            ),
+            pytest.param(
+                "9999-12-31T23:59:59.999999", _OUT_OF_RANGE, id="naive-infinity"
+            ),
+            pytest.param(
+                "10000-01-01T00:59:59.999999+01:00", _INVALID, id="year-10000"
+            ),
         ],
     )
     def test_invalid_value_is_rejected(self, value: object, message: str) -> None:

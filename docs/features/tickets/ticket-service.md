@@ -196,8 +196,8 @@ Explicit opt-outs (functions that do NOT call `ensure_ticket_operable`):
   who is not eligible for the now-confidential Ticket, only in `New`,
   `Analysis`, and `Analyzed`
 - `set_coordinated_release_date` — embargo-metadata operation valid in every
-  Ticket status while the Ticket is confidential; it neither assigns,
-  reconciles, nor exits the manual zone
+  Ticket status of a confidential Ticket or of one that retains a CRD; it
+  neither assigns, reconciles, nor exits the manual zone
 - `dispatch_ticket_convergence` — validates its own eligible status set
 
 `ignore_ticket` calls `ensure_ticket_operable` (which catches
@@ -383,8 +383,9 @@ The result contains a collection of Ticket summary projections plus `total`,
    ([ticket-priority.md](ticket-priority.md#automatic-priority-basis)) from the
    same observation; the basis uses that resolved severity and the persisted
    KEV, SSVC, and EPSS rows of the Ticket's current CVE. Derive the
-   five Ticket-level due dates from that resolved severity, the status, and
-   `created_at` through the service-owned SQL expressions in
+   five Ticket-level due dates from that resolved severity, the status,
+   `created_at`, and `coordinated_release_at` through the service-owned SQL
+   expressions in
    [ticket-deadlines.md](ticket-deadlines.md#read-ownership-and-query-integration);
    due-date sorting and projection use those values, and the `overdue` filter
    applies the Ticket-level rules there with the one evaluation instant, using
@@ -536,6 +537,16 @@ mapping location is an implementation choice.
   non-null value without confidential creation through schema validation; a
   service caller that violates either condition receives `ValueError` before
   database access, like the `ingestion_source` mismatch above
+- A supplied `coordinated_release_at` must not be before the creation instant
+  of the Ticket: its `created_at`, which the database assigns as the start
+  time of the caller's transaction (`now()`). After every input-only guard of
+  these preconditions and before step 1, the function reads that instant from
+  the database
+  and raises `CoordinatedReleaseBeforeCreationError` when the CRD is before
+  it, with no lock, write, or event. The check therefore precedes
+  `TicketCVEConflictError`. The Ticket CHECK
+  `chk_ticket_coordinated_release_not_before_creation` is the database
+  backstop
 - If both `cve_id` and `severity_manual` are provided: the service
   raises `SeverityDerivedError`. When a CVE is associated, severity is
   derived exclusively from CVSS assessments — manual severity is not
@@ -1716,8 +1727,9 @@ async def set_confidentiality(
    the locked-current updated Ticket.
 
 `Ticket.coordinated_release_at` is never modified by this operation. After an
-effective `true` to `false` transition, a retained CRD stays read-only until
-the Ticket becomes confidential again (see `set_coordinated_release_date`).
+effective `true` to `false` transition, a retained CRD keeps deciding the
+remediation deadlines and can still be changed or cleared (see
+`set_coordinated_release_date`).
 
 `TicketPackageMaintainer` rows are not grants and are never modified by this
 operation. When confidentiality becomes true, existing associations qualify
@@ -1764,8 +1776,8 @@ of step 7. Automatic grant deletion creates no additional event.
 
 ### set_coordinated_release_date
 
-Sets, changes, or clears `Ticket.coordinated_release_at` on a confidential
-Ticket. Semantics are owned by
+Sets `Ticket.coordinated_release_at` on a confidential Ticket, or changes or
+clears it on a Ticket that has one. Semantics are owned by
 [tickets.md](tickets.md#coordinated-release-date).
 
 ```python
@@ -1789,26 +1801,33 @@ calling.
    the operation never assigns.
 2. Revalidate consumer accessibility from the locked-current Ticket. Missing or
    inaccessible raises `TicketNotFoundError` before every other decision.
-3. Verify the locked-current Ticket is confidential; otherwise raise
-   `TicketNotConfidentialError`. This function does not call
+3. Verify that the locked-current Ticket is confidential or has a stored CRD;
+   otherwise raise `TicketNotConfidentialError`, whatever the requested value.
+   A non-confidential Ticket cannot receive a CRD, while one retained after
+   declassification can be changed or cleared. This function does not call
    `ensure_ticket_operable()`; it is valid in every Ticket status, including
    `Ignored` and `Duplicated`.
-4. **Idempotency check**: if the requested instant equals the stored value
+4. If the requested instant is not `None` and is before the locked-current
+   `created_at`, raise `CoordinatedReleaseBeforeCreationError`.
+5. **Idempotency check**: if the requested instant equals the stored value
    (both `NULL`, or the same UTC instant), return the Ticket unchanged with no
    write or event.
-5. Preserve the stored value, persist the requested value, and create one
+6. Preserve the stored value, persist the requested value, and create one
    `coordinated_release_changed` event attributed to `acting_user_id` whose
    `old_value` and `new_value` are the preserved and requested instants in UTC
    ISO 8601 format, or `NULL` for an absent side.
-6. Flush the column and event, then return the locked-current updated Ticket.
+7. Flush the column and event, then return the locked-current updated Ticket.
 
 **Concurrency**: the operation serializes with `set_confidentiality()`, access
 grants, and every other Ticket mutation on the Ticket lock and classifies its
 result from the state observed after waiting. If declassification wins, the
-waiter is rejected with `TicketNotConfidentialError`; if the CRD change wins, a
-later declassification retains the new value. Two concurrent CRD changes each
-create one event in serialization order with true locked old values; a waiter
-that observes its requested value is a no-op.
+waiter proceeds when the Ticket has a stored CRD and is otherwise rejected with
+`TicketNotConfidentialError`; if the CRD change wins, a later declassification
+retains the new value. Two concurrent CRD changes each create one event in
+serialization order with true locked old values. A waiter that observes a
+clear on a non-confidential Ticket is rejected by step 3, also when it
+requested a clear; any other waiter that observes its requested value is a
+no-op.
 
 **reconcile_ticket_status**: NOT called — the CRD is not gate-relevant.
 
@@ -1817,7 +1836,8 @@ work.
 
 **Transaction and exceptions**: the function flushes but neither commits nor
 rolls back. It propagates `TicketNotFoundError`, `TicketNotConfidentialError`,
-and database, audit, and flush failures. Any failure or caller rollback leaves
+`CoordinatedReleaseBeforeCreationError`, and database, audit, and flush
+failures. Any failure or caller rollback leaves
 neither the new value nor the event. The API returns the `TicketDetail`
 projection of the post-mutation Ticket under
 [`get_ticket_detail()`](#get_ticket_detail).
@@ -2049,7 +2069,8 @@ to the corresponding HTTP status code and error code per `api-spec.md`.
 | `DuplicateTargetIsDuplicatedError` | 409 | `TICKET_DUPLICATE_TARGET_DUPLICATED` | Target ticket is already in Duplicated status |
 | `DuplicateConcurrentModificationError` | 409 | `TICKET_DUPLICATE_CONCURRENT_MODIFICATION` | NOWAIT lock on a dependent failed (concurrent operation on the duplicate group) |
 | `SeverityDerivedError` † | 409 | `TICKET_SEVERITY_DERIVED` | Cannot manually set severity when it is auto-derived |
-| `TicketNotConfidentialError` | 409 | `TICKET_NOT_CONFIDENTIAL` | Operation requires a confidential ticket |
+| `TicketNotConfidentialError` | 409 | `TICKET_NOT_CONFIDENTIAL` | Operation requires a confidential ticket; for the Coordinated Release Date, a confidential ticket or one that has a CRD |
+| `CoordinatedReleaseBeforeCreationError` | 422 | `TICKET_COORDINATED_RELEASE_BEFORE_CREATION` | The requested Coordinated Release Date is before the Ticket's creation instant (`created_at`) |
 | `TicketConvergenceDispatchError` | 503 | `CELERY_UNAVAILABLE` | Initial publication raised the broker operational error; the exception uses fixed sanitized detail and never contains the broker exception text |
 | `UserNotFoundError` † | 404 | `USER_NOT_FOUND` | Referenced user does not exist |
 | `CVEIdFormatError` † | 422 | `CVE_INVALID_FORMAT` | CVE-ID passed to `ensure_cve_exists()` does not match `^CVE-[0-9]{4}-[0-9]{4,}$` (defense-in-depth; fires only if caller omits pre-validation) |
@@ -2249,16 +2270,30 @@ behavior of `ticket_service` operations:
     `coordinated_release_changed` event (UTC ISO 8601 old/new values, `NULL`
     for the absent side, `comment` and `detail` `NULL`); an unchanged request,
     including an equal instant supplied with a different offset, is a no-op
-    with no event; a non-confidential Ticket, including one declassified with a
-    retained CRD, raises `TicketNotConfidentialError` with no effect; the
-    operation succeeds in every Ticket status including `Ignored` and
-    `Duplicated` without assignment, reconciliation, or status change; past
-    instants are accepted; independent-session races with declassification and
-    with another CRD change serialize as specified; and audit or flush failure
-    rolls back value and event together. Manual creation with a CRD records the
-    event after optional `severity_changed` and before optional
-    `cve_associated`; creation with a CRD without confidential creation, or
-    through the ingestion source, raises `ValueError` before database access
+    with no event; a declassified Ticket with a retained CRD accepts a change
+    and a clear with one event each, while a non-confidential Ticket without a
+    CRD raises `TicketNotConfidentialError` with no effect for a set and for
+    `None`; an instant before `created_at` raises
+    `CoordinatedReleaseBeforeCreationError` with no effect, after
+    `TicketNotConfidentialError` and before the no-op classification, while an
+    instant equal to `created_at` and a past instant after it are accepted;
+    the operation succeeds in every Ticket status including `Ignored` and
+    `Duplicated` without assignment, reconciliation, or status change;
+    independent-session races with declassification (with and without a
+    stored CRD) and with another CRD change serialize as specified, including
+    a change or a clear that waits behind a winning clear on a
+    non-confidential Ticket and raises `TicketNotConfidentialError` with no
+    event; and audit
+    or flush failure rolls back value and event together. Manual creation with
+    a CRD records the event after optional `severity_changed` and before
+    optional `cve_associated`; creation with a CRD without confidential
+    creation, or through the ingestion source, raises `ValueError` before
+    database access; creation with a CRD before the creation instant raises
+    `CoordinatedReleaseBeforeCreationError` before any lock, write, or event,
+    also when the CVE is already associated with another Ticket, while a CRD
+    equal to the transaction's `now()` is accepted and equals the stored
+    `created_at`; and a direct write of a CRD before `created_at` violates the
+    Ticket CHECK
 21. **Self-unassignment**: `unassign_ticket()` clears the caller's own
     assignment in `Analysis`, `Analyzed`, and `Resolved` without changing the
     status, with one `assignment` event (`user_id` the caller, `old_value` the

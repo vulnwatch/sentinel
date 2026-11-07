@@ -204,7 +204,9 @@ class TrackDetail(BaseModel):
         description=(
             "Due date (UTC) of the VA (Vulnerability Analyst) triage "
             "milestone for this track; `null` when no SLA applies (Ticket "
-            "`ignored` or `duplicated`, or severity `none`)."
+            "`ignored` or `duplicated`, or severity `none`). The track due "
+            "dates equal those of the Ticket, from its Coordinated Release "
+            "Date when one is set."
         )
     )
     submission_due_at: datetime | None = Field(
@@ -225,6 +227,8 @@ class TrackDetail(BaseModel):
     release_due_at: datetime | None = Field(
         description=(
             "Final deadline (UTC) by which the update must be released; "
+            "`null` when no SLA applies, otherwise the Ticket's Coordinated "
+            "Release Date when one is set and the SLA deadline when none is; "
             "currently equal to `qa_due_at`."
         )
     )

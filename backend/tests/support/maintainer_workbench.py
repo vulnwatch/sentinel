@@ -137,6 +137,7 @@ class WorkbenchSeed:
         cve: bool = True,
         confidential: bool = False,
         created_at: datetime = RECENT,
+        coordinated_release_at: datetime | None = None,
     ) -> Ticket:
         """A Ticket whose resolved severity is `severity`: through its CVE
         when `cve` is true, otherwise through `severity_manual`."""
@@ -144,6 +145,7 @@ class WorkbenchSeed:
             "status": status.value,
             "is_confidential": confidential,
             "created_at": created_at,
+            "coordinated_release_at": coordinated_release_at,
         }
         if cve:
             record = CVE(

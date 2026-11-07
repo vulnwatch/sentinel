@@ -62,8 +62,9 @@ pytestmark = pytest.mark.usefixtures("no_fetch_single_sources")
 no-eligible-source branch unless a test registers its own refetchable
 source (`_CreationWorld.refetchable_source()`)."""
 
-CRD = datetime(2026, 10, 6, 14, 0, tzinfo=UTC)
-CRD_VALUE = "2026-10-06T14:00:00Z"
+CRD = datetime(2099, 10, 6, 14, 0, tzinfo=UTC)
+CRD_VALUE = "2099-10-06T14:00:00Z"
+"""After every creation instant of the test run, as a CRD must be."""
 
 
 class _CreationWorld(CommittedWorld):

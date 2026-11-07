@@ -1659,10 +1659,10 @@ implementation choice.
    For every track, project the five due dates, `milestones`, and
    `current_phase` through the pure functions in
    `docs/features/tickets/ticket-deadlines.md`, using the Ticket's
-   `created_at`, resolved severity, status, and CVE presence, the track's
-   persisted affectedness, delivery, actionability, actionable eligible
-   Products and their `released_at`, correlated release-request evidence, and
-   the supplied evaluation instant (composed Ticket-detail use passes the
+   `created_at`, resolved severity, status, Coordinated Release Date, and CVE
+   presence, the track's persisted affectedness, delivery, actionability,
+   actionable eligible Products and their `released_at`, correlated
+   release-request evidence, and the supplied evaluation instant (composed Ticket-detail use passes the
    instant captured by `get_ticket_detail()`). All inputs come from the same coherent observation, and evidence is
    loaded without per-track or per-Product N+1 queries
 5. For every package, project its maintainers as

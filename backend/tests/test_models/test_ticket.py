@@ -476,13 +476,37 @@ class TestTicketConfidentiality:
     async def test_crd_on_non_confidential_ticket_not_enforced_by_database(
         self, db_session: AsyncSession, ticket_factory: TicketFactory
     ) -> None:
-        """The CRD is writable only while confidential, but that rule is
+        """A CRD is set only while confidential, but that rule is
         service-enforced and the value is retained after declassification
         (docs/data-model.md, Ticket), so the database accepts it."""
         crd = datetime(2099, 1, 1, tzinfo=UTC)
         ticket = await ticket_factory(is_confidential=False, coordinated_release_at=crd)
         await db_session.refresh(ticket)
         assert ticket.coordinated_release_at == crd
+
+    async def test_crd_equal_to_created_at_is_accepted(
+        self, db_session: AsyncSession, ticket_factory: TicketFactory
+    ) -> None:
+        created_at = datetime(2026, 3, 10, 14, 37, tzinfo=UTC)
+        ticket = await ticket_factory(
+            created_at=created_at, coordinated_release_at=created_at
+        )
+        await db_session.refresh(ticket)
+        assert ticket.coordinated_release_at == ticket.created_at
+
+    async def test_crd_before_created_at_violates_the_check(
+        self, ticket_factory: TicketFactory
+    ) -> None:
+        """`chk_ticket_coordinated_release_not_before_creation`
+        (docs/data-model.md, Ticket, CHECK constraints)."""
+        created_at = datetime(2026, 3, 10, 14, 37, tzinfo=UTC)
+        with pytest.raises(
+            IntegrityError, match="chk_ticket_coordinated_release_not_before_creation"
+        ):
+            await ticket_factory(
+                created_at=created_at,
+                coordinated_release_at=created_at - timedelta(microseconds=1),
+            )
 
 
 @pytest.mark.integration

@@ -289,9 +289,11 @@ history is never rewritten
 (`docs/features/platform/audit-trail-infrastructure.md`, Immutability): the
 history of an aged Ticket begins after its creation time. Remediation
 deadlines, which derive from the Ticket creation time, advance with the age of
-the dataset (`docs/features/tickets/ticket-deadlines.md`), so after a load the
-due date of the current phase of each aged Ticket is already past, and further
-due dates pass as the dataset ages. The lifecycle dates of Product Catalog keep
+the dataset (`docs/features/tickets/ticket-deadlines.md`); the deadlines of
+`SNTL-18`, which is not aged, also derive from its coordinated release date
+`T + 30d`. After a load the due date of the current phase of each aged Ticket
+is already past, and further due dates pass as the dataset ages. The lifecycle
+dates of Product Catalog keep
 every listed lifecycle phase during the first 180 days from `D`.
 
 ## Service

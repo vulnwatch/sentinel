@@ -95,6 +95,7 @@ from tests.support.deadline_matrix import (
     TIER_30_OFFSETS_DAYS,
     TIER_90_OFFSETS_DAYS,
     TIER_180_OFFSETS_DAYS,
+    crd_window_offsets,
 )
 
 Factory = Callable[..., Awaitable[Any]]
@@ -132,9 +133,10 @@ def _sntl(ticket: Ticket) -> str:
     return format_ticket_id(ticket.sequence_id)
 
 
-def _due_dates(offsets: tuple[int, ...]) -> DueDates:
+def _due_dates(offsets: tuple[int | timedelta, ...]) -> DueDates:
     triage, submission, um, qa, release = (
-        CREATED_AT + timedelta(days=days) for days in offsets
+        CREATED_AT + (days if isinstance(days, timedelta) else timedelta(days=days))
+        for days in offsets
     )
     return DueDates(triage=triage, submission=submission, um=um, qa=qa, release=release)
 
@@ -337,7 +339,9 @@ class TestDetailProjection:
             duplicate_of_ticket_id=None,
             is_confidential=False,
             coordinated_release_at=CRD,
-            due_dates=_due_dates(TIER_90_OFFSETS_DAYS),
+            # A CRD retained on a non-confidential Ticket still ends the
+            # deadline window (ticket-deadlines.md, Coordinated Release Window).
+            due_dates=_due_dates(crd_window_offsets(CRD - CREATED_AT)),
             # A `New` Ticket without packages is in Ticket-level triage.
             current_phase=TicketCurrentPhase(
                 phase=CurrentPhase.TRIAGE, milestone=MilestoneStatus.PENDING

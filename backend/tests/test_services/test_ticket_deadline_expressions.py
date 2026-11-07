@@ -435,13 +435,18 @@ class TestSharedMatrixStructure:
         self,
     ) -> None:
         """At least one case evaluates a later phase exactly at its due
-        date and expects `pending`."""
+        date and expects `pending`, and no case expects `overdue` there.
+        Phases that share a due date (a short coordinated release window)
+        are each checked; a completed phase is `done` whatever its date."""
         boundary: list[MilestoneStatus | None] = []
         for case in DEADLINE_CASES:
             due = case.expected_due_dates()
-            if due is not None and case.evaluation_instant in due[1:4]:
-                phase_index = due.index(case.evaluation_instant)
-                boundary.append(case.expected_statuses[phase_index])
+            if due is None:
+                continue
+            for phase_index in range(1, 4):
+                status = case.expected_statuses[phase_index]
+                if due[phase_index] == case.evaluation_instant and status is not D:
+                    boundary.append(status)
 
         assert boundary
         assert set(boundary) == {P}
@@ -479,6 +484,43 @@ class TestDueDateExpressions:
 
         assert tuple(row) == tuple(
             created_at + timedelta(days=days) for days in (9, 54, 63, 90, 90)
+        )
+
+    async def test_crd_window_ignores_session_time_zone_and_daylight_saving(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: Any,
+    ) -> None:
+        """The coordinated release window is an elapsed duration too: with
+        a `TimeZone` whose transition (2026-03-29) falls inside the window,
+        ten wall-clock days that are 239 hours apart give a triage 23 h
+        54 min after creation, not 24 h, and the submission and UM
+        milestones after the transition are not shifted by an hour as
+        calendar days in the session zone would shift them."""
+        created_at = datetime(2026, 3, 25, 11, 0, tzinfo=UTC)
+        crd = datetime(2026, 4, 4, 10, 0, tzinfo=UTC)
+        ticket: Ticket = await ticket_factory(
+            severity_manual=Severity.MEDIUM.value,
+            created_at=created_at,
+            coordinated_release_at=crd,
+        )
+        await db_session.execute(text("SET LOCAL TIME ZONE 'Europe/Rome'"))
+        due = ticket_due_date_expressions()
+
+        row = (
+            await db_session.execute(
+                select(due.triage, due.submission, due.um, due.qa, due.release).where(
+                    Ticket.id == ticket.id
+                )
+            )
+        ).one()
+
+        assert tuple(row) == (
+            datetime(2026, 3, 26, 10, 54, tzinfo=UTC),
+            datetime(2026, 3, 31, 10, 24, tzinfo=UTC),
+            datetime(2026, 4, 1, 10, 18, tzinfo=UTC),
+            crd,
+            crd,
         )
 
     async def test_supplied_severity_expression_is_used_instead_of_resolving(

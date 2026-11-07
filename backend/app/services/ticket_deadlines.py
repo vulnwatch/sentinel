@@ -1,4 +1,4 @@
-"""Pure remediation SLA due dates, per-track milestones, and the Ticket
+"""Pure remediation due dates, per-track milestones, and the Ticket
 current phase.
 
 Single database-free formula owner for Ticket deadlines. See
@@ -23,7 +23,7 @@ time) and makes every due date a UTC value.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
@@ -71,6 +71,8 @@ exactly 100, so the QA milestone always equals the final release deadline.
 
 SECONDS_PER_DAY_PERCENT: Final = 864
 """Seconds in one percent of a day (86 400 / 100): the Formula's unit."""
+
+_ONE_MICROSECOND: Final = timedelta(microseconds=1)
 
 LATER_PHASE_APPLICABLE_STATUSES: Final = frozenset(
     {PackageStatus.ANALYSIS, PackageStatus.AFFECTED, PackageStatus.FIXED}
@@ -198,38 +200,72 @@ def compute_due_dates(
     created_at: datetime,
     severity: Severity | None,
     ticket_status: TicketStatus,
+    coordinated_release_at: datetime | None,
 ) -> DueDates | None:
-    """Compute the Ticket-level due dates from the immutable start.
+    """Compute the Ticket-level due dates over the deadline window.
 
-    Each milestone is `created_at + d * 864 * c` seconds for SLA tier `d`
-    days and cumulative phase share `c` percent; `release` is
-    `created_at + d` days. Offsets are exact, so every due date keeps the
-    time of day of `created_at`. Returns `None` when the Ticket is
-    `Ignored` or `Duplicated`, or its resolved severity is the
-    `Severity.NONE` label (SQL `NULL` uses the 30-day tier).
+    Without a Coordinated Release Date (SLA window), each milestone is
+    `created_at + d * 864 * c` seconds for SLA tier `d` days and
+    cumulative phase share `c` percent, and `release` is `created_at + d`
+    days: exact offsets that keep the time of day of `created_at`. With
+    one (coordinated release window), each milestone is
+    `created_at + floor(w * c / 100)` microseconds for the window length
+    `w = coordinated_release_at - created_at` in whole microseconds, and
+    `release` is `coordinated_release_at`; the tier then decides no date.
+    Returns `None` when the Ticket is `Ignored` or `Duplicated`, or its
+    resolved severity is the `Severity.NONE` label (SQL `NULL` uses the
+    30-day tier or the CRD), with or without a CRD.
 
     Raises:
-        ValueError: `created_at` is naive (validated for every input).
+        ValueError: `created_at` or `coordinated_release_at` is naive, or
+            `coordinated_release_at` is before `created_at` (validated
+            for every input).
     """
     _require_aware(created_at, "created_at")
+    if coordinated_release_at is not None:
+        _require_aware(coordinated_release_at, "coordinated_release_at")
+        if coordinated_release_at < created_at:
+            raise ValueError("coordinated_release_at must not precede created_at.")
     sla_days = resolve_sla_days(severity)
     if ticket_status in MANUAL_ZONE_TICKET_STATUSES or sla_days is None:
         return None
 
     start = created_at.astimezone(UTC)
+    if coordinated_release_at is not None:
+        end = coordinated_release_at.astimezone(UTC)
+        window_us = (end - start) // _ONE_MICROSECOND
+        return _divide_window(
+            start,
+            lambda cumulative: timedelta(microseconds=window_us * cumulative // 100),
+            release=end,
+        )
+    return _divide_window(
+        start,
+        lambda cumulative: timedelta(
+            seconds=sla_days * SECONDS_PER_DAY_PERCENT * cumulative
+        ),
+        release=start + timedelta(days=sla_days),
+    )
+
+
+def _divide_window(
+    start: datetime,
+    offset: Callable[[int], timedelta],
+    *,
+    release: datetime,
+) -> DueDates:
+    """The milestones at `start + offset(cumulative share)`, in phase order."""
     due: dict[MilestonePhase, datetime] = {}
     cumulative = 0
     for phase in _PHASES:
         cumulative += PHASE_SHARES[phase]
-        due[phase] = start + timedelta(
-            seconds=sla_days * SECONDS_PER_DAY_PERCENT * cumulative
-        )
+        due[phase] = start + offset(cumulative)
     return DueDates(
         triage=due[MilestonePhase.TRIAGE],
         submission=due[MilestonePhase.SUBMISSION],
         um=due[MilestonePhase.UM],
         qa=due[MilestonePhase.QA],
-        release=start + timedelta(days=sla_days),
+        release=release,
     )
 
 

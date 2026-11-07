@@ -96,6 +96,25 @@ Date error responses."""
 _CRD = "2026-10-06T14:00:00Z"
 _CRD_INSTANT = datetime(2026, 10, 6, 14, 0, tzinfo=UTC)
 _LATER = "2026-11-20T09:30:00Z"
+_CREATED_AT = datetime(2001, 1, 1, 9, 0, tzinfo=UTC)
+"""Default creation of this module's factory Tickets: before every CRD it
+sends, which a CRD must not precede."""
+_BEFORE_CREATION = {
+    "code": "TICKET_COORDINATED_RELEASE_BEFORE_CREATION",
+    "detail": "The Coordinated Release Date must not be before the Ticket's creation.",
+}
+
+
+@pytest.fixture
+def ticket_factory(ticket_factory: Factory) -> Factory:
+    """The shared factory with `created_at` defaulting to `_CREATED_AT`."""
+
+    async def _create(**overrides: Any) -> Ticket:
+        overrides.setdefault("created_at", _CREATED_AT)
+        ticket: Ticket = await ticket_factory(**overrides)
+        return ticket
+
+    return _create
 
 
 @dataclass(frozen=True, slots=True)
@@ -901,33 +920,25 @@ class TestSetCoordinatedReleaseDate:
         ]
 
     @pytest.mark.parametrize(
-        "stored",
-        [
-            pytest.param(None, id="never-confidential"),
-            pytest.param(_CRD_INSTANT, id="declassified-with-retained-crd"),
-        ],
-    )
-    @pytest.mark.parametrize(
         "supplied",
         [
             pytest.param(_LATER, id="set"),
-            pytest.param(_CRD, id="retained-value"),
-            pytest.param(None, id="clear"),
+            pytest.param(None, id="otherwise-no-op"),
+            pytest.param("2000-01-01T00:00:00Z", id="before-creation"),
         ],
     )
-    async def test_non_confidential_ticket_is_rejected_without_effect(
+    async def test_non_confidential_ticket_without_crd_is_rejected_without_effect(
         self,
         authenticated_client: AsyncClient,
         va_user: User,
         db_session: AsyncSession,
         ticket_factory: Factory,
-        stored: datetime | None,
         supplied: str | None,
     ) -> None:
         """The complete `409 TICKET_NOT_CONFIDENTIAL` body, whatever the
-        requested value (including one that would otherwise be a no-op);
-        the retained value stays read-only."""
-        target: Ticket = await ticket_factory(coordinated_release_at=stored)
+        requested value: `null` and an instant before `created_at`
+        included, because the 409 precedes the 422."""
+        target: Ticket = await ticket_factory()
         before = await _state(db_session, target.id)
 
         response = await authenticated_client.patch(
@@ -938,6 +949,138 @@ class TestSetCoordinatedReleaseDate:
         assert response.json() == _NOT_CONFIDENTIAL
         assert await _state(db_session, target.id) == before
         assert await event_count(db_session, target.id) == 0
+
+    @pytest.mark.parametrize(
+        ("supplied", "expected", "events"),
+        [
+            pytest.param(_LATER, _LATER, [(_CRD, _LATER)], id="change"),
+            pytest.param(None, None, [(_CRD, None)], id="clear"),
+        ],
+    )
+    async def test_crd_retained_by_a_declassified_ticket_stays_editable(
+        self,
+        authenticated_client: AsyncClient,
+        va_user: User,
+        db_session: AsyncSession,
+        ticket_factory: Factory,
+        supplied: str | None,
+        expected: str | None,
+        events: list[tuple[str | None, str | None]],
+    ) -> None:
+        """A change moves the due dates to the new window and a clear
+        returns them to the SLA window (`High`: +30 days)."""
+        target: Ticket = await ticket_factory(
+            status=TicketStatus.ANALYSIS.value,
+            severity_manual="High",
+            coordinated_release_at=_CRD_INSTANT,
+        )
+
+        response = await authenticated_client.patch(
+            CRD_ENDPOINT.url(target), json=_crd(supplied)
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert (data["is_confidential"], data["coordinated_release_at"]) == (
+            False,
+            expected,
+        )
+        assert data["release_due_at"] == (
+            expected if expected is not None else "2001-01-31T09:00:00Z"
+        )
+        assert await ticket_events_by_id(db_session, target.id) == [
+            _crd_event(va_user, old, new) for old, new in events
+        ]
+
+    async def test_instant_before_created_at_is_rejected_without_effect(
+        self,
+        authenticated_client: AsyncClient,
+        va_user: User,
+        db_session: AsyncSession,
+        ticket_factory: Factory,
+    ) -> None:
+        target: Ticket = await ticket_factory(
+            is_confidential=True, coordinated_release_at=_CRD_INSTANT
+        )
+        before = await _state(db_session, target.id)
+
+        response = await authenticated_client.patch(
+            CRD_ENDPOINT.url(target), json=_crd("2001-01-01T08:59:59.999999Z")
+        )
+
+        assert response.status_code == 422
+        assert response.json() == _BEFORE_CREATION
+        assert await _state(db_session, target.id) == before
+        assert await event_count(db_session, target.id) == 0
+
+    async def test_set_crd_divides_the_window_into_the_due_dates(
+        self,
+        authenticated_client: AsyncClient,
+        va_user: User,
+        ticket_factory: Factory,
+    ) -> None:
+        """A `High` Ticket created at `_CREATED_AT` with a CRD ten days
+        later: +1, +6, +7, +10, +10 days (ticket-deadlines.md,
+        Coordinated Release Window)."""
+        target: Ticket = await ticket_factory(
+            status=TicketStatus.ANALYSIS.value,
+            severity_manual="High",
+            is_confidential=True,
+        )
+
+        response = await authenticated_client.patch(
+            CRD_ENDPOINT.url(target), json=_crd("2001-01-11T09:00:00Z")
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert [
+            data[field]
+            for field in (
+                "triage_due_at",
+                "submission_due_at",
+                "um_due_at",
+                "qa_due_at",
+                "release_due_at",
+            )
+        ] == [
+            "2001-01-02T09:00:00Z",
+            "2001-01-07T09:00:00Z",
+            "2001-01-08T09:00:00Z",
+            "2001-01-11T09:00:00Z",
+            "2001-01-11T09:00:00Z",
+        ]
+
+    @pytest.mark.parametrize(
+        ("supplied", "status_code"),
+        [
+            pytest.param("9999-12-31T23:59:59.999998Z", 200, id="latest-accepted"),
+            pytest.param("9999-12-31T23:59:59.999999Z", 422, id="unstorable"),
+        ],
+    )
+    async def test_latest_accepted_instant(
+        self,
+        authenticated_client: AsyncClient,
+        va_user: User,
+        ticket_factory: Factory,
+        supplied: str,
+        status_code: int,
+    ) -> None:
+        target: Ticket = await ticket_factory(
+            status=TicketStatus.ANALYSIS.value, is_confidential=True
+        )
+
+        response = await authenticated_client.patch(
+            CRD_ENDPOINT.url(target), json=_crd(supplied)
+        )
+
+        assert response.status_code == status_code
+        if status_code == 200:
+            data = response.json()["data"]
+            assert data["coordinated_release_at"] == supplied
+            assert data["release_due_at"] == supplied
+        else:
+            assert response.json()["code"] == "VALIDATION_ERROR"
 
 
 # ---------------------------------------------------------------------------
@@ -1201,6 +1344,12 @@ class TestOpenApiContract:
             assert "TICKET_NOT_CONFIDENTIAL" in responses["409"]["description"]
         else:
             assert "409" not in responses
+
+    def test_crd_operation_publishes_the_creation_bound(self) -> None:
+        description = self._operation(CRD_ENDPOINT)["responses"]["422"]["description"]
+
+        assert "TICKET_COORDINATED_RELEASE_BEFORE_CREATION" in description
+        assert "VALIDATION_ERROR" in description
 
 
 # ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ import sys
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, Final
 from urllib.parse import urlsplit, urlunsplit
 
 import pytest
@@ -1632,6 +1632,11 @@ def cve_epss_score_factory(
     return _create
 
 
+_CRD_TICKET_CREATED_AT: Final = datetime(2000, 1, 1, tzinfo=UTC)
+"""Default `created_at` of a factory Ticket created with a Coordinated
+Release Date (`ticket_factory`): before every CRD of the test suite."""
+
+
 @pytest.fixture
 def ticket_factory(db_session: AsyncSession) -> Callable[..., Awaitable[Ticket]]:
     """Factory fixture for `Ticket` model instances.
@@ -1654,9 +1659,16 @@ def ticket_factory(db_session: AsyncSession) -> Callable[..., Awaitable[Ticket]]
     - `chk_ticket_duplicate_status_coherence`: overriding `duplicate_of_id`
       alone defaults `status` to `Duplicated`; overriding
       `status="Duplicated"` alone links to a freshly created target Ticket.
+    - `chk_ticket_coordinated_release_not_before_creation`: overriding
+      `coordinated_release_at` and not `created_at` defaults `created_at` to
+      the earlier of the CRD and `_CRD_TICKET_CREATED_AT`, a fixed instant,
+      so the CRD is not before the creation whatever the wall clock.
     """
 
     async def _create(**overrides: Any) -> Ticket:
+        crd = overrides.get("coordinated_release_at")
+        if crd is not None and "created_at" not in overrides:
+            overrides["created_at"] = min(crd, _CRD_TICKET_CREATED_AT)
         if overrides.get("duplicate_of_id") is not None:
             overrides.setdefault("status", TicketStatus.DUPLICATED.value)
         elif (

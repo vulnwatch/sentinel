@@ -110,6 +110,7 @@ def _milestones(**overrides: object) -> TrackMilestones:
             created_at=CREATED_AT,
             severity=Severity.HIGH,
             ticket_status=TicketStatus.ANALYSIS,
+            coordinated_release_at=None,
         ),
         "ticket_has_cve": True,
         "workflow_type": WorkflowType.IBS,
@@ -223,7 +224,10 @@ class TestComputeDueDates:
         self, severity: Severity | None, days: int
     ) -> None:
         due = compute_due_dates(
-            created_at=CREATED_AT, severity=severity, ticket_status=TicketStatus.NEW
+            created_at=CREATED_AT,
+            severity=severity,
+            ticket_status=TicketStatus.NEW,
+            coordinated_release_at=None,
         )
 
         assert due is not None
@@ -237,7 +241,10 @@ class TestComputeDueDates:
     @pytest.mark.parametrize("severity", _SLA_SEVERITIES)
     def test_qa_equals_release_for_every_tier(self, severity: Severity | None) -> None:
         due = compute_due_dates(
-            created_at=CREATED_AT, severity=severity, ticket_status=TicketStatus.NEW
+            created_at=CREATED_AT,
+            severity=severity,
+            ticket_status=TicketStatus.NEW,
+            coordinated_release_at=None,
         )
 
         assert due is not None
@@ -251,6 +258,7 @@ class TestComputeDueDates:
             created_at=CREATED_AT,
             severity=severity,
             ticket_status=TicketStatus.ANALYSIS,
+            coordinated_release_at=None,
         )
 
         assert due is not None
@@ -265,7 +273,10 @@ class TestComputeDueDates:
     ) -> None:
         assert (
             compute_due_dates(
-                created_at=CREATED_AT, severity=severity, ticket_status=status
+                created_at=CREATED_AT,
+                severity=severity,
+                ticket_status=status,
+                coordinated_release_at=None,
             )
             is None
         )
@@ -276,7 +287,10 @@ class TestComputeDueDates:
     ) -> None:
         assert (
             compute_due_dates(
-                created_at=CREATED_AT, severity=Severity.NONE, ticket_status=status
+                created_at=CREATED_AT,
+                severity=Severity.NONE,
+                ticket_status=status,
+                coordinated_release_at=None,
             )
             is None
         )
@@ -289,11 +303,15 @@ class TestComputeDueDates:
             created_at=CREATED_AT,
             severity=Severity.MEDIUM,
             ticket_status=TicketStatus.NEW,
+            coordinated_release_at=None,
         )
 
         assert (
             compute_due_dates(
-                created_at=CREATED_AT, severity=Severity.MEDIUM, ticket_status=status
+                created_at=CREATED_AT,
+                severity=Severity.MEDIUM,
+                ticket_status=status,
+                coordinated_release_at=None,
             )
             == reference
         )
@@ -305,12 +323,16 @@ class TestComputeDueDates:
         """Pure analogue of Requirement 4: the same `created_at` yields no
         dates in the manual zone and the original dates after exit."""
         before = compute_due_dates(
-            created_at=CREATED_AT, severity=Severity.HIGH, ticket_status=status
+            created_at=CREATED_AT,
+            severity=Severity.HIGH,
+            ticket_status=status,
+            coordinated_release_at=None,
         )
         after = compute_due_dates(
             created_at=CREATED_AT,
             severity=Severity.HIGH,
             ticket_status=TicketStatus.ANALYSIS,
+            coordinated_release_at=None,
         )
 
         assert before is None
@@ -325,11 +347,13 @@ class TestComputeDueDates:
             created_at=CREATED_AT,
             severity=Severity.HIGH,
             ticket_status=TicketStatus.ANALYSIS,
+            coordinated_release_at=None,
         )
         low = compute_due_dates(
             created_at=CREATED_AT,
             severity=Severity.LOW,
             ticket_status=TicketStatus.ANALYSIS,
+            coordinated_release_at=None,
         )
 
         assert high is not None
@@ -339,11 +363,17 @@ class TestComputeDueDates:
         assert low.triage - CREATED_AT == timedelta(days=18)
 
     def test_signature_has_no_other_start_input(self) -> None:
-        """The Coordinated Release Date and every mutation timestamp cannot
-        move the start: `created_at` is the only time input."""
+        """Every mutation timestamp cannot move the start: `created_at` is
+        the only start input, and the Coordinated Release Date only ends the
+        window."""
         parameters = inspect.signature(compute_due_dates).parameters
 
-        assert list(parameters) == ["created_at", "severity", "ticket_status"]
+        assert list(parameters) == [
+            "created_at",
+            "severity",
+            "ticket_status",
+            "coordinated_release_at",
+        ]
 
     @pytest.mark.parametrize("status", [*_NON_MANUAL_STATUSES, *_MANUAL_STATUSES])
     def test_naive_created_at_raises_for_every_status(
@@ -354,6 +384,7 @@ class TestComputeDueDates:
                 created_at=CREATED_AT.replace(tzinfo=None),
                 severity=Severity.HIGH,
                 ticket_status=status,
+                coordinated_release_at=None,
             )
 
     def test_naive_created_at_raises_with_severity_none_label(self) -> None:
@@ -362,6 +393,7 @@ class TestComputeDueDates:
                 created_at=CREATED_AT.replace(tzinfo=None),
                 severity=Severity.NONE,
                 ticket_status=TicketStatus.NEW,
+                coordinated_release_at=None,
             )
 
     def test_aware_non_utc_start_yields_same_instants_in_utc(self) -> None:
@@ -371,6 +403,7 @@ class TestComputeDueDates:
             created_at=offset_start,
             severity=Severity.HIGH,
             ticket_status=TicketStatus.NEW,
+            coordinated_release_at=None,
         )
 
         assert due is not None
@@ -384,12 +417,170 @@ class TestComputeDueDates:
         start = datetime(2026, 3, 10, 14, 0, tzinfo=ZoneInfo("Europe/Rome"))
 
         due = compute_due_dates(
-            created_at=start, severity=Severity.HIGH, ticket_status=TicketStatus.NEW
+            created_at=start,
+            severity=Severity.HIGH,
+            ticket_status=TicketStatus.NEW,
+            coordinated_release_at=None,
         )
 
         assert due is not None
         assert due.release.timestamp() - start.timestamp() == 30 * 86_400
         assert due.release == datetime(2026, 4, 9, 13, 0, tzinfo=UTC)
+
+
+_CRD = CREATED_AT + timedelta(days=7)
+
+
+@pytest.mark.unit
+class TestCoordinatedReleaseWindow:
+    """Requirements 1 and 17 at the pure-function level; the shared matrix
+    rows (`crd_*`) cover the offsets relative to every SLA milestone."""
+
+    @pytest.mark.parametrize(
+        "window",
+        [
+            timedelta(),
+            timedelta(microseconds=7),
+            timedelta(days=1, microseconds=7),
+            timedelta(days=7),
+            timedelta(days=400, seconds=1, microseconds=3),
+        ],
+    )
+    def test_qa_and_release_equal_the_crd(self, window: timedelta) -> None:
+        crd = CREATED_AT + window
+
+        due = compute_due_dates(
+            created_at=CREATED_AT,
+            severity=Severity.HIGH,
+            ticket_status=TicketStatus.ANALYZED,
+            coordinated_release_at=crd,
+        )
+
+        assert due is not None
+        assert due.qa == due.release == crd
+
+    @pytest.mark.parametrize("window_us", [*range(21), 86_400_000_007, 10**15 + 3])
+    def test_due_dates_are_non_decreasing_and_rounded_down(
+        self, window_us: int
+    ) -> None:
+        due = compute_due_dates(
+            created_at=CREATED_AT,
+            severity=Severity.HIGH,
+            ticket_status=TicketStatus.ANALYZED,
+            coordinated_release_at=CREATED_AT + timedelta(microseconds=window_us),
+        )
+
+        assert due is not None
+        values = _due_tuple(due) or ()
+        assert list(values) == sorted(values)
+        for phase, percent in zip(MilestonePhase, (10, 60, 70, 100), strict=True):
+            offset_us = (due.for_phase(phase) - CREATED_AT) // timedelta(microseconds=1)
+            # Floor: at most, and less than one microsecond below, w * c / 100.
+            assert offset_us * 100 <= window_us * percent < (offset_us + 1) * 100
+
+    @pytest.mark.parametrize("severity", _SLA_SEVERITIES)
+    def test_tier_decides_no_date(self, severity: Severity | None) -> None:
+        reference = compute_due_dates(
+            created_at=CREATED_AT,
+            severity=Severity.LOW,
+            ticket_status=TicketStatus.ANALYSIS,
+            coordinated_release_at=_CRD,
+        )
+
+        assert (
+            compute_due_dates(
+                created_at=CREATED_AT,
+                severity=severity,
+                ticket_status=TicketStatus.ANALYSIS,
+                coordinated_release_at=_CRD,
+            )
+            == reference
+        )
+
+    @pytest.mark.parametrize("status", _MANUAL_STATUSES)
+    def test_manual_zone_has_no_dates_with_a_crd(self, status: TicketStatus) -> None:
+        assert (
+            compute_due_dates(
+                created_at=CREATED_AT,
+                severity=Severity.HIGH,
+                ticket_status=status,
+                coordinated_release_at=_CRD,
+            )
+            is None
+        )
+
+    @pytest.mark.parametrize("status", _NON_MANUAL_STATUSES)
+    def test_severity_none_label_has_no_dates_with_a_crd(
+        self, status: TicketStatus
+    ) -> None:
+        assert (
+            compute_due_dates(
+                created_at=CREATED_AT,
+                severity=Severity.NONE,
+                ticket_status=status,
+                coordinated_release_at=_CRD,
+            )
+            is None
+        )
+
+    def test_aware_non_utc_crd_yields_utc_instants(self) -> None:
+        crd = _CRD.astimezone(timezone(timedelta(hours=-5)))
+
+        due = compute_due_dates(
+            created_at=CREATED_AT.astimezone(timezone(timedelta(hours=2))),
+            severity=Severity.HIGH,
+            ticket_status=TicketStatus.NEW,
+            coordinated_release_at=crd,
+        )
+
+        assert due is not None
+        assert due.triage == CREATED_AT + timedelta(hours=16, minutes=48)
+        assert due.release == _CRD
+        assert all(value.tzinfo is UTC for value in _due_tuple(due) or ())
+
+    def test_daylight_saving_transition_does_not_shift_offsets(self) -> None:
+        """The window is an elapsed duration: a start and a CRD in a zone
+        whose window crosses a DST change still divide the real duration."""
+        start = datetime(2026, 3, 20, 12, 0, tzinfo=ZoneInfo("Europe/Rome"))
+        crd = datetime(2026, 3, 30, 12, 0, tzinfo=ZoneInfo("Europe/Rome"))
+
+        due = compute_due_dates(
+            created_at=start,
+            severity=Severity.HIGH,
+            ticket_status=TicketStatus.NEW,
+            coordinated_release_at=crd,
+        )
+
+        assert due is not None
+        # Ten wall-clock days, one hour shorter across the transition.
+        assert due.triage == datetime(2026, 3, 21, 10, 54, tzinfo=UTC)
+        assert due.release == datetime(2026, 3, 30, 10, 0, tzinfo=UTC)
+
+    @pytest.mark.parametrize("status", [*_NON_MANUAL_STATUSES, *_MANUAL_STATUSES])
+    @pytest.mark.parametrize("severity", [Severity.HIGH, Severity.NONE])
+    def test_naive_crd_raises_for_every_input(
+        self, status: TicketStatus, severity: Severity
+    ) -> None:
+        with pytest.raises(ValueError, match="coordinated_release_at"):
+            compute_due_dates(
+                created_at=CREATED_AT,
+                severity=severity,
+                ticket_status=status,
+                coordinated_release_at=_CRD.replace(tzinfo=None),
+            )
+
+    @pytest.mark.parametrize("status", [*_NON_MANUAL_STATUSES, *_MANUAL_STATUSES])
+    @pytest.mark.parametrize("severity", [Severity.HIGH, Severity.NONE])
+    def test_crd_before_created_at_raises_for_every_input(
+        self, status: TicketStatus, severity: Severity
+    ) -> None:
+        with pytest.raises(ValueError, match="coordinated_release_at"):
+            compute_due_dates(
+                created_at=CREATED_AT,
+                severity=severity,
+                ticket_status=status,
+                coordinated_release_at=CREATED_AT - timedelta(microseconds=1),
+            )
 
 
 @pytest.mark.unit
@@ -399,6 +590,7 @@ class TestDueDatesValue:
             created_at=CREATED_AT,
             severity=Severity.HIGH,
             ticket_status=TicketStatus.NEW,
+            coordinated_release_at=None,
         )
 
         assert due is not None
@@ -422,6 +614,7 @@ class TestDueDatesValue:
             created_at=CREATED_AT,
             severity=Severity.HIGH,
             ticket_status=TicketStatus.NEW,
+            coordinated_release_at=None,
         )
 
         assert due is not None
@@ -639,7 +832,10 @@ _D = MilestoneStatus.DONE
 _NA = MilestoneStatus.NOT_APPLICABLE
 _LATER_PHASES = (MilestonePhase.SUBMISSION, MilestonePhase.UM, MilestonePhase.QA)
 _HIGH_DUE = compute_due_dates(
-    created_at=CREATED_AT, severity=Severity.HIGH, ticket_status=TicketStatus.ANALYZED
+    created_at=CREATED_AT,
+    severity=Severity.HIGH,
+    ticket_status=TicketStatus.ANALYZED,
+    coordinated_release_at=None,
 )
 
 
@@ -903,7 +1099,10 @@ class TestTicketCurrentPhaseInvariantsExhaustive:
         reached: dict[CurrentPhase, set[TicketStatus]] = {}
         for status in TicketStatus:
             due = compute_due_dates(
-                created_at=CREATED_AT, severity=Severity.HIGH, ticket_status=status
+                created_at=CREATED_AT,
+                severity=Severity.HIGH,
+                ticket_status=status,
+                coordinated_release_at=None,
             )
             for pair in itertools.product(tracks, repeat=2):
                 phase = resolve_ticket_current_phase(

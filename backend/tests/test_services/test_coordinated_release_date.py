@@ -15,8 +15,10 @@ Owning specifications:
   `coordinated_release_changed` and the bullets after the table; Canonical
   Mutation and No-Event Matrix: Coordinated Release Date set, change, or
   clear; Testing Requirements 1-7, 12, and 29).
-- docs/features/tickets/ticket-deadlines.md (Testing Requirement 3:
-  immutability of the start across a set Coordinated Release Date).
+- docs/features/tickets/ticket-deadlines.md (Testing Requirements 3 and
+  17: immutability of the start, and due dates that follow the
+  coordinated release window, across a set, moved, and cleared
+  Coordinated Release Date).
 - docs/features/platform/testing-strategy.md (Tier Responsibility and
   Proportionality; Ticket Accessibility > Confidentiality and explicit
   access grants, the Coordinated Release Date bullet).
@@ -68,6 +70,7 @@ from app.services.ticket_convergence_registry import (
 )
 from app.services.ticket_deadlines import DueDates
 from app.services.ticket_service import (
+    CoordinatedReleaseBeforeCreationError,
     TicketNotConfidentialError,
     assemble_ticket_detail,
     set_confidentiality,
@@ -76,6 +79,7 @@ from app.services.ticket_service import (
 from app.services.ticket_visibility import TicketCaller, ticket_visibility_condition
 from tests.support.cvss_chain import eligibility
 from tests.support.database import rollback_test_scope
+from tests.support.deadline_matrix import crd_window_offsets
 from tests.support.ticket_mutations import (
     EVAL,
     EventRow,
@@ -89,6 +93,24 @@ from tests.support.ticket_mutations import (
 
 pytest_plugins = ["tests.support.ticket_mutation_fixtures"]
 """Provides the shared `va_user` and `tree` fixtures."""
+
+TICKET_CREATED_AT = datetime(2001, 1, 1, 9, 0, tzinfo=UTC)
+"""Default creation of this module's Tickets: before every CRD it sets, so
+that only the creation-bound tests reach
+`CoordinatedReleaseBeforeCreationError`."""
+
+
+@pytest.fixture
+def ticket_factory(ticket_factory: TicketFactory) -> TicketFactory:
+    """The shared factory with `created_at` defaulting to
+    `TICKET_CREATED_AT`."""
+
+    async def _create(**overrides: Any) -> Ticket:
+        overrides.setdefault("created_at", TICKET_CREATED_AT)
+        return await ticket_factory(**overrides)
+
+    return _create
+
 
 GrantFactory = Callable[..., Awaitable[TicketAccessGrant]]
 
@@ -378,29 +400,25 @@ class TestNoOp:
 @pytest.mark.integration
 class TestGuards:
     @pytest.mark.parametrize(
-        ("retained", "requested"),
+        "requested",
         [
-            pytest.param(None, CRD, id="never-confidential-set"),
-            pytest.param(None, None, id="never-confidential-would-be-no-op"),
-            pytest.param(CRD, LATER, id="retained-change"),
-            pytest.param(CRD, None, id="retained-clear"),
-            pytest.param(CRD, CRD_CEST, id="retained-would-be-no-op"),
+            pytest.param(CRD, id="set"),
+            pytest.param(None, id="would-be-no-op"),
+            pytest.param(TICKET_CREATED_AT - timedelta(days=1), id="before-creation"),
         ],
     )
-    async def test_non_confidential_ticket_is_rejected_before_no_op_classification(
+    async def test_non_confidential_ticket_without_crd_is_rejected_first(
         self,
         db_session: AsyncSession,
         ticket_factory: TicketFactory,
         va_user: VAUser,
-        retained: datetime | None,
         requested: datetime | None,
     ) -> None:
-        """Step 3 precedes step 4: a non-confidential Ticket, with no CRD
-        or with one retained from a declassification, raises
-        `TicketNotConfidentialError` even for an otherwise unchanged
-        request."""
+        """Step 3 precedes steps 4 and 5: a non-confidential Ticket without
+        a CRD raises `TicketNotConfidentialError` for every request, `null`
+        and an instant before `created_at` included."""
         actor = await va_user()
-        ticket = await ticket_factory(coordinated_release_at=retained)
+        ticket = await ticket_factory()
 
         await _assert_rejected(
             db_session,
@@ -410,15 +428,45 @@ class TestGuards:
             value=requested,
         )
 
-    async def test_retained_value_is_read_only_until_reclassification(
+    @pytest.mark.parametrize(
+        ("requested", "persisted", "events"),
+        [
+            pytest.param(LATER, LATER, [(CRD_TEXT, LATER_TEXT)], id="change"),
+            pytest.param(None, None, [(CRD_TEXT, None)], id="clear"),
+            pytest.param(CRD_CEST, CRD, [], id="no-op"),
+        ],
+    )
+    async def test_crd_retained_on_a_non_confidential_ticket_stays_editable(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+        requested: datetime | None,
+        persisted: datetime | None,
+        events: list[tuple[str | None, str | None]],
+    ) -> None:
+        """tickets.md, Coordinated Release Date: a CRD that a
+        declassification retains can be changed or cleared, with one event
+        per effective change; an unchanged request is a no-op."""
+        actor = await va_user()
+        ticket = await ticket_factory(coordinated_release_at=CRD)
+
+        await _set(db_session, ticket.id, actor, requested)
+
+        assert await _stored(db_session, ticket.id) == persisted
+        assert await ticket_events_by_id(db_session, ticket.id) == [
+            _changed(actor, old, new) for old, new in events
+        ]
+
+    async def test_declassified_ticket_keeps_its_crd_editable_until_cleared(
         self,
         db_session: AsyncSession,
         ticket_factory: TicketFactory,
         va_user: VAUser,
     ) -> None:
-        """tickets.md, Coordinated Release Date: declassification through
-        the service retains the CRD read-only; reclassification retains it
-        too and makes it editable again."""
+        """Declassification through the service retains the CRD, which can
+        then be changed and cleared; once cleared, the non-confidential
+        Ticket cannot receive another until it is confidential again."""
         actor = await va_user()
         ticket = await ticket_factory(is_confidential=True, coordinated_release_at=CRD)
         caller = TicketCaller.authenticated(actor.id, Scope.ALL)
@@ -429,21 +477,91 @@ class TestGuards:
         }
 
         await set_confidentiality(db_session, is_confidential=False, **common)
-        with pytest.raises(TicketNotConfidentialError):
-            await _set(db_session, ticket.id, actor, LATER)
-        await set_confidentiality(db_session, is_confidential=True, **common)
         assert await _stored(db_session, ticket.id) == CRD
         await _set(db_session, ticket.id, actor, LATER)
+        await _set(db_session, ticket.id, actor, None)
+        with pytest.raises(TicketNotConfidentialError):
+            await _set(db_session, ticket.id, actor, CRD)
+        await set_confidentiality(db_session, is_confidential=True, **common)
+        await _set(db_session, ticket.id, actor, CRD)
 
-        assert await _stored(db_session, ticket.id) == LATER
+        assert await _stored(db_session, ticket.id) == CRD
         assert [
             (e.event_type, e.old_value, e.new_value)
             for e in await ticket_events_by_id(db_session, ticket.id)
         ] == [
             ("confidentiality_changed", "true", "false"),
-            ("confidentiality_changed", "false", "true"),
             ("coordinated_release_changed", CRD_TEXT, LATER_TEXT),
+            ("coordinated_release_changed", LATER_TEXT, None),
+            ("confidentiality_changed", "false", "true"),
+            ("coordinated_release_changed", None, CRD_TEXT),
         ]
+
+    @pytest.mark.parametrize(
+        ("confidential", "stored"),
+        [
+            pytest.param(True, None, id="confidential-set"),
+            pytest.param(True, CRD, id="confidential-change"),
+            pytest.param(False, CRD, id="retained-change"),
+        ],
+    )
+    async def test_instant_before_created_at_is_rejected(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+        confidential: bool,
+        stored: datetime | None,
+    ) -> None:
+        """Step 4: one microsecond before the locked `created_at` raises
+        `CoordinatedReleaseBeforeCreationError` with no effect."""
+        actor = await va_user()
+        ticket = await ticket_factory(
+            is_confidential=confidential, coordinated_release_at=stored
+        )
+
+        await _assert_rejected(
+            db_session,
+            CoordinatedReleaseBeforeCreationError,
+            ticket_id=ticket.id,
+            actor=actor,
+            value=TICKET_CREATED_AT - timedelta(microseconds=1),
+        )
+
+    async def test_instant_equal_to_created_at_is_accepted(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+    ) -> None:
+        actor = await va_user()
+        ticket = await ticket_factory(is_confidential=True)
+
+        await _set(db_session, ticket.id, actor, TICKET_CREATED_AT)
+
+        assert await _stored(db_session, ticket.id) == TICKET_CREATED_AT
+        assert await ticket_events_by_id(db_session, ticket.id) == [
+            _changed(actor, None, "2001-01-01T09:00:00Z")
+        ]
+
+    async def test_created_at_loaded_by_the_lock_is_compared(
+        self,
+        db_session: AsyncSession,
+        va_user: VAUser,
+    ) -> None:
+        """A Ticket created in the same session through the service, whose
+        server-generated `created_at` is not loaded yet, is still compared
+        with its persisted creation instant."""
+        actor = await va_user()
+        ticket = await ticket_service.create_ticket(
+            db_session,
+            acting_user_id=actor.id,
+            is_confidential=True,
+            source=ticket_service.TicketCreationSource.MANUAL,
+        )
+
+        with pytest.raises(CoordinatedReleaseBeforeCreationError):
+            await _set(db_session, ticket.id, actor, CRD)
 
     async def test_missing_ticket_is_not_found(
         self, db_session: AsyncSession, va_user: VAUser
@@ -659,11 +777,13 @@ class TestInformational:
         """A confidential CVE-less `High` `Analysis` Ticket whose persisted
         state is deliberately stale: its `AFFECTED` track would gate to
         `Analyzed`, and its Product is persisted eligible although in
-        Reactive Support. Setting a future and then a past CRD changes
-        neither the status, the Product eligibility, the assignee, the
-        priority, `created_at` and the due dates (+3, +18, +21, +30, +30
-        days), nor the predicate for a maintainer, a grantee, and an
-        outsider."""
+        Reactive Support. Setting a later CRD, one equal to `created_at`,
+        and clearing it changes neither the status, the Product
+        eligibility, the assignee, the priority, `created_at`, nor the
+        predicate for a maintainer, a grantee, and an outsider; only the
+        due dates follow the deadline window (ticket-deadlines.md,
+        Coordinated Release Window), back to +3, +18, +21, +30, +30 days
+        after the clear."""
         monkeypatch.setattr(ticket_service, "_utc_now", lambda: DETAIL_INSTANT)
         actor = await va_user()
         owner = await va_user()
@@ -711,23 +831,38 @@ class TestInformational:
                 ],
             )
 
-        before = await snapshot()
-        assert before[0] == TicketStatus.ANALYSIS
-        assert before[1] == owner.id
-        assert before[4] == CREATED_AT
-        assert before[5] == DueDates(
+        def window(end: datetime) -> DueDates:
+            triage, submission, um, qa, release = (
+                CREATED_AT + offset for offset in crd_window_offsets(end - CREATED_AT)
+            )
+            return DueDates(
+                triage=triage, submission=submission, um=um, qa=qa, release=release
+            )
+
+        sla = DueDates(
             triage=CREATED_AT + timedelta(days=3),
             submission=CREATED_AT + timedelta(days=18),
             um=CREATED_AT + timedelta(days=21),
             qa=CREATED_AT + timedelta(days=30),
             release=CREATED_AT + timedelta(days=30),
         )
+        before = await snapshot()
+        assert before[0] == TicketStatus.ANALYSIS
+        assert before[1] == owner.id
+        assert before[4] == CREATED_AT
+        assert before[5] == sla
         assert before[6] == [(True, False)]
         assert before[7] == [True, True, False]
         calls = _forbid(monkeypatch)
 
-        for value in (LATER, datetime(2001, 9, 1, 8, 0, tzinfo=UTC)):
+        for value, due_dates in (
+            (LATER, window(LATER)),
+            (CREATED_AT, window(CREATED_AT)),
+            (None, sla),
+        ):
             await _set(db_session, ticket.id, actor, value)
-            assert await snapshot() == before
+            after = await snapshot()
+            assert after[5] == due_dates
+            assert after[:5] + after[6:] == before[:5] + before[6:]
 
         assert calls == []
