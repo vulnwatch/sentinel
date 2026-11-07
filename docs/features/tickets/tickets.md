@@ -233,7 +233,8 @@ Every Ticket exposes an effective `priority` (`P1`–`P4`, or `null` when not ye
 prioritizable). It is derived automatically from the resolved severity above
 and the exploitation evidence of the associated CVE, and an authorized acting
 user may override it. Every Ticket also exposes its automatic priority, its
-override, and the basis of its automatic priority. Priority is informational
+override with who set it and when, and the basis of its automatic priority.
+Priority is informational
 only: it is not a gate input and never affects status, Product eligibility, or
 assignment. The complete contract is in [ticket-priority.md](ticket-priority.md).
 
@@ -1591,6 +1592,8 @@ views without the full package tree.
 | `priority` | string \| null | Effective priority (manual override, otherwise automatic): `p1`, `p2`, `p3`, `p4`, or `null` when not yet prioritizable. See [ticket-priority.md](ticket-priority.md) |
 | `priority_automatic` | string \| null | System-derived priority (`Ticket.priority_auto`): `p1`–`p4`, or `null` when not yet prioritizable |
 | `priority_override` | string \| null | Manual override (`Ticket.priority_override`): `p1`–`p4`, or `null` when no override is set |
+| `priority_override_by` | UserSummary \| null | Current profile of the user who set the current override, including `active = false` when deactivated; `null` when no override is set. See [ticket-priority.md](ticket-priority.md#persistence-and-effective-priority) |
+| `priority_override_at` | datetime \| null | When the current override was set (UTC): the time of the change that set its current value, equal to the `created_at` of that change's `priority_changed` event; `null` when no override is set |
 | `priority_automatic_basis` | PriorityBasis | What `priority_automatic` is based on |
 | `assignee` | UserSummary \| null | Current assignee, or `null` if unassigned |
 | `cve` | CVESummary \| null | Associated CVE summary, or `null` if no CVE |
@@ -1622,6 +1625,8 @@ projection with the full package tree, and uses expanded CVE data.
 | `priority` | string \| null | Effective priority: `priority_override` when set, otherwise `priority_automatic`. Values `p1`–`p4` or `null` |
 | `priority_automatic` | string \| null | System-derived priority (`Ticket.priority_auto`): `p1`–`p4`, or `null` when not yet prioritizable |
 | `priority_override` | string \| null | Manual override (`Ticket.priority_override`): `p1`–`p4`, or `null` when no override is set |
+| `priority_override_by` | UserSummary \| null | User who set the current override, as in `TicketSummary` |
+| `priority_override_at` | datetime \| null | When the current override was set (UTC), as in `TicketSummary` |
 | `priority_automatic_basis` | PriorityBasis | What `priority_automatic` is based on |
 | `assignee` | UserSummary \| null | Current assignee, or `null` if unassigned |
 | `cve` | CVEDetail \| null | Expanded CVE data with dates, or `null` if no CVE |
@@ -2091,9 +2096,12 @@ To clear the override and return to the automatic priority:
   override; JSON `null` clears it. Any other value, or an omitted field,
   produces the global `422 VALIDATION_ERROR`
 
-An unchanged request is an idempotent success with no audit event. An effective
-change may auto-assign the acting user and creates one `priority_changed`
-event. The endpoint has no endpoint-specific errors.
+An unchanged request is an idempotent success with no audit event; it keeps
+`priority_override_by` and `priority_override_at`, also when another user
+sends it. An effective change may auto-assign the acting user and creates one
+`priority_changed` event. Setting or changing the override records the acting
+user and the time of the change as its provenance; clearing it clears both.
+The endpoint has no endpoint-specific errors.
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).
@@ -2663,6 +2671,8 @@ table:
 | duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Original ticket when Duplicated |
 | priority_auto     | VARCHAR(10) | nullable                     | System-derived priority. See [ticket-priority.md](ticket-priority.md) |
 | priority_override | VARCHAR(10) | nullable                     | Sticky manual priority override. See [ticket-priority.md](ticket-priority.md) |
+| priority_override_by_id | UUID  | FK(user.id), nullable        | User who set the current override; `NULL` exactly when `priority_override` is `NULL` (`chk_ticket_priority_override_provenance`). See [ticket-priority.md](ticket-priority.md#persistence-and-effective-priority) |
+| priority_override_at | TIMESTAMPTZ | nullable                 | When the current override was set; `NULL` exactly when `priority_override` is `NULL` |
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record update timestamp |
 | is_confidential   | BOOLEAN       | NOT NULL, DEFAULT FALSE      | Confidentiality flag. See [Confidential Tickets](#confidential-tickets) |

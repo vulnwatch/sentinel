@@ -10,9 +10,9 @@ value.
 
 This specification is the authoritative source for priority semantics, the
 exploitation classification, the decision table, persistence of the automatic
-and manual values, the automatic refresh points, the basis of the automatic
-priority, the manual override, the `priority_changed` audit contract, and the
-priority-related API surface.
+and manual values and of the override provenance, the automatic refresh
+points, the basis of the automatic priority, the manual override, the
+`priority_changed` audit contract, and the priority-related API surface.
 
 ## Priority and Severity
 
@@ -156,22 +156,41 @@ the exploitation level.
 
 ## Persistence and Effective Priority
 
-`Ticket` persists two nullable columns (see `docs/data-model.md`, Ticket):
+`Ticket` persists two nullable priority columns and the provenance of the
+override (see `docs/data-model.md`, Ticket):
 
 - `priority_auto` — system-managed. Only
   [`refresh_priority_auto()`](#refresh_priority_auto) writes it.
 - `priority_override` — the sticky manual value. Only
   [`set_priority_override()`](#set_priority_override) writes it. Automatic
   processing never modifies or clears it.
+- `priority_override_by_id` and `priority_override_at` — the **override
+  provenance**: the user who set the current value of `priority_override`
+  and the time at which they set it. Only `set_priority_override()` writes
+  them, in the same write as `priority_override`. Both are `NULL` exactly
+  when `priority_override` is `NULL`
+  (`chk_ticket_priority_override_provenance`).
 
 The **effective priority** is `COALESCE(priority_override, priority_auto)`. It
 is the value exposed as `priority` in API responses, filtered, sorted, and
 recorded in audit events. It is derived at read time and is not stored in a
 third column. No override reason or comment is stored.
 
-The columns are introduced without a data backfill because no live or
-production database exists; every Ticket receives its automatic value at its
-next refresh point.
+The override provenance is current state of the override, not its history: it
+names the change that set the current value, so that a reader of the Ticket
+knows whom to ask about the override and whether it was set before the
+current evidence of the automatic priority, which an override masks without
+an audit event ([`refresh_priority_auto()`](#refresh_priority_auto), step 6).
+Earlier overrides of the Ticket remain only in its `priority_changed` events.
+The provenance is never derived from audit history, and neither automatic
+processing nor a user lifecycle or profile mutation, such as deactivation or
+a rename, changes it; a response shows the setter's current profile.
+
+These columns are introduced without a data backfill because no live or
+production database exists: every Ticket receives its automatic value at its
+next refresh point, and the provenance has no source outside audit history.
+The migration that adds the provenance therefore fails on a database in which
+a Ticket holds an override.
 
 ## Automatic Refresh
 
@@ -216,10 +235,11 @@ status, like `CVE.severity`.
    change, create no event.
 7. Flush and return `True`.
 
-It never assigns, reconciles, changes status, registers Ticket convergence, or
-performs network, Redis, or Celery I/O. Re-invocation with unchanged inputs is
-a no-op. Database, audit, and flush exceptions propagate unchanged and roll
-back the caller's complete transaction.
+It never writes the override or its provenance, assigns, reconciles, changes
+status, registers Ticket convergence, or performs network, Redis, or Celery
+I/O. Re-invocation with unchanged inputs is a no-op. Database, audit, and
+flush exceptions propagate unchanged and roll back the caller's complete
+transaction.
 
 ### Refresh Points
 
@@ -314,15 +334,21 @@ function captures one UTC date at entry.
    `TicketNotMutableError` with no effect.
 4. If `priority` equals the current `priority_override` (including `None` when
    no override exists), return the Ticket unchanged: no assignment, write,
-   event, or reconciliation.
+   event, or reconciliation. The provenance keeps the change that set the
+   current value, also when another user sends the request.
 5. Call `auto_assign_actor()` with the stabilized User.
 6. Classify the action from the locked pre-state: `set` (no override to a
    value), `changed` (one value to another), or `cleared` (a value to none).
-   Capture the old effective priority, persist `priority_override`, and compute
-   the new effective priority.
+   Capture the old effective priority, persist `priority_override` with its
+   provenance, and compute the new effective priority. For `set` and
+   `changed` the provenance is `acting_user_id` and the transaction's `now()`;
+   for `cleared` both provenance columns are `NULL`.
 7. Create one `priority_changed` event attributed to the acting user, with the
-   old and new effective priorities and the action in `detail`, even when the effective priority is unchanged (for
-   example, an override equal to `priority_auto`).
+   old and new effective priorities and the action in `detail`, even when the
+   effective priority is unchanged (for example, an override equal to
+   `priority_auto`). Its `created_at` is the same transaction `now()`, so the
+   `priority_override_at` of a `set` or `changed` equals the `created_at` of
+   its event.
 8. Call `reconcile_ticket_status()` exactly once with the one
    `evaluation_date`. Priority is not a gate input; reconciliation is required
    by the [auto-assignment rule](ticket-mutations.md#auto-assignment-rule) and
@@ -333,8 +359,8 @@ function captures one UTC date at entry.
 `priority_auto` is not modified. Re-invocation with the same value is the
 step-4 no-op. The operation propagates `TicketNotFoundError`,
 `TicketNotMutableError`, and exceptions from `auto_assign_actor()` and
-`reconcile_ticket_status()`; any failure rolls back the override, assignment,
-status, and every event together.
+`reconcile_ticket_status()`; any failure rolls back the override and its
+provenance, assignment, status, and every event together.
 
 The consumer endpoint is `PATCH /api/v1/tickets/{ticket_id}/priority` with
 `Capability: triage_ticket`, defined in
@@ -360,6 +386,7 @@ no event. Audit history is never an input to priority resolution.
 |---|---|---|
 | `TicketSummary.priority`, `TicketDetail.priority` | Effective priority | [tickets.md](tickets.md#response-schemas) |
 | `priority_automatic`, `priority_override` of `TicketSummary` and `TicketDetail` | Persisted automatic and manual values | [tickets.md](tickets.md#response-schemas) |
+| `priority_override_by`, `priority_override_at` of `TicketSummary` and `TicketDetail` | Override provenance ([Persistence and Effective Priority](#persistence-and-effective-priority)) | [tickets.md](tickets.md#response-schemas) |
 | `priority_automatic_basis` of `TicketSummary` and `TicketDetail` (`PriorityBasis`) | [Automatic Priority Basis](#automatic-priority-basis) | [tickets.md](tickets.md#shared-sub-schemas) |
 | `GET /api/v1/tickets` `priority` filter and `sort_by=priority` | Repeatable filter over effective priority, including `unresolved`; semantic ordering | [tickets.md](tickets.md#list-tickets), [api-spec.md](../../api-spec.md#semantic-sort-fields) |
 | `GET /api/v1/tickets` `sort_by=priority_then_current_due` | Effective priority in semantic ordering, then the due date of the Ticket's current phase | [ticket-deadlines.md](ticket-deadlines.md#current-due-date) |
@@ -386,12 +413,19 @@ Tests MUST cover:
    Ticket status, the single refresh for ingestion-created Tickets, and
    enrichment-only KEV/SSVC/EPSS payloads.
 4. An override masking an automatic change (persisted `priority_auto` change,
-   no event) and a later clear exposing the automatic value.
+   no event, unchanged override provenance) and a later clear exposing the
+   automatic value.
 5. Override set, changed, and cleared with exact `override_action`, equal
    old/new values when the effective priority does not change, the no-op,
    auto-assignment with `New -> Analysis` followed by one reconciliation,
    `TICKET_NOT_FOUND` for missing and inaccessible Tickets, `TICKET_NOT_MUTABLE`
    in `Ignored` and `Duplicated`, `403` without `triage_ticket`, and rollback.
+   Each case asserts the override provenance it leaves: the acting user and a
+   `priority_override_at` equal to the `created_at` of the `priority_changed`
+   event for `set` and for `changed` by another user in a later transaction,
+   both `NULL` after `cleared`, and the unchanged provenance of the earlier
+   change after the no-op, also when another user sends it, and after every
+   rejection and rollback.
 6. Proof that the automatic refresh never alters status, gates, Product
    eligibility, assignment, or accessibility, that the override's assignment
    and status consequences arise only from the auto-assignment rule (item 5),
@@ -401,7 +435,10 @@ Tests MUST cover:
 8. The default-version runner classifying a unit `changed` when only
    `priority_auto` changes.
 9. API filter (`p1`–`p4`, `unresolved`, invalid values ignored), semantic
-   sort with NULL last, and response fields.
+   sort with NULL last, and response fields, including the override
+   provenance in `TicketSummary`, `TicketDetail`, and the `PATCH .../priority`
+   response, both `null` without an override, and a deactivated setter, whom
+   the provenance keeps and projects with `active = false`.
 10. The automatic priority basis of `classify_exploitation()` and of
     `TicketSummary` and `TicketDetail`: each level with its exact deciding
     evidence, values, and order (KEV with `date_added`, alone when SSVC
@@ -417,6 +454,10 @@ Tests MUST cover:
     CVE, `POST .../associate-cve`, and `PATCH .../severity`, and each
     Decision Table cell, reached at least once through any refresh point,
     with a basis whose cell equals `priority_automatic` in the same response.
+11. `chk_ticket_priority_override_provenance` rejecting an override without
+    either provenance column and either provenance column without an
+    override, and the migration that adds the provenance succeeding on
+    Tickets without an override and failing on a Ticket that holds one.
 
 Audit assertions follow `docs/features/platform/testing-strategy.md` (Audit
 Trail Testing).
@@ -439,7 +480,9 @@ Trail Testing).
   follows priority in `sort_by=priority_then_current_due`
 - `docs/features/platform/default-cvss-version-operations.md` — all-CVE
   runner and impact preview
-- `docs/data-model.md` — `Ticket` priority columns and `TicketPriority`
-- `docs/api-spec.md` — semantic sorting, filtering, and error derivation
+- `docs/data-model.md` — `Ticket` priority and override provenance columns
+  and `TicketPriority`
+- `docs/api-spec.md` — semantic sorting, filtering, error derivation, and
+  User References in Responses
 - `docs/features/identity/rbac.md` — `triage_ticket` and the Endpoint
   Permission Map

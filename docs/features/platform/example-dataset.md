@@ -275,8 +275,9 @@ load date `D`, the UTC calendar date of `T`. Every relative date and time in
 Dataset Content is computed from them: `T − 3d` is three days before the load
 instant, and `D + 365` is 365 days after the load date.
 
-The persisted creation, update, and audit timestamps are the database times of
-the operations, shortly after `T`. The load backdates only two kinds of value,
+The persisted creation, update, and audit timestamps, and the time at which
+the priority override of `SNTL-12` was set, are the database times of the
+operations, shortly after `T`. The load backdates only two kinds of value,
 so that a dataset backend shows past due dates and a run history:
 
 - the creation time of each aged Ticket, which the `Ticket work` step sets to
@@ -655,6 +656,12 @@ release detection is `set_track_status()` with `FIXED` and no acting user.
 After these operations, the step ages the Tickets of Aged Tickets and then
 sets the coordinated release date of `SNTL-27` through
 `set_coordinated_release_date()` (Aged Tickets).
+
+`SNTL-12` is the only Ticket with a priority override: `P1`, set by `bwilson`.
+Its override provenance names `bwilson` and the time of that operation, the
+`created_at` of its `priority_changed` event
+(`docs/features/tickets/ticket-priority.md`, Persistence and Effective
+Priority); the aging of `SNTL-12` does not change it.
 
 The resulting states follow the gates of `docs/features/tickets/tickets.md`:
 

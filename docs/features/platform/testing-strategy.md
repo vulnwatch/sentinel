@@ -4990,7 +4990,7 @@ and the dedicated database starts its Ticket identifiers at `SNTL-1`.
   source data and CVE source records, and the failure drill-down of the last
   NVD run; the Tickets with their identifiers, status, assignee,
   confidentiality, access grant, coordinated release date, severity, and
-  priority override; the aged Tickets with their creation times, current
+  priority override with its provenance; the aged Tickets with their creation times, current
   phases, and the Tickets that each `overdue` value lists; the due dates and
   current phases of the Tickets with a coordinated release date and the
   Tickets that the Embargo filters list; the packages, tracks, Products,

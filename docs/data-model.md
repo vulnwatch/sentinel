@@ -97,7 +97,7 @@ flowchart TB
     Ticket --> TicketAuditEvent
     Ticket --> TicketAccessGrant
     Ticket --> TicketPackage
-    Ticket -->|"assignee"| User
+    Ticket -->|"assignee_id, priority_override_by_id"| User
     TicketAccessGrant -->|"user_id, granted_by_id"| User
     TicketPackage --> TicketPackageTrack
     TicketPackage --> TicketPackageMaintainer
@@ -182,6 +182,8 @@ erDiagram
         VARCHAR_20 severity_manual "nullable"
         VARCHAR_10 priority_auto "nullable"
         VARCHAR_10 priority_override "nullable"
+        UUID priority_override_by_id FK "nullable"
+        TIMESTAMPTZ priority_override_at "nullable"
         BOOLEAN is_confidential "NOT NULL, DEFAULT FALSE"
         UUID assignee_id FK "nullable"
          UUID duplicate_of_id FK "self-ref, nullable"
@@ -226,6 +228,7 @@ erDiagram
     Ticket ||--o{ TicketAuditEvent : "has events"
     Ticket ||--o{ TicketReference : "has references"
     Ticket }o--o| User : "assigned to"
+    Ticket }o--o| User : "priority override set by"
     Ticket }o--o| Ticket : "duplicate of"
     TicketAccessGrant }o--|| User : "granted to"
     TicketAccessGrant }o--|| User : "granted by"
@@ -964,6 +967,8 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 | severity_manual | VARCHAR(20) | nullable                     | Manual severity set by the VA (Critical, High, Medium, Low, None). `NULL` = not set (unresolved). `None` = VA explicitly assessed as informational (equivalent to CVSS score 0.0). Used for severity resolution when `cve_id IS NULL`. Cannot be set when `cve_id IS NOT NULL` (severity is derived from CVSS). Cleared to `NULL` by `associate_cve` when a CVE is linked. Mutually exclusive with `cve_id` (see CHECK below). See `docs/features/tickets/tickets.md` (Severity Resolution) |
 | priority_auto     | VARCHAR(10) | nullable                     | TicketPriority derived automatically from the resolved severity and the associated CVE's exploitation evidence. `NULL` = not yet prioritizable. Written only by `ticket_mutations.refresh_priority_auto()`. See `docs/features/tickets/ticket-priority.md` |
 | priority_override | VARCHAR(10) | nullable                     | Sticky manual TicketPriority override set by an authorized user. `NULL` = no override. Never modified by automatic processing. The effective priority is `COALESCE(priority_override, priority_auto)` and is not stored. See `docs/features/tickets/ticket-priority.md` |
+| priority_override_by_id | UUID  | FK(user.id) ON DELETE RESTRICT, nullable | User who set the current value of `priority_override`, part of the override provenance. `NULL` exactly when `priority_override` is `NULL` (see CHECK below). Written only by `ticket_service.set_priority_override()`; never derived from audit history, and unchanged by automatic processing and by user lifecycle and profile mutations. Not indexed: Users are never deleted and no documented query selects Tickets by it. See `docs/features/tickets/ticket-priority.md` (Persistence and Effective Priority) |
+| priority_override_at | TIMESTAMPTZ | nullable                 | When the current value of `priority_override` was set: the `now()` of the transaction of that change, equal to the `created_at` of its `priority_changed` event. `NULL` exactly when `priority_override` is `NULL` (see CHECK below). Written only by `ticket_service.set_priority_override()` |
 | assignee_id       | UUID        | FK(user.id), nullable        | Current assignee. Assignment eligibility is defined in `docs/features/identity/rbac.md` (Business Rule 10); assignment and unassignment behavior in `docs/features/tickets/tickets.md`, `docs/features/tickets/ticket-service.md`, and `docs/features/identity/user-service.md` |
 | duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Self-referencing FK to the target ticket when status is Duplicated. Always references a non-Duplicated ticket (enforced by the transactional locking protocol in `mark_as_duplicate`). See `docs/features/tickets/tickets.md` (Duplicate Handling) |
 | created_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT            | Record creation timestamp            |
@@ -977,6 +982,7 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 - `chk_ticket_no_self_duplicate`: `duplicate_of_id <> id`
 - `chk_ticket_severity_manual_cve_exclusive`: `severity_manual IS NULL OR cve_id IS NULL`
 - `chk_ticket_coordinated_release_not_before_creation`: `coordinated_release_at IS NULL OR coordinated_release_at >= created_at` — a Coordinated Release Date is never before the Ticket's creation, so the coordinated release window of the remediation deadlines is never negative. `ticket_service` rejects such a value first with `TICKET_COORDINATED_RELEASE_BEFORE_CREATION`; the backdating of `created_at` by the example dataset loader only moves the creation earlier
+- `chk_ticket_priority_override_provenance`: `(priority_override IS NULL AND priority_override_by_id IS NULL AND priority_override_at IS NULL) OR (priority_override IS NOT NULL AND priority_override_by_id IS NOT NULL AND priority_override_at IS NOT NULL)` — an override always has its provenance, and no provenance exists without an override (`docs/features/tickets/ticket-priority.md`, Persistence and Effective Priority)
 
 **Indexes**:
 

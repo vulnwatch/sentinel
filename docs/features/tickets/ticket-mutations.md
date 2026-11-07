@@ -1410,7 +1410,7 @@ gates MUST go through the appropriate centralized module:
   mutation; delivery-status mutation is explicitly not gate-relevant)
 - **Automatic Ticket priority**: `ticket_mutations.refresh_priority_auto()` is
   the only writer of `Ticket.priority_auto`; `ticket_service` owns the manual
-  `priority_override`. Priority is not gate-relevant (see
+  `priority_override` and its provenance. Priority is not gate-relevant (see
   [ticket-priority.md](ticket-priority.md))
 
 Direct modification of gate-relevant records outside the owning module is a
