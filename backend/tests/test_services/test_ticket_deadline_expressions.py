@@ -492,11 +492,13 @@ class TestDueDateExpressions:
         ticket_factory: Any,
     ) -> None:
         """The coordinated release window is an elapsed duration too: with
-        a `TimeZone` whose transition falls inside the window, ten wall-clock
-        days that are 239 hours apart give a triage 23 h 54 min after
-        creation, not 24 h."""
-        created_at = datetime(2026, 3, 20, 11, 0, tzinfo=UTC)
-        crd = datetime(2026, 3, 30, 10, 0, tzinfo=UTC)
+        a `TimeZone` whose transition (2026-03-29) falls inside the window,
+        ten wall-clock days that are 239 hours apart give a triage 23 h
+        54 min after creation, not 24 h, and the submission and UM
+        milestones after the transition are not shifted by an hour as
+        calendar days in the session zone would shift them."""
+        created_at = datetime(2026, 3, 25, 11, 0, tzinfo=UTC)
+        crd = datetime(2026, 4, 4, 10, 0, tzinfo=UTC)
         ticket: Ticket = await ticket_factory(
             severity_manual=Severity.MEDIUM.value,
             created_at=created_at,
@@ -514,9 +516,9 @@ class TestDueDateExpressions:
         ).one()
 
         assert tuple(row) == (
-            datetime(2026, 3, 21, 10, 54, tzinfo=UTC),
-            datetime(2026, 3, 26, 10, 24, tzinfo=UTC),
-            datetime(2026, 3, 27, 10, 18, tzinfo=UTC),
+            datetime(2026, 3, 26, 10, 54, tzinfo=UTC),
+            datetime(2026, 3, 31, 10, 24, tzinfo=UTC),
+            datetime(2026, 4, 1, 10, 18, tzinfo=UTC),
             crd,
             crd,
         )
