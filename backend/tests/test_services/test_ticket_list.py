@@ -2254,25 +2254,29 @@ class TestSorting:
         """tickets.md (List Tickets > Embargo filters): the stored CRD, one
         retained on a non-confidential Ticket included, in both directions;
         Tickets without a CRD sort last in both, and equal keys are
-        tie-broken by `Ticket.id` in the requested direction. The creation
-        order differs from the CRD order."""
+        tie-broken by `Ticket.id` in the requested direction. The Tickets
+        share one creation instant and the insertion order differs from the
+        CRD order."""
         clock.instant = EMBARGO_INSTANT
         coming_crd = EMBARGO_INSTANT + timedelta(days=2)
+        # Equal creation instants, before every CRD: no `created_at` order.
+        created = {"created_at": EMBARGO_INSTANT - timedelta(days=30)}
         coming = await ticket_factory(
-            is_confidential=True, coordinated_release_at=coming_crd
+            is_confidential=True, coordinated_release_at=coming_crd, **created
         )
-        without_crd = await ticket_factory(is_confidential=True)
+        without_crd = await ticket_factory(is_confidential=True, **created)
         retained = await ticket_factory(
-            coordinated_release_at=EMBARGO_INSTANT - timedelta(days=5)
+            coordinated_release_at=EMBARGO_INSTANT - timedelta(days=5), **created
         )
         passed = await ticket_factory(
             is_confidential=True,
             coordinated_release_at=EMBARGO_INSTANT - timedelta(days=1),
+            **created,
         )
         twin = await ticket_factory(
-            is_confidential=True, coordinated_release_at=coming_crd
+            is_confidential=True, coordinated_release_at=coming_crd, **created
         )
-        public = await ticket_factory()
+        public = await ticket_factory(**created)
         ascending = [
             _sntl(t)
             for t in (retained, passed, *sorted([coming, twin], key=lambda t: t.id))

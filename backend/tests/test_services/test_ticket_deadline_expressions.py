@@ -486,6 +486,41 @@ class TestDueDateExpressions:
             created_at + timedelta(days=days) for days in (9, 54, 63, 90, 90)
         )
 
+    async def test_crd_window_ignores_session_time_zone_and_daylight_saving(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: Any,
+    ) -> None:
+        """The coordinated release window is an elapsed duration too: with
+        a `TimeZone` whose transition falls inside the window, ten wall-clock
+        days that are 239 hours apart give a triage 23 h 54 min after
+        creation, not 24 h."""
+        created_at = datetime(2026, 3, 20, 11, 0, tzinfo=UTC)
+        crd = datetime(2026, 3, 30, 10, 0, tzinfo=UTC)
+        ticket: Ticket = await ticket_factory(
+            severity_manual=Severity.MEDIUM.value,
+            created_at=created_at,
+            coordinated_release_at=crd,
+        )
+        await db_session.execute(text("SET LOCAL TIME ZONE 'Europe/Rome'"))
+        due = ticket_due_date_expressions()
+
+        row = (
+            await db_session.execute(
+                select(due.triage, due.submission, due.um, due.qa, due.release).where(
+                    Ticket.id == ticket.id
+                )
+            )
+        ).one()
+
+        assert tuple(row) == (
+            datetime(2026, 3, 21, 10, 54, tzinfo=UTC),
+            datetime(2026, 3, 26, 10, 24, tzinfo=UTC),
+            datetime(2026, 3, 27, 10, 18, tzinfo=UTC),
+            crd,
+            crd,
+        )
+
     async def test_supplied_severity_expression_is_used_instead_of_resolving(
         self,
         db_session: AsyncSession,

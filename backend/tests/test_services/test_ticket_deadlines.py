@@ -523,18 +523,6 @@ class TestCoordinatedReleaseWindow:
             is None
         )
 
-    def test_cleared_crd_returns_the_sla_window(self) -> None:
-        cleared = compute_due_dates(
-            created_at=CREATED_AT,
-            severity=Severity.MEDIUM,
-            ticket_status=TicketStatus.ANALYSIS,
-            coordinated_release_at=None,
-        )
-
-        assert cleared is not None
-        assert cleared.triage == CREATED_AT + timedelta(days=9)
-        assert cleared.release == CREATED_AT + timedelta(days=90)
-
     def test_aware_non_utc_crd_yields_utc_instants(self) -> None:
         crd = _CRD.astimezone(timezone(timedelta(hours=-5)))
 

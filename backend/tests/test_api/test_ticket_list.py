@@ -512,14 +512,23 @@ class TestListEndpoint:
         await user_role_factory(
             user_id=authenticated_user.id, role=Role.VULNERABILITY_ANALYST.value
         )
+        # One creation instant before every CRD: equal `created_at` keys,
+        # so only the CRD sort can produce the expected order.
+        created_at = _NOW - timedelta(days=30)
         coming = await ticket_factory(
-            is_confidential=True, coordinated_release_at=_NOW + timedelta(days=1)
+            is_confidential=True,
+            coordinated_release_at=_NOW + timedelta(days=1),
+            created_at=created_at,
         )
         passed = await ticket_factory(
-            is_confidential=True, coordinated_release_at=_NOW - timedelta(days=1)
+            is_confidential=True,
+            coordinated_release_at=_NOW - timedelta(days=1),
+            created_at=created_at,
         )
-        without_crd = await ticket_factory(is_confidential=True)
-        retained = await ticket_factory(coordinated_release_at=_NOW - timedelta(days=2))
+        without_crd = await ticket_factory(is_confidential=True, created_at=created_at)
+        retained = await ticket_factory(
+            coordinated_release_at=_NOW - timedelta(days=2), created_at=created_at
+        )
 
         assert set(await _ids(authenticated_client, is_confidential="true")) == {
             _sntl(t) for t in (passed, coming, without_crd)

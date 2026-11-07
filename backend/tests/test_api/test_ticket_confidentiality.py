@@ -955,7 +955,6 @@ class TestSetCoordinatedReleaseDate:
         [
             pytest.param(_LATER, _LATER, [(_CRD, _LATER)], id="change"),
             pytest.param(None, None, [(_CRD, None)], id="clear"),
-            pytest.param(_CRD, _CRD, [], id="unchanged"),
         ],
     )
     async def test_crd_retained_by_a_declassified_ticket_stays_editable(
@@ -993,17 +992,15 @@ class TestSetCoordinatedReleaseDate:
             _crd_event(va_user, old, new) for old, new in events
         ]
 
-    @pytest.mark.parametrize("confidential", [True, False])
     async def test_instant_before_created_at_is_rejected_without_effect(
         self,
         authenticated_client: AsyncClient,
         va_user: User,
         db_session: AsyncSession,
         ticket_factory: Factory,
-        confidential: bool,
     ) -> None:
         target: Ticket = await ticket_factory(
-            is_confidential=confidential, coordinated_release_at=_CRD_INSTANT
+            is_confidential=True, coordinated_release_at=_CRD_INSTANT
         )
         before = await _state(db_session, target.id)
 

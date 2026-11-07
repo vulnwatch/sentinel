@@ -100,15 +100,16 @@ def _state(
     return run_sync(_state_async(database_url))
 
 
-def _assert_previous_head(database_url: str) -> None:
+def _assert_previous_head(database_url: str, previous_checks: dict[str, str]) -> None:
     checks, rows = _state(database_url)
     assert _CONSTRAINT not in checks
+    assert checks == previous_checks
     assert rows == list(_ROWS)
 
 
-def _assert_upgraded(database_url: str) -> None:
+def _assert_upgraded(database_url: str, previous_checks: dict[str, str]) -> None:
     checks, rows = _state(database_url)
-    assert checks[_CONSTRAINT] == _EXPECTED_DEFINITION
+    assert checks == {**previous_checks, _CONSTRAINT: _EXPECTED_DEFINITION}
     assert rows == list(_ROWS)
     with pytest.raises(IntegrityError, match=_CONSTRAINT):
         _insert_ticket(
@@ -123,22 +124,26 @@ class TestTicketCoordinatedReleaseCheckMigration:
         alembic_test_database_url: str,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        """Exactly the new constraint is added and removed: every other
+        Ticket CHECK keeps its definition through the cycle."""
         monkeypatch.setattr(settings, "database_url", alembic_test_database_url)
         cfg = isolated_alembic_config()
 
         command.upgrade(cfg, _PREVIOUS_HEAD)
         for created_at, crd in _ROWS:
             _insert_ticket(alembic_test_database_url, created_at, crd)
-        _assert_previous_head(alembic_test_database_url)
+        previous_checks, _ = _state(alembic_test_database_url)
+        assert "chk_ticket_severity_manual_cve_exclusive" in previous_checks
+        _assert_previous_head(alembic_test_database_url, previous_checks)
 
         command.upgrade(cfg, _REVISION)
-        _assert_upgraded(alembic_test_database_url)
+        _assert_upgraded(alembic_test_database_url, previous_checks)
 
         command.downgrade(cfg, _PREVIOUS_HEAD)
-        _assert_previous_head(alembic_test_database_url)
+        _assert_previous_head(alembic_test_database_url, previous_checks)
 
         command.upgrade(cfg, _REVISION)
-        _assert_upgraded(alembic_test_database_url)
+        _assert_upgraded(alembic_test_database_url, previous_checks)
 
     def test_existing_crd_before_creation_fails_the_upgrade(
         self,
