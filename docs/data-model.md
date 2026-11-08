@@ -179,6 +179,7 @@ erDiagram
         INTEGER sequence_id UK "auto-increment"
         UUID cve_id FK "UNIQUE, nullable"
         VARCHAR_20 status "NOT NULL"
+        VARCHAR_20 ignore_reason "nullable"
         VARCHAR_20 severity_manual "nullable"
         VARCHAR_10 priority_auto "nullable"
         VARCHAR_10 priority_override "nullable"
@@ -964,6 +965,7 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 | sequence_id       | INTEGER     | UNIQUE, NOT NULL, auto-increment | Human-readable ticket ID, exposed as `SNTL-{n}` (e.g., `SNTL-42`) |
 | cve_id            | UUID        | FK(cve.id), UNIQUE, nullable | Associated CVE. NULL for tickets created without a CVE. A CVE can be associated later via `POST /api/v1/tickets/{ticket_id}/associate-cve` |
 | status            | VARCHAR(20) | NOT NULL, DEFAULT New        | TicketStatus: New, Analysis, Analyzed, Resolved, Ignored, Duplicated |
+| ignore_reason     | VARCHAR(20) | nullable                     | TicketIgnoreReason: why the Ticket is ignored. Set exactly while `status = Ignored` (see CHECK below): written together with the transition into `Ignored` by `ticket_service.ignore_ticket()` or `ignore_new_for_rejected_cve()`, unchanged while the Ticket stays `Ignored`, and cleared by `ticket_service.reopen_from_ignored()`. Only `cve_rejected` makes the Ticket reopen automatically, when the rejection of its CVE is reverted. Never derived from audit history. Not indexed: the Ticket-list `ignore_reason` filter uses the same unindexed approach as the `status` filter. See `docs/features/tickets/tickets.md` (Ignore Reason) |
 | severity_manual | VARCHAR(20) | nullable                     | Manual severity set by the VA (Critical, High, Medium, Low, None). `NULL` = not set (unresolved). `None` = VA explicitly assessed as informational (equivalent to CVSS score 0.0). Used for severity resolution when `cve_id IS NULL`. Cannot be set when `cve_id IS NOT NULL` (severity is derived from CVSS). Cleared to `NULL` by `associate_cve` when a CVE is linked. Mutually exclusive with `cve_id` (see CHECK below). See `docs/features/tickets/tickets.md` (Severity Resolution) |
 | priority_auto     | VARCHAR(10) | nullable                     | TicketPriority derived automatically from the resolved severity and the associated CVE's exploitation evidence. `NULL` = not yet prioritizable. Written only by `ticket_mutations.refresh_priority_auto()`. See `docs/features/tickets/ticket-priority.md` |
 | priority_override | VARCHAR(10) | nullable                     | Sticky manual TicketPriority override set by an authorized user. `NULL` = no override. Never modified by automatic processing. The effective priority is `COALESCE(priority_override, priority_auto)` and is not stored. See `docs/features/tickets/ticket-priority.md` |
@@ -979,6 +981,7 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 **CHECK constraints**:
 
 - `chk_ticket_duplicate_status_coherence`: `(status = 'Duplicated' AND duplicate_of_id IS NOT NULL) OR (status != 'Duplicated' AND duplicate_of_id IS NULL)`
+- `chk_ticket_ignore_reason_status_coherence`: `(status = 'Ignored' AND ignore_reason IS NOT NULL) OR (status != 'Ignored' AND ignore_reason IS NULL)` — an `Ignored` Ticket always has a reason, and no other Ticket has one
 - `chk_ticket_no_self_duplicate`: `duplicate_of_id <> id`
 - `chk_ticket_severity_manual_cve_exclusive`: `severity_manual IS NULL OR cve_id IS NULL`
 - `chk_ticket_coordinated_release_not_before_creation`: `coordinated_release_at IS NULL OR coordinated_release_at >= created_at` — a Coordinated Release Date is never before the Ticket's creation, so the coordinated release window of the remediation deadlines is never negative. `ticket_service` rejects such a value first with `TICKET_COORDINATED_RELEASE_BEFORE_CREATION`; the backdating of `created_at` by the example dataset loader only moves the creation earlier
@@ -1011,7 +1014,8 @@ for the full transition diagram, gates, and rules.
 Summary:
 - New -> Analysis (manual: assignment, or any modifying operation by a user
   eligible to be the assignee)
-- New -> Ignored (manual or automatic: CVE rejection)
+- New -> Ignored (manual or automatic: CVE rejection); every transition into
+  Ignored writes `ignore_reason`
 - Analysis -> Analyzed (automatic: all gates met — at least one manually
   included track, no actionable track in ANALYSIS, severity set, and at least
   one canonical SUSE assessment in any accepted CVSS version if a CVE is
@@ -1030,15 +1034,16 @@ Summary:
   the assignee becomes assignee, while an ineligible actor retains the current
   assignee)
 - Ignored -> (evaluated status) (manual or automatic via
-  `ticket_service.reopen_from_ignored()`; a locked-current actor eligible to
-  be the assignee becomes assignee, while an ineligible actor or system caller
-  retains the current assignee)
+  `ticket_service.reopen_from_ignored()`, which clears `ignore_reason`; a
+  locked-current actor eligible to be the assignee becomes assignee, while an
+  ineligible actor or system caller retains the current assignee)
 
 `REJECTED -> PUBLISHED` reopens the unique associated Ticket only when its
-locked-current status is `Ignored`; the decision uses current CVE/Ticket state
-and never audit-derived provenance. A Ticket newly created for an already-
-`REJECTED` orphan CVE transitions from `New` to `Ignored` after current-payload
-CVSS composition in the same transaction.
+locked-current status is `Ignored` and its `ignore_reason` is `cve_rejected`;
+the decision uses current CVE/Ticket state and never audit-derived provenance.
+A Ticket newly created for an already-`REJECTED` orphan CVE transitions from
+`New` to `Ignored`, with the reason `cve_rejected`, after current-payload CVSS
+composition in the same transaction.
 Every successful manual-zone exit registers one transaction-local Ticket
 convergence effect,
 including an immediate `Resolved` result. Assignment-eligibility sanitation
@@ -1082,6 +1087,23 @@ Alembic migration.
 
 See `docs/features/tickets/tickets.md` (Ticket Lifecycle) for the full
 transition diagram, gates, and rules.
+
+#### TicketIgnoreReason Enum
+
+Why a Ticket is ignored, used by `Ticket.ignore_reason`. Category A —
+state-machine (VARCHAR + CHECK constraint `chk_ticket_ignore_reason_valid`):
+the value decides which automatic exit from `Ignored` applies. Adding a value
+requires an Alembic migration. `NULL`, which every Ticket outside `Ignored`
+has, passes this constraint; `chk_ticket_ignore_reason_status_coherence`
+decides when a value is required. API wire values equal the stored values.
+
+| Value | Description |
+|-------|-------------|
+| `not_shipped` | SUSE ships none of the affected software; set by a user |
+| `cve_rejected` | The associated CVE is rejected; set by the automatic ignore of a rejected CVE or by a user while the CVE is `REJECTED`. The only value that reopens the Ticket automatically, when the rejection is reverted |
+| `other` | The Ticket is not worked for another reason; set by a user |
+
+See `docs/features/tickets/tickets.md` (Ignore Reason).
 
 #### TicketPriority Enum
 
@@ -1183,7 +1205,7 @@ contract is in `docs/features/tickets/ticket-audit-log.md`.
 
 | Value                      | Description                                        |
 |----------------------------|----------------------------------------------------|
-| status_change              | Ticket status changed. Direct manual transitions use the acting user; derived transitions use NULL. `comment` is exactly `CVE rejected` for CVE rejection and NULL otherwise. |
+| status_change              | Ticket status changed. Direct manual transitions use the acting user; derived transitions use NULL. `comment` is exactly `CVE rejected` for CVE rejection and NULL otherwise. `detail` carries `{"ignore_reason": "..."}` for a transition into `Ignored` and is NULL otherwise. |
 | assignment                 | Ticket was assigned, reassigned, unassigned by its assignee, or system-unassigned. Direct assignment, reassignment, auto-assignment, and self-unassignment use the acting user; system unassignment uses NULL. System unassignment uses `Unassigned from {username}: {reason}` with the closed reason vocabulary in `ticket-audit-log.md`; other assignment comments are NULL. |
 | duplicate_set              | Ticket was marked as duplicate of another          |
 | duplicate_removed          | Duplicate mark was reverted                        |
@@ -2141,9 +2163,10 @@ retained provenance.
   checksum checkpoint value was last accepted after complete local processing,
   not when the record was created))
 - Sentinel does not use PostgreSQL ENUM types. All enumerated columns
-  use VARCHAR. State-machine enums (TicketStatus, PackageStatus,
-  DeliveryStatus, CveState, Role, FetcherRunStatus, IBSRequestState) are
-  protected by CHECK constraints. `IBSRequestActionType` is a Category B
+  use VARCHAR. State-machine enums (TicketStatus, TicketIgnoreReason,
+  PackageStatus, DeliveryStatus, CveState, Role, FetcherRunStatus,
+  IBSRequestState) are protected by CHECK constraints.
+  `IBSRequestActionType` is a Category B
   classification; its type-specific structural CHECK also rejects unknown
   values as a consequence of field coherence. See `docs/conventions.md` (Enum
   Storage Strategy) for

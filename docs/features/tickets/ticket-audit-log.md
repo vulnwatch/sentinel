@@ -32,7 +32,7 @@ event type.
 
 | `event_type` | Trigger | `user_id` | `old_value` | `new_value` | `comment` | `detail` |
 |---|---|---|---|---|---|---|
-| `status_change` | Ticket status transitions (manual or system-initiated) | Authorized acting user for direct manual transitions; `NULL` for derived or automatic transitions | Previous status (e.g., `New`) | New status (e.g., `Analysis`) | Exactly `CVE rejected` for CVE rejection; otherwise `NULL` | `NULL` |
+| `status_change` | Ticket status transitions (manual or system-initiated) | Authorized acting user for direct manual transitions; `NULL` for derived or automatic transitions | Previous status (e.g., `New`) | New status (e.g., `Analysis`) | Exactly `CVE rejected` for CVE rejection; otherwise `NULL` | `{"ignore_reason": "..."}` for a transition into `Ignored`; otherwise `NULL` (see detail contract) |
 | `assignment` | Ticket assigned, reassigned, unassigned by its assignee, or system-unassigned | Authorized acting user for direct assignment, auto-assignment, and self-unassignment; `NULL` for system unassignment | Previous assignee username or `NULL` | New assignee username or `NULL` (unassigned) | `NULL` for assignment, reassignment, and self-unassignment; system unassignment uses `Unassigned from {username}: {reason}` with a closed reason below | `NULL` |
 | `duplicate_set` | Ticket marked as duplicate | Authorized acting user | `NULL` | `SNTL-{n}` identifier of the original ticket | `NULL` | `NULL` |
 | `duplicate_removed` | Duplicate mark reverted | Authorized acting user | `SNTL-{n}` identifier of the original ticket | `NULL` | `NULL` | `NULL` |
@@ -280,8 +280,8 @@ an intentional no-event contract, not missing audit coverage.
 | Self-unassignment | One `assignment` with `new_value = NULL`; no status or other event | Acting user | `ticket_service`; Ticket |
 | Auto-assignment during an effective mutation | One `assignment`; system `New → Analysis` when applicable | Acting user for assignment, system for promotion | Owning mutation service; stabilized acting User then optional CVE then Ticket |
 | User deactivation, bot marking, role-origin removal that leaves the assignee ineligible, or assignment-eligibility sanitation | One `assignment` per effectively cleared non-NULL assignee | System | `user_service`: User `FOR NO KEY UPDATE` then ordered Ticket locks; reconciliation sanitation: existing Ticket lock plus a fresh unlocked User/role observation |
-| Ignore, mark duplicate, reopen, or revert duplicate | Direct `status_change`, `duplicate_set`, or `duplicate_removed` as applicable; one `duplicate_target_changed` per repointed dependent; derived Product, sanitation, and final status events retain their normal contracts | Acting user for the direct ignore, duplicate-set, or duplicate-remove decision; reopen's resulting gate status and all other derived consequences use system | `ticket_service`; Ticket, ordered multi-Ticket, or locked dependent roots as specified there |
-| CVE association and rejection/revert | `cve_associated`; applicable derived severity/Product/status events; rejection uses one `status_change`. A rejected orphan records creation/association, then CVSS events, then `New -> Ignored` | Acting user for association; system for derived changes and rejection/revert status | manual `ticket_service`: User then CVE then Ticket; system `cve_service`: CVE then Ticket |
+| Ignore, mark duplicate, reopen, or revert duplicate | Direct `status_change`, `duplicate_set`, or `duplicate_removed` as applicable; the ignore `status_change` carries the ignore reason in `detail`, and the reopen clears the reason without an event of its own; one `duplicate_target_changed` per repointed dependent; derived Product, sanitation, and final status events retain their normal contracts | Acting user for the direct ignore, duplicate-set, or duplicate-remove decision; reopen's resulting gate status and all other derived consequences use system | `ticket_service`; Ticket, ordered multi-Ticket, or locked dependent roots as specified there |
+| CVE association and rejection/revert | `cve_associated`; applicable derived severity/Product/status events; rejection uses one `status_change` carrying the reason `cve_rejected`. A rejected orphan records creation/association, then CVSS events, then `New -> Ignored` | Acting user for association; system for derived changes and rejection/revert status | manual `ticket_service`: User then CVE then Ticket; system `cve_service`: CVE then Ticket |
 | Manual severity | One `severity_changed`, optional system `priority_changed`, plus ordinary assignment/status consequences | Acting user for severity; system for derived status | `ticket_mutations`; acting User then Ticket |
 | Effective CVSS assessment mutation or ingestion batch | One `cvss_assessment_changed` per effective assessment; optional single `severity_changed`, Product-event sequence, optional system `priority_changed`, and final status per chain/batch | Direct SUSE event uses acting user; all derived events and external ingestion use system | `ticket_mutations`; manual path User then CVE then optional Ticket; system path CVE then optional Ticket |
 | Default-version severity/eligibility chain | No assessment event; optional `severity_changed`, Product events, `priority_changed`, and final status | System | `ticket_mutations`; CVE then optional Ticket |
@@ -385,6 +385,7 @@ types not listed here MUST set `detail` to `NULL`.
 | `duplicate_target_changed` | `triggered_by_ticket` (string) | — | `{"triggered_by_ticket": "SNTL-42"}` |
 | `package_maintainer_added` | `package` (string) | — | `{"package": "fictional-package"}` |
 | `priority_changed` | `override_action` (string; conditionally required) | — | `{"override_action": "set"}` |
+| `status_change` | `ignore_reason` (string; conditionally required) | — | `{"ignore_reason": "not_shipped"}` |
 
 **Notes**:
 
@@ -423,6 +424,17 @@ types not listed here MUST set `detail` to `NULL`.
   `TicketAuditLog.log_event()` MUST reject a missing or non-NULL `detail` in
   the respective case, any other key, and any other `override_action` value,
   raising `ValueError`.
+- `status_change`: an event whose `new_value` is `Ignored` requires
+  `detail = {"ignore_reason": ...}` with the reason that the transition wrote,
+  exactly one of the TicketIgnoreReason values `not_shipped`, `cve_rejected`,
+  and `other` (`docs/features/tickets/tickets.md`, Ignore Reason), whether the
+  actor is a user or the system. Every other `status_change`, including the
+  system `New → Analysis` of an auto-assignment that precedes an ignore and
+  the exit from `Ignored`, requires `detail = NULL`. `TicketAuditLog.log_event()`
+  MUST reject a missing or non-NULL `detail` in the respective case, any other
+  key, and any other `ignore_reason` value, raising `ValueError`. The event
+  records the reason for review; the reason that governs the Ticket is its
+  `ignore_reason` column, never this event.
 - Product event details intentionally omit both `TicketPackageProduct.id` and
   internal `Product.id`. Within the ticket-scoped audit log, the event-time
   `package`, `track`, and canonical `product_cpe` identify the occurrence, and
@@ -747,6 +759,13 @@ required event sequence or explicit no-event outcome. For audited mutations:
     8601 old/new values with `NULL` for the absent side, `comment` and `detail`
     `NULL`, the creation-order position, no event for an unchanged instant or a
     rejected request, and no event when declassification retains the CRD
+30. `status_change` tests assert `detail = {"ignore_reason": ...}` equal to the
+    stored reason on every transition into `Ignored`, by a user with each
+    reason and by the system with `cve_rejected`, and `detail = NULL` on every
+    other `status_change`, including the `New → Analysis` of an auto-assignment
+    before an ignore and the final event of a reopen; `log_event()` rejects a
+    missing, extra-key, or unknown-valued `detail` on a transition into
+    `Ignored` and any non-NULL `detail` on another transition
 
 `AGENTS.md` enforces these requirements through Quality and findings
 (mandatory tests) and its audit routing rule, and its Reviewer Trigger Matrix

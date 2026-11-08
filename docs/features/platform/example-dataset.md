@@ -591,7 +591,7 @@ are visible to every authenticated user.
 | Ticket | CVE | Created by | Status | Assignee | Confidential | Severity |
 |---|---|---|---|---|---|---|
 | `SNTL-1` to `SNTL-7` | `CVE-2099-0001` to `CVE-2099-0007` | Ingestion | `New` | — | No | As CVEs |
-| `SNTL-8` | `CVE-2099-0008` | Ingestion | `Ignored`, because its CVE is rejected | — | No | unresolved |
+| `SNTL-8` | `CVE-2099-0008` | Ingestion | `Ignored` with the reason `cve_rejected`, because its CVE is rejected | — | No | unresolved |
 | `SNTL-9` | `CVE-2099-0009` | Ingestion | `Analysis` | — | No | high |
 | `SNTL-10` | `CVE-2099-0010` | Ingestion | `New` | — | No | medium |
 | `SNTL-11` | `CVE-2099-0011` | Ingestion | `Analysis` | `bwilson` | No | high |
@@ -600,13 +600,14 @@ are visible to every authenticated user.
 | `SNTL-14` | `CVE-2099-0014` | Ingestion | `Resolved` | `asmith` | No | high |
 | `SNTL-15` | `CVE-2099-0015` | Ingestion | `Resolved` | `bwilson` | No | medium |
 | `SNTL-16` | `CVE-2099-0016` | Ingestion | `Resolved` | `asmith` | No | medium |
-| `SNTL-17` | `CVE-2099-0017` | Ingestion | `Ignored` | `bwilson` | No | medium |
+| `SNTL-17` | `CVE-2099-0017` | Ingestion | `Ignored` with the reason `not_shipped` | `bwilson` | No | medium |
 | `SNTL-18` | `CVE-2099-0018` | `asmith` | `Analysis` | `asmith` | Yes, with a coordinated release date `T + 14d` and an access grant to `cwhite` | critical |
 | `SNTL-19` | `CVE-2099-0019` | `bwilson` | `Analysis` | `bwilson` | Yes, without access grant | high |
 | `SNTL-20` | `CVE-2099-0020` | `cwhite` | `Analysis` | `cwhite` | No | medium |
 | `SNTL-21` | — | `asmith`, with the manual severity high | `Analysis` | `asmith` | No | high |
 | `SNTL-22` | — | `bwilson` | `Duplicated`, a duplicate of `SNTL-21` | `bwilson` | No | unresolved |
-| `SNTL-23` to `SNTL-25` | `CVE-2099-0021` to `CVE-2099-0023` | Ingestion | `New` | — | No | As CVEs |
+| `SNTL-23` and `SNTL-24` | `CVE-2099-0021` and `CVE-2099-0022` | Ingestion | `New` | — | No | As CVEs |
+| `SNTL-25` | `CVE-2099-0023` | Ingestion | `Ignored` with the reason `other` | `asmith` | No | medium |
 | `SNTL-26` | `CVE-2099-0024` | Ingestion | `Analyzed` | `bwilson` | No | high |
 | `SNTL-27` | `CVE-2099-0025` | `asmith` | `Analyzed` | `asmith` | Yes, with a coordinated release date `T − 2d`, without access grant | high |
 
@@ -640,10 +641,11 @@ named user is a system operation (Attribution).
 | `SNTL-14` | `asmith` adds `fictional-libxml`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-14` are applied in order. Track release detection sets the track to `FIXED`. Product release detection confirms the release of `Server 15 SP7` at `T − 2d` with the advisory `SUSE-SU-2099:0001-1` |
 | `SNTL-15` | `bwilson` adds `fictional-sudo`, sets the `fles-16.0` track to `NOT_AFFECTED` and the `SUSE:FLES-15-SP4:Update` track to `WONT_FIX`, and adds the SUSE assessment |
 | `SNTL-16` | `asmith` adds `fictional-kernel`, sets the `SUSE:FLES-15-SP5:Update` track to `AFFECTED`, and adds the SUSE assessment |
-| `SNTL-17` | `bwilson` ignores the Ticket |
+| `SNTL-17` | `bwilson` ignores the Ticket with the reason `not_shipped` |
 | `SNTL-18` | `asmith` adds `fictional-openssh` and sets its track to `AFFECTED`. The IBS observations of `SNTL-18` are applied in order. `asmith` grants access to `cwhite` |
 | `SNTL-19` | `bwilson` makes the Ticket confidential |
 | `SNTL-22` | `bwilson` marks the Ticket as a duplicate of `SNTL-21` |
+| `SNTL-25` | `asmith` ignores the Ticket with the reason `other` |
 | `SNTL-26` | `bwilson` adds `fictional-glibc`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-26` are applied in order |
 | `SNTL-27` | `asmith` adds `fictional-bind`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-27` are applied in order |
 
@@ -677,6 +679,14 @@ The resulting states follow the gates of `docs/features/tickets/tickets.md`:
 - `SNTL-18` and `SNTL-19` stay in `Analysis` without a SUSE assessment.
 - `SNTL-20` stays in `Analysis`, assigned to its creator `cwhite`: it has no
   package, so its Analyzed gate fails.
+
+`SNTL-8`, `SNTL-17`, and `SNTL-25` are the `Ignored` Tickets, one for each
+ignore reason (`docs/features/tickets/tickets.md`, Ignore Reason): the
+ingestion of the rejected `CVE-2099-0008` ignores `SNTL-8` with
+`cve_rejected`, and the ignores of `bwilson` and `asmith` record
+`not_shipped` and `other`. Each of those two ignores first assigns its
+unassigned `New` Ticket to the user who ignores it
+(`docs/features/tickets/tickets.md`, Auto-Assignment on Unassigned Tickets).
 
 ### Aged Tickets
 

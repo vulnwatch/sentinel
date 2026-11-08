@@ -208,7 +208,9 @@ See ordering constraint below.
 `ensure_ticket_operable` executes first. For Ignored/Duplicated tickets
 it raises `TicketNotMutableError` before the function's own status check
 fires. For other non-valid statuses (Analyzed, Resolved), the function's
-own check raises `InvalidTransitionError`. This ordering is contractual.
+own check raises `InvalidTransitionError`. The check of the reason
+`cve_rejected` (`TicketCVENotRejectedError`) follows both. This ordering is
+contractual.
 
 ### Concurrency control
 
@@ -314,6 +316,7 @@ Conceptual semantic inputs are:
 | `db` | `AsyncSession` | required | Caller-owned session |
 | `search` | `str \| None` | `None` | Ticket multi-field search |
 | `status` | supplied-state plus collection of valid `TicketStatus` | omitted | Repeatable OR filter, preserving omitted versus supplied-but-empty after validation |
+| `ignore_reason` | supplied-state plus collection of valid `TicketIgnoreReason` | omitted | Repeatable OR filter, preserving omitted versus supplied-but-empty after validation |
 | `assignee` | `str \| None` | `None` | User UUID, exact username, or literal `none` |
 | `severity` | supplied-state plus collection of valid resolved-severity filters | omitted | Repeatable OR filter including `none` and `unresolved`, preserving omitted versus supplied-but-empty after validation |
 | `priority` | supplied-state plus collection of valid effective-priority filters | omitted | Repeatable OR filter over `p1`–`p4` and `unresolved`, preserving omitted versus supplied-but-empty after validation |
@@ -343,8 +346,8 @@ The result contains a collection of Ticket summary projections plus `total`,
    rules in `tickets.md` only to directly included package occurrences and
    current CVE/external-identifier state.
 3. Apply simultaneously supplied client filters with AND semantics. Values
-   inside one repeatable status, severity, priority, overdue, or current-phase
-   filter use OR semantics.
+   inside one repeatable status, ignore-reason, severity, priority, overdue,
+   or current-phase filter use OR semantics.
    The API
    passes whether the filter was supplied together with its valid members in an
    implementation-chosen typed form, so an all-invalid supplied filter yields
@@ -367,7 +370,9 @@ The result contains a collection of Ticket summary projections plus `total`,
    `n`, whatever the visibility of that Ticket, under List Tickets (Duplicate
    filter) in `tickets.md`; an unknown value yields an empty page. The API
    rejects a malformed value; given one, the operation raises `ValueError`
-   before any query. `is_confidential` compares `Ticket.is_confidential`.
+   before any query. `ignore_reason` compares `Ticket.ignore_reason`, so a
+   Ticket without a reason, in every status other than `Ignored`, matches no
+   value. `is_confidential` compares `Ticket.is_confidential`.
    `coordinated_release_passed = True` matches a confidential Ticket whose
    `coordinated_release_at` is not `NULL` and is at or before the evaluation
    instant of step 1; `False` matches every Ticket that `True` does not, a
@@ -445,7 +450,8 @@ The result is the semantic projection represented by `TicketDetail` in
 1. Resolves a public locator through the SNTL-only contract and selects the root
    through the canonical visibility predicate. Missing, malformed, UUID, and
    inaccessible locators raise `TicketNotFoundError`.
-2. Projects the root fields (including `coordinated_release_at`), resolved
+2. Projects the root fields (including `ignore_reason` and
+   `coordinated_release_at`), resolved
    severity, effective, automatic, and override priority, the override
    provenance with the complete current reference of the User who set it
    ([ticket-priority.md](ticket-priority.md#persistence-and-effective-priority)),
@@ -604,7 +610,8 @@ For a manual creation whose locked-current CVE is already `REJECTED`, these
 same steps remain authoritative: initial status still comes only from step 4,
 and the function does not call `ignore_new_for_rejected_cve()` or create the
 automatic `CVE rejected` status event. The authorized user may invoke the
-ordinary manual ignore operation separately.
+ordinary manual ignore operation separately, for example with the reason
+`cve_rejected`.
 
 **Concurrency — CVE uniqueness**: concurrent creations for the same CVE
 serialize on the CVE `FOR NO KEY UPDATE` lock of step 2. The association state
@@ -720,7 +727,8 @@ If the locked CVE was already `REJECTED` before this deliberate manual
 association, the function still performs only the ordinary association,
 severity-source handover, Product, and gate sequence above. It does not invoke
 `ignore_new_for_rejected_cve()` or create an automatic `CVE rejected` event; the
-authorized user may ignore the Ticket through the ordinary manual operation.
+authorized user may ignore the Ticket through the ordinary manual operation,
+for example with the reason `cve_rejected`.
 
 **Locking**: `FOR SHARE` on acting User, `FOR NO KEY UPDATE` on CVE, then
 `FOR UPDATE` on Ticket. CVE Resolution
@@ -1022,7 +1030,8 @@ cross-reference overview.
 
 ### ignore_ticket
 
-Transitions a ticket to Ignored status (manual-zone entry).
+Transitions a ticket to Ignored status (manual-zone entry) with the reason why
+it is ignored ([tickets.md](tickets.md#ignore-reason), Ignore Reason).
 
 ```python
 async def ignore_ticket(
@@ -1030,15 +1039,21 @@ async def ignore_ticket(
     *,
     ticket_id: UUID,
     acting_user_id: UUID,
+    reason: TicketIgnoreReason,
 ) -> Ticket:
 ```
 
 **Preconditions**:
 
+- `reason` is a `TicketIgnoreReason` member; any other value raises
+  `ValueError` before any database access. Every current member is a reason
+  that a user may choose
 - Ticket must be operable (`ensure_ticket_operable`) — catches
   Ignored and Duplicated tickets before the status check
 - Ticket must be in New or Analysis status (only valid source states;
   else `InvalidTransitionError`)
+- For `reason = cve_rejected`, the Ticket must have a CVE whose `cve_state` is
+  `REJECTED` (else `TicketCVENotRejectedError`)
 
 **Behavioral steps**:
 
@@ -1052,20 +1067,40 @@ async def ignore_ticket(
 5. Verify status is New or Analysis (else `InvalidTransitionError` —
    this catches Analyzed and Resolved, which pass `ensure_ticket_operable`
    but are not valid source states for ignore)
-6. `auto_assign_actor(ticket, acting_user)` using the stabilized User; an
+6. For `reason = cve_rejected`, read the `cve_state` of the Ticket's CVE with
+   a statement issued after the Ticket lock is held, never from a row selected
+   together with the lock request; raise `TicketCVENotRejectedError` when the
+   Ticket has no CVE or the state is not `REJECTED`. The read takes no CVE
+   lock
+7. `auto_assign_actor(ticket, acting_user)` using the stabilized User; an
    actor who is not eligible for the locked-current Ticket is not assigned
-7. Set `ticket.status = Ignored`
-8. Create `TicketAuditEvent` (`status_change`)
-9. Return updated Ticket
+8. Set `ticket.status = Ignored` and `ticket.ignore_reason = reason`
+   consecutively, before any operation that may flush, so that both values
+   are written together under `chk_ticket_ignore_reason_status_coherence`
+9. Create `TicketAuditEvent` (`status_change`) with
+   `detail = {"ignore_reason": reason}`
+10. Return updated Ticket
 
-**Locking**: `FOR SHARE` on acting User, then `FOR UPDATE` on Ticket.
+Every guard precedes every write, so a rejected request leaves no assignment,
+status change, or event.
+
+**Locking**: `FOR SHARE` on acting User, then `FOR UPDATE` on Ticket. The
+`cve_rejected` check reads the CVE row without locking it, so the root order
+is unchanged. An ingestion that changes the CVE state holds the CVE lock
+before it locks the Ticket and decides from the Ticket state committed when it
+obtains that lock (`cve-service.md`, Complete `upsert_cve()` Composition).
+Therefore a republication that waits for this operation reopens the Ticket
+that it ignored with `cve_rejected`, and a rejection that has not committed
+when step 6 reads leaves the state `PUBLISHED`, so the request fails and the
+user can retry it after the rejection.
 
 **reconcile_ticket_status**: NOT called — this is a direct transition
 into the manual zone. `reconcile_ticket_status` never operates on
 Ignored tickets.
 
-**Audit events**: `status_change`. Possibly `assignment` (from
-auto-assign). Both use `comment = NULL`.
+**Audit events**: `status_change` with the reason in `detail`. Possibly
+`assignment` and the system `New → Analysis` `status_change` (from
+auto-assign), whose `detail` is `NULL`. All use `comment = NULL`.
 
 ### `ignore_new_for_rejected_cve()`
 
@@ -1101,12 +1136,15 @@ already locked unique associated Ticket.
 
 1. Read the supplied locked-current Ticket status without reacquiring either
    root or querying audit history.
-2. If status is `New`, set it to `Ignored` and create exactly one
-   system-attributed `status_change` with `old_value = "New"`,
-   `new_value = "Ignored"`, `comment = "CVE rejected"`, and `detail = NULL`.
+2. If status is `New`, set it to `Ignored` and `ignore_reason` to
+   `cve_rejected` consecutively, before any operation that may flush, and
+   create exactly one system-attributed `status_change` with
+   `old_value = "New"`, `new_value = "Ignored"`, `comment = "CVE rejected"`,
+   and `detail = {"ignore_reason": "cve_rejected"}`.
 3. For `Ignored`, `Analysis`, `Analyzed`, `Resolved`, or `Duplicated`, return the
-   Ticket unchanged with no event. Do not call `ensure_ticket_operable()`,
-   assign, reconcile, register convergence, or change any other field.
+   Ticket unchanged with no event; an `Ignored` Ticket keeps its reason. Do not
+   call `ensure_ticket_operable()`, assign, reconcile, register convergence, or
+   change any other field.
 4. Flush an effective transition and return the Ticket. Do not commit, roll
    back, or perform external, Redis, or Celery I/O.
 
@@ -1298,15 +1336,20 @@ composition.
    current assignee unchanged. Final reconciliation sanitizes an ineligible
    assignee only when the final status is `Analysis` or `Analyzed`; a final
    `Resolved` result retains it.
-4. Set `status = Analysis`, then call `_complete_manual_zone_exit()` with the
-   preserved source status and date and return the resulting Ticket. Its final
-   status is `Analysis`, `Analyzed`, or `Resolved` from current gate inputs.
+4. Set `status = Analysis` and clear `ignore_reason` to `NULL` consecutively
+   before any operation that may flush, so that both values are written
+   together under `chk_ticket_ignore_reason_status_coherence`. Then call
+   `_complete_manual_zone_exit()` with the preserved source status and date and
+   return the resulting Ticket. Its final status is `Analysis`, `Analyzed`, or
+   `Resolved` from current gate inputs.
 
 **Audit events**: optional actor assignment, zero or more system-attributed
 `product_eligibility_changed` events, optional assignment-eligibility sanitation
 `assignment`, then one system-attributed
 `status_change` from `Ignored` to the final evaluated status. All comments are
-`NULL` except a sanitation assignment's canonical unassignment comment.
+`NULL` except a sanitation assignment's canonical unassignment comment. The
+cleared reason creates no event of its own, and the final `status_change` has
+`detail = NULL`.
 
 **Locking and transaction**: a consumer invocation retains its acting User `FOR
 SHARE` and Ticket `FOR UPDATE` locks through assignment, package convergence,
@@ -1317,14 +1360,17 @@ these effects in the caller-owned transaction.
 
 **CVE-ingestion composition**: before invoking this function, the trusted
 `cve_service` caller verifies under its existing CVE-then-Ticket locks that the
-Ticket remains the unique association of the locked CVE and that its status is
-`Ignored`. It then calls the existing system form with `ticket_id` and the
-caller-supplied `evaluation_date`. Step 1 reselects the same Ticket `FOR UPDATE`;
-that same-transaction re-lock is a no-op and does not invert the already-held
+Ticket remains the unique association of the locked CVE, that its status is
+`Ignored`, and that its `ignore_reason` is `cve_rejected`. It then calls the
+existing system form with `ticket_id` and the caller-supplied
+`evaluation_date`. Step 1 reselects the same Ticket `FOR UPDATE`; that
+same-transaction re-lock is a no-op and does not invert the already-held
 CVE-then-Ticket order. The remaining behavior, audit, convergence registration,
 and exception contracts are identical. If locked-current status is not
-`Ignored`, `cve_service` does not invoke this boundary; a direct invalid
-invocation retains the ordinary `InvalidTransitionError`. System authority is
+`Ignored`, or its reason is not `cve_rejected`, `cve_service` does not invoke
+this boundary and the Ticket keeps its status and reason. The system form does
+not check the reason itself; a direct invalid invocation on a Ticket that is
+not `Ignored` retains the ordinary `InvalidTransitionError`. System authority is
 selected through the existing implementation-chosen service boundary, not by
 `acting_user_id = NULL` alone.
 
@@ -2067,6 +2113,7 @@ to the corresponding HTTP status code and error code per `api-spec.md`.
 | `InvalidTransitionError` † | 409 | `TICKET_INVALID_TRANSITION` | Requested status transition is not allowed |
 | `TicketCVEAlreadySetError` | 400 | `TICKET_CVE_ALREADY_SET` | Ticket already has a CVE associated |
 | `TicketCVEConflictError` | 409 | `TICKET_CVE_CONFLICT` | CVE is already associated with another ticket |
+| `TicketCVENotRejectedError` | 409 | `TICKET_CVE_NOT_REJECTED` | The ignore reason `cve_rejected` is requested for a Ticket without a CVE or whose CVE is not rejected |
 | `AssigneeNotEligibleError` | 400 | `TICKET_ASSIGNEE_NOT_ELIGIBLE` | Active target user is not eligible to be the assignee of the Ticket: a bot account, without `triage_ticket`, or without effective scope `all` for a confidential Ticket |
 | `AssigneeInactiveError` | 409 | `TICKET_ASSIGNEE_INACTIVE` | Target user is inactive (for assignment) |
 | `AssigneeNotCallerError` | 409 | `TICKET_ASSIGNEE_NOT_CALLER` | Self-unassignment is requested while another user is the assignee |
@@ -2198,7 +2245,11 @@ behavior of `ticket_service` operations:
    prove `duplicate_of_id = NULL` and the `Analysis` floor are flushed together
    without violating `chk_ticket_duplicate_status_coherence`; assert that the
    `duplicate_removed` event uses the pre-clear target's `SNTL-{n}` identifier
-   as `old_value` and `NULL` as `new_value`
+   as `old_value` and `NULL` as `new_value`. For reopen, force the same
+   autoflush and prove that the cleared `ignore_reason` and the `Analysis`
+   floor are flushed together without violating
+   `chk_ticket_ignore_reason_status_coherence`, for every reason, and that the
+   final `status_change` has `detail = NULL`
 11. **Manual-zone convergence registration**: both exit workflows register one
      transaction-local Ticket convergence effect for final `Analysis`,
      `Analyzed`, and `Resolved`; registration is deduplicated per Ticket in one
@@ -2222,7 +2273,9 @@ behavior of `ticket_service` operations:
     `ticket_created`, optional assignment, optional manual severity, optional
     Coordinated Release Date, optional CVE association, and optional
     manual-creation `priority_changed` order. Normal status transitions use NULL comments,
-    while rejection uses exactly `CVE rejected`
+    while rejection uses exactly `CVE rejected`. Every transition into
+    `Ignored`, manual or automatic, carries `{"ignore_reason": ...}` in
+    `detail` and every other status transition `NULL`
 14. **Confidentiality and grants**: direct changes assert exact acting-user
     events and no-op absence; `true` to `false` atomically deletes every grant
     with only `confidentiality_changed`, complete rollback on deletion/audit/
@@ -2257,16 +2310,22 @@ behavior of `ticket_service` operations:
     for an accessible Ticket with no grants, and cannot return rows selected
     after visibility is lost
 17. **System CVE rejection boundary**: call only with CVE-then-Ticket locks and
-    cover `New -> Ignored` with exact system event/comment, every other status as
-    a no-op, re-invocation, rejected-orphan creation order, association/lock
-    preconditions, runtime association violation, no audit-history query, and
-    complete rollback on audit or flush failure
+    cover `New -> Ignored` with exact system event/comment, the reason
+    `cve_rejected` on the Ticket and in the event `detail`, every other status
+    as a no-op (an `Ignored` Ticket keeping each of its reasons), re-invocation,
+    rejected-orphan creation order, association/lock preconditions, runtime
+    association violation, no audit-history query, and complete rollback on
+    audit or flush failure
 18. **CVE republication composition**: under an already-held CVE-then-Ticket
-    lock pair, verify the association and `Ignored` status before invoking the
-    existing system `reopen_from_ignored()` form. Assert its Ticket reselect is a
-    same-transaction re-lock, the caller's `evaluation_date` is preserved,
-    Product and gate convergence use the current ingestion batch's assessment
-    state, and an association/status mismatch causes no lifecycle call
+    lock pair, verify the association, the `Ignored` status, and the reason
+    `cve_rejected` before invoking the existing system `reopen_from_ignored()`
+    form. Assert its Ticket reselect is a same-transaction re-lock, the
+    caller's `evaluation_date` is preserved, Product and gate convergence use
+    the current ingestion batch's assessment state, a Ticket that a user
+    ignored with `cve_rejected` reopens like one that the system ignored, and
+    an association, status, or reason mismatch causes no lifecycle call: a
+    Ticket ignored with `not_shipped` or `other` stays `Ignored` with its
+    reason and no event
 19. **Priority composition**: manual creation refreshes the automatic priority
     after every creation event while ingestion creation does not; association
     refreshes it inside the chain after Product events and before the one final
@@ -2364,6 +2423,28 @@ behavior of `ticket_service` operations:
     TICKET_ASSIGNEE_CHANGED` and never `404 USER_NOT_FOUND`, the mapping to
     `409 TICKET_ASSIGNEE_CHANGED` for both forms, and the member's publication
     as a string of format `uuid`
+24. **Ignore reason**: `ignore_ticket()` from `New` and from `Analysis` stores
+    each reason and records it in the `detail` of its acting-user
+    `status_change`, after the optional `assignment` and system
+    `New → Analysis` with `detail = NULL`; a non-member `reason` raises
+    `ValueError` before any database access. `cve_rejected` succeeds for a
+    Ticket whose CVE is `REJECTED` and raises `TicketCVENotRejectedError` for a
+    CVE-less Ticket and for a `PUBLISHED` CVE, with no assignment, status
+    change, or event, and a `New` Ticket stays `New`; accessibility,
+    operability, and the transition guard precede that error. The check takes
+    no CVE lock, proved by completion while an independent session holds the
+    CVE `FOR NO KEY UPDATE`. Independent sessions, with a lock-wait proof, race
+    an ignore with `cve_rejected` against an ingestion: a republication that
+    waits for the ignore reopens the Ticket and clears its reason; a
+    republication that commits first makes the ignore raise
+    `TicketCVENotRejectedError`; a rejection that has not committed when the
+    ignore reads the CVE makes it raise the same error. A direct write of a
+    reason without `Ignored`, or of `Ignored` without a reason, violates
+    `chk_ticket_ignore_reason_status_coherence`, and an unknown value violates
+    `chk_ticket_ignore_reason_valid`. API tests cover an omitted body or
+    member, `null`, and an unknown value as `422 VALIDATION_ERROR`, the mapping
+    to `409 TICKET_CVE_NOT_REJECTED`, the published `enum` of `reason`, and the
+    `ignore_reason` filter and response fields
 
 ## Cross-references
 
