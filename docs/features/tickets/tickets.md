@@ -976,10 +976,10 @@ other status has none (`chk_ticket_ignore_reason_status_coherence`,
 | `cve_rejected` | The associated CVE is rejected | The system, through the automatic `New -> Ignored` of a rejected CVE (`docs/features/tickets/cve-tracking.md`, Rejection handling); or a user, through Ignore Ticket, while the associated CVE is `REJECTED` |
 | `other` | The Ticket is not worked for another reason | A user, through Ignore Ticket |
 
-- The reason names the cause of the ignore, not who decided it: `cve_rejected`
-  means the same whether the system or a user set it. The `status_change`
-  event of the transition into `Ignored` records the reason together with its
-  actor (`docs/features/tickets/ticket-audit-log.md`).
+- `cve_rejected` names the cause of the ignore, not who decided it: it means
+  the same whether the system or a user set it. The `status_change` event of
+  the transition into `Ignored` records the reason together with its actor
+  (`docs/features/tickets/ticket-audit-log.md`).
 - `not_shipped` applies only when SUSE ships none of the affected software.
   When SUSE ships the software and the issue does not affect it, its tracks
   record `NOT_AFFECTED` (`docs/features/packages/package-model.md`, Axis 1:
@@ -990,7 +990,9 @@ other status has none (`chk_ticket_ignore_reason_status_coherence`,
 - The reason does not change while the Ticket stays `Ignored`: no operation
   writes it, and a later rejection of the associated CVE leaves an `Ignored`
   Ticket and its reason unchanged. A user who wants to record another reason
-  reopens the Ticket and ignores it again.
+  reopens the Ticket and ignores it again, which requires the reopened Ticket
+  to be in `Analysis`: a reopen whose gates give `Analyzed` or `Resolved`
+  follows the path of the design note on Analyzed → Ignored above.
 - Only `cve_rejected` lets an `Ignored` Ticket leave the manual zone without a
   user: the revert of the rejection reopens it
   (`docs/features/tickets/cve-tracking.md`, Rejection revert handling). A
@@ -1007,7 +1009,9 @@ other status has none (`chk_ticket_ignore_reason_status_coherence`,
 The migration that adds the column gives every Ticket that is already
 `Ignored` the reason `cve_rejected` when its associated CVE is `REJECTED`,
 which keeps the reopen of a reverted rejection for it, and `other` otherwise;
-it never infers `not_shipped`.
+it never infers `not_shipped`. The migration creates no audit event and leaves
+earlier events unchanged, so a `status_change` into `Ignored` recorded before
+it keeps `detail = NULL`.
 
 ### Modifications in Inactive Statuses
 

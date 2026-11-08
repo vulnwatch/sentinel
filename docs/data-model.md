@@ -1205,7 +1205,7 @@ contract is in `docs/features/tickets/ticket-audit-log.md`.
 
 | Value                      | Description                                        |
 |----------------------------|----------------------------------------------------|
-| status_change              | Ticket status changed. Direct manual transitions use the acting user; derived transitions use NULL. `comment` is exactly `CVE rejected` for CVE rejection and NULL otherwise. `detail` carries `{"ignore_reason": "..."}` for a transition into `Ignored` and is NULL otherwise. |
+| status_change              | Ticket status changed. Direct manual transitions use the acting user; derived transitions use NULL. `comment` is exactly `CVE rejected` for the automatic CVE rejection and NULL otherwise, also for a user's ignore with the reason `cve_rejected`. `detail` carries `{"ignore_reason": "..."}` for a transition into `Ignored` and is NULL otherwise. |
 | assignment                 | Ticket was assigned, reassigned, unassigned by its assignee, or system-unassigned. Direct assignment, reassignment, auto-assignment, and self-unassignment use the acting user; system unassignment uses NULL. System unassignment uses `Unassigned from {username}: {reason}` with the closed reason vocabulary in `ticket-audit-log.md`; other assignment comments are NULL. |
 | duplicate_set              | Ticket was marked as duplicate of another          |
 | duplicate_removed          | Duplicate mark was reverted                        |

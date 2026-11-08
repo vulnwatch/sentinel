@@ -32,7 +32,7 @@ event type.
 
 | `event_type` | Trigger | `user_id` | `old_value` | `new_value` | `comment` | `detail` |
 |---|---|---|---|---|---|---|
-| `status_change` | Ticket status transitions (manual or system-initiated) | Authorized acting user for direct manual transitions; `NULL` for derived or automatic transitions | Previous status (e.g., `New`) | New status (e.g., `Analysis`) | Exactly `CVE rejected` for CVE rejection; otherwise `NULL` | `{"ignore_reason": "..."}` for a transition into `Ignored`; otherwise `NULL` (see detail contract) |
+| `status_change` | Ticket status transitions (manual or system-initiated) | Authorized acting user for direct manual transitions; `NULL` for derived or automatic transitions | Previous status (e.g., `New`) | New status (e.g., `Analysis`) | Exactly `CVE rejected` for the automatic CVE rejection; otherwise `NULL`, also for a user's ignore with the reason `cve_rejected` | `{"ignore_reason": "..."}` for a transition into `Ignored`; otherwise `NULL` (see detail contract) |
 | `assignment` | Ticket assigned, reassigned, unassigned by its assignee, or system-unassigned | Authorized acting user for direct assignment, auto-assignment, and self-unassignment; `NULL` for system unassignment | Previous assignee username or `NULL` | New assignee username or `NULL` (unassigned) | `NULL` for assignment, reassignment, and self-unassignment; system unassignment uses `Unassigned from {username}: {reason}` with a closed reason below | `NULL` |
 | `duplicate_set` | Ticket marked as duplicate | Authorized acting user | `NULL` | `SNTL-{n}` identifier of the original ticket | `NULL` | `NULL` |
 | `duplicate_removed` | Duplicate mark reverted | Authorized acting user | `SNTL-{n}` identifier of the original ticket | `NULL` | `NULL` | `NULL` |
@@ -228,7 +228,7 @@ illustrative phrase or pass arbitrary text into a Ticket audit comment.
 | Product catalog backfill | `Product catalog backfill` |
 | Ticket convergence package resolution | `Ticket convergence` |
 | Assignment, reassignment, self-unassignment, assignment promotion, ordinary gate reconciliation, manual-zone entry or exit, and other normal status transitions | `NULL` |
-| CVE rejection `New → Ignored` | `CVE rejected` |
+| Automatic CVE rejection `New → Ignored` | `CVE rejected` |
 | System unassignment | `Unassigned from {username}: {reason}` |
 
 System unassignment selects `{reason}` from this closed vocabulary:
@@ -434,7 +434,9 @@ types not listed here MUST set `detail` to `NULL`.
   MUST reject a missing or non-NULL `detail` in the respective case, any other
   key, and any other `ignore_reason` value, raising `ValueError`. The event
   records the reason for review; the reason that governs the Ticket is its
-  `ignore_reason` column, never this event.
+  `ignore_reason` column, never this event. An event recorded before the
+  reason existed keeps `detail = NULL` (`docs/features/tickets/tickets.md`,
+  Ignore Reason).
 - Product event details intentionally omit both `TicketPackageProduct.id` and
   internal `Product.id`. Within the ticket-scoped audit log, the event-time
   `package`, `track`, and canonical `product_cpe` identify the occurrence, and
@@ -761,7 +763,8 @@ required event sequence or explicit no-event outcome. For audited mutations:
     rejected request, and no event when declassification retains the CRD
 30. `status_change` tests assert `detail = {"ignore_reason": ...}` equal to the
     stored reason on every transition into `Ignored`, by a user with each
-    reason and by the system with `cve_rejected`, and `detail = NULL` on every
+    reason (`comment = NULL`, also for `cve_rejected`) and by the system with
+    `cve_rejected` (`comment = "CVE rejected"`), and `detail = NULL` on every
     other `status_change`, including the `New → Analysis` of an auto-assignment
     before an ignore and the final event of a reopen; `log_event()` rejects a
     missing, extra-key, or unknown-valued `detail` on a transition into

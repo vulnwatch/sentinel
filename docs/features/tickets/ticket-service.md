@@ -1045,9 +1045,9 @@ async def ignore_ticket(
 
 **Preconditions**:
 
-- `reason` is a `TicketIgnoreReason` member; any other value raises
-  `ValueError` before any database access. Every current member is a reason
-  that a user may choose
+- `reason` is one of the reasons that a user may choose: `not_shipped`,
+  `cve_rejected`, or `other` ([tickets.md](tickets.md#ignore-reason), Set by);
+  any other value raises `ValueError` before any database access
 - Ticket must be operable (`ensure_ticket_operable`) — catches
   Ignored and Duplicated tickets before the status check
 - Ticket must be in New or Analysis status (only valid source states;
@@ -2273,7 +2273,8 @@ behavior of `ticket_service` operations:
     `ticket_created`, optional assignment, optional manual severity, optional
     Coordinated Release Date, optional CVE association, and optional
     manual-creation `priority_changed` order. Normal status transitions use NULL comments,
-    while rejection uses exactly `CVE rejected`. Every transition into
+    while the automatic rejection uses exactly `CVE rejected` and a user's
+    ignore with the reason `cve_rejected` uses NULL. Every transition into
     `Ignored`, manual or automatic, carries `{"ignore_reason": ...}` in
     `detail` and every other status transition `NULL`
 14. **Confidentiality and grants**: direct changes assert exact acting-user
@@ -2425,9 +2426,10 @@ behavior of `ticket_service` operations:
     as a string of format `uuid`
 24. **Ignore reason**: `ignore_ticket()` from `New` and from `Analysis` stores
     each reason and records it in the `detail` of its acting-user
-    `status_change`, after the optional `assignment` and system
-    `New → Analysis` with `detail = NULL`; a non-member `reason` raises
-    `ValueError` before any database access. `cve_rejected` succeeds for a
+    `status_change`, with `comment = NULL` also for `cve_rejected`, after the
+    optional `assignment` and system `New → Analysis` with `detail = NULL`;
+    any value outside the three user reasons raises `ValueError` before any
+    database access. `cve_rejected` succeeds for a
     Ticket whose CVE is `REJECTED` and raises `TicketCVENotRejectedError` for a
     CVE-less Ticket and for a `PUBLISHED` CVE, with no assignment, status
     change, or event, and a `New` Ticket stays `New`; accessibility,
