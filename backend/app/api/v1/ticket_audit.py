@@ -1,16 +1,17 @@
-"""Ticket audit log endpoint.
+"""Ticket audit log endpoints.
 
 See `docs/features/tickets/ticket-audit-log.md` (API > List Ticket
-Events) for the authoritative endpoint contract. The handler stays thin:
-it validates transport input, delegates the protected read to
-`ticket_audit_log.list_ticket_events()`, and maps the result or the
+Events; List Ticket Actors) for the authoritative endpoint contracts.
+The handlers stay thin: they validate transport input, delegate the
+protected read to `ticket_audit_log.list_ticket_events()` or
+`ticket_audit_log.list_ticket_actors()`, and map the result or the
 shared `TicketNotFoundError` to HTTP. No business logic or database
 query lives here.
 """
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 
@@ -27,12 +28,26 @@ from app.core.exceptions import TicketNotFoundError
 from app.database import DatabaseSession
 from app.schemas.common import PaginationMeta, UserReference
 from app.schemas.errors import ErrorResponse
-from app.schemas.ticket_audit import TicketAuditEventData, TicketAuditListResponse
+from app.schemas.ticket_audit import (
+    TicketActorListResponse,
+    TicketAuditEventData,
+    TicketAuditListResponse,
+)
 from app.services import ticket_audit_log
-from app.services.ticket_audit_log import TicketEventItem
+from app.services.ticket_audit_log import TicketEventActor, TicketEventItem
 from app.services.ticket_service import ResolvedTicket
 
 router = APIRouter(prefix="/api/v1", tags=["Ticket Audit Log"])
+
+_TICKET_NOT_FOUND_RESPONSE: dict[int | str, dict[str, Any]] = {
+    404: {
+        "model": ErrorResponse,
+        "description": (
+            "`TICKET_NOT_FOUND`: Ticket identifier is malformed, does not "
+            "exist, or identifies a Ticket inaccessible to the caller."
+        ),
+    },
+}
 
 
 def parse_event_types(raw: list[str]) -> list[TicketAuditEventType] | None:
@@ -55,6 +70,16 @@ def parse_event_types(raw: list[str]) -> list[TicketAuditEventType] | None:
     return valid
 
 
+def _serialize_actor(actor: TicketEventActor) -> UserReference:
+    return UserReference(
+        id=actor.id,
+        username=actor.username,
+        full_name=actor.full_name,
+        active=actor.active,
+        bot=actor.bot,
+    )
+
+
 def _serialize_event(event: TicketEventItem) -> TicketAuditEventData:
     return TicketAuditEventData(
         id=event.id,
@@ -65,17 +90,7 @@ def _serialize_event(event: TicketEventItem) -> TicketAuditEventData:
         comment=event.comment,
         detail=event.detail,
         created_at=event.created_at,
-        actor=(
-            UserReference(
-                id=event.actor.id,
-                username=event.actor.username,
-                full_name=event.actor.full_name,
-                active=event.actor.active,
-                bot=event.actor.bot,
-            )
-            if event.actor is not None
-            else None
-        ),
+        actor=_serialize_actor(event.actor) if event.actor is not None else None,
     )
 
 
@@ -91,15 +106,7 @@ def _serialize_event(event: TicketEventItem) -> TicketAuditEventData:
         "SNTL-{n} identity. Requires authentication (JWT session or API "
         "key)."
     ),
-    responses={
-        404: {
-            "model": ErrorResponse,
-            "description": (
-                "`TICKET_NOT_FOUND`: Ticket identifier is malformed, does not "
-                "exist, or identifies a Ticket inaccessible to the caller."
-            ),
-        },
-    },
+    responses=_TICKET_NOT_FOUND_RESPONSE,
 )
 async def list_ticket_events(
     ticket_id: TicketIdPath,
@@ -175,3 +182,39 @@ async def list_ticket_events(
             total=result.total, page=result.page, per_page=result.per_page
         ),
     )
+
+
+@router.get(
+    "/tickets/{ticket_id}/actors",
+    response_model=TicketActorListResponse,
+    summary="List the users who acted on a Ticket",
+    description=(
+        "Returns, unpaginated, each user who is the actor of at least one "
+        "audit event of the Ticket, once, as the current User reference, "
+        "ordered by username in Unicode code-point order. Events without an "
+        "actor (system events) add no entry. The Ticket is identified by its "
+        "canonical SNTL-{n} identity. Requires authentication (JWT session or "
+        "API key)."
+    ),
+    responses=_TICKET_NOT_FOUND_RESPONSE,
+)
+async def list_ticket_actors(
+    ticket_id: TicketIdPath,
+    db: DatabaseSession,
+    caller: AuthenticatedTicketCaller,
+    _ticket: Annotated[ResolvedTicket, Depends(require_accessible_ticket)],
+) -> TicketActorListResponse:
+    """List Ticket actors — see `docs/features/tickets/ticket-audit-log.md`
+    (List Ticket Actors).
+
+    As for `list_ticket_events`, the service re-applies Ticket visibility
+    inside the one statement that selects the actors, so the response
+    never relies on the preliminary `require_accessible_ticket` decision.
+    """
+    try:
+        actors = await ticket_audit_log.list_ticket_actors(
+            db, ticket_id=ticket_id, caller=caller
+        )
+    except TicketNotFoundError:
+        raise ticket_not_found_error() from None
+    return TicketActorListResponse(data=[_serialize_actor(actor) for actor in actors])

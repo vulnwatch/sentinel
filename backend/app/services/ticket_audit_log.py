@@ -58,6 +58,9 @@ only the actor-dependent `detail` and `comment` rules above.
 selects the accessible parent Ticket, the filtered events, their total,
 the requested page, and the current actor profiles in one SQL statement,
 so every part of the result derives from one PostgreSQL snapshot.
+`list_ticket_actors()` (Service Contract > `list_ticket_actors()`)
+selects the accessible parent and the current profile of each distinct
+event actor in one SQL statement in the same way.
 """
 
 from __future__ import annotations
@@ -69,7 +72,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Final
 
-from sqlalchemy import Text, cast, false, func, or_, select, true
+from sqlalchemy import CTE, Text, cast, false, func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -462,12 +465,31 @@ class TicketAuditLog(BaseAuditLog):
 
 
 # ---------------------------------------------------------------------------
-# Ticket audit read (ticket-audit-log.md, Service Contract >
-# `list_ticket_events()`)
+# Ticket audit reads (ticket-audit-log.md, Service Contract >
+# `list_ticket_events()`; `list_ticket_actors()`)
 # ---------------------------------------------------------------------------
 
 MAX_PER_PAGE: Final = 100
 """Largest accepted `per_page` (docs/api-spec.md, Pagination)."""
+
+_CODE_POINT_COLLATION: Final = "C"
+"""Orders text by Unicode code point, independent of the database
+collation (ticket-audit-log.md, List Ticket Actors)."""
+
+
+def _accessible_parent(sequence_id: int, caller: TicketCaller) -> CTE:
+    """The parent Ticket of an audit read, selected by `sequence_id` under
+    the canonical visibility predicate (rbac.md, Scope and Confidential
+    Ticket Visibility): no row when the Ticket is missing or
+    inaccessible."""
+    return (
+        select(
+            Ticket.id.label("ticket_id"),
+            Ticket.sequence_id.label("sequence_id"),
+        )
+        .where(Ticket.sequence_id == sequence_id, ticket_visibility_condition(caller))
+        .cte("parent")
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -574,14 +596,7 @@ async def list_ticket_events(
     if sequence_id is None:
         raise TicketNotFoundError()
 
-    parent = (
-        select(
-            Ticket.id.label("ticket_id"),
-            Ticket.sequence_id.label("sequence_id"),
-        )
-        .where(Ticket.sequence_id == sequence_id, ticket_visibility_condition(caller))
-        .cte("parent")
-    )
+    parent = _accessible_parent(sequence_id, caller)
 
     events = select(
         TicketAuditEvent.id,
@@ -677,4 +692,79 @@ async def list_ticket_events(
     )
     return TicketEventPage(
         items=items, total=rows[0].total, page=page, per_page=per_page
+    )
+
+
+async def list_ticket_actors(
+    db: AsyncSession,
+    *,
+    ticket_id: str,
+    caller: TicketCaller,
+) -> tuple[TicketEventActor, ...]:
+    """List the users who acted on one accessible Ticket.
+
+    Category B read (ticket-audit-log.md, Service Contract >
+    `list_ticket_actors()`; API > List Ticket Actors).
+
+    Q1: `ticket_id` is the public `SNTL-{n}` locator and `caller` the
+    request-resolved caller information.
+
+    Q3: in one SQL statement, and therefore one PostgreSQL snapshot:
+    1. select the parent Ticket by `sequence_id` under the canonical
+       visibility predicate, as `list_ticket_events()` does;
+    2. select the distinct non-null `user_id` values of its events, so a
+       system event adds nothing and several events of one actor add one
+       entry;
+    3. project each actor from the current `User` row, ordered by
+       `username` in code-point order (`id` breaks no real tie, since
+       usernames are unique, but keeps the order total).
+    Returns an empty tuple for an accessible Ticket without a
+    user-attributed event. Creates no event, acquires no lock, and never
+    commits or rolls back.
+
+    Q6: raises `TicketNotFoundError` for a malformed locator (including a
+    Ticket UUID), a missing Ticket, or an inaccessible Ticket, never an
+    empty result. Database exceptions propagate unchanged.
+    """
+    sequence_id = parse_ticket_id(ticket_id)
+    if sequence_id is None:
+        raise TicketNotFoundError()
+
+    parent = _accessible_parent(sequence_id, caller)
+    actor_ids = (
+        select(TicketAuditEvent.user_id.label("user_id"))
+        .join(parent, TicketAuditEvent.ticket_id == parent.c.ticket_id)
+        .where(TicketAuditEvent.user_id.is_not(None))
+        .distinct()
+        .cte("actor_ids")
+    )
+    actor_user = aliased(User, name="actor_user")
+    statement = (
+        select(
+            parent.c.ticket_id,
+            actor_user.id.label("actor_id"),
+            actor_user.username.label("actor_username"),
+            actor_user.full_name.label("actor_full_name"),
+            actor_user.active.label("actor_active"),
+            actor_user.bot.label("actor_bot"),
+        )
+        .select_from(parent)
+        .outerjoin(actor_ids, true())
+        .outerjoin(actor_user, actor_user.id == actor_ids.c.user_id)
+        .order_by(actor_user.username.collate(_CODE_POINT_COLLATION), actor_user.id)
+    )
+    rows = (await db.execute(statement)).all()
+    if not rows:
+        raise TicketNotFoundError()
+
+    return tuple(
+        TicketEventActor(
+            id=row.actor_id,
+            username=row.actor_username,
+            full_name=row.actor_full_name,
+            active=row.actor_active,
+            bot=row.actor_bot,
+        )
+        for row in rows
+        if row.actor_id is not None
     )

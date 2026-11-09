@@ -1,7 +1,8 @@
-"""Response schemas for the Ticket audit log endpoint.
+"""Response schemas for the Ticket audit log endpoints.
 
 See `docs/features/tickets/ticket-audit-log.md` (API > List Ticket
-Events) for the authoritative response contract these schemas implement.
+Events; List Ticket Actors) for the authoritative response contracts
+these schemas implement.
 """
 
 from __future__ import annotations
@@ -56,3 +57,14 @@ class TicketAuditListResponse(BaseModel):
 
     data: list[TicketAuditEventData]
     meta: PaginationMeta
+
+
+class TicketActorListResponse(BaseModel):
+    """Response body for `GET /api/v1/tickets/{ticket_id}/actors`.
+
+    Unpaginated: each user who is the actor of at least one event of the
+    Ticket, once, as the complete current User reference, ordered by
+    `username` in Unicode code-point order.
+    """
+
+    data: list[UserReference]

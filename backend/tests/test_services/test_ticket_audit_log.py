@@ -9,10 +9,10 @@ and Implementation Guidelines 3, 5, and 6. The flush / no-commit /
 exception-propagation guarantees come from
 docs/features/platform/audit-trail-infrastructure.md (Atomicity).
 
-It also covers the consumer read `list_ticket_events()`
-(ticket-audit-log.md, Service Contract > `list_ticket_events()`;
-Testing Requirements 22 and 26) against the Ticket Accessibility matrix
-in docs/features/platform/testing-strategy.md, including the
+It also covers the consumer reads `list_ticket_events()` and
+`list_ticket_actors()` (ticket-audit-log.md, Service Contract;
+Testing Requirements 22, 26, and 31) against the Ticket Accessibility
+matrix in docs/features/platform/testing-strategy.md, including the
 independent-session races.
 
 Per-mutation event sequences, actors, and no-event assertions belong
@@ -52,6 +52,7 @@ from app.services.ticket_audit_log import (
     TicketAuditLog,
     TicketEventActor,
     _serialized_detail_size,
+    list_ticket_actors,
     list_ticket_events,
 )
 from app.services.ticket_service import resolve_ticket_locator
@@ -2198,3 +2199,518 @@ class TestListTicketEventsRaces:
             await list_ticket_events(
                 reader, ticket_id=_sntl(ticket), caller=next_request
             )
+
+
+# ---------------------------------------------------------------------------
+# list_ticket_actors() — consumer read
+# ---------------------------------------------------------------------------
+
+
+def _actor(user: User) -> TicketEventActor:
+    return TicketEventActor(
+        id=user.id,
+        username=user.username,
+        full_name=user.full_name,
+        active=user.active,
+        bot=user.bot,
+    )
+
+
+@pytest.mark.unit
+class TestListTicketActorsInputGuards:
+    @pytest.mark.parametrize(
+        "locator",
+        [
+            "sntl-1",
+            " SNTL-1",
+            "SNTL-01",
+            "SNTL-2147483648",
+            # Fixed rather than random: pytest-xdist workers must collect
+            # identical test ids.
+            "8d0a6f1e-3c2b-4f5a-9e7d-1b2c3d4e5f60",
+        ],
+    )
+    async def test_malformed_locator_raises_before_query(self, locator: str) -> None:
+        db = AsyncMock(spec=AsyncSession)
+
+        with pytest.raises(TicketNotFoundError):
+            await list_ticket_actors(db, ticket_id=locator, caller=ROLELESS_CALLER)
+
+        db.execute.assert_not_awaited()
+
+    async def test_database_error_propagates(self) -> None:
+        db = AsyncMock(spec=AsyncSession)
+        failure = OperationalError("SELECT 1", {}, Exception("connection lost"))
+        db.execute.side_effect = failure
+
+        with pytest.raises(OperationalError) as excinfo:
+            await list_ticket_actors(db, ticket_id="SNTL-1", caller=ROLELESS_CALLER)
+
+        assert excinfo.value is failure
+
+
+@pytest.mark.integration
+class TestListTicketActorsProjection:
+    async def test_each_actor_is_listed_once_in_code_point_order(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: _Factory,
+        user_factory: _Factory,
+        ticket_audit_event_factory: _Factory,
+    ) -> None:
+        """Code-point order puts `-` (U+002D) before `.` (U+002E) before
+        `_` (U+005F); a linguistic collation that ignores punctuation would
+        order these usernames by their last letter instead."""
+        ticket: Ticket = await ticket_factory()
+        dash: User = await user_factory(username="fictional-z")
+        dot: User = await user_factory(username="fictional.y")
+        underscore: User = await user_factory(username="fictional_x")
+        for actor, event_types in (
+            (underscore, ("status_change",)),
+            (dot, ("assignment", "priority_changed", "reference_added")),
+            (dash, ("package_excluded", "package_restored")),
+        ):
+            for event_type in event_types:
+                await ticket_audit_event_factory(
+                    ticket_id=ticket.id, event_type=event_type, user_id=actor.id
+                )
+        await ticket_audit_event_factory(
+            ticket_id=ticket.id, event_type="status_change"
+        )
+
+        actors = await list_ticket_actors(
+            db_session, ticket_id=_sntl(ticket), caller=ROLELESS_CALLER
+        )
+
+        assert actors == (_actor(dash), _actor(dot), _actor(underscore))
+
+    async def test_actors_are_the_current_user_profiles(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: _Factory,
+        user_factory: _Factory,
+        ticket_audit_event_factory: _Factory,
+    ) -> None:
+        ticket: Ticket = await ticket_factory()
+        renamed: User = await user_factory(
+            username="fictional.before", full_name="Fictional Before"
+        )
+        inactive: User = await user_factory(username="fictional.inactive")
+        bot: User = await user_factory(username="fictional.scanner", bot=True)
+        for actor in (renamed, inactive, bot):
+            await ticket_audit_event_factory(ticket_id=ticket.id, user_id=actor.id)
+        renamed.username = "fictional.after"
+        renamed.full_name = None
+        inactive.active = False
+        await db_session.flush()
+
+        actors = await list_ticket_actors(
+            db_session, ticket_id=_sntl(ticket), caller=ROLELESS_CALLER
+        )
+
+        assert actors == (
+            TicketEventActor(
+                id=renamed.id,
+                username="fictional.after",
+                full_name=None,
+                active=True,
+                bot=False,
+            ),
+            TicketEventActor(
+                id=inactive.id,
+                username="fictional.inactive",
+                full_name=None,
+                active=False,
+                bot=False,
+            ),
+            TicketEventActor(
+                id=bot.id,
+                username="fictional.scanner",
+                full_name=None,
+                active=True,
+                bot=True,
+            ),
+        )
+
+    async def test_usernames_carried_as_event_content_add_no_entry(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: _Factory,
+        user_factory: _Factory,
+        ticket_audit_event_factory: _Factory,
+    ) -> None:
+        """Only `user_id` makes an actor: the assignee, grant target, and
+        unassigned user that events name in `old_value`, `new_value`, or
+        `comment` are not actors of the Ticket."""
+        ticket: Ticket = await ticket_factory()
+        actor: User = await user_factory(username="fictional.actor")
+        target: User = await user_factory(username="fictional.target")
+        await ticket_audit_event_factory(
+            ticket_id=ticket.id,
+            event_type="access_grant_added",
+            user_id=actor.id,
+            new_value=target.username,
+        )
+        await ticket_audit_event_factory(
+            ticket_id=ticket.id,
+            event_type="assignment",
+            old_value=target.username,
+            comment=f"Unassigned from {target.username}: user deactivated",
+        )
+
+        actors = await list_ticket_actors(
+            db_session, ticket_id=_sntl(ticket), caller=ROLELESS_CALLER
+        )
+
+        assert actors == (_actor(actor),)
+
+    async def test_actors_of_other_tickets_are_not_listed(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: _Factory,
+        user_factory: _Factory,
+        ticket_audit_event_factory: _Factory,
+    ) -> None:
+        ticket: Ticket = await ticket_factory()
+        other: Ticket = await ticket_factory()
+        own: User = await user_factory()
+        foreign: User = await user_factory()
+        await ticket_audit_event_factory(ticket_id=ticket.id, user_id=own.id)
+        await ticket_audit_event_factory(ticket_id=other.id, user_id=foreign.id)
+
+        actors = await list_ticket_actors(
+            db_session, ticket_id=_sntl(ticket), caller=ROLELESS_CALLER
+        )
+
+        assert actors == (_actor(own),)
+
+    @pytest.mark.parametrize("system_events", [0, 3])
+    async def test_ticket_without_a_user_attributed_event_lists_no_actor(
+        self,
+        system_events: int,
+        db_session: AsyncSession,
+        ticket_factory: _Factory,
+        ticket_audit_event_factory: _Factory,
+    ) -> None:
+        ticket: Ticket = await ticket_factory()
+        for _ in range(system_events):
+            await ticket_audit_event_factory(ticket_id=ticket.id)
+
+        actors = await list_ticket_actors(
+            db_session, ticket_id=_sntl(ticket), caller=ROLELESS_CALLER
+        )
+
+        assert actors == ()
+
+    async def test_read_creates_no_event_and_adds_nothing_to_the_session(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: _Factory,
+        user_factory: _Factory,
+        ticket_audit_event_factory: _Factory,
+    ) -> None:
+        ticket: Ticket = await ticket_factory()
+        actor: User = await user_factory()
+        await ticket_audit_event_factory(ticket_id=ticket.id, user_id=actor.id)
+
+        await list_ticket_actors(
+            db_session, ticket_id=_sntl(ticket), caller=ROLELESS_CALLER
+        )
+
+        assert not db_session.new
+        assert not db_session.dirty
+        assert await _event_count(db_session, ticket.id) == 1
+
+    async def test_read_is_one_statement(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: _Factory,
+        user_factory: _Factory,
+        ticket_audit_event_factory: _Factory,
+    ) -> None:
+        """Parent accessibility, the actor set, and the actor profiles come
+        from one statement, hence one PostgreSQL snapshot, whatever the
+        number of actors."""
+        ticket: Ticket = await ticket_factory()
+        for _ in range(3):
+            actor = await user_factory()
+            await ticket_audit_event_factory(ticket_id=ticket.id, user_id=actor.id)
+        caller = _restricted(await user_factory())
+        statements: list[str] = []
+
+        def _record(*args: Any) -> None:
+            statements.append(args[2])
+
+        sync_engine = db_session.get_bind().engine
+        event.listen(sync_engine, "before_cursor_execute", _record)
+        try:
+            actors = await list_ticket_actors(
+                db_session, ticket_id=_sntl(ticket), caller=caller
+            )
+        finally:
+            event.remove(sync_engine, "before_cursor_execute", _record)
+
+        assert len(actors) == 3
+        assert len(statements) == 1
+        (statement,) = statements
+        assert "parent AS" in statement
+        assert "actor_ids AS" in statement
+        assert '"user" AS actor_user' in statement
+
+    async def test_parent_scope_can_use_the_ticket_id_index(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: _Factory,
+        user_factory: _Factory,
+        ticket_audit_event_factory: _Factory,
+    ) -> None:
+        ticket: Ticket = await ticket_factory()
+        actor: User = await user_factory()
+        await ticket_audit_event_factory(ticket_id=ticket.id, user_id=actor.id)
+        captured: list[tuple[str, Any]] = []
+
+        def _record(*args: Any) -> None:
+            captured.append((args[2], args[3]))
+
+        sync_engine = db_session.get_bind().engine
+        event.listen(sync_engine, "before_cursor_execute", _record)
+        try:
+            await list_ticket_actors(
+                db_session, ticket_id=_sntl(ticket), caller=ROLELESS_CALLER
+            )
+        finally:
+            event.remove(sync_engine, "before_cursor_execute", _record)
+        statement, parameters = captured[0]
+
+        connection = await db_session.connection()
+        await connection.exec_driver_sql("SET LOCAL enable_seqscan = off")
+        plan = await connection.exec_driver_sql(f"EXPLAIN {statement}", parameters)
+
+        assert "ix_ticket_audit_event_ticket_id" in "\n".join(
+            row[0] for row in plan.all()
+        )
+
+
+@pytest.mark.integration
+class TestListTicketActorsAccessibility:
+    @pytest.mark.parametrize("branch", ["scope_all", "grant", "maintainer"])
+    async def test_each_visibility_branch_exposes_the_actors(
+        self,
+        branch: str,
+        db_session: AsyncSession,
+        ticket_factory: _Factory,
+        user_factory: _Factory,
+        ticket_access_grant_factory: _Factory,
+        ticket_package_factory: _Factory,
+        ticket_package_maintainer_factory: _Factory,
+        ticket_audit_event_factory: _Factory,
+    ) -> None:
+        ticket: Ticket = await ticket_factory(is_confidential=True)
+        user: User = await user_factory()
+        actor: User = await user_factory()
+        caller = _restricted(user)
+        if branch == "scope_all":
+            caller = TicketCaller.authenticated(user.id, Scope.ALL)
+        elif branch == "grant":
+            await ticket_access_grant_factory(ticket_id=ticket.id, user_id=user.id)
+        else:
+            package = await ticket_package_factory(ticket_id=ticket.id)
+            await ticket_package_maintainer_factory(
+                ticket_package_id=package.id, user_id=user.id
+            )
+        await ticket_audit_event_factory(ticket_id=ticket.id, user_id=actor.id)
+
+        actors = await list_ticket_actors(
+            db_session, ticket_id=_sntl(ticket), caller=caller
+        )
+
+        assert actors == (_actor(actor),)
+
+    async def test_inaccessible_ticket_is_not_found_rather_than_empty(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: _Factory,
+        user_factory: _Factory,
+        ticket_audit_event_factory: _Factory,
+    ) -> None:
+        ticket: Ticket = await ticket_factory(is_confidential=True)
+        actor: User = await user_factory()
+        await ticket_audit_event_factory(ticket_id=ticket.id, user_id=actor.id)
+
+        for caller in (ROLELESS_CALLER, _restricted(await user_factory())):
+            with pytest.raises(TicketNotFoundError):
+                await list_ticket_actors(
+                    db_session, ticket_id=_sntl(ticket), caller=caller
+                )
+
+    async def test_inaccessible_ticket_without_actors_is_not_found(
+        self, db_session: AsyncSession, ticket_factory: _Factory
+    ) -> None:
+        """A confidential Ticket whose events are all system events is
+        indistinguishable from a missing one, never an empty list."""
+        ticket: Ticket = await ticket_factory(is_confidential=True)
+
+        with pytest.raises(TicketNotFoundError):
+            await list_ticket_actors(
+                db_session, ticket_id=_sntl(ticket), caller=ROLELESS_CALLER
+            )
+
+    @pytest.mark.parametrize("kind", ["missing", "uuid"])
+    async def test_missing_ticket_and_uuid_locator_are_not_found(
+        self, kind: str, db_session: AsyncSession, ticket_factory: _Factory
+    ) -> None:
+        ticket: Ticket = await ticket_factory()
+        locator = "SNTL-2147483647" if kind == "missing" else str(ticket.id)
+
+        with pytest.raises(TicketNotFoundError):
+            await list_ticket_actors(
+                db_session, ticket_id=locator, caller=ROLELESS_CALLER
+            )
+
+    async def test_losing_the_final_visibility_path_denies_the_list(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: _Factory,
+        user_factory: _Factory,
+        ticket_package_factory: _Factory,
+        ticket_package_maintainer_factory: _Factory,
+        ticket_audit_event_factory: _Factory,
+    ) -> None:
+        ticket: Ticket = await ticket_factory(is_confidential=True)
+        user: User = await user_factory()
+        package: TicketPackage = await ticket_package_factory(ticket_id=ticket.id)
+        await ticket_package_maintainer_factory(
+            ticket_package_id=package.id, user_id=user.id
+        )
+        await ticket_audit_event_factory(ticket_id=ticket.id, user_id=user.id)
+        package.deleted_at = datetime.now(UTC)
+        await db_session.flush()
+
+        with pytest.raises(TicketNotFoundError):
+            await list_ticket_actors(
+                db_session, ticket_id=_sntl(ticket), caller=_restricted(user)
+            )
+
+    async def test_fan_out_does_not_duplicate_actors(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: _Factory,
+        user_factory: _Factory,
+        ticket_access_grant_factory: _Factory,
+        ticket_package_factory: _Factory,
+        ticket_package_maintainer_factory: _Factory,
+        ticket_audit_event_factory: _Factory,
+    ) -> None:
+        """Several qualifying visibility paths and repeated events of one
+        actor never multiply its entry."""
+        ticket: Ticket = await ticket_factory(is_confidential=True)
+        user: User = await user_factory()
+        await ticket_access_grant_factory(ticket_id=ticket.id, user_id=user.id)
+        for _ in range(3):
+            package = await ticket_package_factory(ticket_id=ticket.id)
+            await ticket_package_maintainer_factory(
+                ticket_package_id=package.id, user_id=user.id
+            )
+        for _ in range(4):
+            await ticket_audit_event_factory(ticket_id=ticket.id, user_id=user.id)
+
+        actors = await list_ticket_actors(
+            db_session, ticket_id=_sntl(ticket), caller=_restricted(user)
+        )
+
+        assert actors == (_actor(user),)
+
+
+@pytest.mark.integration
+class TestListTicketActorsRaces:
+    """Session R performs the preliminary SNTL resolution, session W then
+    commits a visibility change, and R performs the protected selection,
+    in a fixed order on independent connections. The Ticket has a
+    user-attributed event, so a read that skipped visibility after the
+    preliminary decision would return its actor and fail these tests."""
+
+    @pytest.mark.parametrize("change", ["confidentiality", "grant", "package"])
+    async def test_visibility_lost_after_preliminary_resolution(
+        self,
+        change: str,
+        committed_world: _CommittedWorld,
+        db_session_factory: Callable[[], Awaitable[AsyncSession]],
+    ) -> None:
+        user = await committed_world.user()
+        actor = await committed_world.user()
+        ticket = await committed_world.ticket(
+            is_confidential=change != "confidentiality"
+        )
+        session = committed_world.session
+        session.add(
+            TicketAuditEvent(
+                ticket_id=ticket.id, event_type="assignment", user_id=actor.id
+            )
+        )
+        package = TicketPackage(ticket_id=ticket.id, package_name="fictional-race-pkg")
+        session.add(package)
+        await session.flush()
+        if change == "grant":
+            session.add(
+                TicketAccessGrant(
+                    ticket_id=ticket.id, user_id=user.id, granted_by_id=actor.id
+                )
+            )
+        elif change == "package":
+            session.add(
+                TicketPackageMaintainer(ticket_package_id=package.id, user_id=user.id)
+            )
+        await session.commit()
+        reader = await db_session_factory()
+        writer = await db_session_factory()
+        caller = _restricted(user)
+        losses = {
+            "confidentiality": update(Ticket)
+            .where(Ticket.id == ticket.id)
+            .values(is_confidential=True),
+            "grant": delete(TicketAccessGrant).where(
+                TicketAccessGrant.ticket_id == ticket.id,
+                TicketAccessGrant.user_id == user.id,
+            ),
+            "package": update(TicketPackage)
+            .where(TicketPackage.id == package.id)
+            .values(deleted_at=datetime.now(UTC)),
+        }
+
+        await resolve_ticket_locator(reader, _sntl(ticket), caller)
+        await _commit(writer, losses[change])
+
+        with pytest.raises(TicketNotFoundError):
+            await list_ticket_actors(reader, ticket_id=_sntl(ticket), caller=caller)
+
+    async def test_visibility_acquired_after_a_denial_is_observed_whole(
+        self,
+        committed_world: _CommittedWorld,
+        db_session_factory: Callable[[], Awaitable[AsyncSession]],
+    ) -> None:
+        user = await committed_world.user()
+        actor = await committed_world.user()
+        ticket = await committed_world.ticket(is_confidential=True)
+        committed_world.session.add(
+            TicketAuditEvent(
+                ticket_id=ticket.id, event_type="assignment", user_id=actor.id
+            )
+        )
+        await committed_world.session.commit()
+        reader = await db_session_factory()
+        writer = await db_session_factory()
+        caller = _restricted(user)
+
+        with pytest.raises(TicketNotFoundError):
+            await resolve_ticket_locator(reader, _sntl(ticket), caller)
+        writer.add(
+            TicketAccessGrant(
+                ticket_id=ticket.id, user_id=user.id, granted_by_id=actor.id
+            )
+        )
+        await writer.commit()
+        actors = await list_ticket_actors(
+            reader, ticket_id=_sntl(ticket), caller=caller
+        )
+
+        assert [entry.id for entry in actors] == [actor.id]
