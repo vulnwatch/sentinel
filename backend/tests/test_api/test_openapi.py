@@ -40,6 +40,7 @@ from app.api.openapi import (
     publish_parameters_without_null,
 )
 from app.core.enums import (
+    USER_IGNORE_REASONS,
     ApiKeyStatus,
     Capability,
     CatalogPresence,
@@ -62,6 +63,7 @@ from app.core.enums import (
     SSVCExploitation,
     SSVCTechnicalImpact,
     TicketAuditEventType,
+    TicketIgnoreReason,
     TicketPriority,
     TicketStatus,
     UserType,
@@ -664,6 +666,7 @@ _PUBLISHED_FILTERS = [
         _values(TicketAuditEventType),
     ),
     ("/api/v1/tickets", "status", True, _TICKET_STATUSES),
+    ("/api/v1/tickets", "ignore_reason", True, _values(TicketIgnoreReason)),
     ("/api/v1/tickets", "severity", True, _SEVERITY_FILTER),
     (
         "/api/v1/tickets",
@@ -724,6 +727,9 @@ _RESPONSE_ENUMS = [
     ("FetcherTimelinePointData", "status", "FetcherRunStatus"),
     ("FetcherAuditEventData", "event_type", "FetcherAuditEventType"),
     ("TicketAuditEventData", "event_type", "TicketAuditEventType"),
+    ("TicketSummary", "ignore_reason", "TicketIgnoreReason"),
+    ("TicketDetail", "ignore_reason", "TicketIgnoreReason"),
+    ("TicketIgnoreRequest", "reason", "UserTicketIgnoreReasonValue"),
     ("CVESSVCResponse", "exploitation", "SSVCExploitation"),
     ("CVESSVCResponse", "automatable", "SSVCAutomatable"),
     ("CVESSVCResponse", "technical_impact", "SSVCTechnicalImpact"),
@@ -759,6 +765,8 @@ _COMPONENT_VALUES: dict[str, list[str]] = {
     "FetcherRunTriggeredBy": _values(FetcherRunTriggeredBy),
     "FetcherAuditEventType": _values(FetcherAuditEventType),
     "TicketAuditEventType": _values(TicketAuditEventType),
+    "TicketIgnoreReason": _values(TicketIgnoreReason),
+    "UserTicketIgnoreReasonValue": [reason.value for reason in USER_IGNORE_REASONS],
     "SSVCExploitation": _values(SSVCExploitation),
     "SSVCAutomatable": _values(SSVCAutomatable),
     "SSVCTechnicalImpact": _values(SSVCTechnicalImpact),
@@ -818,6 +826,9 @@ class TestPublishedValueSets:
 
         if schema.get("type") == "array":
             schema = schema["items"]
+        if "anyOf" in schema:
+            # A nullable field: its enum and `null`.
+            (schema,) = [s for s in schema["anyOf"] if s != {"type": "null"}]
         assert schema["$ref"] == f"#/components/schemas/{enum}"
 
     @pytest.mark.parametrize(

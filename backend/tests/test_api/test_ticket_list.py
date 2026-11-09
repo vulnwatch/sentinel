@@ -37,6 +37,7 @@ from app.core.enums import (
     Role,
     Severity,
     SortOrder,
+    TicketIgnoreReason,
     TicketPriority,
     TicketSortField,
     TicketStatus,
@@ -78,6 +79,7 @@ _DUE_FIELDS = (
 _TICKET_SUMMARY_FIELDS = {
     "ticket_id",
     "status",
+    "ignore_reason",
     "severity",
     "priority",
     "priority_automatic",
@@ -178,6 +180,7 @@ class TestListEndpoint:
         assert item == {
             "ticket_id": _sntl(ticket),
             "status": "analysis",
+            "ignore_reason": None,
             "severity": "critical",
             "priority": "p2",
             "priority_automatic": "p2",
@@ -287,6 +290,7 @@ class TestListEndpoint:
             {"priority": "P1"},
             {"overdue": ["release", "late"]},
             {"current_phase": ["null", "Triage", "overdue"]},
+            {"ignore_reason": ["Other", "not_for_us", "not_shipped,other"]},
         ],
     )
     async def test_all_invalid_supplied_filter_returns_an_empty_page(
@@ -308,6 +312,48 @@ class TestListEndpoint:
         assert response.json() == {
             "data": [],
             "meta": {"total": 0, "page": 1, "per_page": 20},
+        }
+
+    async def test_ignore_reason_filter_parses_reasons_and_serializes_them(
+        self,
+        authenticated_client: AsyncClient,
+        fixed_clock: list[datetime],
+        ticket_factory: Factory,
+    ) -> None:
+        """tickets.md, List Tickets: repeatable, OR semantics, invalid values
+        ignored, and a Ticket that is not `ignored` matches no value; each
+        item serializes its `ignore_reason`, `null` outside `ignored`."""
+        shipped = await ticket_factory(
+            status=TicketStatus.IGNORED.value,
+            ignore_reason=TicketIgnoreReason.NOT_SHIPPED.value,
+        )
+        other = await ticket_factory(
+            status=TicketStatus.IGNORED.value,
+            ignore_reason=TicketIgnoreReason.OTHER.value,
+        )
+        active = await ticket_factory(status=TicketStatus.ANALYSIS.value)
+
+        assert set(
+            await _ids(
+                authenticated_client, ignore_reason=["not_shipped", "other", "x"]
+            )
+        ) == {_sntl(shipped), _sntl(other)}
+        assert await _ids(authenticated_client, ignore_reason=["cve_rejected"]) == []
+        response = await authenticated_client.get(
+            _PATH, params={"ignore_reason": "not_shipped", "status": "ignored"}
+        )
+        (item,) = response.json()["data"]
+        assert (item["ticket_id"], item["status"], item["ignore_reason"]) == (
+            _sntl(shipped),
+            "ignored",
+            "not_shipped",
+        )
+        listed = (await authenticated_client.get(_PATH)).json()["data"]
+        reasons = {item["ticket_id"]: item["ignore_reason"] for item in listed}
+        assert reasons == {
+            _sntl(shipped): "not_shipped",
+            _sntl(other): "other",
+            _sntl(active): None,
         }
 
     async def test_overdue_filter_parses_phases(
@@ -625,6 +671,7 @@ class TestListEndpoint:
             ({"product": "cpe:/o:example\x00"}, "product"),
             ({"track": "slfo-main\x00"}, "track"),
             ({"status": ["new", "x" * 501]}, "status"),
+            ({"ignore_reason": ["other", "x" * 501]}, "ignore_reason"),
             ({"is_confidential": "maybe"}, "is_confidential"),
             ({"coordinated_release_passed": "2"}, "coordinated_release_passed"),
         ],
@@ -850,6 +897,7 @@ class TestSerializer:
             TicketSummaryProjection(
                 ticket_id="SNTL-1",
                 status=TicketStatus.ANALYZED,
+                ignore_reason=None,
                 severity=Severity.LOW,
                 priority=TicketPriority.P4,
                 priority_automatic=TicketPriority.P3,
@@ -952,6 +1000,11 @@ class TestSerializer:
             "done",
         }
         assert set(route._CURRENT_PHASE_FILTER.values()) == set(CurrentPhase)
+        assert route._IGNORE_REASON_FILTER == {
+            "not_shipped": TicketIgnoreReason.NOT_SHIPPED,
+            "cve_rejected": TicketIgnoreReason.CVE_REJECTED,
+            "other": TicketIgnoreReason.OTHER,
+        }
 
 
 @pytest.mark.unit
@@ -970,6 +1023,7 @@ class TestOpenApiContract:
         assert {p["name"] for p in parameters if p["in"] == "query"} == {
             "search",
             "status",
+            "ignore_reason",
             "assignee",
             "severity",
             "priority",

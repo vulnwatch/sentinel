@@ -95,7 +95,7 @@ from tests.support.fetch_single_cve import (
 )
 from tests.support.inadmissible import REQUEST_INPUT_ERROR
 from tests.support.ticket_api import INTERNAL_ERROR, force_production_error_page
-from tests.support.ticket_mutations import StatementRecorder
+from tests.support.ticket_mutations import StatementRecorder, ignore_reason_for
 
 Factory = Callable[..., Awaitable[Any]]
 
@@ -297,6 +297,7 @@ class _Api:
             target_id = target.id
         ticket = Ticket(
             status=status.value,
+            ignore_reason=ignore_reason_for(status),
             cve_id=cve.id,
             is_confidential=confidential,
             duplicate_of_id=target_id,

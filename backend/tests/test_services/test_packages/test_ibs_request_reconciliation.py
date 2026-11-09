@@ -127,7 +127,12 @@ from tests.support.ibs_track_release import (
     logged,
     raising,
 )
-from tests.support.ticket_mutations import BEFORE_EVAL, RELEASED_AT, StatementRecorder
+from tests.support.ticket_mutations import (
+    BEFORE_EVAL,
+    DEFAULT_IGNORE_REASON,
+    RELEASED_AT,
+    StatementRecorder,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -1605,7 +1610,12 @@ async def _resolved(seed: RequestSeed, scope: IBSRequestScope) -> None:
 
 
 async def _ignored(seed: RequestSeed, scope: IBSRequestScope) -> None:
-    await _set_ticket(seed, scope, status=TicketStatus.IGNORED.value)
+    await _set_ticket(
+        seed,
+        scope,
+        status=TicketStatus.IGNORED.value,
+        ignore_reason=DEFAULT_IGNORE_REASON.value,
+    )
 
 
 async def _duplicated(seed: RequestSeed, scope: IBSRequestScope) -> None:

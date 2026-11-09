@@ -119,6 +119,7 @@ from tests.support.suse_cvss_races import (
 )
 from tests.support.ticket_mutations import (
     AFTER_EVAL,
+    DEFAULT_IGNORE_REASON,
     EVAL,
     EventRow,
     status_event,
@@ -1061,7 +1062,10 @@ class TestLockedCurrentAccessibilityRaces:
             statements.append(
                 update(Ticket)
                 .where(Ticket.id == ticket.id)
-                .values(status=TicketStatus.IGNORED.value)
+                .values(
+                    status=TicketStatus.IGNORED.value,
+                    ignore_reason=DEFAULT_IGNORE_REASON.value,
+                )
             )
         a = await world.open_session()
         b = await world.open_session()

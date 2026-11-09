@@ -13,7 +13,8 @@ Owning specifications:
 - docs/features/tickets/ticket-mutations.md (Architectural Test
   Requirement: Serialized outcomes).
 - docs/features/tickets/ticket-service.md (Architectural Test Requirement
-  9, the system path).
+  9, the system path; `ignore_ticket` Locking and Architectural Test
+  Requirement 24, the races of an ignore with `cve_rejected`).
 - docs/features/tickets/ticket-references.md (Mutability and Concurrency >
   Race Outcomes).
 - docs/features/tickets/ticket-audit-log.md (Testing Requirements 16, 23).
@@ -32,9 +33,12 @@ conflicting rejection/republication payloads from `New` and from
 `Ignored` in both commit orders; Ticket creation on an existing ticketless
 CVE; manual SUSE upsert and delete against ingestion CVSS in both orders;
 `associate_cve()` against ingestion in both orders for an orphan and a new
-CVE; every ordered same-source status pair after commit and after a
-holder rollback; and the composed reference race in both orders, which
-also confirms that the Ticket lock is already held when
+CVE; an ignore with `cve_rejected` that holds no CVE lock, a republication
+waiting for it, a republication committed before it, and a rejection not
+yet committed when it reads the CVE; every ordered same-source status
+pair after commit and after a holder rollback; and the composed
+reference race in both orders, which also confirms that the Ticket lock
+is already held when
 `upsert_references()` starts (the residual deadlock risk deferred from
 the reference work).
 
@@ -79,6 +83,7 @@ from app.core.enums import (
     Role,
     Scope,
     Severity,
+    TicketIgnoreReason,
     TicketStatus,
 )
 from app.models.cve import CVE
@@ -107,7 +112,11 @@ from app.services.ticket_mutations import (
     ExternalCVSSAssessmentOutcome,
     ExternalCVSSBatchResult,
 )
-from app.services.ticket_service import TicketCVEConflictError, associate_cve
+from app.services.ticket_service import (
+    TicketCVEConflictError,
+    TicketCVENotRejectedError,
+    associate_cve,
+)
 from app.services.ticket_visibility import TicketCaller
 from tests.support.cve_ingest import (
     IngestionWorld,
@@ -194,7 +203,14 @@ ANALYSIS = TicketStatus.ANALYSIS.value
 ANALYZED = TicketStatus.ANALYZED.value
 IGNORED = TicketStatus.IGNORED.value
 
-REJECTION = EventRow("status_change", None, NEW, IGNORED, "CVE rejected", None)
+REJECTION = EventRow(
+    "status_change",
+    None,
+    NEW,
+    IGNORED,
+    "CVE rejected",
+    {"ignore_reason": "cve_rejected"},
+)
 """The exact system rejection event (cve-tracking.md, Rejection handling)."""
 
 REOPENED = status_event(IGNORED, ANALYSIS)
@@ -646,7 +662,11 @@ class TestLifecycleRace:
             ticket = await world.ticket(cve_id=cve.id, status=TicketStatus.NEW)
         else:
             cve = await world.cve_in(state=CveState.REJECTED, date_rejected=REJECTED_AT)
-            ticket = await world.ticket(cve_id=cve.id, status=TicketStatus.IGNORED)
+            ticket = await world.ticket(
+                cve_id=cve.id,
+                status=TicketStatus.IGNORED,
+                ignore_reason=TicketIgnoreReason.CVE_REJECTED,
+            )
         rejection = CVEIngestPayload(
             cve_state=CveState.REJECTED, date_rejected=LATER_REJECTED_AT
         )
@@ -1376,3 +1396,204 @@ class TestComposedReferenceRace:
             EventRow("reference_added", actor.id, None, REFERENCE_URL, None, None),
             *_high_batch(),
         ]
+
+
+# ---------------------------------------------------------------------------
+# Ignore with `cve_rejected` against ingestion (ticket-service.md,
+# `ignore_ticket` Locking; Architectural Test Requirement 24)
+# ---------------------------------------------------------------------------
+
+
+def _ignored_by(actor: User, reason: TicketIgnoreReason) -> EventRow:
+    """The acting-user `Analysis -> Ignored` of an assigned Ticket."""
+    return EventRow(
+        "status_change", actor.id, ANALYSIS, IGNORED, None, {"ignore_reason": reason}
+    )
+
+
+async def _ignore_reason(db: AsyncSession, ticket_id: uuid.UUID) -> str | None:
+    return (
+        await db.execute(select(Ticket.ignore_reason).where(Ticket.id == ticket_id))
+    ).scalar_one()
+
+
+@pytest.mark.integration
+class TestIgnoreReasonRace:
+    """Each Ticket is in `Analysis`, assigned to the ignoring VA, so the
+    ignore makes no assignment and no promotion. The CVE-state read of the
+    `cve_rejected` check takes no CVE lock and observes the state committed
+    after the Ticket lock."""
+
+    async def _assigned(
+        self, world: IngestionWorld, state: CveState
+    ) -> tuple[CVE, Ticket, User]:
+        actor = await world.user(role=Role.VULNERABILITY_ANALYST)
+        cve = await world.cve_in(
+            state=state,
+            date_rejected=REJECTED_AT if state is CveState.REJECTED else None,
+        )
+        ticket = await world.ticket(
+            cve_id=cve.id, status=TicketStatus.ANALYSIS, assignee_id=actor.id
+        )
+        return cve, ticket, actor
+
+    @staticmethod
+    def _ignore(
+        db: AsyncSession, ticket: Ticket, actor: User
+    ) -> Coroutine[Any, Any, Ticket]:
+        return ticket_service.ignore_ticket(
+            db,
+            ticket_id=ticket.id,
+            acting_user_id=actor.id,
+            caller=TicketCaller.authenticated(actor.id, Scope.ALL),
+            reason=TicketIgnoreReason.CVE_REJECTED,
+        )
+
+    async def test_check_completes_while_another_session_holds_the_cve(
+        self, world: IngestionWorld
+    ) -> None:
+        """The check reads the CVE without a lock: it completes while an
+        independent session holds the CVE `FOR NO KEY UPDATE`."""
+        cve, ticket, actor = await self._assigned(world, CveState.REJECTED)
+        holder = await world.open_session()
+        ignorer = await world.open_session()
+        await holder.execute(
+            text("SELECT id FROM cve WHERE id = :id FOR NO KEY UPDATE"),
+            {"id": cve.id},
+        )
+
+        ignored = await asyncio.wait_for(
+            world.start(ignorer, self._ignore(ignorer, ticket, actor)), timeout=WAIT
+        )
+        await ignorer.commit()
+        await holder.rollback()
+
+        assert ignored.ignore_reason == TicketIgnoreReason.CVE_REJECTED
+        assert await _observe(world, lambda s: _ignore_reason(s, ticket.id)) == (
+            "cve_rejected"
+        )
+
+    async def test_republication_waiting_for_the_ignore_reopens_the_ticket(
+        self, world: IngestionWorld
+    ) -> None:
+        """The ignore holds the Ticket; the republication locks the CVE,
+        then waits for the Ticket and decides from the committed `Ignored`
+        with `cve_rejected`: it reopens the Ticket and clears its reason."""
+        cve, ticket, actor = await self._assigned(world, CveState.REJECTED)
+        ignorer = await world.open_session()
+        ingester = await world.open_session()
+        await self._ignore(ignorer, ticket, actor)
+
+        with SessionStatementRecorder(ingester) as recorder:
+            task = world.start(
+                ingester,
+                _upsert(
+                    ingester, cve.cve_id, CVEIngestPayload(cve_state=CveState.PUBLISHED)
+                ),
+            )
+            await assert_lock_wait(task, waiter=ingester, blocked_by=ignorer)
+            assert is_root_lock(recorder.statements[-1], "ticket")
+            await ignorer.commit()
+            result = await asyncio.wait_for(task, timeout=WAIT)
+            await ingester.commit()
+
+        assert result.ticket.status == TicketStatus.ANALYSIS
+        assert await _observe(world, lambda s: ticket_state(s, ticket.id)) == (
+            ANALYSIS,
+            actor.id,
+            None,
+            None,
+            None,
+        )
+        assert await _observe(world, lambda s: _ignore_reason(s, ticket.id)) is None
+        assert await _observe(world, lambda s: ticket_events_by_id(s, ticket.id)) == [
+            _ignored_by(actor, TicketIgnoreReason.CVE_REJECTED),
+            REOPENED,
+        ]
+
+    async def test_ignore_waiting_for_a_committed_republication_is_rejected(
+        self, world: IngestionWorld
+    ) -> None:
+        """The republication holds the CVE and the Ticket and commits
+        first; the waiting ignore then reads `PUBLISHED` and raises
+        `TicketCVENotRejectedError` with no effect."""
+        cve, ticket, actor = await self._assigned(world, CveState.REJECTED)
+        ingester = await world.open_session()
+        ignorer = await world.open_session()
+        await _upsert(
+            ingester, cve.cve_id, CVEIngestPayload(cve_state=CveState.PUBLISHED)
+        )
+
+        task = world.start(ignorer, self._ignore(ignorer, ticket, actor))
+        await assert_lock_wait(task, waiter=ignorer, blocked_by=ingester)
+        await ingester.commit()
+        with pytest.raises(TicketCVENotRejectedError):
+            await asyncio.wait_for(task, timeout=WAIT)
+        await ignorer.rollback()
+
+        assert await _observe(world, lambda s: ticket_state(s, ticket.id)) == (
+            ANALYSIS,
+            actor.id,
+            None,
+            None,
+            None,
+        )
+        assert await _observe(world, lambda s: _ignore_reason(s, ticket.id)) is None
+        assert await _observe(world, lambda s: ticket_events_by_id(s, ticket.id)) == []
+
+    async def test_uncommitted_rejection_when_the_ignore_reads_is_rejected(
+        self, world: IngestionWorld, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The ignore holds the Ticket and is paused before its CVE-state
+        read; the rejection writes `REJECTED` under the CVE lock and waits
+        for the Ticket. The ignore then reads the committed `PUBLISHED`,
+        raises `TicketCVENotRejectedError`, and rolls back; the rejection
+        proceeds and leaves the `Analysis` Ticket unchanged."""
+        cve, ticket, actor = await self._assigned(world, CveState.PUBLISHED)
+        ignorer = await world.open_session()
+        ingester = await world.open_session()
+        paused = asyncio.Event()
+        resume = asyncio.Event()
+        original = ticket_service._cve_is_rejected
+
+        async def pause_then_read(db: AsyncSession, locked: Ticket) -> bool:
+            paused.set()
+            await resume.wait()
+            return await original(db, locked)
+
+        monkeypatch.setattr(ticket_service, "_cve_is_rejected", pause_then_read)
+
+        ignoring = world.start(ignorer, self._ignore(ignorer, ticket, actor))
+        await asyncio.wait_for(paused.wait(), timeout=WAIT)
+        with SessionStatementRecorder(ingester) as recorder:
+            rejecting = world.start(
+                ingester,
+                _upsert(
+                    ingester,
+                    cve.cve_id,
+                    CVEIngestPayload(
+                        cve_state=CveState.REJECTED, date_rejected=REJECTED_AT
+                    ),
+                ),
+            )
+            await assert_lock_wait(rejecting, waiter=ingester, blocked_by=ignorer)
+            assert is_root_lock(recorder.statements[-1], "ticket")
+            resume.set()
+            with pytest.raises(TicketCVENotRejectedError):
+                await asyncio.wait_for(ignoring, timeout=WAIT)
+            await ignorer.rollback()
+            await asyncio.wait_for(rejecting, timeout=WAIT)
+            await ingester.commit()
+
+        assert await _observe(world, lambda s: ticket_state(s, ticket.id)) == (
+            ANALYSIS,
+            actor.id,
+            None,
+            None,
+            None,
+        )
+        assert await _observe(world, lambda s: _ignore_reason(s, ticket.id)) is None
+        assert await _observe(world, lambda s: ticket_events_by_id(s, ticket.id)) == []
+        assert (await _observe(world, lambda s: _cve_columns(s, cve.id)))[1] == (
+            "REJECTED"
+        )

@@ -29,6 +29,7 @@ from app.core.enums import (
     GATE_ZONE_TICKET_STATUSES,
     MANUAL_ZONE_TICKET_STATUSES,
     OPERABLE_TICKET_STATUSES,
+    USER_IGNORE_REASONS,
     Capability,
     CredentialKind,
     CurrentPhase,
@@ -76,6 +77,7 @@ from app.core.enums import (
     SSVCExploitation,
     SSVCTechnicalImpact,
     TicketAuditEventType,
+    TicketIgnoreReason,
     TicketPriority,
     TicketSortField,
     TicketStatus,
@@ -545,6 +547,28 @@ class TestTicketStatusEnum:
             "Resolved",
             "Ignored",
             "Duplicated",
+        ]
+
+
+@pytest.mark.unit
+class TestTicketIgnoreReasonEnum:
+    """TicketIgnoreReason stored and wire values per data-model.md
+    (TicketIgnoreReason Enum), and the reasons that a user may choose per
+    tickets.md (Ignore Reason, Set by)."""
+
+    def test_exact_values(self) -> None:
+        assert [member.value for member in TicketIgnoreReason] == [
+            "not_shipped",
+            "cve_rejected",
+            "other",
+        ]
+
+    def test_user_reasons_are_every_listed_reason_in_order(self) -> None:
+        assert type(USER_IGNORE_REASONS) is tuple
+        assert [member.value for member in USER_IGNORE_REASONS] == [
+            "not_shipped",
+            "cve_rejected",
+            "other",
         ]
 
 

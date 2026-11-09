@@ -67,7 +67,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
 
-from app.core.enums import CVESourceFetchStatus, CveState, Severity, TicketStatus
+from app.core.enums import (
+    CVESourceFetchStatus,
+    CveState,
+    Severity,
+    TicketIgnoreReason,
+    TicketStatus,
+)
 from app.models.cve import CVE
 from app.models.ticket import Ticket
 from app.models.ticket_reference import TicketReference
@@ -216,7 +222,11 @@ async def _republication(world: IngestionWorld) -> _Republication:
     cve = await world.cve_in(
         state=CveState.REJECTED, date_rejected=REJECTED_AT, severity=Severity.HIGH
     )
-    ticket = await world.ticket(cve_id=cve.id, status=TicketStatus.IGNORED)
+    ticket = await world.ticket(
+        cve_id=cve.id,
+        status=TicketStatus.IGNORED,
+        ignore_reason=TicketIgnoreReason.CVE_REJECTED,
+    )
     (package,) = package_names("resolved")
     return _Republication(cve, ticket, package)
 

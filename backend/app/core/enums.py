@@ -864,6 +864,31 @@ OPERABLE_TICKET_STATUSES: Final[tuple[TicketStatus, ...]] = (
 `ensure_ticket_operable()`)."""
 
 
+class TicketIgnoreReason(StrEnum):
+    """Why a Ticket is ignored, set exactly while it is `Ignored`.
+
+    Category A — state-machine (`Ticket.ignore_reason`, VARCHAR + CHECK
+    constraint `chk_ticket_ignore_reason_valid`): the value decides which
+    automatic exit from `Ignored` applies. Adding a value requires an
+    Alembic migration. The API wire values equal the stored values. See
+    `docs/data-model.md` (TicketIgnoreReason Enum) and
+    `docs/features/tickets/tickets.md` (Ignore Reason).
+    """
+
+    NOT_SHIPPED = "not_shipped"
+    CVE_REJECTED = "cve_rejected"
+    OTHER = "other"
+
+
+USER_IGNORE_REASONS: Final[tuple[TicketIgnoreReason, ...]] = (
+    TicketIgnoreReason.NOT_SHIPPED,
+    TicketIgnoreReason.CVE_REJECTED,
+    TicketIgnoreReason.OTHER,
+)
+"""The reasons that a user may choose through Ignore Ticket (tickets.md,
+Ignore Reason, Set by)."""
+
+
 class TicketPriority(StrEnum):
     """Remediation urgency of a Ticket.
 

@@ -54,6 +54,7 @@ from app.core.enums import (
     Scope,
     Severity,
     SortOrder,
+    TicketIgnoreReason,
     TicketPriority,
     TicketSortField,
     TicketStatus,
@@ -242,6 +243,7 @@ class TestSummaryProjection:
             TicketSummaryProjection(
                 ticket_id=_sntl(ticket),
                 status=TicketStatus.DUPLICATED,
+                ignore_reason=None,
                 severity=Severity.MEDIUM,
                 priority=TicketPriority.P1,
                 priority_automatic=TicketPriority.P3,
@@ -599,6 +601,51 @@ class TestEnumFilters:
         ) == _set([by_status[TicketStatus.NEW], by_status[TicketStatus.RESOLVED]])
         assert await _ids(db_session, status=[]) == []
         assert len(await _ids(db_session, status=None)) == 3
+
+    async def test_ignore_reason_filter_is_or_within_and_matches_only_ignored(
+        self, db_session: AsyncSession, clock: Clock, ticket_factory: Factory
+    ) -> None:
+        """ticket-service.md, `list_tickets()` step 3: the filter compares
+        the stored reason, so a Ticket outside `Ignored` matches no value;
+        an empty collection matches nothing and `None` applies no filter.
+        Each summary projects the reason, `None` outside `Ignored`."""
+        by_reason = {
+            reason: await ticket_factory(
+                status=TicketStatus.IGNORED.value, ignore_reason=reason.value
+            )
+            for reason in TicketIgnoreReason
+        }
+        active = await ticket_factory(status=TicketStatus.ANALYSIS.value)
+        shipped = by_reason[TicketIgnoreReason.NOT_SHIPPED]
+        rejected = by_reason[TicketIgnoreReason.CVE_REJECTED]
+
+        assert await _ids(
+            db_session, ignore_reason=[TicketIgnoreReason.NOT_SHIPPED]
+        ) == [_sntl(shipped)]
+        assert set(
+            await _ids(
+                db_session,
+                ignore_reason=[
+                    TicketIgnoreReason.NOT_SHIPPED,
+                    TicketIgnoreReason.CVE_REJECTED,
+                ],
+            )
+        ) == _set([shipped, rejected])
+        assert await _ids(db_session, ignore_reason=[]) == []
+        assert len(await _ids(db_session, ignore_reason=None)) == 4
+        assert (
+            await _ids(
+                db_session,
+                ignore_reason=list(TicketIgnoreReason),
+                status=[TicketStatus.ANALYSIS],
+            )
+            == []
+        )
+        page = await _list(db_session, per_page=100)
+        assert {item.ticket_id: item.ignore_reason for item in page.items} == {
+            **{_sntl(t): reason for reason, t in by_reason.items()},
+            _sntl(active): None,
+        }
 
     async def test_severity_filter_distinguishes_none_label_from_unresolved(
         self,

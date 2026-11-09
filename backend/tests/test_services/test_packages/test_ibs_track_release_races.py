@@ -119,7 +119,7 @@ from tests.support.ibs_track_release import (
     unavailable,
 )
 from tests.support.suse_cvss_races import SessionStatementRecorder
-from tests.support.ticket_mutations import EVAL, RELEASED_AT
+from tests.support.ticket_mutations import EVAL, RELEASED_AT, ignore_reason_for
 
 pytestmark = pytest.mark.integration
 
@@ -282,7 +282,10 @@ class TestTicketRaces:
         seed = Seed(world.session, world)
         canonical = await seed.ticket(TicketStatus.ANALYSIS, with_cve=False)
         await seed.commit()
-        values: dict[str, Any] = {"status": status.value}
+        values: dict[str, Any] = {
+            "status": status.value,
+            "ignore_reason": ignore_reason_for(status),
+        }
         if status is TicketStatus.DUPLICATED:
             values["duplicate_of_id"] = canonical.id
         ibs.source(PROJECT, PACKAGE, CURRENT)

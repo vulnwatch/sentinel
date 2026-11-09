@@ -94,6 +94,7 @@ from tests.support.ibs_request_provenance import (
     provenance_fixture_record,
 )
 from tests.support.ibs_track_release import TrackWorld, issue
+from tests.support.ticket_mutations import ignore_reason_for
 
 CODESTREAM: Final = "SUSE:SLE-15-SP6:Update"
 OTHER_CODESTREAM: Final = "SUSE:SLE-15-SP7:Update"
@@ -896,6 +897,7 @@ class RequestSeed:
             duplicate_of_id = canonical.id
         ticket = Ticket(
             status=status.value,
+            ignore_reason=ignore_reason_for(status),
             cve_id=None if cve is None else cve.id,
             duplicate_of_id=duplicate_of_id,
         )

@@ -24,7 +24,13 @@ from typing import Any
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
-from app.core.enums import PackageStatus, Role, Severity, TicketStatus
+from app.core.enums import (
+    PackageStatus,
+    Role,
+    Severity,
+    TicketIgnoreReason,
+    TicketStatus,
+)
 from app.models.cve import CVE
 from app.models.cve_cvss_assessment import CVECVSSAssessment
 from app.models.product import Product
@@ -38,7 +44,11 @@ from app.models.ticket_package_track import TicketPackageTrack
 from app.models.user import User
 from app.models.user_role import UserRole
 from tests.support.suse_cvss import Vector
-from tests.support.ticket_mutations import EVAL, StatementRecorder
+from tests.support.ticket_mutations import (
+    DEFAULT_IGNORE_REASON,
+    EVAL,
+    StatementRecorder,
+)
 
 
 class CommittedWorld:
@@ -112,9 +122,14 @@ class CommittedWorld:
         priority_auto: str | None = None,
         status: TicketStatus = TicketStatus.ANALYSIS,
         severity_manual: Severity | None = None,
+        ignore_reason: TicketIgnoreReason = DEFAULT_IGNORE_REASON,
     ) -> Ticket:
+        """A committed Ticket; an `Ignored` one carries `ignore_reason`."""
         ticket = Ticket(
             status=status.value,
+            ignore_reason=(
+                ignore_reason.value if status is TicketStatus.IGNORED else None
+            ),
             cve_id=cve_id,
             is_confidential=is_confidential,
             assignee_id=assignee_id,

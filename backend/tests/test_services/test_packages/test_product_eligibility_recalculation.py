@@ -109,6 +109,7 @@ from tests.support.suse_cvss_races import CommittedWorld
 from tests.support.ticket_mutations import (
     AFTER_EVAL,
     BEFORE_EVAL,
+    DEFAULT_IGNORE_REASON,
     EVAL,
     EventRow,
     StatementRecorder,
@@ -843,7 +844,10 @@ class TestWorkflowOutcomes:
             await concurrent.execute(
                 update(Ticket)
                 .where(Ticket.id == ignored.id)
-                .values(status=TicketStatus.IGNORED.value)
+                .values(
+                    status=TicketStatus.IGNORED.value,
+                    ignore_reason=DEFAULT_IGNORE_REASON.value,
+                )
             )
             await concurrent.commit()
             return selected

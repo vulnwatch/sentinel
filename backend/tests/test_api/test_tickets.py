@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1 import ticket_packages as packages_route
 from app.api.v1 import tickets as route
 from app.core.enums import (
+    USER_IGNORE_REASONS,
     CurrentPhase,
     CveState,
     ExploitationLevel,
@@ -75,6 +76,7 @@ _DUE_FIELDS = (
 _TICKET_DETAIL_FIELDS = {
     "ticket_id",
     "status",
+    "ignore_reason",
     "severity",
     "priority",
     "priority_automatic",
@@ -282,6 +284,7 @@ class TestGetTicketEndpoint:
         assert data == {
             "ticket_id": format_ticket_id(target.sequence_id),
             "status": "analysis",
+            "ignore_reason": None,
             "severity": "high",
             "priority": "p2",
             "priority_automatic": "p1",
@@ -649,6 +652,10 @@ class TestSchemaEnumerations:
         ("alias", "expected"),
         [
             (common.TicketStatusValue, {s.value.lower() for s in TicketStatus}),
+            (
+                ticket.UserTicketIgnoreReasonValue,
+                {r.value for r in USER_IGNORE_REASONS},
+            ),
             (ticket.TicketPriorityValue, {p.value.lower() for p in TicketPriority}),
             (common.SeverityValue, {s.value.lower() for s in Severity}),
             (cve.CveStateValue, {s.value.lower() for s in CveState}),
@@ -675,6 +682,7 @@ class TestSerializer:
             TicketDetailProjection(
                 ticket_id="SNTL-1",
                 status=TicketStatus.DUPLICATED,
+                ignore_reason=None,
                 severity=None,
                 priority=None,
                 priority_automatic=None,
@@ -727,6 +735,7 @@ class TestSerializer:
             TicketDetailProjection(
                 ticket_id="SNTL-1",
                 status=TicketStatus.ANALYZED,
+                ignore_reason=None,
                 severity=Severity.HIGH,
                 priority=TicketPriority.P3,
                 priority_automatic=TicketPriority.P3,

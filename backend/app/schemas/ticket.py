@@ -27,7 +27,12 @@ from uuid import UUID
 
 from pydantic import MISSING, BaseModel, Field, field_validator, model_validator
 
-from app.core.enums import ExploitationLevel, SortOrder, TicketSortField
+from app.core.enums import (
+    ExploitationLevel,
+    SortOrder,
+    TicketIgnoreReason,
+    TicketSortField,
+)
 from app.core.identifiers import (
     CVE_ID_MAX_LENGTH,
     CVE_ID_PATTERN,
@@ -47,6 +52,10 @@ from app.schemas.package import CurrentPhaseValue, PackageDetail
 
 type TicketPriorityValue = Literal["p1", "p2", "p3", "p4"]
 type CurrentPhaseMilestoneValue = Literal["pending", "overdue"]
+type UserTicketIgnoreReasonValue = Literal["not_shipped", "cve_rejected", "other"]
+"""The ignore reasons that a user may choose (`USER_IGNORE_REASONS`;
+tickets.md, Ignore Reason, Set by): a system-only reason is not a request
+value."""
 
 _CVE_ID_SCHEMA: dict[str, Any] = {
     "pattern": CVE_ID_PATTERN.pattern,
@@ -92,6 +101,12 @@ _TICKET_ID_DESCRIPTION = "Canonical Ticket identity (`SNTL-{n}`)."
 _STATUS_DESCRIPTION = (
     "Ticket status: `new`, `analysis`, `analyzed`, `resolved`, `ignored`, or "
     "`duplicated`."
+)
+_IGNORE_REASON_DESCRIPTION = (
+    "Why the Ticket is ignored: `not_shipped` (SUSE ships none of the affected "
+    "software), `cve_rejected` (the associated CVE is rejected), or `other`; "
+    "`null` unless `status` is `ignored`. Only `cve_rejected` reopens the "
+    "Ticket automatically, when the rejection of its CVE is reverted."
 )
 _SEVERITY_DESCRIPTION = (
     "Resolved severity (the CVE severity for a Ticket with a CVE, otherwise "
@@ -322,6 +337,9 @@ class TicketSummary(BaseModel):
 
     ticket_id: str = Field(description=_TICKET_ID_DESCRIPTION, examples=["SNTL-42"])
     status: TicketStatusValue = Field(description=_STATUS_DESCRIPTION)
+    ignore_reason: TicketIgnoreReason | None = Field(
+        description=_IGNORE_REASON_DESCRIPTION
+    )
     severity: SeverityValue | None = Field(description=_SEVERITY_DESCRIPTION)
     priority: TicketPriorityValue | None = Field(description=_PRIORITY_DESCRIPTION)
     priority_automatic: TicketPriorityValue | None = Field(
@@ -384,8 +402,9 @@ class TicketListQuery(BaseModel):
     """Query parameters for `GET /api/v1/tickets` (tickets.md, List
     Tickets).
 
-    The repeatable enum filters (`status`, `severity`, `priority`,
-    `overdue`, `current_phase`) are intentionally raw `list[str]`: an
+    The repeatable enum filters (`status`, `ignore_reason`, `severity`,
+    `priority`, `overdue`, `current_phase`) are intentionally raw
+    `list[str]`: an
     invalid value is
     silently dropped rather than rejected (`docs/api-spec.md`, Enum
     Filter Validation), and an empty list means the filter was omitted.
@@ -399,6 +418,7 @@ class TicketListQuery(BaseModel):
 
     search: str | None = None
     status: list[str] = Field(default_factory=list)
+    ignore_reason: list[str] = Field(default_factory=list)
     assignee: str | None = None
     severity: list[str] = Field(default_factory=list)
     priority: list[str] = Field(default_factory=list)
@@ -427,6 +447,9 @@ class TicketDetail(BaseModel):
 
     ticket_id: str = Field(description=_TICKET_ID_DESCRIPTION, examples=["SNTL-42"])
     status: TicketStatusValue = Field(description=_STATUS_DESCRIPTION)
+    ignore_reason: TicketIgnoreReason | None = Field(
+        description=_IGNORE_REASON_DESCRIPTION
+    )
     severity: SeverityValue | None = Field(description=_SEVERITY_DESCRIPTION)
     priority: TicketPriorityValue | None = Field(description=_PRIORITY_DESCRIPTION)
     priority_automatic: TicketPriorityValue | None = Field(
@@ -570,6 +593,30 @@ class TicketAssigneeUpdateRequest(BaseModel):
             "mismatch."
         ),
         examples=["01994c20-7c00-7000-8000-000000000003", None],
+    )
+
+
+class TicketIgnoreRequest(BaseModel):
+    """Request body of `POST /api/v1/tickets/{ticket_id}/ignore`.
+
+    See `docs/features/tickets/tickets.md` (Ignore Ticket, Ignore Reason).
+    `reason` is required and typed with the reasons that a user may choose,
+    so an omitted member, `null`, or any other value fails with the global
+    `422 VALIDATION_ERROR`. Whether `cve_rejected` applies depends on the
+    stored CVE state, which the service decides
+    (`409 TICKET_CVE_NOT_REJECTED`).
+    """
+
+    reason: UserTicketIgnoreReasonValue = Field(
+        description=(
+            "Why the Ticket is ignored: `not_shipped` (SUSE ships none of the "
+            "affected software; software that SUSE ships but the issue does "
+            "not affect is recorded with `not_affected` tracks instead), "
+            "`cve_rejected` (the associated CVE is rejected; accepted only "
+            "while the Ticket has a CVE whose `cve_state` is `rejected`), or "
+            "`other`. Required."
+        ),
+        examples=["not_shipped"],
     )
 
 

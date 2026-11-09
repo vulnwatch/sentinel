@@ -121,6 +121,7 @@ from app.core.enums import (
     FetcherRunStatus,
     Severity,
     SortOrder,
+    TicketIgnoreReason,
     TicketStatus,
 )
 from app.core.exceptions import CVENotFoundError, ServiceError
@@ -2111,7 +2112,8 @@ async def upsert_cve(
     rejection boundary for `PUBLISHED -> REJECTED` or a newly created
     Ticket whose CVE is `REJECTED`; for `REJECTED -> PUBLISHED`, the system
     `reopen_from_ignored()` form only when the locked Ticket is still the
-    CVE's association and `Ignored`; otherwise nothing; (8)
+    CVE's association, `Ignored`, and ignored with `cve_rejected`; otherwise
+    nothing, and a Ticket with another reason keeps it; (8)
     `record_source_status(SUCCESS)`; (9) flush. No HTTP, Redis, Celery,
     DNS, or package work; never commits or rolls back.
 
@@ -2177,6 +2179,7 @@ async def upsert_cve(
         and resulting_state == CveState.PUBLISHED
         and ticket.cve_id == cve.id
         and ticket.status == TicketStatus.IGNORED
+        and ticket.ignore_reason == TicketIgnoreReason.CVE_REJECTED
     ):
         ticket = await ticket_service.reopen_from_ignored_as_system(
             db, ticket_id=ticket.id, evaluation_date=evaluation_date

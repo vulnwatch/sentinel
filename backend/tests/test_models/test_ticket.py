@@ -20,17 +20,22 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import Severity, TicketPriority, TicketStatus
+from app.core.enums import Severity, TicketIgnoreReason, TicketPriority, TicketStatus
 from app.models.cve import CVE
 from app.models.ticket import Ticket
 from app.models.user import User
-from tests.support.ticket_mutations import PRIORITY_OVERRIDE_SET_AT
+from tests.support.ticket_mutations import (
+    DEFAULT_IGNORE_REASON,
+    PRIORITY_OVERRIDE_SET_AT,
+    ignore_reason_for,
+)
 
 TicketFactory = Callable[..., Awaitable[Ticket]]
 CVEFactory = Callable[..., Awaitable[CVE]]
 UserFactory = Callable[..., Awaitable[User]]
 
 _NON_DUPLICATED_STATUSES = [s for s in TicketStatus if s != TicketStatus.DUPLICATED]
+_NON_IGNORED_STATUSES = [s for s in TicketStatus if s != TicketStatus.IGNORED]
 _OVERRIDE_SET_AT = datetime(2026, 3, 10, 15, 30, tzinfo=UTC)
 
 
@@ -43,6 +48,7 @@ class TestTicketCreation:
         assert isinstance(ticket.sequence_id, int)
         assert ticket.sequence_id >= 1
         assert ticket.status == TicketStatus.NEW
+        assert ticket.ignore_reason is None
         assert ticket.is_confidential is False
         assert ticket.cve_id is None
         assert ticket.severity_manual is None
@@ -357,7 +363,13 @@ class TestTicketDuplicateConstraints:
         status: TicketStatus,
     ) -> None:
         target = await ticket_factory()
-        db_session.add(Ticket(status=status.value, duplicate_of_id=target.id))
+        db_session.add(
+            Ticket(
+                status=status.value,
+                ignore_reason=ignore_reason_for(status),
+                duplicate_of_id=target.id,
+            )
+        )
         with pytest.raises(
             IntegrityError, match="chk_ticket_duplicate_status_coherence"
         ):
@@ -399,6 +411,86 @@ class TestTicketDuplicateConstraints:
         await db_session.refresh(chained)
 
         assert chained.duplicate_of_id == duplicated_target.id
+
+
+@pytest.mark.integration
+class TestTicketIgnoreReasonConstraints:
+    """`ignore_reason` is Category A (`chk_ticket_ignore_reason_valid`) and
+    set exactly while the Ticket is `Ignored`
+    (`chk_ticket_ignore_reason_status_coherence`; docs/data-model.md,
+    Ticket, TicketIgnoreReason Enum)."""
+
+    @pytest.mark.parametrize("reason", list(TicketIgnoreReason), ids=lambda r: r.name)
+    async def test_every_member_accepted_while_ignored(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        reason: TicketIgnoreReason,
+    ) -> None:
+        ticket = await ticket_factory(
+            status=TicketStatus.IGNORED.value, ignore_reason=reason.value
+        )
+        await db_session.refresh(ticket)
+        assert ticket.ignore_reason == reason.value
+
+    @pytest.mark.parametrize("status", _NON_IGNORED_STATUSES, ids=lambda s: s.name)
+    async def test_no_reason_accepted_outside_ignored(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        status: TicketStatus,
+    ) -> None:
+        ticket = await ticket_factory(status=status.value)
+        await db_session.refresh(ticket)
+        assert ticket.ignore_reason is None
+
+    async def test_ignored_without_reason_rejected(
+        self, db_session: AsyncSession
+    ) -> None:
+        db_session.add(Ticket(status=TicketStatus.IGNORED.value, ignore_reason=None))
+        with pytest.raises(
+            IntegrityError, match="chk_ticket_ignore_reason_status_coherence"
+        ):
+            await db_session.flush()
+
+    @pytest.mark.parametrize("status", _NON_IGNORED_STATUSES, ids=lambda s: s.name)
+    async def test_reason_outside_ignored_rejected(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        status: TicketStatus,
+    ) -> None:
+        ticket = await ticket_factory(status=status.value)
+        with pytest.raises(
+            IntegrityError, match="chk_ticket_ignore_reason_status_coherence"
+        ):
+            await db_session.execute(
+                text("UPDATE ticket SET ignore_reason = 'other' WHERE id = :id"),
+                {"id": ticket.id},
+            )
+
+    async def test_leaving_ignored_without_clearing_reason_rejected(
+        self, db_session: AsyncSession, ticket_factory: TicketFactory
+    ) -> None:
+        ticket = await ticket_factory(status=TicketStatus.IGNORED.value)
+        with pytest.raises(
+            IntegrityError, match="chk_ticket_ignore_reason_status_coherence"
+        ):
+            await db_session.execute(
+                text("UPDATE ticket SET status = 'Analysis' WHERE id = :id"),
+                {"id": ticket.id},
+            )
+
+    @pytest.mark.parametrize("value", ["not_for_us", "Other", "OTHER", ""])
+    async def test_unknown_value_rejected(
+        self, db_session: AsyncSession, ticket_factory: TicketFactory, value: str
+    ) -> None:
+        ticket = await ticket_factory(status=TicketStatus.IGNORED.value)
+        with pytest.raises(IntegrityError, match="chk_ticket_ignore_reason_valid"):
+            await db_session.execute(
+                text("UPDATE ticket SET ignore_reason = :value WHERE id = :id"),
+                {"id": ticket.id, "value": value},
+            )
 
 
 @pytest.mark.integration
@@ -775,6 +867,13 @@ class TestTicketFactory:
         assert ticket.priority_override_at == PRIORITY_OVERRIDE_SET_AT
         assert ticket.priority_override_by_id is not None
         assert await db_session.get(User, ticket.priority_override_by_id) is not None
+
+    async def test_ignored_status_override_defaults_its_reason(
+        self, db_session: AsyncSession, ticket_factory: TicketFactory
+    ) -> None:
+        ticket = await ticket_factory(status=TicketStatus.IGNORED.value)
+        await db_session.refresh(ticket)
+        assert ticket.ignore_reason == DEFAULT_IGNORE_REASON.value
 
     async def test_duplicated_status_override_creates_target(
         self, db_session: AsyncSession, ticket_factory: TicketFactory

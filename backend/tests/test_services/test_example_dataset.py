@@ -54,6 +54,7 @@ from app.core.enums import (
     Role,
     Severity,
     SortOrder,
+    TicketIgnoreReason,
     TicketStatus,
     WorkflowType,
 )
@@ -419,12 +420,20 @@ TICKETS: Final[
     22: (None, DUPLICATED, "bwilson", False, None),
     23: ("CVE-2099-0021", NEW, None, False, LOW),
     24: ("CVE-2099-0022", NEW, None, False, HIGH),
-    25: ("CVE-2099-0023", NEW, None, False, MEDIUM),
+    25: ("CVE-2099-0023", IGNORED, "asmith", False, MEDIUM),
     26: ("CVE-2099-0024", ANALYZED, "bwilson", False, HIGH),
     27: ("CVE-2099-0025", ANALYZED, "asmith", True, HIGH),
 }
 """Tickets: `SNTL-n` -> (CVE, status, assignee, confidential, resolved
 severity; `None` is unresolved)."""
+
+IGNORE_REASONS: Final[dict[int, tuple[TicketIgnoreReason, str | None]]] = {
+    8: (TicketIgnoreReason.CVE_REJECTED, None),
+    17: (TicketIgnoreReason.NOT_SHIPPED, "bwilson"),
+    25: (TicketIgnoreReason.OTHER, "asmith"),
+}
+"""The `Ignored` Tickets: `SNTL-n` -> (ignore reason, actor of the ignore;
+`None` is the system ignore of a rejected CVE)."""
 
 PRIORITIES: Final[
     dict[
@@ -887,6 +896,8 @@ ATTRIBUTED_TICKET_EVENTS: Final = frozenset(
         (16, "track_status_changed", "asmith"),
         (16, "cvss_assessment_changed", "asmith"),
         (17, "status_change", "bwilson"),
+        (25, "assignment", "asmith"),  # auto-assignment of the ignore
+        (25, "status_change", "asmith"),
         (18, "package_added", "asmith"),
         (18, "track_status_changed", "asmith"),
         (18, "access_grant_added", "asmith"),
@@ -923,6 +934,7 @@ TABLE_EXCEPTIONS: Final = frozenset(
 ENUM_EXCEPTIONS: Final[dict[str, frozenset[str]]] = {
     "Role": frozenset(),
     "TicketStatus": frozenset(),
+    "TicketIgnoreReason": frozenset(),
     "PackageStatus": frozenset(),
     "DeliveryStatus": frozenset(),
     "WorkflowType": frozenset(),
@@ -1691,6 +1703,52 @@ class TestTickets:
         assert (
             sum(not confidential for _, _, _, confidential, _ in tickets.values()) == 24
         )
+
+    def test_ignore_reasons_and_their_events(self, loaded: Loaded) -> None:
+        """example-dataset.md, Tickets and Ticket work: each `Ignored`
+        Ticket carries one ignore reason, every other Ticket none, and the
+        `status_change` into `Ignored` records the reason with its actor
+        (ticket-audit-log.md, `detail` JSONB Schema Contract)."""
+
+        async def reader(
+            db: AsyncSession,
+        ) -> tuple[dict[int, str | None], dict[int, tuple[str | None, Any, Any]]]:
+            rows = await db.execute(select(Ticket.sequence_id, Ticket.ignore_reason))
+            reasons = {row.sequence_id: row.ignore_reason for row in rows}
+            actor = aliased(User)
+            events = await db.execute(
+                select(
+                    Ticket.sequence_id,
+                    actor.username,
+                    TicketAuditEvent.comment,
+                    TicketAuditEvent.detail,
+                )
+                .join(Ticket, Ticket.id == TicketAuditEvent.ticket_id)
+                .outerjoin(actor, actor.id == TicketAuditEvent.user_id)
+                .where(
+                    TicketAuditEvent.event_type == "status_change",
+                    TicketAuditEvent.new_value == TicketStatus.IGNORED.value,
+                )
+            )
+            return reasons, {
+                n: (username, comment, detail)
+                for n, username, comment, detail in events
+            }
+
+        reasons, events = read(loaded.url, reader)
+
+        assert reasons == {
+            n: IGNORE_REASONS[n][0].value if n in IGNORE_REASONS else None
+            for n in TICKETS
+        }
+        assert events == {
+            n: (
+                actor,
+                "CVE rejected" if actor is None else None,
+                {"ignore_reason": reason.value},
+            )
+            for n, (reason, actor) in IGNORE_REASONS.items()
+        }
 
     def test_ticket_attributes(self, loaded: Loaded) -> None:
         async def reader(
@@ -2488,6 +2546,7 @@ class Covered:
     users_without_roles: int
     bot_accounts: int
     ticket_statuses: set[str]
+    ignore_reasons: set[str | None]
     package_statuses: set[str]
     delivery_statuses: set[str]
     workflow_types: set[str]
@@ -2527,6 +2586,7 @@ def test_dataset_covers_every_table_and_enumeration(loaded: Loaded) -> None:
             users_without_roles=int(without_roles or 0),
             bot_accounts=int(bot_accounts or 0),
             ticket_statuses=await values(Ticket.status),
+            ignore_reasons=await values(Ticket.ignore_reason),
             package_statuses=await values(TicketPackageTrack.status),
             delivery_statuses=await values(TicketPackageTrack.delivery_status),
             workflow_types=await values(TicketPackageTrack.workflow_type),
@@ -2563,6 +2623,11 @@ def test_dataset_covers_every_table_and_enumeration(loaded: Loaded) -> None:
             members(TicketStatus),
             covered.ticket_statuses,
             ENUM_EXCEPTIONS["TicketStatus"],
+        ),
+        "TicketIgnoreReason": coverage_violations(
+            members(TicketIgnoreReason),
+            {r for r in covered.ignore_reasons if r is not None},
+            ENUM_EXCEPTIONS["TicketIgnoreReason"],
         ),
         "PackageStatus": coverage_violations(
             members(PackageStatus),

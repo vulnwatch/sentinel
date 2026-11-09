@@ -93,14 +93,17 @@ from sqlalchemy.orm import aliased, joinedload, selectinload
 
 from app.core.enums import (
     ACTIVE_TICKET_STATUSES,
+    USER_IGNORE_REASONS,
     CurrentPhase,
     CVESourceType,
+    CveState,
     ExploitationLevel,
     MilestonePhase,
     MilestoneStatus,
     Severity,
     SortOrder,
     TicketAuditEventType,
+    TicketIgnoreReason,
     TicketPriority,
     TicketSortField,
     TicketStatus,
@@ -243,8 +246,9 @@ class TicketDetailProjection:
     """The semantic projection represented by `TicketDetail`.
 
     `ticket_id` is the public `SNTL-{n}` identity; the internal Ticket
-    UUID is deliberately absent. `severity` is the resolved severity
-    (tickets.md, Severity Resolution). `priority` is the effective
+    UUID is deliberately absent. `ignore_reason` is `None` unless `status`
+    is `Ignored` (tickets.md, Ignore Reason). `severity` is the resolved
+    severity (tickets.md, Severity Resolution). `priority` is the effective
     priority `COALESCE(priority_override, priority_automatic)`,
     `priority_override_by` and `priority_override_at` the override
     provenance (both `None` without an override), and `priority_basis`
@@ -259,6 +263,7 @@ class TicketDetailProjection:
 
     ticket_id: str
     status: TicketStatus
+    ignore_reason: TicketIgnoreReason | None
     severity: Severity | None
     priority: TicketPriority | None
     priority_automatic: TicketPriority | None
@@ -297,7 +302,8 @@ class TicketSummaryProjection:
     """The semantic projection represented by `TicketSummary`.
 
     `ticket_id` is the public `SNTL-{n}` identity; the internal Ticket
-    UUID is deliberately absent. `severity` is the resolved severity and
+    UUID is deliberately absent. `ignore_reason` is `None` unless `status`
+    is `Ignored`. `severity` is the resolved severity and
     `priority` the effective priority, the same values the list filtered
     and sorted by; `priority_override_by` and `priority_override_at` are
     the override provenance, and `priority_basis` is what
@@ -310,6 +316,7 @@ class TicketSummaryProjection:
 
     ticket_id: str
     status: TicketStatus
+    ignore_reason: TicketIgnoreReason | None
     severity: Severity | None
     priority: TicketPriority | None
     priority_automatic: TicketPriority | None
@@ -370,6 +377,7 @@ def _detail_statement(evaluation_date: date) -> Select[*tuple[Any, ...]]:
     statement = (
         select(
             Ticket.sequence_id.label("sequence_id"),
+            Ticket.ignore_reason.label("ignore_reason"),
             Ticket.priority_auto.label("priority_automatic"),
             Ticket.priority_override.label("priority_override"),
             func.coalesce(Ticket.priority_override, Ticket.priority_auto).label(
@@ -407,6 +415,10 @@ def _detail_statement(evaluation_date: date) -> Select[*tuple[Any, ...]]:
 
 def _priority(value: str | None) -> TicketPriority | None:
     return TicketPriority(value) if value is not None else None
+
+
+def _ignore_reason(value: str | None) -> TicketIgnoreReason | None:
+    return TicketIgnoreReason(value) if value is not None else None
 
 
 def _override_provenance_columns(setter: Any) -> tuple[ColumnElement[Any], ...]:
@@ -494,6 +506,7 @@ def _project(
     return TicketDetailProjection(
         ticket_id=format_ticket_id(row.sequence_id),
         status=context.status,
+        ignore_reason=_ignore_reason(row.ignore_reason),
         severity=context.severity,
         priority=_priority(row.priority),
         priority_automatic=_priority(row.priority_automatic),
@@ -1043,6 +1056,7 @@ def _summary(row: Row[*tuple[Any, ...]]) -> TicketSummaryProjection:
     return TicketSummaryProjection(
         ticket_id=format_ticket_id(row.sequence_id),
         status=status,
+        ignore_reason=_ignore_reason(row.ignore_reason),
         severity=severity,
         priority=_priority(row.priority),
         priority_automatic=_priority(row.priority_automatic),
@@ -1116,6 +1130,7 @@ async def list_tickets(
     caller: TicketCaller,
     search: str | None = None,
     status: Collection[TicketStatus] | None = None,
+    ignore_reason: Collection[TicketIgnoreReason] | None = None,
     assignee: str | None = None,
     severity: Collection[Severity | None] | None = None,
     priority: Collection[TicketPriority | None] | None = None,
@@ -1139,7 +1154,8 @@ async def list_tickets(
 
     Q1: `caller` is the request-resolved caller information. `search` is
     the raw multi-field search. For each repeatable filter (`status`,
-    `severity`, `priority`, `overdue`, `current_phase`), `None` means
+    `ignore_reason`, `severity`, `priority`, `overdue`, `current_phase`),
+    `None` means
     omitted (no filter) and a collection holds the valid supplied members,
     so an empty collection (every supplied value was invalid) matches
     nothing. A
@@ -1170,7 +1186,9 @@ async def list_tickets(
        when both are supplied, and an unknown value matches nothing;
        `duplicate_of_ticket_id` matches the duplicates of the Ticket with
        that sequence, whatever that Ticket's visibility, and an unknown
-       value matches nothing; `is_confidential` matches the Ticket's
+       value matches nothing; `ignore_reason` compares the stored reason,
+       so a Ticket outside `Ignored` matches no value; `is_confidential`
+       matches the Ticket's
        confidentiality; `coordinated_release_passed=True` matches a
        confidential Ticket whose Coordinated Release Date is at or before
        the one instant, and `False` every other Ticket, a `NULL` date
@@ -1245,6 +1263,9 @@ async def list_tickets(
     if status is not None:
         values = sorted({member.value for member in status})
         conditions.append(Ticket.status.in_(values) if values else false())
+    if ignore_reason is not None:
+        reasons = sorted({member.value for member in ignore_reason})
+        conditions.append(Ticket.ignore_reason.in_(reasons) if reasons else false())
     if severity is not None:
         conditions.append(_nullable_member_condition(resolved_severity, severity))
     if priority is not None:
@@ -1350,6 +1371,7 @@ async def list_tickets(
             Ticket.id.label("ticket_pk"),
             Ticket.sequence_id,
             Ticket.status,
+            Ticket.ignore_reason,
             resolved_severity.label("severity"),
             effective_priority.label("priority"),
             Ticket.priority_auto.label("priority_automatic"),
@@ -1434,6 +1456,15 @@ class TicketCVEAlreadySetError(TicketServiceError):
 
     def __init__(self) -> None:
         super().__init__("Ticket already has a CVE associated.")
+
+
+class TicketCVENotRejectedError(TicketServiceError):
+    """The ignore reason `cve_rejected` is requested for a Ticket without
+    a CVE or whose CVE is not `REJECTED` (tickets.md, Ignore Reason). Maps
+    to `409 TICKET_CVE_NOT_REJECTED`. The message is static."""
+
+    def __init__(self) -> None:
+        super().__init__("The Ticket has no rejected CVE.")
 
 
 class AssigneeNotEligibleError(TicketServiceError):
@@ -2294,57 +2325,76 @@ async def ignore_ticket(
     ticket_id: UUID,
     acting_user_id: UUID,
     caller: TicketCaller,
+    reason: TicketIgnoreReason,
 ) -> Ticket:
-    """Move a `New` or `Analysis` Ticket into `Ignored` (manual-zone entry).
+    """Move a `New` or `Analysis` Ticket into `Ignored` with its reason
+    (manual-zone entry).
 
     Category A lifecycle operation (ticket-service.md, `ignore_ticket`;
-    tickets.md, Status Transitions, Ignore Ticket).
+    tickets.md, Status Transitions, Ignore Reason, Ignore Ticket).
 
     Q1: `ticket_id` is the internal Ticket UUID (the API resolves the
     public `SNTL-{n}` locator first). `acting_user_id` is the
     authenticated acting user (there is no system caller); `caller` is the
     request-resolved caller information whose `user_id` must identify
-    `acting_user_id`. No `evaluation_date`: nothing here reconciles.
+    `acting_user_id`. `reason` is one of `USER_IGNORE_REASONS`. No
+    `evaluation_date`: nothing here reconciles.
 
     Q2: the caller has verified `triage_ticket` and owns the transaction.
     Locks, in order: the acting User `FOR SHARE`
-    (`stabilize_acting_user()`), then the Ticket `FOR UPDATE`.
+    (`stabilize_acting_user()`), then the Ticket `FOR UPDATE`. The
+    `cve_rejected` check reads the CVE without locking it, so the root
+    order is unchanged.
 
     Q3: (3) revalidates accessibility from locked-current state; (4)
     `ensure_ticket_operable()` rejects `Ignored` and `Duplicated` before
     (5) the source-status guard, which accepts only `New` and `Analysis`
-    (the ordering is contractual); (6) `auto_assign_actor()` with the
-    stabilized User, so an actor eligible to be the assignee of an
-    unassigned `New` Ticket records
-    `assignment` and the system `New → Analysis` first; (7)-(8) sets
-    `Ignored` and creates one `status_change` attributed to the acting
-    user from the status after any auto-assignment (`comment NULL`).
-    Never reconciles, registers convergence, reads audit history, or
-    commits.
+    (the ordering is contractual); (6) for `cve_rejected`, reads the
+    CVE's `cve_state` in a statement issued after the Ticket lock, so it
+    observes the state committed while this transaction waited; (7)
+    `auto_assign_actor()` with the stabilized User, so an actor eligible
+    to be the assignee of an unassigned `New` Ticket records `assignment`
+    and the system `New → Analysis` first; (8)-(9) sets `Ignored` and the
+    reason together, before anything may flush
+    (`chk_ticket_ignore_reason_status_coherence`), and creates one
+    `status_change` attributed to the acting user from the status after
+    any auto-assignment (`comment NULL`, `detail = {"ignore_reason":
+    reason}`). Every guard precedes every write. Never reconciles,
+    registers convergence, reads audit history, or commits.
 
     Q4: returns the locked Ticket in its post-mutation state.
 
     Q6: raises `ValueError` before any database operation when `caller`
-    does not identify `acting_user_id`. Raises `TicketNotFoundError` for
-    a missing or inaccessible Ticket, before any other decision;
+    does not identify `acting_user_id` or `reason` is not one of
+    `USER_IGNORE_REASONS`. Raises `TicketNotFoundError` for a missing or
+    inaccessible Ticket, before any other decision;
     `TicketNotMutableError` for `Ignored` or `Duplicated`;
-    `InvalidTransitionError` for `Analyzed` or `Resolved`.
-    `UserNotFoundError` (an invariant violation for an authenticated
-    caller), audit, database, and flush exceptions propagate and roll back
-    the status, assignment, and every event together.
+    `InvalidTransitionError` for `Analyzed` or `Resolved`;
+    `TicketCVENotRejectedError` for `cve_rejected` when the Ticket has no
+    CVE or its CVE is not `REJECTED`. `UserNotFoundError` (an invariant
+    violation for an authenticated caller), audit, database, and flush
+    exceptions propagate and roll back the status, reason, assignment,
+    and every event together.
     """
     if caller.user_id != acting_user_id:
         raise ValueError("caller must identify the acting user.")
+    if not isinstance(reason, TicketIgnoreReason) or reason not in USER_IGNORE_REASONS:
+        raise ValueError("reason must be a reason that a user may choose.")
 
     acting_user = await stabilize_acting_user(db, acting_user_id)
     ticket = await lock_accessible_ticket(db, ticket_id, caller)
     ensure_ticket_operable(ticket)
     if ticket.status not in _IGNORABLE:
         raise InvalidTransitionError()
+    if reason is TicketIgnoreReason.CVE_REJECTED and not await _cve_is_rejected(
+        db, ticket
+    ):
+        raise TicketCVENotRejectedError()
 
     await auto_assign_actor(ticket, acting_user, db)
     previous_status = ticket.status
     ticket.status = TicketStatus.IGNORED.value
+    ticket.ignore_reason = reason.value
     await TicketAuditLog.log_event(
         db,
         ticket_id=ticket.id,
@@ -2352,8 +2402,22 @@ async def ignore_ticket(
         user_id=acting_user_id,
         old_value=previous_status,
         new_value=TicketStatus.IGNORED.value,
+        detail={"ignore_reason": reason.value},
     )
     return ticket
+
+
+async def _cve_is_rejected(db: AsyncSession, ticket: Ticket) -> bool:
+    """Whether the locked Ticket's CVE is `REJECTED`; `False` for a
+    CVE-less Ticket. One column statement issued after the Ticket lock,
+    never a CVE entity the session may already hold, and no CVE lock
+    (ticket-service.md, `ignore_ticket`, step 6)."""
+    if ticket.cve_id is None:
+        return False
+    state = (
+        await db.execute(select(CVE.cve_state).where(CVE.id == ticket.cve_id))
+    ).scalar_one()
+    return state == CveState.REJECTED
 
 
 async def ignore_new_for_rejected_cve(
@@ -2378,11 +2442,13 @@ async def ignore_new_for_rejected_cve(
     Acquires no lock and does not call `ensure_ticket_operable()`.
 
     Q3: (1) reads the supplied locked-current status without any query or
-    audit-history read. (2) `New` becomes `Ignored` with exactly one
-    system `status_change` (`New` to `Ignored`, `comment = "CVE
-    rejected"`, `detail NULL`). (3) Every other status returns unchanged
-    with no event. Never assigns, reconciles, registers convergence, or
-    changes another field. (4) Flushes an effective transition. Never
+    audit-history read. (2) `New` becomes `Ignored` with the reason
+    `cve_rejected`, set together before anything may flush, and exactly
+    one system `status_change` (`New` to `Ignored`, `comment = "CVE
+    rejected"`, `detail = {"ignore_reason": "cve_rejected"}`). (3) Every
+    other status returns unchanged with no event; an `Ignored` Ticket
+    keeps its reason. Never assigns, reconciles, registers convergence,
+    or changes another field. (4) Flushes an effective transition. Never
     commits, rolls back, or performs network, Redis, or Celery I/O.
 
     Q4: returns the supplied Ticket.
@@ -2401,6 +2467,7 @@ async def ignore_new_for_rejected_cve(
         return ticket
 
     ticket.status = TicketStatus.IGNORED.value
+    ticket.ignore_reason = TicketIgnoreReason.CVE_REJECTED.value
     await TicketAuditLog.log_event(
         db,
         ticket_id=ticket.id,
@@ -2409,6 +2476,7 @@ async def ignore_new_for_rejected_cve(
         old_value=TicketStatus.NEW.value,
         new_value=TicketStatus.IGNORED.value,
         comment=CVE_REJECTED_COMMENT,
+        detail={"ignore_reason": TicketIgnoreReason.CVE_REJECTED.value},
     )
     await db.flush()
     return ticket
@@ -2635,7 +2703,11 @@ async def _reopen_locked_ticket(
     acting_user: User | None,
     evaluation_date: date | None,
 ) -> Ticket:
-    """Steps 2-4 of `reopen_from_ignored()` for an already locked Ticket."""
+    """Steps 2-4 of `reopen_from_ignored()` for an already locked Ticket.
+
+    The `Analysis` floor and the cleared `ignore_reason` are set together,
+    before anything may flush (`chk_ticket_ignore_reason_status_coherence`);
+    the cleared reason creates no event of its own."""
     if ticket.status != TicketStatus.IGNORED:
         raise InvalidTransitionError()
     if evaluation_date is None:
@@ -2643,6 +2715,7 @@ async def _reopen_locked_ticket(
 
     await auto_assign_actor(ticket, acting_user, db, force=True)
     ticket.status = TicketStatus.ANALYSIS.value
+    ticket.ignore_reason = None
     await _complete_manual_zone_exit(
         db,
         ticket=ticket,
@@ -2685,8 +2758,8 @@ async def reopen_from_ignored(
     resolves the date; (3) `auto_assign_actor(force=True)`: an actor
     eligible to be the assignee of the locked-current Ticket becomes the
     assignee (replacing a different one), otherwise the assignee is
-    unchanged; (4) sets the `Analysis` floor and completes
-    the exit (`_complete_manual_zone_exit()`). Events: optional acting-user
+    unchanged; (4) sets the `Analysis` floor, clears `ignore_reason`, and
+    completes the exit (`_complete_manual_zone_exit()`). Events: optional acting-user
     `assignment`, system Product events, optional sanitation `assignment`,
     then one system `status_change` from `Ignored` to the final status;
     all comments `NULL` except sanitation. Never reads audit history,
@@ -2725,8 +2798,9 @@ async def reopen_from_ignored_as_system(
     of `reopen_from_ignored()` (ticket-service.md, `reopen_from_ignored()`
     step 1 and CVE-ingestion composition). Its only specified caller is
     the `cve_service` CVE-republication composition, which verifies the
-    association and `Ignored` status under its CVE-then-Ticket locks
-    first. Never expose it to an API, CLI, or task entry point.
+    association, the `Ignored` status, and the reason `cve_rejected` under
+    its CVE-then-Ticket locks first; this form does not check the reason
+    itself. Never expose it to an API, CLI, or task entry point.
 
     Q1: `ticket_id` is the internal Ticket UUID; `evaluation_date` is the
     caller's UTC date (captured once after the lock when omitted).

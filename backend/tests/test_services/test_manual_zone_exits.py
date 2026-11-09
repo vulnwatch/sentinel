@@ -63,6 +63,7 @@ from app.core.enums import (
     Scope,
     Severity,
     TicketAuditEventType,
+    TicketIgnoreReason,
     TicketStatus,
 )
 from app.core.exceptions import InvalidTransitionError, TicketNotFoundError
@@ -901,6 +902,72 @@ class TestFinalStatus:
 
 def _ticket_updates(statements: Iterable[str]) -> list[str]:
     return [s for s in statements if s.lstrip().startswith("UPDATE ticket SET")]
+
+
+@pytest.mark.integration
+class TestReopenReason:
+    @pytest.mark.parametrize("reason", list(TicketIgnoreReason), ids=lambda r: r.value)
+    async def test_forced_autoflush_writes_the_reason_clear_and_floor_together(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+        monkeypatch: pytest.MonkeyPatch,
+        reason: TicketIgnoreReason,
+    ) -> None:
+        """ATR 10 (reopen): an autoflush-capable role lookup is forced at
+        the first operation after the clear (the eligibility convergence).
+        The autoflush issues one Ticket `UPDATE` carrying both `status` and
+        `ignore_reason`, which satisfies
+        `chk_ticket_ignore_reason_status_coherence`; the persisted row is
+        then `Analysis` without a reason. The clear creates no event of its
+        own and the final `status_change` has `detail = NULL`."""
+        actor = await va_user()
+        ticket = await ticket_factory(
+            status=TicketStatus.IGNORED.value,
+            ignore_reason=reason.value,
+            assignee_id=actor.id,
+        )
+        original = package_service.converge_manual_zone_exit_eligibility
+        observed: dict[str, Any] = {}
+
+        async def converge_with_role_lookup(
+            db: AsyncSession, *, ticket: Ticket, evaluation_date: date
+        ) -> Any:
+            start = len(recorder.statements)
+            await db.execute(select(UserRole.role).where(UserRole.user_id == actor.id))
+            observed["autoflush"] = recorder.statements[start:]
+            observed["persisted"] = tuple(
+                (
+                    await db.execute(
+                        select(Ticket.status, Ticket.ignore_reason).where(
+                            Ticket.id == ticket.id
+                        )
+                    )
+                ).one()
+            )
+            return await original(db, ticket=ticket, evaluation_date=evaluation_date)
+
+        monkeypatch.setattr(
+            package_service,
+            "converge_manual_zone_exit_eligibility",
+            converge_with_role_lookup,
+        )
+
+        with StatementRecorder(db_session) as recorder:
+            result = await _exit(db_session, "reopen", ticket.id, actor)
+
+        (flushed,) = _ticket_updates(observed["autoflush"])
+        assert "status=" in flushed
+        assert "ignore_reason=" in flushed
+        assert observed["persisted"] == (TicketStatus.ANALYSIS, None)
+        assert [
+            s for s in _ticket_updates(recorder.statements) if "ignore_reason=" in s
+        ] == [flushed]
+        assert result.ignore_reason is None
+        assert await ticket_events_by_id(db_session, ticket.id) == [
+            _final("reopen", TicketStatus.ANALYSIS)
+        ]
 
 
 @pytest.mark.integration

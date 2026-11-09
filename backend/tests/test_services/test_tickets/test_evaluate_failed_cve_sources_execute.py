@@ -110,6 +110,7 @@ from tests.support.fetch_single_cve import (
     pending_key,
 )
 from tests.support.suse_cvss_races import CommittedWorld
+from tests.support.ticket_mutations import ignore_reason_for
 
 SessionFactory = Callable[[], Awaitable[AsyncSession]]
 Counters = tuple[int, int, int, int]
@@ -213,7 +214,10 @@ class _World(CommittedWorld):
                 self.ticket_ids.append(canonical.id)
                 canonical_id = canonical.id
             created = Ticket(
-                status=ticket.value, cve_id=cve.id, duplicate_of_id=canonical_id
+                status=ticket.value,
+                ignore_reason=ignore_reason_for(ticket),
+                cve_id=cve.id,
+                duplicate_of_id=canonical_id,
             )
             self.session.add(created)
             await self.session.flush()

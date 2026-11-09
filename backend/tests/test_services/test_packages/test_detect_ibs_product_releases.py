@@ -145,7 +145,7 @@ from tests.support.ibs_product_release import (
 )
 from tests.support.module_imports import APP_ROOT, imported_modules
 from tests.support.suse_cvss_races import SessionStatementRecorder
-from tests.support.ticket_mutations import EVAL
+from tests.support.ticket_mutations import EVAL, ignore_reason_for
 
 Factory = Callable[[], Awaitable[AsyncSession]]
 Outcome = tuple[str, int, int, int, int]
@@ -316,7 +316,10 @@ def _leaves(world: ReleaseWorld, ticket_id: uuid.UUID, status: TicketStatus) -> 
     """A committed concurrent change moving the Ticket to `status`."""
 
     async def change() -> None:
-        values: dict[str, Any] = {"status": status.value}
+        values: dict[str, Any] = {
+            "status": status.value,
+            "ignore_reason": ignore_reason_for(status),
+        }
         if status is TicketStatus.DUPLICATED:
             seed = Seed(world.session, world)
             canonical = await seed.ticket(with_cve=False)

@@ -13,11 +13,13 @@ Proportionality; API Endpoints; Ticket Accessibility).
 
 These tests cover only the HTTP boundary: authentication, capability before
 lookup, the status and complete body of each error mapping (one
-representative request each), the absent request body, the response shape,
-OpenAPI, and the handler-owned steps (the one captured date and the final
-`TicketDetail` assembly with its rollback). The service matrix (every source
-status, VA/non-VA actor, event sequence, guard order, lock order, races) is
-proven once in `tests/test_services/test_ignore_ticket.py` and
+representative request each), the required `reason` body member and its
+validation (ticket-service.md, Architectural Test Requirement 24, API part),
+the response shape with `ignore_reason`, OpenAPI, and the handler-owned steps
+(the one captured date and the final `TicketDetail` assembly with its
+rollback). The service matrix (every source status and reason, VA/non-VA
+actor, event sequence, guard order, lock order, races) is proven once in
+`tests/test_services/test_ignore_ticket.py` and
 `tests/test_services/test_manual_zone_entry_atomicity.py`.
 """
 
@@ -36,7 +38,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1 import tickets as route
-from app.core.enums import Role, TicketStatus
+from app.core.enums import USER_IGNORE_REASONS, CveState, Role, TicketStatus
 from app.main import app
 from app.models.ticket import Ticket
 from app.models.user import User
@@ -64,9 +66,14 @@ from tests.support.ticket_api import (
 Factory = Callable[..., Awaitable[Any]]
 
 _PATH = "/api/v1/tickets/{ticket_id}/ignore"
+_BODY = {"reason": "not_shipped"}
 _INVALID_TRANSITION = {
     "code": "TICKET_INVALID_TRANSITION",
     "detail": "Ticket status transition is not allowed.",
+}
+_CVE_NOT_REJECTED = {
+    "code": "TICKET_CVE_NOT_REJECTED",
+    "detail": "The Ticket has no rejected CVE.",
 }
 
 
@@ -127,18 +134,20 @@ async def committed_app(
 
 @pytest.mark.e2e
 class TestIgnoreTicket:
-    async def test_bodiless_request_returns_the_committed_ignored_detail(
+    async def test_request_returns_the_committed_ignored_detail(
         self, committed_app: tuple[CommittedApp, AsyncClient]
     ) -> None:
-        """A VA caller ignores an unassigned `New` Ticket with no request
-        body: the response is the complete post-mutation `TicketDetail`
-        (auto-assigned to the caller), equal to a subsequent GET, and the
-        state is committed."""
+        """A VA caller ignores an unassigned `New` Ticket with a reason: the
+        response is the complete post-mutation `TicketDetail` (auto-assigned
+        to the caller, carrying the reason), equal to a subsequent GET, and
+        the state is committed."""
         world, committed_client = committed_app
         caller, headers = await world.va_headers()
         target = await world.ticket()
 
-        response = await committed_client.post(_url(target), headers=headers)
+        response = await committed_client.post(
+            _url(target), headers=headers, json=_BODY
+        )
         detail = await committed_client.get(
             f"/api/v1/tickets/{locator(target)}", headers=headers
         )
@@ -148,17 +157,40 @@ class TestIgnoreTicket:
         data = response.json()["data"]
         assert set(data) == TICKET_DETAIL_FIELDS
         assert data == detail.json()["data"]
-        assert (data["ticket_id"], data["status"], data["duplicate_of_ticket_id"]) == (
-            locator(target),
-            "ignored",
-            None,
-        )
+        assert (
+            data["ticket_id"],
+            data["status"],
+            data["ignore_reason"],
+            data["duplicate_of_ticket_id"],
+        ) == (locator(target), "ignored", "not_shipped", None)
         assert data["assignee"] == user_reference(caller)
         fresh = await world.session()
         state = await ticket_row(fresh, target.id)
-        assert (state["status"], state["assignee_id"]) == (
+        assert (state["status"], state["ignore_reason"], state["assignee_id"]) == (
             TicketStatus.IGNORED.value,
+            "not_shipped",
             caller.id,
+        )
+
+    async def test_cve_rejected_is_accepted_for_a_rejected_cve(
+        self,
+        authenticated_client: AsyncClient,
+        va_user: User,
+        db_session: AsyncSession,
+        cve_factory: Factory,
+        ticket_factory: Factory,
+    ) -> None:
+        cve = await cve_factory(cve_state=CveState.REJECTED.value)
+        target: Ticket = await ticket_factory(cve_id=cve.id)
+
+        response = await authenticated_client.post(
+            _url(target), json={"reason": "cve_rejected"}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["ignore_reason"] == "cve_rejected"
+        assert (await ticket_row(db_session, target.id))["ignore_reason"] == (
+            "cve_rejected"
         )
 
 
@@ -187,7 +219,7 @@ class TestAuthenticationAndCapability:
         resolver, mutation = _forbid_lookups(monkeypatch)
 
         for path in (_url(target), _url(f"SNTL-{MAX_SEQUENCE}")):
-            response = await client.post(path, headers=headers)
+            response = await client.post(path, headers=headers, json=_BODY)
             assert response.status_code == 401
             assert response.json() == UNAUTHENTICATED
 
@@ -213,8 +245,10 @@ class TestAuthenticationAndCapability:
         visible: Ticket = await ticket_factory()
         resolver, mutation = _forbid_lookups(monkeypatch)
 
-        existing = await authenticated_client.post(_url(visible))
-        missing = await authenticated_client.post(_url(f"SNTL-{MAX_SEQUENCE}"))
+        existing = await authenticated_client.post(_url(visible), json=_BODY)
+        missing = await authenticated_client.post(
+            _url(f"SNTL-{MAX_SEQUENCE}"), json=_BODY
+        )
 
         assert existing.status_code == missing.status_code == 403
         assert existing.content == missing.content
@@ -248,7 +282,9 @@ class TestTicketNotFound:
         target: Ticket = await ticket_factory()
         before = await ticket_row(db_session, target.id)
 
-        response = await authenticated_client.post(_url(build_locator(target)))
+        response = await authenticated_client.post(
+            _url(build_locator(target)), json=_BODY
+        )
 
         assert response.status_code == 404
         assert response.content == NOT_FOUND
@@ -265,8 +301,10 @@ class TestTicketNotFound:
         hidden: Ticket = await ticket_factory(is_confidential=True)
         before = await ticket_row(db_session, hidden.id)
 
-        inaccessible = await authenticated_client.post(_url(hidden))
-        missing = await authenticated_client.post(_url(f"SNTL-{MAX_SEQUENCE}"))
+        inaccessible = await authenticated_client.post(_url(hidden), json=_BODY)
+        missing = await authenticated_client.post(
+            _url(f"SNTL-{MAX_SEQUENCE}"), json=_BODY
+        )
 
         assert inaccessible.status_code == missing.status_code == 404
         assert inaccessible.content == missing.content == NOT_FOUND
@@ -302,10 +340,93 @@ class TestErrorMappings:
         target: Ticket = await ticket_factory(status=status.value)
         before = await ticket_row(db_session, target.id)
 
-        response = await authenticated_client.post(_url(target))
+        response = await authenticated_client.post(_url(target), json=_BODY)
 
         assert response.status_code == 409
         assert response.json() == expected
+        assert await ticket_row(db_session, target.id) == before
+        assert await event_count(db_session, target.id) == 0
+
+    async def test_cve_rejected_without_a_rejected_cve_returns_its_409(
+        self,
+        authenticated_client: AsyncClient,
+        va_user: User,
+        db_session: AsyncSession,
+        ticket_factory: Factory,
+    ) -> None:
+        """An unassigned `New` CVE-less Ticket: an auto-assignment before
+        the rejection would be observable."""
+        target: Ticket = await ticket_factory()
+        before = await ticket_row(db_session, target.id)
+
+        response = await authenticated_client.post(
+            _url(target), json={"reason": "cve_rejected"}
+        )
+
+        assert response.status_code == 409
+        assert response.json() == _CVE_NOT_REJECTED
+        assert await ticket_row(db_session, target.id) == before
+        assert await event_count(db_session, target.id) == 0
+
+
+# ---------------------------------------------------------------------------
+# Request-body validation of `reason` (global 422)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+class TestRequestValidation:
+    @pytest.mark.parametrize(
+        ("body", "loc", "error_type"),
+        [
+            pytest.param(None, ["body"], "missing", id="absent-body"),
+            pytest.param({}, ["body", "reason"], "missing", id="omitted-member"),
+            pytest.param(
+                {"reason": None}, ["body", "reason"], "literal_error", id="null"
+            ),
+            pytest.param(
+                {"reason": "not_for_us"},
+                ["body", "reason"],
+                "literal_error",
+                id="unknown",
+            ),
+            pytest.param(
+                {"reason": "Not_Shipped"},
+                ["body", "reason"],
+                "literal_error",
+                id="wrong-case",
+            ),
+            pytest.param(
+                {"reason": 1}, ["body", "reason"], "literal_error", id="non-string"
+            ),
+        ],
+    )
+    async def test_invalid_reason_is_the_global_422_without_effect(
+        self,
+        authenticated_client: AsyncClient,
+        va_user: User,
+        db_session: AsyncSession,
+        ticket_factory: Factory,
+        monkeypatch: pytest.MonkeyPatch,
+        body: dict[str, Any] | None,
+        loc: list[str],
+        error_type: str,
+    ) -> None:
+        target: Ticket = await ticket_factory()
+        before = await ticket_row(db_session, target.id)
+        mutation = AsyncMock()
+        monkeypatch.setattr(ticket_service, "ignore_ticket", mutation)
+
+        response = await authenticated_client.post(_url(target), json=body)
+
+        assert response.status_code == 422
+        payload = response.json()
+        assert (payload["code"], payload["detail"]) == (
+            "VALIDATION_ERROR",
+            "Request validation failed",
+        )
+        assert [(e["loc"], e["type"]) for e in payload["errors"]] == [(loc, error_type)]
+        mutation.assert_not_awaited()
         assert await ticket_row(db_session, target.id) == before
         assert await event_count(db_session, target.id) == 0
 
@@ -340,7 +461,9 @@ class TestMutationAssembly:
         monkeypatch.setattr(ticket_service, "assemble_ticket_detail", _fail)
         force_production_error_page(monkeypatch)
 
-        response = await committed_client.post(_url(target), headers=headers)
+        response = await committed_client.post(
+            _url(target), headers=headers, json=_BODY
+        )
 
         assert response.status_code == 500
         assert response.json() == INTERNAL_ERROR
@@ -389,11 +512,11 @@ class TestEvaluationDate:
         monkeypatch.setattr(ticket_service, "assemble_ticket_detail", _assembly)
         target: Ticket = await ticket_factory()
 
-        response = await authenticated_client.post(_url(target))
+        response = await authenticated_client.post(_url(target), json=_BODY)
 
         assert response.status_code == 200
         # The mutation neither receives nor captures a workflow date.
-        assert mutation_kwargs == [{"ticket_id", "acting_user_id", "caller"}]
+        assert mutation_kwargs == [{"ticket_id", "acting_user_id", "caller", "reason"}]
         assert assembly_dates == [date(2026, 9, 27)]
         assert handler_clock.calls == 1
         # The service clock is read only for the assembly's own milestone
@@ -419,12 +542,27 @@ class TestOpenApiContract:
         ref: str = content["application/json"]["schema"]["$ref"]
         return ref.rsplit("/", 1)[-1]
 
-    def test_operation_declares_no_request_body(self) -> None:
+    def test_operation_requires_the_reason_body(self) -> None:
+        """api-spec.md, Published Input Constraints: `reason` is required,
+        not nullable, and published as the `enum` of the reasons that a user
+        may choose."""
         operation = self._operation()
 
         assert operation["tags"] == ["Tickets"]
         assert operation["summary"] == "Ignore Ticket"
-        assert "requestBody" not in operation
+        request_body = operation["requestBody"]
+        assert request_body["required"] is True
+        assert self._ref_name(request_body["content"]) == "TicketIgnoreRequest"
+        schemas = app.openapi()["components"]["schemas"]
+        schema = schemas["TicketIgnoreRequest"]
+        assert schema["required"] == ["reason"]
+        assert set(schema["properties"]) == {"reason"}
+        field = schema["properties"]["reason"]
+        assert "anyOf" not in field
+        ref: str = field["$ref"]
+        values = schemas[ref.rsplit("/", 1)[-1]]
+        assert values["type"] == "string"
+        assert values["enum"] == [reason.value for reason in USER_IGNORE_REASONS]
 
     def test_responses_declare_detail_and_error_envelopes(self) -> None:
         responses = self._operation()["responses"]
@@ -432,9 +570,15 @@ class TestOpenApiContract:
         assert self._ref_name(responses["200"]["content"]) == "TicketDetailResponse"
         assert self._ref_name(responses["404"]["content"]) == "ErrorResponse"
         assert self._ref_name(responses["409"]["content"]) == "ErrorResponse"
+        assert self._ref_name(responses["422"]["content"]) == "ValidationErrorResponse"
         assert "TICKET_NOT_FOUND" in responses["404"]["description"]
-        assert "TICKET_INVALID_TRANSITION" in responses["409"]["description"]
-        assert "TICKET_NOT_MUTABLE" in responses["409"]["description"]
+        for code in (
+            "TICKET_INVALID_TRANSITION",
+            "TICKET_NOT_MUTABLE",
+            "TICKET_CVE_NOT_REJECTED",
+        ):
+            assert code in responses["409"]["description"]
+        assert "VALIDATION_ERROR" in responses["422"]["description"]
         assert "400" not in responses
 
 
@@ -477,7 +621,9 @@ class TestIndependentRaces:
 
         monkeypatch.setattr(ticket_service, "ignore_ticket", _lose_then_call)
 
-        response = await committed_client.post(_url(target), headers=headers)
+        response = await committed_client.post(
+            _url(target), headers=headers, json=_BODY
+        )
         monkeypatch.undo()
 
         assert response.status_code == 404

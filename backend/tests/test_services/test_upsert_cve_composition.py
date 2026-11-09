@@ -75,6 +75,7 @@ from app.core.enums import (
     SSVCExploitation,
     SSVCTechnicalImpact,
     TicketAuditEventType,
+    TicketIgnoreReason,
     TicketStatus,
 )
 from app.models.cve import CVE
@@ -217,7 +218,7 @@ REJECTION = EventRow(
     TicketStatus.NEW.value,
     TicketStatus.IGNORED.value,
     "CVE rejected",
-    None,
+    {"ignore_reason": TicketIgnoreReason.CVE_REJECTED.value},
 )
 """The exact system rejection event (cve-tracking.md, Rejection handling)."""
 
@@ -270,7 +271,9 @@ def fixed_clock(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 def cve_ticket(cve_factory: Factory, ticket_factory: TicketFactory) -> CVETicket:
     """An existing CVE in `state` and, unless `status` is `None`, its
-    associated Ticket in `status` with the given extra columns."""
+    associated Ticket in `status` with the given extra columns. An
+    `Ignored` Ticket of a `REJECTED` CVE is ignored with `cve_rejected`,
+    as the rejection leaves it, unless `ignore_reason` is given."""
 
     async def _create(
         *,
@@ -287,12 +290,23 @@ def cve_ticket(cve_factory: Factory, ticket_factory: TicketFactory) -> CVETicket
         )
         if status is None:
             return cve, None
+        if rejected and status is TicketStatus.IGNORED:
+            ticket_columns.setdefault(
+                "ignore_reason", TicketIgnoreReason.CVE_REJECTED.value
+            )
         ticket = await ticket_factory(
             status=status.value, cve_id=cve.id, **ticket_columns
         )
         return cve, ticket
 
     return _create
+
+
+async def _ignore_reason(db: AsyncSession, ticket_id: uuid.UUID) -> str | None:
+    """The persisted `ignore_reason` of a Ticket."""
+    return (
+        await db.execute(select(Ticket.ignore_reason).where(Ticket.id == ticket_id))
+    ).scalar_one()
 
 
 async def _upsert(
@@ -627,6 +641,32 @@ class TestIngestionPaths:
         assert await ticket_events(db_session, ticket) == ([REJECTION] if new else [])
         assert pending_ticket_convergence_effects(db_session) == ()
 
+    @pytest.mark.parametrize("reason", list(TicketIgnoreReason), ids=lambda r: r.value)
+    async def test_rejection_of_an_ignored_ticket_keeps_its_reason(
+        self,
+        db_session: AsyncSession,
+        cve_ticket: CVETicket,
+        monkeypatch: pytest.MonkeyPatch,
+        reason: TicketIgnoreReason,
+    ) -> None:
+        """tickets.md, Ignore Reason: a later rejection of the CVE of an
+        `Ignored` Ticket leaves its status and reason unchanged, with no
+        event."""
+        cve, ticket = await cve_ticket(
+            status=TicketStatus.IGNORED, ignore_reason=reason.value
+        )
+        assert ticket is not None
+        timeline = CompositionTimeline(db_session, monkeypatch)
+
+        await _upsert(
+            db_session, cve.cve_id, CVEIngestPayload(cve_state=CveState.REJECTED)
+        )
+
+        assert timeline.top_level() == [BATCH, REFRESH, IGNORE, SOURCE_STATUS]
+        assert (await ticket_state(db_session, ticket.id))[0] == "Ignored"
+        assert await _ignore_reason(db_session, ticket.id) == reason
+        assert await ticket_events(db_session, ticket) == []
+
     @pytest.mark.parametrize("status", STATUSES, ids=str)
     async def test_rejected_to_published_reopens_only_an_ignored_ticket(
         self,
@@ -666,6 +706,7 @@ class TestIngestionPaths:
             None,
             None,
         )
+        assert await _ignore_reason(db_session, ticket.id) is None
         assert await ticket_events(db_session, ticket) == (
             [status_event("Ignored", "Analysis")] if ignored else []
         )
@@ -869,6 +910,103 @@ class TestRepublicationComposition:
         assert await eligibility(db_session, ticket.id) == [
             (False, False),
             (True, False),
+        ]
+
+    @pytest.mark.parametrize(
+        "reason",
+        [TicketIgnoreReason.NOT_SHIPPED, TicketIgnoreReason.OTHER],
+        ids=lambda r: r.value,
+    )
+    async def test_another_reason_stays_ignored_with_its_effects_deferred(
+        self,
+        db_session: AsyncSession,
+        cve_ticket: CVETicket,
+        cve_cvss_assessment_factory: Factory,
+        tree: TreeBuilder,
+        monkeypatch: pytest.MonkeyPatch,
+        reason: TicketIgnoreReason,
+    ) -> None:
+        """tickets.md, Ignore Reason: only `cve_rejected` reopens. The same
+        stale Ticket ignored for another reason keeps its status and reason,
+        the batch keeps its Product and gate effects deferred, and no
+        lifecycle call, Product event, status event, or convergence effect
+        follows; the batch's own direct events are unchanged."""
+        cve, ticket = await _stale_ignored(
+            cve_ticket, cve_cvss_assessment_factory, tree, ignore_reason=reason.value
+        )
+        timeline = CompositionTimeline(db_session, monkeypatch)
+
+        with timeline:
+            result = await _upsert(
+                db_session,
+                cve.cve_id,
+                CVEIngestPayload(
+                    cve_state=CveState.PUBLISHED,
+                    cvss_assessments=[cvss(PROVIDER, V31_CRITICAL.canonical)],
+                ),
+            )
+
+        [batch] = timeline.calls_of(BATCH)
+        assert batch.result.propagation is CVSSPropagation.DEFERRED_UNTIL_REACTIVATION
+        assert timeline.top_level() == [BATCH, REFRESH, SOURCE_STATUS]
+        assert result.ticket.status == TicketStatus.IGNORED
+        assert await _ignore_reason(db_session, ticket.id) == reason
+        assert await ticket_events(db_session, ticket) == [
+            _created(PROVIDER, V31_CRITICAL),
+            severity_event(None, "High"),
+            priority_event(None, "P3"),
+        ]
+        assert await eligibility(db_session, ticket.id) == [
+            (True, False),
+            (False, False),
+        ]
+        assert pending_ticket_convergence_effects(db_session) == ()
+
+    async def test_user_ignore_with_cve_rejected_reopens_like_the_system_ignore(
+        self,
+        db_session: AsyncSession,
+        cve_ticket: CVETicket,
+        va_user: VAUser,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """cve-tracking.md, Rejection revert handling: the revert reopens a
+        Ticket ignored with `cve_rejected` whoever set the reason. A VA
+        ignores the assigned `Analysis` Ticket of a rejected CVE with
+        `cve_rejected`; the republication reopens it through the system form
+        and clears the reason."""
+        analyst = await va_user()
+        cve, ticket = await cve_ticket(
+            state=CveState.REJECTED,
+            status=TicketStatus.ANALYSIS,
+            assignee_id=analyst.id,
+        )
+        assert ticket is not None
+        await ticket_service.ignore_ticket(
+            db_session,
+            ticket_id=ticket.id,
+            acting_user_id=analyst.id,
+            caller=TicketCaller.authenticated(analyst.id, Scope.ALL),
+            reason=TicketIgnoreReason.CVE_REJECTED,
+        )
+        timeline = CompositionTimeline(db_session, monkeypatch)
+
+        result = await _upsert(
+            db_session, cve.cve_id, CVEIngestPayload(cve_state=CveState.PUBLISHED)
+        )
+
+        assert timeline.top_level() == [BATCH, REFRESH, REOPEN, SOURCE_STATUS]
+        assert result.ticket.status == TicketStatus.ANALYSIS
+        assert await _ignore_reason(db_session, ticket.id) is None
+        assert await ticket_events(db_session, ticket) == [
+            EventRow(
+                "status_change",
+                analyst.id,
+                "Analysis",
+                "Ignored",
+                None,
+                {"ignore_reason": "cve_rejected"},
+            ),
+            status_event("Ignored", "Analysis"),
         ]
 
     async def test_association_mismatch_makes_no_lifecycle_call(

@@ -2105,7 +2105,12 @@ class TestCveSuccess:
         async with env.factory() as session:
             events = await ticket_events_by_id(session, ticket.id)
         assert events[-1] == EventRow(
-            "status_change", None, "New", "Ignored", "CVE rejected", None
+            "status_change",
+            None,
+            "New",
+            "Ignored",
+            "CVE rejected",
+            {"ignore_reason": "cve_rejected"},
         )
 
     async def test_unknown_vuln_status_is_published_with_one_bounded_warning(

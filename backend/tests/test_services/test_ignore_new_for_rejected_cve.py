@@ -35,7 +35,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import TicketAuditEventType, TicketStatus
+from app.core.enums import TicketAuditEventType, TicketIgnoreReason, TicketStatus
 from app.models.cve import CVE
 from app.models.ticket import Ticket
 from app.models.ticket_audit_event import TicketAuditEvent
@@ -68,7 +68,7 @@ REJECTED = EventRow(
     TicketStatus.NEW.value,
     TicketStatus.IGNORED.value,
     "CVE rejected",
-    None,
+    {"ignore_reason": TicketIgnoreReason.CVE_REJECTED.value},
 )
 """The exact system rejection event (cve-tracking.md, Rejection handling;
 ticket-audit-log.md, Canonical Automatic Comment Vocabulary)."""
@@ -116,6 +116,13 @@ def _spies(monkeypatch: pytest.MonkeyPatch) -> list[_Spy]:
             "recalculate_cvss_chain",
         )
     ]
+
+
+async def _ignore_reason(db: AsyncSession, ticket_id: uuid.UUID) -> str | None:
+    """The persisted `ignore_reason` of a Ticket."""
+    return (
+        await db.execute(select(Ticket.ignore_reason).where(Ticket.id == ticket_id))
+    ).scalar_one()
 
 
 def _statement_kinds(statements: list[str]) -> list[str]:
@@ -169,7 +176,34 @@ class TestStatusTable:
             None,
         )
         assert await ticket_events(db_session, ticket) == [REJECTED]
+        assert result.ignore_reason == TicketIgnoreReason.CVE_REJECTED
+        assert await _ignore_reason(db_session, ticket.id) == "cve_rejected"
         assert pending_ticket_convergence_effects(db_session) == ()
+
+    @pytest.mark.parametrize("reason", list(TicketIgnoreReason), ids=lambda r: r.value)
+    async def test_an_ignored_ticket_keeps_each_of_its_reasons(
+        self,
+        db_session: AsyncSession,
+        cve_factory: Factory,
+        ticket_factory: TicketFactory,
+        reason: TicketIgnoreReason,
+    ) -> None:
+        """tickets.md, Ignore Reason: the reason does not change while the
+        Ticket stays `Ignored`, including on a later rejection."""
+        cve = await cve_factory()
+        ticket = await ticket_factory(
+            status=TicketStatus.IGNORED.value,
+            cve_id=cve.id,
+            ignore_reason=reason.value,
+        )
+        locked = await _lock_roots(db_session, cve.id, ticket)
+
+        with StatementRecorder(db_session) as recorder:
+            await ignore_new_for_rejected_cve(db_session, cve_id=cve.id, ticket=locked)
+
+        assert recorder.statements == []
+        assert await _ignore_reason(db_session, ticket.id) == reason
+        assert await ticket_events(db_session, ticket) == []
 
     @pytest.mark.parametrize("status", OTHER_STATUSES)
     async def test_every_other_status_is_a_no_op(

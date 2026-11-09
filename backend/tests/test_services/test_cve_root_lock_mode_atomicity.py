@@ -41,7 +41,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import Role, Scope, Severity, TicketStatus
+from app.core.enums import Role, Scope, Severity, TicketIgnoreReason, TicketStatus
 from app.core.exceptions import TicketNotMutableError
 from app.models.cve import CVE
 from app.models.ticket import Ticket
@@ -193,7 +193,14 @@ def _explicit_assignment_event(actor: User, target: User) -> EventRow:
 
 
 def _ignored_event(actor: User) -> EventRow:
-    return EventRow("status_change", actor.id, "Analysis", "Ignored", None, None)
+    return EventRow(
+        "status_change",
+        actor.id,
+        "Analysis",
+        "Ignored",
+        None,
+        {"ignore_reason": "other"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +233,7 @@ class TestTicketFirstMutationAgainstCVSSMutation:
                 ticket_id=ticket.id,
                 acting_user_id=ignorer.id,
                 caller=TicketCaller.authenticated(ignorer.id, Scope.ALL),
+                reason=TicketIgnoreReason.OTHER,
             )
 
         async def _cvss(db: AsyncSession) -> CVSSAssessmentMutationResult:

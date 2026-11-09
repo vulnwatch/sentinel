@@ -53,6 +53,7 @@ from app.models.ticket_package_track import TicketPackageTrack
 from app.models.user import User
 from app.models.user_role import UserRole
 from app.services.ticket_visibility import TicketCaller
+from tests.support.ticket_mutations import ignore_reason_for
 
 INSTANT: Final = datetime(2026, 9, 27, 12, 0, tzinfo=UTC)
 """The evaluation instant of every read unless a test states otherwise."""
@@ -143,6 +144,7 @@ class WorkbenchSeed:
         when `cve` is true, otherwise through `severity_manual`."""
         columns: dict[str, object] = {
             "status": status.value,
+            "ignore_reason": ignore_reason_for(status),
             "is_confidential": confidential,
             "created_at": created_at,
             "coordinated_release_at": coordinated_release_at,

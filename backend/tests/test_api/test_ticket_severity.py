@@ -653,6 +653,7 @@ class TestSetSeverity:
         assert data == {
             "ticket_id": format_ticket_id(target.sequence_id),
             "status": "analysis",
+            "ignore_reason": None,
             "severity": "high",
             "priority": "p3",
             "priority_automatic": "p3",

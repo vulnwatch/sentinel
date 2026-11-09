@@ -149,6 +149,7 @@ from tests.support.smelt import SMELT_TEST_API_URL
 from tests.support.suse_cvss import assignment_event
 from tests.support.suse_cvss_races import CommittedWorld
 from tests.support.ticket_mutations import (
+    DEFAULT_IGNORE_REASON,
     EVAL,
     EventRow,
     status_event,
@@ -981,7 +982,10 @@ class TestUnitIsolation:
                 await concurrent.execute(
                     update(Ticket)
                     .where(Ticket.id == ticket.id)
-                    .values(status=TicketStatus.IGNORED.value)
+                    .values(
+                        status=TicketStatus.IGNORED.value,
+                        ignore_reason=DEFAULT_IGNORE_REASON.value,
+                    )
                 )
                 await concurrent.commit()
             finally:

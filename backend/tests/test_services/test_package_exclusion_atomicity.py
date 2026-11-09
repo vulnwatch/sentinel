@@ -108,7 +108,11 @@ from tests.support.suse_cvss_races import (
     SessionStatementRecorder,
     prepare_loss,
 )
-from tests.support.ticket_mutations import EventRow, ticket_events_by_id
+from tests.support.ticket_mutations import (
+    DEFAULT_IGNORE_REASON,
+    EventRow,
+    ticket_events_by_id,
+)
 from tests.support.track_status import Spy
 
 Factory = Callable[[], Awaitable[AsyncSession]]
@@ -658,7 +662,10 @@ class TestLockedCurrentAccessibilityRaces:
             statements.append(
                 update(Ticket)
                 .where(Ticket.id == ticket.id)
-                .values(status=TicketStatus.IGNORED.value)
+                .values(
+                    status=TicketStatus.IGNORED.value,
+                    ignore_reason=DEFAULT_IGNORE_REASON.value,
+                )
             )
         before = await markers_by_id(world.session, path.id)
 

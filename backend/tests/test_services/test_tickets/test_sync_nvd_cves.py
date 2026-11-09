@@ -2169,7 +2169,12 @@ class TestIngestion:
         assert target.cve.cve_state == CveState.REJECTED.value
         assert target.ticket.status == "Ignored"
         assert EventRow(
-            "status_change", None, "New", "Ignored", "CVE rejected", None
+            "status_change",
+            None,
+            "New",
+            "Ignored",
+            "CVE rejected",
+            {"ignore_reason": "cve_rejected"},
         ) in await ticket_events(db_session, target.ticket)
 
     async def test_non_base_v40_vector_is_persisted_as_its_base_vector(

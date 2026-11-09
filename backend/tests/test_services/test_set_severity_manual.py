@@ -77,6 +77,7 @@ from app.services.ticket_service import resolve_ticket_locator
 from app.services.ticket_visibility import TicketCaller
 from tests.support.database import assert_lock_wait, rollback_test_scope
 from tests.support.ticket_mutations import (
+    DEFAULT_IGNORE_REASON,
     EVAL,
     EventRow,
     StatementRecorder,
@@ -1421,7 +1422,10 @@ class TestLockedCurrentAccessibilityRaces:
             ticket,
             update(Ticket)
             .where(Ticket.id == ticket.id)
-            .values(status=TicketStatus.IGNORED.value),
+            .values(
+                status=TicketStatus.IGNORED.value,
+                ignore_reason=DEFAULT_IGNORE_REASON.value,
+            ),
         )
         task = _start(committed_world, a, ticket, user)
         await assert_lock_wait(task, waiter=a, blocked_by=b)

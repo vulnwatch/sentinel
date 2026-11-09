@@ -67,6 +67,7 @@ from tests.support.lifecycle_matrix import (
     lifecycle_grid,
 )
 from tests.support.module_imports import APP_ROOT, imported_modules
+from tests.support.ticket_mutations import ignore_reason_for
 
 Factory = Callable[..., Awaitable[Any]]
 DateSet = tuple[date | None, date | None, date | None, date | None]
@@ -811,6 +812,8 @@ class TestActionabilityInputs:
         ]
         for record, attribute, value in variations:
             setattr(record, attribute, value)
+            if record is ticket:
+                ticket.ignore_reason = ignore_reason_for(value)
             await db_session.flush()
             assert await self._levels(db_session, occurrence) == baseline, (
                 attribute,
@@ -822,6 +825,7 @@ class TestActionabilityInputs:
         target = await ticket_factory()
         ticket.duplicate_of_id = target.id
         ticket.status = TicketStatus.DUPLICATED.value
+        ticket.ignore_reason = None
         await db_session.flush()
         assert await self._levels(db_session, occurrence) == baseline
 

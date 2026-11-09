@@ -69,6 +69,7 @@ from tests.support.suse_cvss_races import (
     SessionStatementRecorder,
     prepare_loss,
 )
+from tests.support.ticket_mutations import DEFAULT_IGNORE_REASON, ignore_reason_for
 
 Factory = Callable[[], Awaitable[AsyncSession]]
 
@@ -105,6 +106,7 @@ class _World(CommittedWorld):
         if status is TicketStatus.DUPLICATED:
             target = await self.ticket(cve_id=None)
             columns["duplicate_of_id"] = target.id
+        columns.setdefault("ignore_reason", ignore_reason_for(status))
         ticket = Ticket(status=status.value, **columns)
         self.session.add(ticket)
         await self.session.flush()
@@ -567,7 +569,10 @@ class TestLockedCurrentAccessibilityRaces:
                 *statements,
                 update(Ticket)
                 .where(Ticket.id == ticket.id)
-                .values(status=TicketStatus.IGNORED.value),
+                .values(
+                    status=TicketStatus.IGNORED.value,
+                    ignore_reason=DEFAULT_IGNORE_REASON.value,
+                ),
             ]
         caller = TicketCaller.authenticated(user.id, Scope.NON_CONFIDENTIAL)
         a = await world.open_session()
