@@ -272,6 +272,12 @@ Consequences:
   `New`, for example one that a user assigned or one that auto-assignment moved
   to `Analysis`.
 - **Ticket without a CVE**: it has no CNA, so the policy never applies.
+- **Exploitation evidence does not exempt**: a KEV entry, an SSVC assessment,
+  or an EPSS score of the CVE does not exempt its Ticket from the policy,
+  whether the evidence arrives before or after the CNA is recorded. The
+  outcome therefore does not depend on the order in which the sources arrive,
+  just as no later evidence reopens a Ticket that the policy ignored (No
+  Automatic Reopen).
 
 ### No Automatic Reopen
 
@@ -310,11 +316,19 @@ revert of a rejection reopens only a Ticket ignored with `cve_rejected`
 - Set CNA Auto-Ignore locks only the CNA row, with `FOR NO KEY UPDATE`. The
   foreign-key check of a CVE that references the row takes `FOR KEY SHARE`,
   which that mode does not block.
-- The lock order of every CNA root is owned by `docs/conventions.md`
-  (Cross-Domain Root Lock Order): an ingestion acquires at most one CNA row,
-  after its CVE root and before its Ticket root; `sync_mitre_cnas` acquires
-  only CNA rows, in ascending `CNA.id` order; and Set CNA Auto-Ignore acquires
-  only its one CNA row.
+- `docs/conventions.md` (Cross-Domain Root Lock Order) owns the position of
+  a CNA row in the root order, after the CVE and before the Tickets. This
+  specification owns the operations that acquire CNA rows, which are the only
+  ones:
+  - a CVE ingestion acquires at most one, by creating it or by an effective
+    update of its short name, after its CVE root and before its Ticket root;
+  - `sync_mitre_cnas` acquires CNA rows in ascending `CNA.id` order and no
+    other root; and
+  - Set CNA Auto-Ignore acquires only its one CNA row, with
+    `FOR NO KEY UPDATE`.
+
+  The foreign-key `FOR KEY SHARE` that a CVE write takes on its CNA row is not
+  a root and conflicts with none of these locks.
 
 ## Service: `cna_service`
 
@@ -999,7 +1013,8 @@ least:
      Exclusions;
    - the exact event of the transition and its position as the last event of
      the ingestion;
-   - no reopen by KEV, a transfer, a policy change, or a rejection revert;
+   - no reopen by KEV, a transfer, a policy change, or a rejection revert,
+     and a CVE with a KEV entry recorded before its CNA still ignored;
    - a policy change committed concurrently with an ingestion, in both commit
      orders;
    - no call and no event when an ingestion leaves an unchanged CNA under the

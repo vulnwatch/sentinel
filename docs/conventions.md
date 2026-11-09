@@ -1044,14 +1044,9 @@ that is itself waiting for that Ticket, and deadlock. `FOR UPDATE` on the CVE
 row is required only to delete a CVE or change its key, which no workflow does.
 The Ticket root keeps `FOR UPDATE`.
 
-A `CNA` row (`docs/features/tickets/cna.md`) is acquired only in these ways. A
-CVE ingestion acquires at most one, by creating it or by an effective update of
-its short name, after its CVE root and before its Ticket root. The CNA metadata
-fetcher acquires CNA rows in ascending `CNA.id` order and no other root, and
-the auto-ignore operation acquires only its one CNA row, with
-`FOR NO KEY UPDATE`. The foreign-key `FOR KEY SHARE` that a CVE write takes on
-its CNA row is not a root in this protocol and conflicts with none of these
-locks.
+A `CNA` row takes the position shown above, after the CVE root and before the
+Ticket roots. The operations that acquire CNA rows, and their lock modes, are
+owned by `docs/features/tickets/cna.md` (Concurrency).
 
 When one workflow affects multiple Users or Tickets, it locks every applicable
 User in ascending UUID order before locking the union of applicable Tickets in
