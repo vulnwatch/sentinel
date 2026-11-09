@@ -602,7 +602,10 @@ The endpoint declares no query parameter.
   as the target of an `assignment` or `access_grant_added`, adds no entry.
 - Entries are ordered by `username` in ascending Unicode code-point order,
   independent of database collation; usernames are unique, so the order is
-  total. The order is fixed: `sort_by` and `sort_order` are not accepted.
+  total. The order is fixed because the unpaginated list is bounded and has
+  one canonical display order: `sort_by` and `sort_order` are not declared, so
+  a supplied value is ignored (`docs/api-spec.md`, Undeclared Query
+  Parameters).
 - The endpoint is unpaginated because its size is bounded by the number of
   users who acted on one Ticket, typically a handful, and not by the length of
   the Ticket's history.
