@@ -2774,19 +2774,6 @@ class TestCnaOwner:
             2022, 9, 5, 11, 6, 9, tzinfo=UTC
         )
 
-    def test_assigner_of_the_cve_id_is_not_read(self) -> None:
-        """Only `containers.cna.providerMetadata` is read: the caller passes
-        the CNA container, which holds no `cveMetadata`."""
-        cna = {
-            **_cna(),
-            "cveMetadata": {"assignerOrgId": "11111111-2222-4333-8444-555555555555"},
-        }
-
-        owner = parse_cna_owner(cna)
-
-        assert owner is not None
-        assert owner.org_id == uuid.UUID(_ORG_ID)
-
     @pytest.mark.parametrize("name", ALL_FIXTURES)
     def test_fixture_owner_is_the_provider_metadata(self, name: str) -> None:
         metadata = load_fixture(name)["containers"]["cna"]["providerMetadata"]

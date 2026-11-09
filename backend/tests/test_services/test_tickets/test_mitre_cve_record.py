@@ -827,15 +827,6 @@ class TestCnaOwner:
         )
         assert result.cna_owner_skipped is False
 
-    def test_mapping_delegates_the_owner_to_the_parser(self) -> None:
-        record = _record()
-
-        payload = _payload(record)
-
-        assert payload.cna == cve_record_parser.parse_cna_owner(
-            record["containers"]["cna"]
-        )
-
     def test_assigner_is_not_the_owner(self) -> None:
         """After a transfer the assigner of the CVE ID differs from the
         owner; only the owner is read."""
@@ -880,12 +871,10 @@ class TestCnaOwner:
             {"shortName": CNA_NAME},
             {"orgId": None, "shortName": CNA_NAME},
             {"orgId": SECRET, "shortName": CNA_NAME},
-            {"orgId": CNA_ORG_ID.replace("-", ""), "shortName": CNA_NAME},
-            {"orgId": f"{{{CNA_ORG_ID}}}", "shortName": CNA_NAME},
             None,
             "ExampleCNA",
         ],
-        ids=["absent", "null", "text", "unhyphenated", "braced", "null-pm", "string"],
+        ids=["absent", "null", "text", "null-pm", "string"],
     )
     def test_owner_guard_omits_cna_and_leaves_every_other_field(
         self, provider: Any

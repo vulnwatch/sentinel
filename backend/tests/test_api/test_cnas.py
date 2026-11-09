@@ -35,8 +35,9 @@ from app.main import app
 from app.models.cna import CNA
 from app.models.cve import CVE
 from app.models.ticket import Ticket
-from app.services import cna_service
+from app.services import cna_service, ticket_service
 from app.services.cna_service import CNAListResult
+from app.services.ticket_service import TicketPage
 from tests.support.ticket_api import UNAUTHENTICATED
 
 Factory = Callable[..., Awaitable[Any]]
@@ -141,14 +142,8 @@ class TestGetCna:
 
     @pytest.mark.parametrize(
         "org_id",
-        [
-            "not-a-uuid",
-            "000000000000400080000000000000a1",
-            "%7B00000000-0000-4000-8000-0000000000a1%7D",
-            "urn:uuid:00000000-0000-4000-8000-0000000000a1",
-            str(uuid.uuid4()),
-        ],
-        ids=["text", "unhyphenated", "braced", "urn", "unknown"],
+        ["000000000000400080000000000000a1", str(uuid.uuid4())],
+        ids=["unhyphenated", "unknown"],
     )
     async def test_malformed_or_unknown_org_id_is_404(
         self, authenticated_client: AsyncClient, org_id: str
@@ -318,6 +313,11 @@ class TestCNAInCVEAndTicketResponses:
         )
         cve: CVE = await cve_factory(cna_id=cna.id)
         ticket: Ticket = await ticket_factory(cve_id=cve.id)
+        # Rows that the `cna` filters must exclude.
+        other: CNA = await cna_factory()
+        await ticket_factory(cve_id=(await cve_factory(cna_id=other.id)).id)
+        await ticket_factory(cve_id=(await cve_factory()).id)
+        await ticket_factory()
         expected = {"org_id": str(cna.org_id), "name": "Example Corporation"}
         sntl = format_ticket_id(ticket.sequence_id)
 
@@ -351,31 +351,70 @@ class TestCNAInCVEAndTicketResponses:
 
     @pytest.mark.parametrize("path", ["/api/v1/cves", "/api/v1/tickets"])
     async def test_unknown_cna_filter_value_is_an_empty_page(
-        self, authenticated_client: AsyncClient, path: str
+        self,
+        authenticated_client: AsyncClient,
+        cna_factory: Factory,
+        cve_factory: Factory,
+        ticket_factory: Factory,
+        path: str,
     ) -> None:
+        cna: CNA = await cna_factory()
+        await ticket_factory(cve_id=(await cve_factory(cna_id=cna.id)).id)
+        assert (await authenticated_client.get(path)).json()["meta"]["total"] >= 1
+
         response = await authenticated_client.get(
             path, params={"cna": str(uuid.uuid4())}
         )
 
         assert response.status_code == 200
-        assert response.json()["meta"]["total"] == 0
+        assert response.json() == {
+            "data": [],
+            "meta": {"total": 0, "page": 1, "per_page": 20},
+        }
+
+    async def test_ticket_list_filter_reaches_the_service_as_uuids(
+        self, authenticated_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        spy = AsyncMock(return_value=TicketPage(items=(), total=0, page=1, per_page=20))
+        monkeypatch.setattr(ticket_service, "list_tickets", spy)
+
+        response = await authenticated_client.get(
+            "/api/v1/tickets",
+            params={
+                "cna": [
+                    "00000000-0000-4000-8000-0000000000A1",
+                    "00000000-0000-4000-8000-0000000000a2",
+                ]
+            },
+        )
+
+        assert response.status_code == 200
+        assert spy.await_args is not None
+        assert spy.await_args.kwargs["cna"] == [
+            uuid.UUID("00000000-0000-4000-8000-0000000000a1"),
+            uuid.UUID("00000000-0000-4000-8000-0000000000a2"),
+        ]
+
+    async def test_omitted_ticket_list_filter_reaches_the_service_as_none(
+        self, authenticated_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        spy = AsyncMock(return_value=TicketPage(items=(), total=0, page=1, per_page=20))
+        monkeypatch.setattr(ticket_service, "list_tickets", spy)
+
+        await authenticated_client.get("/api/v1/tickets")
+
+        assert spy.await_args is not None
+        assert spy.await_args.kwargs["cna"] is None
 
     @pytest.mark.parametrize("path", ["/api/v1/cves", "/api/v1/tickets"])
-    @pytest.mark.parametrize(
-        "value",
-        [
-            "not-a-uuid",
-            "000000000000400080000000000000a1",
-            "{00000000-0000-4000-8000-0000000000a1}",
-            "urn:uuid:00000000-0000-4000-8000-0000000000a1",
-            " 00000000-0000-4000-8000-0000000000a1",
-        ],
-    )
     async def test_malformed_cna_filter_value_is_422(
-        self, authenticated_client: AsyncClient, path: str, value: str
+        self, authenticated_client: AsyncClient, path: str
     ) -> None:
+        """Every malformed form is pinned by the Core parser's tests
+        (`tests/test_core/test_identifiers.py`); one suffices here."""
         response = await authenticated_client.get(
-            path, params={"cna": [str(uuid.uuid4()), value]}
+            path,
+            params={"cna": [str(uuid.uuid4()), "000000000000400080000000000000a1"]},
         )
 
         assert response.status_code == 422

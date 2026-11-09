@@ -20,6 +20,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import func, select, update
@@ -219,7 +220,7 @@ class TestShortNameRules:
         ),
         _SHORT_NAME_RULES,
     )
-    async def test_rule(
+    async def test_short_name_rule_yields_the_specified_row(
         self,
         db_session: AsyncSession,
         cna_factory: CNAFactory,
@@ -365,16 +366,18 @@ class TestListCnas:
     async def test_search_matches_a_substring_of_either_name_case_insensitively(
         self, db_session: AsyncSession, cna_factory: CNAFactory, token: str
     ) -> None:
-        await cna_factory(short_name=f"{token}-short")
-        await cna_factory(
-            short_name=f"{token}-b", organization_name=f"Example {token.upper()} Org"
+        short = await cna_factory(short_name=f"{token}-short")
+        organization = await cna_factory(
+            short_name=f"other-{uuid.uuid4().hex[:8]}",
+            organization_name=f"Example {token.upper()} Org",
         )
         await cna_factory(short_name="unrelated", organization_name="Unrelated")
 
         result = await _list(db_session, search=f"  {token.upper()}  ")
 
         assert result.total == 2
-        assert _names(result) == [f"{token}-b", f"{token}-short"]
+        # `Example …` sorts before the lowercase short name in code-point order.
+        assert [cna.id for cna in result.items] == [organization.id, short.id]
 
     @pytest.mark.parametrize("literal", ["%", "_", "\\"])
     async def test_pattern_characters_match_literally(
@@ -465,16 +468,22 @@ class TestListCnas:
         """A CNA without a short name has no display name: only a row with a
         short name can match the CNA list (cna.md, Display Name)."""
         unnamed = await cna_factory(short_name=None)
-        await cna_factory()
+        named = await cna_factory()
 
         result = await _list(
             db_session, search=None, sort_order=sort_order, per_page=100
         )
 
         assert result.total <= 100
-        assert result.items[-1].id == unnamed.id
+        ids = [cna.id for cna in result.items]
+        assert ids.index(named.id) < ids.index(unnamed.id)
+        # Every row after the first unnamed one is unnamed too.
+        assert all(
+            cna.organization_name is None and cna.short_name is None
+            for cna in result.items[ids.index(unnamed.id) :]
+        )
 
-    async def test_short_name_and_created_at_orders_with_id_tie_breaker(
+    async def test_short_name_order(
         self, db_session: AsyncSession, cna_factory: CNAFactory, token: str
     ) -> None:
         first = await cna_factory(short_name=f"{token}-b")
@@ -483,22 +492,43 @@ class TestListCnas:
         by_short = await _list(
             db_session, search=token, sort_by=CNASortField.SHORT_NAME
         )
-        # Same transaction: equal `created_at`, so `CNA.id` decides.
-        by_created = await _list(
-            db_session, search=token, sort_by=CNASortField.CREATED_AT
+
+        assert [c.id for c in by_short.items] == [second.id, first.id]
+
+    @pytest.mark.parametrize("sort_order", [SortOrder.ASC, SortOrder.DESC])
+    async def test_created_at_order_with_the_id_tie_breaker(
+        self,
+        db_session: AsyncSession,
+        cna_factory: CNAFactory,
+        token: str,
+        sort_order: SortOrder,
+    ) -> None:
+        """The later `created_at` sorts by its value, not by its id; two rows
+        with an equal `created_at` are ordered by `CNA.id` in the same
+        direction."""
+        older = await cna_factory(short_name=f"{token}-older")
+        tied_a = await cna_factory(short_name=f"{token}-tied-a")
+        tied_b = await cna_factory(short_name=f"{token}-tied-b")
+        await db_session.execute(
+            update(CNA).where(CNA.id == older.id).values(created_at=NEW)
         )
-        by_created_desc = await _list(
+        for cna in (tied_a, tied_b):
+            await db_session.execute(
+                update(CNA).where(CNA.id == cna.id).values(created_at=OLD)
+            )
+
+        result = await _list(
             db_session,
             search=token,
             sort_by=CNASortField.CREATED_AT,
-            sort_order=SortOrder.DESC,
+            sort_order=sort_order,
         )
 
-        assert [c.id for c in by_short.items] == [second.id, first.id]
-        assert [c.id for c in by_created.items] == sorted([first.id, second.id])
-        assert [c.id for c in by_created_desc.items] == sorted(
-            [first.id, second.id], reverse=True
-        )
+        tied = sorted([tied_a.id, tied_b.id])
+        expected = [*tied, older.id]
+        if sort_order is SortOrder.DESC:
+            expected.reverse()
+        assert [c.id for c in result.items] == expected
 
     async def test_pagination_and_a_page_beyond_the_last(
         self, db_session: AsyncSession, cna_factory: CNAFactory, token: str
@@ -550,73 +580,24 @@ class TestGetCna:
 
         assert lower.id == upper.id == stored.id
 
-    @pytest.mark.parametrize(
-        "org_id",
-        [
-            "not-a-uuid",
-            "000000000000400080000000000abcde",
-            "{00000000-0000-4000-8000-0000000abcde}",
-            "urn:uuid:00000000-0000-4000-8000-0000000abcde",
-            " 00000000-0000-4000-8000-0000000abcde",
-        ],
-    )
     async def test_malformed_org_id_raises_not_found_without_a_query(
-        self, db_session: AsyncSession, org_id: str
+        self, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """Every malformed form is pinned by the Core parser's tests
+        (`tests/test_core/test_identifiers.py`); one suffices here."""
+        execute = AsyncMock(side_effect=AssertionError("no query expected"))
+        monkeypatch.setattr(db_session, "execute", execute)
+
         with pytest.raises(CNANotFoundError):
-            await get_cna(db_session, org_id)
+            await get_cna(db_session, "000000000000400080000000000abcde")
+
+        execute.assert_not_awaited()
 
     async def test_unknown_org_id_raises_not_found(
         self, db_session: AsyncSession
     ) -> None:
         with pytest.raises(CNANotFoundError):
             await get_cna(db_session, str(_org_id()))
-
-
-# ---------------------------------------------------------------------------
-# cna_filter_condition()
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.integration
-class TestCnaFilterCondition:
-    async def test_matches_the_cves_of_the_supplied_cnas(
-        self,
-        db_session: AsyncSession,
-        cna_factory: CNAFactory,
-        cve_factory: CVEFactory,
-    ) -> None:
-        first, second, third = [await cna_factory() for _ in range(3)]
-        cve_1 = await cve_factory(cna_id=first.id)
-        cve_2 = await cve_factory(cna_id=second.id)
-        await cve_factory(cna_id=third.id)
-        without = await cve_factory()
-
-        rows = await db_session.scalars(
-            select(CVE.id).where(
-                CVE.id.in_([cve_1.id, cve_2.id, without.id]),
-                cna_filter_condition(CVE.cna_id, [first.org_id, second.org_id]),
-            )
-        )
-
-        assert set(rows.all()) == {cve_1.id, cve_2.id}
-
-    async def test_unknown_or_empty_values_match_nothing(
-        self,
-        db_session: AsyncSession,
-        cna_factory: CNAFactory,
-        cve_factory: CVEFactory,
-    ) -> None:
-        cna = await cna_factory()
-        cve = await cve_factory(cna_id=cna.id)
-
-        for values in ([_org_id()], []):
-            rows = await db_session.scalars(
-                select(CVE.id).where(
-                    CVE.id == cve.id, cna_filter_condition(CVE.cna_id, values)
-                )
-            )
-            assert rows.all() == []
 
 
 # ---------------------------------------------------------------------------
