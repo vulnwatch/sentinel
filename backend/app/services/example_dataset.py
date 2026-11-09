@@ -64,6 +64,7 @@ from app.core.exceptions import ServiceError
 from app.core.identifiers import format_ticket_id
 from app.core.permissions import get_effective_scope
 from app.database import detach_post_commit_callbacks
+from app.models.cna import CNA
 from app.models.cve import CVE
 from app.models.fetcher_run import FetcherRun
 from app.models.product import Product
@@ -73,6 +74,7 @@ from app.models.ticket_package_product import TicketPackageProduct
 from app.models.ticket_package_track import TicketPackageTrack
 from app.models.user import User
 from app.services import (
+    cna_service,
     cve_service,
     fetcher_bootstrap,
     fetcher_operations,
@@ -428,11 +430,22 @@ _MITRE_FURTHER: Final = ("CVE-2099-0009", "CVE-2099-0010", "CVE-2099-0013")
 
 
 @dataclass(frozen=True, slots=True)
+class _CNAMetadata:
+    """The organization name, types, and scope of a CNA, as the CNA list
+    supplies them (CNAs)."""
+
+    organization_name: str
+    types: tuple[str, ...]
+    scope: str
+
+
+@dataclass(frozen=True, slots=True)
 class _CNA:
     org_id: uuid.UUID
     short_name: str | None
     cve_ids: tuple[str, ...]
     """The CVEs whose MITRE ingestions supply this CNA as their owner."""
+    metadata: _CNAMetadata | None = None
 
 
 _CNAS: Final = (
@@ -440,15 +453,25 @@ _CNAS: Final = (
         uuid.UUID("00000000-0000-4000-8000-0000000000a1"),
         "example",
         ("CVE-2099-0008", "CVE-2099-0009", "CVE-2099-0010"),
+        _CNAMetadata(
+            "Example Corporation", ("Vendor",), "Example Corporation products only."
+        ),
     ),
     _CNA(
         uuid.UUID("00000000-0000-4000-8000-0000000000a2"),
         "fictional-plugins",
         ("CVE-2099-0006",),
+        _CNAMetadata(
+            "Fictional Plugin Foundation",
+            ("Open Source", "Researcher"),
+            "Plugins of the fictional plugin directory.\n"
+            "Plugin list: https://plugins.example.com",
+        ),
     ),
     _CNA(uuid.UUID("00000000-0000-4000-8000-0000000000a3"), None, ("CVE-2099-0013",)),
 )
-"""The fictional CNAs (CNAs); the third has no short name."""
+"""The fictional CNAs (CNAs); the third has no short name and therefore no
+metadata."""
 _CNA_OF: Final = {cve_id: cna for cna in _CNAS for cve_id in cna.cve_ids}
 _KEV_ADDED: Final = {"CVE-2099-0001": -2}
 """KEV date added, in days from `D`."""
@@ -1354,6 +1377,26 @@ class _Load:
                     ]
                 ),
             )
+        for cna in _CNAS:
+            if cna.metadata is not None:
+                await self.cna_metadata(cna.org_id, cna.metadata)
+
+    async def cna_metadata(self, org_id: uuid.UUID, metadata: _CNAMetadata) -> None:
+        """Step 8: one system operation of `update_cna_metadata()`, standing
+        for `sync_mitre_cnas` (CNAs)."""
+
+        async def update(db: AsyncSession) -> None:
+            cna_id = await db.scalar(select(CNA.id).where(CNA.org_id == org_id))
+            assert cna_id is not None, "the MITRE ingestions created the CNA"
+            await cna_service.update_cna_metadata(
+                db,
+                cna_id=cna_id,
+                organization_name=metadata.organization_name,
+                types=metadata.types,
+                scope=metadata.scope,
+            )
+
+        await self.run(update)
 
     # -- Ticket work ----------------------------------------------------------
 

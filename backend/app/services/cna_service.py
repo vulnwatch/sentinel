@@ -1,10 +1,11 @@
-"""CNA service: the CNA rows written by ingestion and the CNA reads.
+"""CNA service: the CNA rows written by ingestion and by the CNA list
+synchronization, and the CNA reads.
 
 Implements docs/features/tickets/cna.md (Service: `cna_service` — Module
 Location, Ownership, Module-Level Defaults, Service Exceptions,
-`resolve_ingested_cna()`, `list_cnas()`, `get_cna()`; CNA of a CVE; Short
-Name; Concurrency) and the CNA locator of `docs/api-spec.md` (CNA Identifier
-Resolution).
+`resolve_ingested_cna()`, `update_cna_metadata()`, `list_cnas()`,
+`get_cna()`; CNA of a CVE; Short Name; Concurrency) and the CNA locator of
+`docs/api-spec.md` (CNA Identifier Resolution).
 
 This module owns the `CNA` rows and their reads. It does not own
 `CVE.cna_id`, which `cve_service.upsert_cve()` writes. Every function
@@ -12,17 +13,18 @@ receives the caller-owned `AsyncSession`, flushes only through its own
 statements, and never commits or rolls back (`docs/conventions.md`,
 Caller-Owned Service Transactions); database and programming exceptions
 propagate unchanged. No function performs HTTP, Redis, or Celery I/O or
-creates an audit event: ingestion writes are source-owned data without an
-audit trail (cna.md, CNA Audit Log).
+creates an audit event: ingestion and CNA list writes are source-owned data
+without an audit trail (cna.md, CNA Audit Log).
 """
 
 from __future__ import annotations
 
 import uuid
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
+from pydantic import MISSING
 from sqlalchemy import (
     ColumnElement,
     SQLColumnExpression,
@@ -39,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import CNASortField, SortOrder
 from app.core.exceptions import ServiceError
+from app.core.external_strings import contains_inadmissible_character
 from app.core.identifiers import parse_cna_org_id
 from app.models.cna import CNA
 from app.services.cve_ingest import CNAEntry
@@ -46,6 +49,15 @@ from app.services.cve_projection import CODE_POINT_COLLATION
 from app.services.sql_patterns import LIKE_ESCAPE, escape_like
 
 MAX_PER_PAGE: Final = 100
+
+ORGANIZATION_NAME_MAX_LENGTH: Final = 256
+"""`CNA.organization_name` is `VARCHAR(256)` (cna.md, Field Mapping)."""
+TYPES_MAX_ITEMS: Final = 16
+"""At most 16 CNA types (cna.md, Field Mapping)."""
+TYPE_MAX_LENGTH: Final = 128
+"""At most 128 characters per CNA type (cna.md, Field Mapping)."""
+SCOPE_MAX_LENGTH: Final = 4096
+"""At most 4096 characters of plain-text scope (cna.md, Scope Plain Text)."""
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +189,128 @@ async def _cna_by_org_id(db: AsyncSession, org_id: uuid.UUID) -> CNA | None:
             .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
+
+
+# ---------------------------------------------------------------------------
+# CNA list metadata (cna.md, `update_cna_metadata()`; Field Mapping)
+# ---------------------------------------------------------------------------
+
+
+def is_admissible_text(value: object, *, max_length: int) -> bool:
+    """Whether `value` is a string that is not empty after trimming, has at
+    most `max_length` characters, and contains no inadmissible character
+    (`docs/conventions.md`, External String Admissibility). Pure."""
+    return (
+        isinstance(value, str)
+        and bool(value.strip())
+        and len(value) <= max_length
+        and not contains_inadmissible_character(value)
+    )
+
+
+def _is_admissible_scope(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) <= SCOPE_MAX_LENGTH
+        and not contains_inadmissible_character(value)
+    )
+
+
+async def update_cna_metadata(
+    db: AsyncSession,
+    *,
+    cna_id: uuid.UUID,
+    organization_name: str | MISSING = MISSING,
+    types: Sequence[str] | MISSING = MISSING,
+    scope: str | MISSING | None = MISSING,
+) -> bool:
+    """Write the CNA list metadata of one CNA row.
+
+    System operation (cna.md, `update_cna_metadata()`) that
+    `sync_mitre_cnas` calls for each matched row, and the example dataset
+    loader in its place.
+
+    Q1: `cna_id` is the internal id of a row that the caller has read in the
+    same transaction. An omitted (`MISSING`) field keeps its stored value;
+    `scope = None` clears the scope.
+
+    Q2: before any database access, a supplied `organization_name` that is
+    empty after trimming or longer than 256 characters, `types` that is a
+    string or holds more than 16 items, an item that is empty after trimming
+    or longer than 128 characters, a `scope` longer than 4096 characters,
+    or any value containing an inadmissible character raises `ValueError`:
+    the caller validates first, so this is a programming error.
+
+    Q3: stores the supplied `types` without duplicates in ascending Unicode
+    code-point order. One `UPDATE` sets the supplied columns and
+    `updated_at` only when at least one supplied value differs from the
+    stored one (`IS DISTINCT FROM`), so `updated_at` advances only with an
+    effective change. Never writes `org_id`, `short_name`,
+    `short_name_observed_at`, or `auto_ignore`, and no CVE or Ticket. When
+    nothing changed, one plain read distinguishes an unchanged row from a
+    `cna_id` that identifies none. A `CNA` instance already loaded in the
+    session is not refreshed. An effective update holds the row lock until
+    the caller commits.
+
+    Q4: no audit event. Q5: idempotent; a repeated call returns `False`.
+
+    Q6: raises `ValueError` for a guard of Q2 and for a `cna_id` that
+    identifies no row; database exceptions propagate unchanged.
+    """
+    values: dict[str, Any] = {}
+    if organization_name is not MISSING:
+        if not is_admissible_text(
+            organization_name, max_length=ORGANIZATION_NAME_MAX_LENGTH
+        ):
+            raise ValueError(
+                "organization_name must be 1-256 characters without an "
+                "inadmissible character"
+            )
+        values["organization_name"] = organization_name
+    if types is not MISSING:
+        if (
+            isinstance(types, str)
+            or len(types) > TYPES_MAX_ITEMS
+            or not all(
+                is_admissible_text(item, max_length=TYPE_MAX_LENGTH) for item in types
+            )
+        ):
+            raise ValueError(
+                "types must be at most 16 items of 1-128 characters without an "
+                "inadmissible character"
+            )
+        values["types"] = sorted(set(types))
+    if scope is not MISSING:
+        if scope is not None and not _is_admissible_scope(scope):
+            raise ValueError(
+                "scope must be at most 4096 characters without an inadmissible "
+                "character"
+            )
+        values["scope"] = scope
+
+    if values:
+        changed = (
+            await db.execute(
+                update(CNA)
+                .where(
+                    CNA.id == cna_id,
+                    or_(
+                        *(
+                            getattr(CNA, column).is_distinct_from(value)
+                            for column, value in values.items()
+                        )
+                    ),
+                )
+                .values(**values, updated_at=func.now())
+                .returning(CNA.id)
+                .execution_options(synchronize_session=False)
+            )
+        ).scalar_one_or_none()
+        if changed is not None:
+            return True
+    if await db.scalar(select(CNA.id).where(CNA.id == cna_id)) is None:
+        raise ValueError("No CNA row has this id.")
+    return False
 
 
 # ---------------------------------------------------------------------------

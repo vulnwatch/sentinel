@@ -359,6 +359,22 @@ CNAS: Final = {
     "00000000-0000-4000-8000-0000000000a3": None,
 }
 """CNAs: `org_id` -> short name; the third has none."""
+CNA_METADATA: Final = {
+    "00000000-0000-4000-8000-0000000000a1": (
+        "Example Corporation",
+        ["Vendor"],
+        "Example Corporation products only.",
+    ),
+    "00000000-0000-4000-8000-0000000000a2": (
+        "Fictional Plugin Foundation",
+        ["Open Source", "Researcher"],
+        "Plugins of the fictional plugin directory.\n"
+        "Plugin list: https://plugins.example.com",
+    ),
+    "00000000-0000-4000-8000-0000000000a3": (None, [], None),
+}
+"""CNAs: `org_id` -> organization name, types, and scope that step 8 of
+`CVEs and tickets` writes; the third CNA has no short name and none."""
 CNA_OF: Final = {
     "CVE-2099-0006": "00000000-0000-4000-8000-0000000000a2",
     "CVE-2099-0008": "00000000-0000-4000-8000-0000000000a1",
@@ -1558,10 +1574,10 @@ def test_products_lifecycle_and_thresholds(loaded: Loaded) -> None:
 
 
 class TestCNAs:
-    """CNAs: the rows that the MITRE ingestions create and the CNA of every
-    CVE. The metadata of the CNA list and the auto-ignore policy are not
-    loaded yet, so every CNA has no organization name, no types, no scope,
-    and `auto_ignore = false`, and its display name is its short name."""
+    """CNAs: the rows that the MITRE ingestions create, the metadata that
+    step 8 writes through `update_cna_metadata()` in place of
+    `sync_mitre_cnas`, and the CNA of every CVE. The auto-ignore policy is
+    not loaded yet, so every CNA has `auto_ignore = false`."""
 
     def test_cna_rows(self, loaded: Loaded) -> None:
         async def reader(db: AsyncSession) -> list[CNA]:
@@ -1575,15 +1591,28 @@ class TestCNAs:
                 loaded.ago(1) if CNAS[org_id] is not None else None
             ), org_id
             assert (cna.organization_name, cna.types, cna.scope) == (
-                None,
-                [],
-                None,
+                CNA_METADATA[org_id]
             ), org_id
             assert cna.auto_ignore is False, org_id
-            assert (
-                cna_display_name(cna.organization_name, cna.short_name)
-                == (CNAS[org_id])
-            ), org_id
+
+    def test_display_names(self, loaded: Loaded) -> None:
+        """The organization name when the list supplied one; `null` for the
+        CNA without a short name."""
+
+        async def reader(db: AsyncSession) -> dict[str, str | None]:
+            rows = await db.execute(
+                select(CNA.org_id, CNA.organization_name, CNA.short_name)
+            )
+            return {
+                str(org_id): cna_display_name(organization_name, short_name)
+                for org_id, organization_name, short_name in rows.all()
+            }
+
+        assert read(loaded.url, reader) == {
+            "00000000-0000-4000-8000-0000000000a1": "Example Corporation",
+            "00000000-0000-4000-8000-0000000000a2": "Fictional Plugin Foundation",
+            "00000000-0000-4000-8000-0000000000a3": None,
+        }
 
     def test_cna_of_every_cve(self, loaded: Loaded) -> None:
         async def reader(db: AsyncSession) -> dict[str, str | None]:

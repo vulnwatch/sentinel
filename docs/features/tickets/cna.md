@@ -848,7 +848,8 @@ UUID. For each row with short name `s`:
    equals `s` after Unicode case folding of both values;
 2. the row matches an entry when the entry is its only candidate and the entry
    is the only candidate of no other row; and
-3. otherwise the row is ambiguous and is not updated.
+3. otherwise a row with at least one candidate is ambiguous and is not
+   updated. A row without a candidate matches no entry.
 
 In the list of November 2026, two entries, `Snow` and `SNOW`, differed only in
 case: a row whose short name equals one of them exactly matches that one,
@@ -898,9 +899,11 @@ values, and its tokens are converted in order:
 While a link is open, its text and the line feeds of its `br` tags go to the
 link text, not to the result, until its end tag; the link text is compared
 with the `href` after trimming. A link still open at the end makes the scope
-invalid. The result is trimmed of
-leading and trailing whitespace; an empty result is `NULL`, and a result longer
-than 4096 characters or containing an inadmissible character is invalid. For
+invalid, and so does a start or end tag that is incomplete at the end of the
+value, such as `Example products <a`, which the parser would otherwise drop
+without a trace. The result is trimmed of leading and trailing whitespace; an
+empty result is `NULL`, and a result longer than 4096 characters or
+containing an inadmissible character is invalid. For
 example, `Projects listed on its <a href='https://github.com/example'
 target='_blank'>Example GitHub website</a> only.` becomes `Projects listed on
 its Example GitHub website (https://github.com/example) only.`, and
@@ -1039,8 +1042,9 @@ least:
    before the parser; every matching rule, including `Snow`/`SNOW`, an entry
    shared by two rows, and a short name absent from the list; every Field
    Mapping and Scope Plain Text rule, including nested and unclosed links,
-   relative and `javascript:` links, entities, and the length bound; every
-   Error Handling condition, including a redirect that is not followed;
+   relative and `javascript:` links, entities, an incomplete tag at the end,
+   and the length bound; every Error Handling condition, including a redirect
+   that is not followed;
    metrics and run status; the warnings and their fields; no write to
    `auto_ignore`, CVEs, or Tickets; and no network I/O while the transaction
    is open.
