@@ -117,6 +117,11 @@ ticket creation or via explicit association), the following rules apply:
   `cve_rejected` ([Ignore Reason](#ignore-reason)). Automatic `New -> Ignored`
   remains limited to the source-neutral ingestion cases in the status matrix
   below
+- **CNA under the auto-ignore policy, manual operation**: a manual creation or
+  association never applies the CNA auto-ignore policy itself, whatever the CNA
+  of the CVE. A later ingestion that records or changes the CNA of the CVE
+  applies it if the Ticket is then `New` (`docs/features/tickets/cna.md`, When
+  the Policy Applies)
 
 ### Associating a CVE Later
 
@@ -162,6 +167,11 @@ See `docs/features/tickets/cve-tracking.md` for the full ingestion flow.
 - `TicketAuditEvent`: `event_type = ticket_created`, `user_id = NULL`,
   `comment = "CVE ingested from {source}"`, where `{source}` is the canonical
   human-readable `CVESourceType` label in `cve-service.md`
+
+The same ingestion transaction moves the new Ticket to `Ignored` when its CVE
+is already `REJECTED` (reason `cve_rejected`), or when its CVE is published and
+its CNA is under the auto-ignore policy (reason `cna_policy`, see
+`docs/features/tickets/cna.md`); see [Status Transitions](#status-transitions).
 
 ### Manual Creation
 
@@ -265,7 +275,7 @@ The complete contract is in [ticket-deadlines.md](ticket-deadlines.md).
 | Analysis   | Gate-zone floor. At least one Analyzed-gate condition is currently false, or the Ticket has just left `New` or the manual zone and has not qualified for a higher gate result. Assignment is irrelevant. |
 | Analyzed   | Every Analyzed-gate condition is true and at least one actionable track is not resolution-complete. Assignment is irrelevant. |
 | Resolved   | Every Analyzed-gate condition is true and every actionable track is resolution-complete under the CVE-aware formula below. Assignment is irrelevant; track `delivery_status` is not a gate input. |
-| Ignored    | Manual-zone isolation for an issue that is not currently being worked. It can be entered manually only from `New` or `Analysis`, or automatically from `New` after CVE rejection, and it always carries the [reason](#ignore-reason) why the Ticket is ignored. Gates and ordinary mutations do not operate in this status. |
+| Ignored    | Manual-zone isolation for an issue that is not currently being worked. It can be entered manually only from `New` or `Analysis`, or automatically from `New` after CVE rejection or under the auto-ignore policy of the CVE's CNA, and it always carries the [reason](#ignore-reason) why the Ticket is ignored. Gates and ordinary mutations do not operate in this status. |
 | Duplicated | Manual-zone isolation for a Ticket represented by another non-Duplicated Ticket. The duplicate link is required and the status is reversible through its dedicated exit workflow. |
 
 **Design note — why Analyzed → Ignored is intentionally excluded**: A ticket
@@ -285,7 +295,7 @@ Ignored Ticket. The regression path ensures a clean state.
                          highest-valid gate result
 New ──assignment──→ Analysis ⇄ Analyzed ⇄ Resolved
  │                     ╲_________________╱
- ├──manual/rejection──→ Ignored ──dedicated exit──→ evaluated gate status
+ ├──manual/automatic──→ Ignored ──dedicated exit──→ evaluated gate status
  └──manual────────────→ Duplicated ─dedicated exit→ evaluated gate status
 
 Analysis ──manual──→ Ignored
@@ -304,6 +314,7 @@ highest valid gate-zone status (`Analysis`, `Analyzed`, or `Resolved`).
 | `New` | `Analysis` | First explicit assignment, or implicit assignment by a qualifying modifying operation | Explicit or implicit user action; status event is system-attributed | `ticket_service.assign_ticket()` or `ticket_mutations.auto_assign_actor()` |
 | `New` | `Ignored` | User invokes Ignore with a reason | Manual; acting user | `ticket_service.ignore_ticket()` |
 | `New` | `Ignored` | Associated CVE changes to `REJECTED`, or ingestion creates the Ticket for an already-`REJECTED` orphan CVE; the reason is `cve_rejected` | Automatic; system | `cve_service.upsert_cve()` orchestrates `ticket_service.ignore_new_for_rejected_cve()` |
+| `New` | `Ignored` | Ingestion creates the non-confidential Ticket of a published CVE whose CNA is under the auto-ignore policy, or records or changes the CNA of its CVE to such a CNA; the reason is `cna_policy` (`docs/features/tickets/cna.md`, When the Policy Applies) | Automatic; system | `cve_service.upsert_cve()` orchestrates `ticket_service.ignore_new_for_cna_policy()` |
 | `Analysis` | `Ignored` | User invokes Ignore with a reason | Manual; acting user | `ticket_service.ignore_ticket()` |
 | `New`, `Analysis`, `Analyzed`, `Resolved` | `Duplicated` | User marks the Ticket as duplicate | Manual; acting user | `ticket_service.mark_as_duplicate()` |
 | `Ignored` | evaluated `Analysis`, `Analyzed`, or `Resolved` | User invokes Reopen, or associated CVE changes from `REJECTED` to `PUBLISHED` while the reason is `cve_rejected` | Manual or automatic; final status event is system-attributed | `ticket_service.reopen_from_ignored()` and `_complete_manual_zone_exit()` |
@@ -329,6 +340,15 @@ manually and may ignore a `New` or `Analysis` Ticket with the reason
 reason reopens automatically, whoever ignored it. For the complete flow, see
 `docs/features/tickets/cve-tracking.md` (Rejection handling and Rejection
 revert handling).
+
+**Note on the CNA auto-ignore policy**: when ingestion creates the Ticket of a
+published CVE whose CNA is under the policy, or records or changes the CNA of
+the CVE of a `New` Ticket to such a CNA, the Ticket is transitioned to
+`Ignored` with the reason `cna_policy`, unless it is confidential. The
+rejection takes precedence, the policy never ignores a Ticket in another
+status, and no event reopens a Ticket that it ignored. For the complete rules
+and the order of arrival of the CVE sources, see
+`docs/features/tickets/cna.md` (Auto-Ignore Policy).
 
 ### Gate: Analysis → Analyzed
 
@@ -974,6 +994,7 @@ other status has none (`chk_ticket_ignore_reason_status_coherence`,
 |---|---|---|
 | `not_shipped` | SUSE ships none of the affected software | A user, through [Ignore Ticket](#ignore-ticket) |
 | `cve_rejected` | The associated CVE is rejected | The system, through the automatic `New -> Ignored` of a rejected CVE (`docs/features/tickets/cve-tracking.md`, Rejection handling); or a user, through Ignore Ticket, while the associated CVE is `REJECTED` |
+| `cna_policy` | The CNA of the associated CVE is under the auto-ignore policy | Only the system, through the automatic `New -> Ignored` of the policy (`docs/features/tickets/cna.md`, Auto-Ignore Policy) |
 | `other` | The Ticket is not worked for another reason | A user, through Ignore Ticket |
 
 - `cve_rejected` names the cause of the ignore, not who decided it: it means
@@ -987,6 +1008,9 @@ other status has none (`chk_ticket_ignore_reason_status_coherence`,
 - A user can choose `cve_rejected` only while the Ticket has a CVE whose
   `cve_state` is `REJECTED`; otherwise Ignore Ticket fails with
   `409 TICKET_CVE_NOT_REJECTED`.
+- No user can choose `cna_policy`: it records a system decision, so that the
+  Tickets that the policy ignored can be reviewed as such. Ignore Ticket
+  rejects it like any other value outside the user reasons.
 - The reason does not change while the Ticket stays `Ignored`: no operation
   writes it, and a later rejection of the associated CVE leaves an `Ignored`
   Ticket and its reason unchanged. A user who wants to record another reason
@@ -996,7 +1020,8 @@ other status has none (`chk_ticket_ignore_reason_status_coherence`,
 - Only `cve_rejected` lets an `Ignored` Ticket leave the manual zone without a
   user: the revert of the rejection reopens it
   (`docs/features/tickets/cve-tracking.md`, Rejection revert handling). A
-  Ticket with another reason stays `Ignored` until a user reopens it. The
+  Ticket with another reason, `cna_policy` included, stays `Ignored` until a
+  user reopens it (`docs/features/tickets/cna.md`, No Automatic Reopen). The
   reason has no other effect on status, gates, assignment, visibility,
   priority, or deadlines.
 - The reason is current Ticket state and is never derived from audit history
@@ -1108,6 +1133,7 @@ features behave differently:
 | CVE rejection handling | Not applicable — no CVE means no `cve_state` changes |
 | CVE rejection revert handling | Not applicable |
 | Ignore reason `cve_rejected` | Not applicable — Ignore Ticket rejects it with `409 TICKET_CVE_NOT_REJECTED` |
+| CNA auto-ignore policy | Not applicable — no CVE means no CNA |
 | Gate: SUSE CVSS required | Not applicable — severity is set via `severity_manual` instead |
 
 Packages, tracks, and products can still be added and managed
@@ -1510,6 +1536,7 @@ response enums (`docs/api-spec.md`, Response Enums).
 | `cve_id` | string | CVE identifier (e.g., `CVE-2024-1234`) |
 | `title` | string \| null | Brief summary (max 256 chars): the CNA title or the GitHub advisory summary, whichever source wrote last. Null if no source provides one |
 | `description` | string \| null | Vulnerability description |
+| `cna` | CNASummary \| null | CNA that owns the CVE Record, with its display name ([cna.md](cna.md#response-schemas)); `null` when no CNA is recorded |
 
 **CVEDetail** — expanded CVE representation for detail views:
 
@@ -1523,6 +1550,7 @@ response enums (`docs/api-spec.md`, Response Enums).
 | `cve_state` | string | CVE record state (`"published"` or `"rejected"`). A CVE for which none of the sources that report CVE state (the MITRE, NVD, and kernel CVE sources, see [cve-tracking.md](cve-tracking.md#cve-rejection-handling)) has reported a state yet, such as a placeholder created for a Ticket or a CVE known only from GitHub advisories, reports `"published"`, which then means that its state is unknown (see [cve-service.md](cve-service.md#placeholder-records)) |
 | `date_rejected` | datetime \| null | When the CVE was rejected (UTC). `null` if `cve_state` is `"published"` |
 | `severity` | string \| null | Unified CVE severity (`CVE.severity`): `critical`, `high`, `medium`, `low`, `none`, or `null` when unresolved |
+| `cna` | CNASummary \| null | CNA that owns the CVE Record, as in `CVESummary` |
 | `external_identifiers` | CVEExternalIdentifierResponse[] | External identifiers from other naming authorities |
 | `kev` | CVEKEVResponse \| null | CISA KEV catalog entry, or `null` when the CVE has no `CVEKEVEntry` |
 | `epss` | CVEEPSSResponse \| null | Latest persisted FIRST EPSS snapshot, or `null` when none exists |
@@ -1651,7 +1679,7 @@ views without the full package tree.
 |-------|------|-------------|
 | `ticket_id` | string | Canonical Ticket identity (`SNTL-{n}`) |
 | `status` | string | TicketStatus enum: `new`, `analysis`, `analyzed`, `resolved`, `ignored`, `duplicated` |
-| `ignore_reason` | string \| null | Why the Ticket is ignored: `not_shipped`, `cve_rejected`, or `other`; `null` unless `status` is `ignored`. See [Ignore Reason](#ignore-reason) |
+| `ignore_reason` | string \| null | Why the Ticket is ignored: `not_shipped`, `cve_rejected`, `cna_policy`, or `other`; `null` unless `status` is `ignored`. See [Ignore Reason](#ignore-reason) |
 | `severity` | string \| null | Resolved severity (CVSS-derived → manual fallback). Values: `critical`, `high`, `medium`, `low`, `none`, or `null` if unresolved. `null` = no CVSS data and no manual severity set. `"none"` = CVSS score 0.0 (informational) |
 | `priority` | string \| null | Effective priority (manual override, otherwise automatic): `p1`, `p2`, `p3`, `p4`, or `null` when not yet prioritizable. See [ticket-priority.md](ticket-priority.md) |
 | `priority_automatic` | string \| null | System-derived priority (`Ticket.priority_auto`): `p1`–`p4`, or `null` when not yet prioritizable |
@@ -1773,9 +1801,19 @@ Query parameters:
   tickets matching any of the specified statuses are returned.
 - `ignore_reason` (string, repeatable, optional): filter by
   [ignore reason](#ignore-reason). Accepts one or more values from:
-  `not_shipped`, `cve_rejected`, `other`. A Ticket that is not `Ignored` has no
-  reason and matches no value. Multiple values use OR semantics; invalid values
-  follow Enum Filter Validation in `docs/api-spec.md`.
+  `not_shipped`, `cve_rejected`, `cna_policy`, `other`. A Ticket that is not
+  `Ignored` has no reason and matches no value. Multiple values use OR
+  semantics; invalid values follow Enum Filter Validation in
+  `docs/api-spec.md`.
+- `cna` (string, repeatable, optional): `org_id` of a CNA
+  (`docs/features/tickets/cna.md`, CNA of a CVE). Matches the Tickets whose
+  CVE's CNA has one of the values; multiple values use OR semantics. A Ticket
+  without a CVE, or whose CVE has no CNA, matches no value, and an unknown
+  value matches nothing and never returns 404. Each value must be a UUID in the
+  hyphenated form; another value produces the global `422 VALIDATION_ERROR`
+  (`docs/api-spec.md`, CNA Identifier Resolution). Combined with
+  `ignore_reason=cna_policy`, it lists the Tickets that the policy ignored
+  whose CVE currently belongs to one of those CNAs.
 - `assignee` (string, optional): filter by assignee. Accepts a user UUID,
   a username, or the special value `none` to return only unassigned
   tickets.
@@ -2290,9 +2328,10 @@ Request body:
 
 - `reason` (string, required): the [ignore reason](#ignore-reason) of the
   Ticket: `not_shipped`, `cve_rejected`, or `other`. An omitted field, `null`,
-  or any other value produces the global `422 VALIDATION_ERROR`. `cve_rejected`
-  is accepted only while the Ticket has a CVE whose `cve_state` is `REJECTED`;
-  otherwise the request fails with `409 TICKET_CVE_NOT_REJECTED`
+  or any other value, the system reason `cna_policy` included, produces the
+  global `422 VALIDATION_ERROR`. `cve_rejected` is accepted only while the
+  Ticket has a CVE whose `cve_state` is `REJECTED`; otherwise the request
+  fails with `409 TICKET_CVE_NOT_REJECTED`
 
 Ticket accessibility (`404 TICKET_NOT_FOUND`), then operability
 (`409 TICKET_NOT_MUTABLE`), then `TICKET_INVALID_TRANSITION`, then
@@ -2758,7 +2797,7 @@ table:
 | sequence_id       | INTEGER     | UNIQUE, NOT NULL, auto-increment | Human-readable ID, exposed as `SNTL-{n}` |
 | cve_id            | UUID        | FK(cve.id), UNIQUE, nullable | Associated CVE (optional) |
 | status            | VARCHAR(20) | NOT NULL, DEFAULT New        | Ticket status |
-| ignore_reason     | VARCHAR(20) | nullable                     | Why the Ticket is ignored (`not_shipped`, `cve_rejected`, `other`); set exactly while `status = Ignored` (`chk_ticket_ignore_reason_status_coherence`). See [Ignore Reason](#ignore-reason) |
+| ignore_reason     | VARCHAR(20) | nullable                     | Why the Ticket is ignored (`not_shipped`, `cve_rejected`, `cna_policy`, `other`); set exactly while `status = Ignored` (`chk_ticket_ignore_reason_status_coherence`). See [Ignore Reason](#ignore-reason) |
 | assignee_id       | UUID        | FK(user.id), nullable        | Current assignee. See [Reassignment](#reassignment), Target constraint |
 | severity_manual | VARCHAR(20) | nullable                     | Manual severity (Critical, High, Medium, Low, None). NULL = not set (unresolved). `None` = an authorized acting user explicitly set informational severity (CVSS score 0.0). Used when `cve_id IS NULL`. Cleared to NULL by `associate_cve` when a CVE is linked. Mutually exclusive with `cve_id` (`chk_ticket_severity_manual_cve_exclusive`) |
 | duplicate_of_id   | UUID        | FK(ticket.id), nullable      | Original ticket when Duplicated |
@@ -2819,3 +2858,5 @@ table:
   acquisition and dynamic visibility
 - `docs/features/packages/maintainer.md` — authoritative maintainer workbench
   classification and per-Ticket response
+- `docs/features/tickets/cna.md` — CNA of a CVE, `CNASummary`, and the
+  auto-ignore policy behind the reason `cna_policy`

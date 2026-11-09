@@ -501,7 +501,7 @@ a natural English compound noun: "sync NVD CVEs", "detect IBS releases".
 | Source | External system |
 |--------|----------------|
 | `nvd` | NIST NVD |
-| `mitre` | MITRE CVE List (cvelistV5) |
+| `mitre` | MITRE and the CVE Program: the CVE List (cvelistV5) and the CNA list of the CVE Program website |
 | `redhat` | Red Hat Security Data API |
 | `kernel` | Linux Kernel CNA |
 | `ghsa` | GitHub Advisory Database |
@@ -530,6 +530,7 @@ Use the most general accurate term:
 - `lifecycle` — product lifecycle dates
 - `thresholds` — CVSS thresholds
 - `kev` — CISA Known Exploited Vulnerabilities catalog entries
+- `cnas` — CNA metadata of the CVE Program
 - `track_releases` — codestream-level release detection
 - `product_releases` — product-level release detection
 
@@ -914,6 +915,7 @@ on-demand discovery. The default `catch_up()` inherited from
 | `sync_smelt_products` | Syncs entire product catalog regardless of ticket state |
 | `sync_aimaas_lifecycle` | Syncs all product lifecycle dates |
 | `sync_aimaas_thresholds` | Syncs all CVSS thresholds |
+| `sync_mitre_cnas` | Syncs the metadata of every CNA from the complete CNA list and writes no Ticket-scoped data (`docs/features/tickets/cna.md`) |
 | `sync_cisa_kev` | Syncs entire KEV catalog (`supports_fetch_single = False` → `participates_in_catch_up` derived as `False`) |
 | `evaluate_failed_cve_sources` | Retries failed `CVESource` records of CVEs with an active Ticket on every run; the participating CVE fetchers' own catch-up already refetches a converged Ticket's CVE (`cve-source-failure-retry.md`) |
 

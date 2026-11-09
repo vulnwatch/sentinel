@@ -32,7 +32,7 @@ event type.
 
 | `event_type` | Trigger | `user_id` | `old_value` | `new_value` | `comment` | `detail` |
 |---|---|---|---|---|---|---|
-| `status_change` | Ticket status transitions (manual or system-initiated) | Authorized acting user for direct manual transitions; `NULL` for derived or automatic transitions | Previous status (e.g., `New`) | New status (e.g., `Analysis`) | Exactly `CVE rejected` for the automatic CVE rejection; otherwise `NULL`, also for a user's ignore with the reason `cve_rejected` | `{"ignore_reason": "..."}` for a transition into `Ignored`; otherwise `NULL` (see detail contract) |
+| `status_change` | Ticket status transitions (manual or system-initiated) | Authorized acting user for direct manual transitions; `NULL` for derived or automatic transitions | Previous status (e.g., `New`) | New status (e.g., `Analysis`) | Exactly `CVE rejected` for the automatic CVE rejection and `CNA auto-ignore policy` for the automatic ignore of the CNA policy; otherwise `NULL`, also for a user's ignore with the reason `cve_rejected` | `{"ignore_reason": "..."}` for a transition into `Ignored`; otherwise `NULL` (see detail contract) |
 | `assignment` | Ticket assigned, reassigned, unassigned by its assignee, or system-unassigned | Authorized acting user for direct assignment, auto-assignment, and self-unassignment; `NULL` for system unassignment | Previous assignee username or `NULL` | New assignee username or `NULL` (unassigned) | `NULL` for assignment, reassignment, and self-unassignment; system unassignment uses `Unassigned from {username}: {reason}` with a closed reason below | `NULL` |
 | `duplicate_set` | Ticket marked as duplicate | Authorized acting user | `NULL` | `SNTL-{n}` identifier of the original ticket | `NULL` | `NULL` |
 | `duplicate_removed` | Duplicate mark reverted | Authorized acting user | `SNTL-{n}` identifier of the original ticket | `NULL` | `NULL` | `NULL` |
@@ -229,6 +229,7 @@ illustrative phrase or pass arbitrary text into a Ticket audit comment.
 | Ticket convergence package resolution | `Ticket convergence` |
 | Assignment, reassignment, self-unassignment, assignment promotion, ordinary gate reconciliation, manual-zone entry or exit, and other normal status transitions | `NULL` |
 | Automatic CVE rejection `New → Ignored` | `CVE rejected` |
+| Automatic CNA-policy `New → Ignored` | `CNA auto-ignore policy` |
 | System unassignment | `Unassigned from {username}: {reason}` |
 
 System unassignment selects `{reason}` from this closed vocabulary:
@@ -282,6 +283,8 @@ an intentional no-event contract, not missing audit coverage.
 | User deactivation, bot marking, role-origin removal that leaves the assignee ineligible, or assignment-eligibility sanitation | One `assignment` per effectively cleared non-NULL assignee | System | `user_service`: User `FOR NO KEY UPDATE` then ordered Ticket locks; reconciliation sanitation: existing Ticket lock plus a fresh unlocked User/role observation |
 | Ignore, mark duplicate, reopen, or revert duplicate | Direct `status_change`, `duplicate_set`, or `duplicate_removed` as applicable; the ignore `status_change` carries the ignore reason in `detail`, and the reopen clears the reason without an event of its own; one `duplicate_target_changed` per repointed dependent; derived Product, sanitation, and final status events retain their normal contracts | Acting user for the direct ignore, duplicate-set, or duplicate-remove decision; reopen's resulting gate status and all other derived consequences use system | `ticket_service`; Ticket, ordered multi-Ticket, or locked dependent roots as specified there |
 | CVE association and rejection/revert | `cve_associated`; applicable derived severity/Product/status events; rejection uses one `status_change` carrying the reason `cve_rejected`. A rejected orphan records creation/association, then CVSS events, then `New -> Ignored` | Acting user for association; system for derived changes and rejection/revert status | manual `ticket_service`: User then CVE then Ticket; system `cve_service`: CVE then Ticket |
+| CNA auto-ignore policy | One system `status_change` `New -> Ignored` carrying the reason `cna_policy`, after every other event of the same ingestion (Cross-Event Ordering; `docs/features/tickets/cna.md`, When the Policy Applies) | System | `cve_service`: CVE, then at most one CNA row, then Ticket |
+| CNA row creation, short name, or metadata, and `CVE.cna_id` | None; an administrative change of `CNA.auto_ignore` records a `CNAAuditEvent` in its own trail (`docs/features/tickets/cna.md`, CNA Audit Log) | N/A | `cna_service` and `cve_service`; CNA row |
 | Manual severity | One `severity_changed`, optional system `priority_changed`, plus ordinary assignment/status consequences | Acting user for severity; system for derived status | `ticket_mutations`; acting User then Ticket |
 | Effective CVSS assessment mutation or ingestion batch | One `cvss_assessment_changed` per effective assessment; optional single `severity_changed`, Product-event sequence, optional system `priority_changed`, and final status per chain/batch | Direct SUSE event uses acting user; all derived events and external ingestion use system | `ticket_mutations`; manual path User then CVE then optional Ticket; system path CVE then optional Ticket |
 | Default-version severity/eligibility chain | No assessment event; optional `severity_changed`, Product events, `priority_changed`, and final status | System | `ticket_mutations`; CVE then optional Ticket |
@@ -332,7 +335,7 @@ precede the invocation-level `package_added` event.
 The source-neutral ingestion sequence is creation events when needed, canonical
 CVSS assessment events, at most one severity event, state-applicable Product
 events, at most one automatic priority event, then the state-applicable final
-gate event. An applicable rejection follows that batch; an
+gate event. An applicable rejection or CNA-policy ignore follows that batch; an
 `Ignored` republication performs its deferred Product and final status events in
 the subsequent manual-zone-exit sequence. Source-status and automatic-reference
 writes create no Ticket event. Any reference, audit, flush, or other
@@ -427,8 +430,8 @@ types not listed here MUST set `detail` to `NULL`.
 - `status_change`: an event whose `new_value` is `Ignored` requires
   `detail = {"ignore_reason": ...}` with the reason that the transition wrote,
   exactly one of the TicketIgnoreReason values `not_shipped`, `cve_rejected`,
-  and `other` (`docs/features/tickets/tickets.md`, Ignore Reason), whether the
-  actor is a user or the system. Every other `status_change`, including the
+  `cna_policy`, and `other` (`docs/features/tickets/tickets.md`, Ignore
+  Reason), whether the actor is a user or the system. Every other `status_change`, including the
   system `New → Analysis` of an auto-assignment that precedes an ignore and
   the exit from `Ignored`, requires `detail = NULL`. `TicketAuditLog.log_event()`
   MUST reject a missing or non-NULL `detail` in the respective case, any other
@@ -764,7 +767,8 @@ required event sequence or explicit no-event outcome. For audited mutations:
 30. `status_change` tests assert `detail = {"ignore_reason": ...}` equal to the
     stored reason on every transition into `Ignored`, by a user with each
     reason (`comment = NULL`, also for `cve_rejected`) and by the system with
-    `cve_rejected` (`comment = "CVE rejected"`), and `detail = NULL` on every
+    `cve_rejected` (`comment = "CVE rejected"`) and with `cna_policy`
+    (`comment = "CNA auto-ignore policy"`), and `detail = NULL` on every
     other `status_change`, including the `New → Analysis` of an auto-assignment
     before an ignore and the final event of a reopen; `log_event()` rejects a
     missing, extra-key, or unknown-valued `detail` on a transition into
@@ -792,3 +796,5 @@ Indefinite. TicketAuditEvent records are never automatically deleted.
   matrix
 - `docs/features/tickets/ticket-priority.md` — `priority_changed` triggers,
   refresh points, and override
+- `docs/features/tickets/cna.md` — the CNA-policy `status_change` and the
+  separate CNA audit trail

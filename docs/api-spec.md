@@ -885,6 +885,7 @@ Error codes are grouped by prefix:
 | `AUTH_*` | Authentication and authorization | `AUTH_NOT_AUTHENTICATED`, `AUTH_INSUFFICIENT_PERMISSION`, `AUTH_API_KEY_NOT_FOUND`, `AUTH_API_KEY_NAME_CONFLICT`, `AUTH_API_KEY_NAME_INVALID`, `AUTH_API_KEY_INVALID_EXPIRY`, `AUTH_SESSION_REQUIRED`, `AUTH_INVALID_CREDENTIALS`, `AUTH_ACCOUNT_LOCKED`, `AUTH_LOGOUT_NOT_APPLICABLE`, `AUTH_CROSS_ORIGIN_REJECTED`; reserved: `AUTH_SSO_FAILED`, `AUTH_SSO_USER_NOT_FOUND`, `AUTH_SSO_USER_INACTIVE`, `AUTH_SSO_STATE_INVALID`, `AUTH_SSO_DISABLED` |
 | `TICKET_*` | Ticket operations | `TICKET_NOT_FOUND`, `TICKET_INVALID_TRANSITION`, `TICKET_NOT_MUTABLE`, `TICKET_NOT_CONFIDENTIAL`, `TICKET_DUPLICATE_TARGET_DUPLICATED`, `TICKET_DUPLICATE_CONCURRENT_MODIFICATION`, `TICKET_SELF_DUPLICATE`, `TICKET_CVE_CONFLICT`, `TICKET_CVE_ALREADY_SET`, `TICKET_CVE_NOT_REJECTED`, `TICKET_SEVERITY_DERIVED`, `TICKET_ASSIGNEE_NOT_ELIGIBLE`, `TICKET_ASSIGNEE_INACTIVE`, `TICKET_ASSIGNEE_NOT_CALLER`, `TICKET_ASSIGNEE_CHANGED`, `TICKET_COORDINATED_RELEASE_BEFORE_CREATION` |
 | `CVE_*` | CVE operations | `CVE_NOT_FOUND`, `CVE_FETCH_FAILED`, `CVE_INVALID_SOURCE`, `CVE_INVALID_FORMAT` |
+| `CNA_*` | CNA operations | `CNA_NOT_FOUND` |
 | `CVSS_*` | CVSS assessment and default-version operations | `CVSS_INVALID_VECTOR`, `CVSS_ASSESSMENT_NOT_FOUND`, `CVSS_RECALC_ALREADY_IN_PROGRESS`, `CVSS_PREVIEW_TIMEOUT` |
 | `RESOURCE_*` | Generic resource errors | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_NOT_EDITABLE` |
 | `PACKAGE_*` | Package operations | `PACKAGE_NOT_FOUND_IN_SMELT`, `PACKAGE_TARGETS_UNRESOLVED`, `PACKAGE_ALREADY_EXCLUDED`, `PACKAGE_NOT_EXCLUDED` |
@@ -1481,6 +1482,22 @@ public mutation locators.
 `ProductRepository` is an internal catalog association. Its UUID is never
 serialized or accepted by the API; repository names are exposed only when an
 owning endpoint explicitly requires them.
+
+### CNA Identifier Resolution
+
+A CNA is identified by its `org_id`, the CVE Services UUID of its organization
+(`docs/features/tickets/cna.md`). The internal UUIDv7 `CNA.id` is never
+serialized or accepted. Responses serialize `org_id` in lowercase hyphenated
+form.
+
+The `{org_id}` path parameter of the CNA endpoints and every `cna` query
+filter accept only the hyphenated 8-4-4-4-12 hexadecimal form, with digits in
+either case, and compare it by value. As for other locators (Published Input
+Constraints), a malformed path value and an unknown CNA both return
+`404 CNA_NOT_FOUND`. A `cna` filter instead publishes that form as the
+`pattern` of each value: a malformed value produces the global
+`422 VALIDATION_ERROR`, and an unknown CNA returns an empty result, as for the
+other optional filters.
 
 ## Mutation Conventions
 

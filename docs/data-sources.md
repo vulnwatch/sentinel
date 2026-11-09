@@ -18,6 +18,7 @@ relevant feature specifications in `docs/features/`.
 |---|---|---|---|
 | NVD | Public | CVE data, CVSS scores, CPE matches | Active |
 | MITRE CVE List (cvelistV5) | Public | CVE Records, early CVE assignments | Active |
+| CVE Program CNA List | Public | CNA organization names, types, and scopes | Active |
 | Red Hat Security Data | Public | CVSS assessments | Active |
 | SUSE CSAF VEX | Public | SUSE CVSS assessments per CVE | Not integrated |
 | IBS | Internal | Source packages, builds, repos, declarative product channels | Active |
@@ -96,6 +97,40 @@ awareness of new vulnerabilities.
 
 > See [cve-sync-mitre.md](features/tickets/cve-sync-mitre.md) for the full
 > fetcher specification.
+
+### CVE Program CNA List
+
+The CVE Program website publishes the list of CVE Numbering Authorities
+(CNAs) that it shows at `https://www.cve.org/PartnerInformation/ListofPartners`
+from a JSON data file of its source repository. Each entry describes one
+partner organization.
+
+- **Relevant data**: per entry, the short name (`shortName`), the organization
+  name (`organizationName`), the CNA types (`CNA.type`), and the scope
+  (`scope`, which contains HTML markup). Entries also carry contacts,
+  disclosure policies, advisories, roles, and hierarchy, which Sentinel does
+  not read. An entry carries no CVE Services organization UUID, so Sentinel
+  matches it to a CNA by its short name
+- **Access**: anonymous HTTPS download of
+  `https://raw.githubusercontent.com/CVEProject/cve-website/main/src/assets/data/CNAsList.json`,
+  the file `src/assets/data/CNAsList.json` of the `main` branch of the public
+  `CVEProject/cve-website` GitHub repository. No authentication. GitHub
+  applies limits to unauthenticated requests, downloads from this host
+  included, without publishing their values; Sentinel makes one request a
+  day. On 2026-11-09 the file held 564 entries in 757,202 bytes and was served
+  as `text/plain` with a five-minute CDN cache
+- **Contract and license**: the file is a data file of a website, not a
+  versioned API: its location and format can change without notice, and the
+  repository declares no license. Sentinel stores only the organization name,
+  types, and plain-text scope of the CNAs that own ingested CVEs, and shows
+  them to its users. The failure behavior is owned by the fetcher
+  specification below
+- **Integration status**: **Active**
+- **Documentation**: https://www.cve.org/PartnerInformation/ListofPartners,
+  https://github.com/CVEProject/cve-website
+
+> See [cna.md](features/tickets/cna.md#fetcher-sync_mitre_cnas) for the
+> full fetcher specification.
 
 ### Red Hat Security Data
 
@@ -1317,7 +1352,8 @@ feature documentation (not its implementation status):
 | Fetcher | Source | Schedule | Auth | Rate Limits | Data Ingested | Spec | Spec Status |
 |---------|--------|----------|------|-------------|---------------|------|-------------|
 | `sync_nvd_cves` | NVD | Every 6 hours | API key (free, optional) | Without key: 5 req/30s; with key: 50 req/30s | CVE records, CVSS (NVD's own and CNA/ADP assessments), CWE, CPE applicability statements, references | [cve-sync-nvd.md](features/tickets/cve-sync-nvd.md#fetcher-definition) | Complete |
-| `sync_mitre_cves` | MITRE cvelistV5 (Git) | Every 6 hours | None | None (bare clone + fetch) | CVE records, all ADP data (affected versions, CVSS), CISA-specific (SSVC, KEV, CWE), references | [cve-sync-mitre.md](features/tickets/cve-sync-mitre.md#fetcher-definition) | Complete |
+| `sync_mitre_cves` | MITRE cvelistV5 (Git) | Every 6 hours | None | None (bare clone + fetch) | CVE records, the CNA owner of each record, all ADP data (affected versions, CVSS), CISA-specific (SSVC, KEV, CWE), references | [cve-sync-mitre.md](features/tickets/cve-sync-mitre.md#fetcher-definition) | Complete |
+| `sync_mitre_cnas` | CVE Program CNA List | Daily at 07:00 UTC (`0 7 * * *`) | None | Unpublished GitHub limits for unauthenticated requests; one request per run | Organization names, CNA types, and plain-text scopes of the existing CNA rows, matched by short name | [cna.md](features/tickets/cna.md#fetcher-sync_mitre_cnas) | Complete |
 | `sync_redhat_cves` | Red Hat Security Data | Daily at 03:00 UTC | None | Undocumented; Sentinel uses 2s delay between requests | CVSS Red Hat, CWE, references, package-name candidates | [cve-sync-redhat.md](features/tickets/cve-sync-redhat.md#fetcher-definition) | Complete |
 | `sync_smelt_products` | SMELT | Daily at 01:00 UTC | None | N/A (internal) | Product catalog and repository mappings; dispatches active-ticket Product catalog backfill when Products become newly current | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_smelt_products) | Complete |
 | `sync_aimaas_lifecycle` | AIMAAS | Daily at 02:15 UTC | None | N/A (internal) | Product lifecycle dates via paginated list with `all_fields=true`; field-level clearing on null change; lifecycle dates retained on product disappearance | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_aimaas_lifecycle) | Complete |
@@ -1329,7 +1365,7 @@ feature documentation (not its implementation status):
 | `sync_cisa_kev` | CISA KEV | 4x daily (`0 4,10,18,22 * * *`) | None | None (single JSON file) | KEV date_added, reference_url, CWE classifications | [cve-sync-kev.md](features/tickets/cve-sync-kev.md#fetcher-definition) | Complete |
 | `sync_epss_scores` | FIRST.org EPSS | Daily at 14:00 UTC | None | 1000 req/min (public) | EPSS score + percentile per CVE | [cve-sync-epss.md](features/tickets/cve-sync-epss.md#fetcher-definition) | Complete |
 | `sync_ghsa_advisories` | GitHub Advisory DB | Every 3 hours (`0 */3 * * *`) | GitHub token (free) | 5,000 req/hour with token | CVSS GitHub (v3.x + v4.0, `provider_name = "GitHub"`), GHSA-ID (as CVEExternalIdentifier), CWE, affected versions (multi-ecosystem, `source_container = "ghsa"`), package-name candidates, references | [cve-sync-ghsa.md](features/tickets/cve-sync-ghsa.md#fetcher-definition) | Complete |
-| `sync_kernel_cves` | Linux Kernel CNA | Every 3 hours (`0 */3 * * *`) | None | None (bare clone + fetch) | CVSS kernel (`provider_name = "Linux"`), fix/introduce commits (as CVEAffectedVersion with version_type=git), affected kernel versions (semver), programFiles, references. Sets `resolved_packages = ["kernel-source"]` as a package-name candidate. `source_container = "cna"` | [cve-sync-kernel.md](features/tickets/cve-sync-kernel.md#fetcher-definition) | Complete |
+| `sync_kernel_cves` | Linux Kernel CNA | Every 3 hours (`0 */3 * * *`) | None | None (bare clone + fetch) | The Linux kernel CNA as owner of each record, CVSS kernel (`provider_name = "Linux"`), fix/introduce commits (as CVEAffectedVersion with version_type=git), affected kernel versions (semver), programFiles, references. Sets `resolved_packages = ["kernel-source"]` as a package-name candidate. `source_container = "cna"` | [cve-sync-kernel.md](features/tickets/cve-sync-kernel.md#fetcher-definition) | Complete |
 | `sync_osv_advisories` | OSV (osv.dev) | Daily at 05:00 UTC (`0 5 * * *`) | None | None (no rate limits) | GIT fix/introduce commits (CVEAffectedVersion), ecosystem affected versions (CVEAffectedVersion with ecosystem), references (TicketReference), external identifiers (GHSA/PYSEC/RUSTSEC), package-name candidates. `source_container = "osv"` | [cve-sync-osv.md](features/tickets/cve-sync-osv.md#fetcher-definition) | Complete |
 | `evaluate_failed_cve_sources` | Local (no external source) | Daily at 06:00 UTC (`0 6 * * *`) | N/A | N/A | Dispatches retry for CVESource failure records with active tickets (within 30-day window) | [cve-source-failure-retry.md](features/platform/cve-source-failure-retry.md#fetcher-evaluate_failed_cve_sources) | Complete |
 

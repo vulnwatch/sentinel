@@ -881,7 +881,7 @@ Ticket trail, the complete audited/no-event inventory is the canonical matrix in
 boundaries rather than a global exception.
 
 The Audit Trail Index is the authoritative source for which audit
-trails exist. As of this writing, four audit trails are registered:
+trails exist. As of this writing, five audit trails are registered:
 
 | Audit Trail | Event Model | Owning Spec |
 |---|---|---|
@@ -889,6 +889,7 @@ trails exist. As of this writing, four audit trails are registered:
 | Identity | `IdentityAuditEvent` | `docs/features/identity/identity-audit-log.md` |
 | Fetcher | `FetcherAuditEvent` | `docs/features/platform/fetcher-infrastructure.md` |
 | Setting | `SettingAuditEvent` | `docs/features/platform/system-settings.md` |
+| CNA | `CNAAuditEvent` | `docs/features/tickets/cna.md` |
 
 This list is **not closed**. When a new audit trail is added to the
 Index, the testing obligation extends automatically — no update to this
@@ -2129,9 +2130,9 @@ contract is mandatory:
   field-level visibility, and authorization remain unchanged.
 - **Concrete mappings**: tests cover the selected unit, all successful
   terminal outcomes, all failed terminal outcomes, pre-scope exclusions, and
-  durable create/update effects documented by the owning specs for all 16
+  durable create/update effects documented by the owning specs for all 17
   registered fetchers: `sync_nvd_cves`, `sync_mitre_cves`,
-  `sync_redhat_cves`, `sync_smelt_products`, `sync_aimaas_lifecycle`,
+  `sync_mitre_cnas`, `sync_redhat_cves`, `sync_smelt_products`, `sync_aimaas_lifecycle`,
   `sync_aimaas_thresholds`, `detect_ibs_track_releases`,
   `detect_ibs_product_releases`, `evaluate_lifecycle_transitions`,
   `sync_ibs_requests`, `sync_cisa_kev`, `sync_epss_scores`,
@@ -2742,6 +2743,20 @@ MUST cover the complete matrix in
 the SQL/pure-function equivalence and the proof that deadlines, milestones, and
 the track and Ticket current phase create no audit event and never affect
 gates, eligibility, or assignment.
+
+### CNA and Auto-Ignore Policy
+
+When the CNA of a CVE, its writers, the CNA metadata fetcher
+(`sync_mitre_cnas`), the auto-ignore policy, its administrative operation, or
+the CNA reads and filters are implemented or changed, tests MUST cover the
+complete matrix in `docs/features/tickets/cna.md` (Testing Requirements),
+together with:
+
+- the `status_change` assertions of
+  `docs/features/tickets/ticket-audit-log.md`;
+- Audit Trail Testing in this document, for the CNA audit trail; and
+- External Integration Contract Verification (`docs/conventions.md`), for the
+  CNA list.
 
 ### NVD CPE Applicability Selection
 
@@ -4996,7 +5011,10 @@ and the dedicated database starts its Ticket identifiers at `SNTL-1`.
   fetcher runs with their times, statuses, counters, and errors; the
   Products with their lifecycle phases and thresholds; the CVEs with their
   source data and CVE source records, and the failure drill-down of the last
-  NVD run; the Tickets with their identifiers, status, ignore reason,
+  NVD run; the CNAs with their short names, metadata, display names,
+  auto-ignore flags, and CNA audit events, and the CNA of every CVE; the
+  Tickets with their
+  identifiers, status, ignore reason,
   assignee, confidentiality, access grant, coordinated release date, and
   severity; the
   priorities of every Ticket: the automatic priority with its basis, the

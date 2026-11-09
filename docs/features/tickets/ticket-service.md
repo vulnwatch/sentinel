@@ -105,8 +105,8 @@ revoking explicit access.
 access-grant operations require a non-null authorized acting user. Their API
 handlers must not use system attribution. `create_ticket()` and
 `reopen_from_ignored()` retain their documented system callers.
-`ignore_new_for_rejected_cve()` is exclusively system-only and has no actor
-parameter.
+`ignore_new_for_rejected_cve()` and `ignore_new_for_cna_policy()` are
+exclusively system-only and have no actor parameter.
 
 ### Caller category and Ticket accessibility
 
@@ -188,6 +188,9 @@ Explicit opt-outs (functions that do NOT call `ensure_ticket_operable`):
 
 - `ignore_new_for_rejected_cve` — validates exactly `New` as the automatic
   rejection source state and leaves every other status unchanged
+- `ignore_new_for_cna_policy` — validates exactly a non-confidential `New`
+  Ticket as the automatic CNA-policy source state and leaves every other
+  Ticket unchanged
 - `reopen_from_ignored` and `revert_duplicate` — validate their exact manual-
   zone source state instead because they are its dedicated exits
 - `set_confidentiality`, `grant_access`, and `revoke_access` — visibility-only
@@ -317,6 +320,7 @@ Conceptual semantic inputs are:
 | `search` | `str \| None` | `None` | Ticket multi-field search |
 | `status` | supplied-state plus collection of valid `TicketStatus` | omitted | Repeatable OR filter, preserving omitted versus supplied-but-empty after validation |
 | `ignore_reason` | supplied-state plus collection of valid `TicketIgnoreReason` | omitted | Repeatable OR filter, preserving omitted versus supplied-but-empty after validation |
+| `cna` | collection of `UUID` \| `None` | `None` | Repeatable OR filter over CNA `org_id` values, validated as UUIDs by the API |
 | `assignee` | `str \| None` | `None` | User UUID, exact username, or literal `none` |
 | `severity` | supplied-state plus collection of valid resolved-severity filters | omitted | Repeatable OR filter including `none` and `unresolved`, preserving omitted versus supplied-but-empty after validation |
 | `priority` | supplied-state plus collection of valid effective-priority filters | omitted | Repeatable OR filter over `p1`–`p4` and `unresolved`, preserving omitted versus supplied-but-empty after validation |
@@ -346,8 +350,8 @@ The result contains a collection of Ticket summary projections plus `total`,
    rules in `tickets.md` only to directly included package occurrences and
    current CVE/external-identifier state.
 3. Apply simultaneously supplied client filters with AND semantics. Values
-   inside one repeatable status, ignore-reason, severity, priority, overdue,
-   or current-phase filter use OR semantics.
+   inside one repeatable status, ignore-reason, CNA, severity, priority,
+   overdue, or current-phase filter use OR semantics.
    The API
    passes whether the filter was supplied together with its valid members in an
    implementation-chosen typed form, so an all-invalid supplied filter yields
@@ -372,7 +376,10 @@ The result contains a collection of Ticket summary projections plus `total`,
    rejects a malformed value; given one, the operation raises `ValueError`
    before any query. `ignore_reason` compares `Ticket.ignore_reason`, so a
    Ticket without a reason, in every status other than `Ignored`, matches no
-   value. `is_confidential` compares `Ticket.is_confidential`.
+   value. `cna` matches a Ticket whose current CVE has a `cna_id` whose
+   `CNA.org_id` is one of the values; a Ticket without a CVE or whose CVE has
+   no CNA matches no value, and an unknown value matches nothing.
+   `is_confidential` compares `Ticket.is_confidential`.
    `coordinated_release_passed = True` matches a confidential Ticket whose
    `coordinated_release_at` is not `NULL` and is at or before the evaluation
    instant of step 1; `False` matches every Ticket that `True` does not, a
@@ -411,6 +418,9 @@ The result contains a collection of Ticket summary projections plus `total`,
 6. Project `package_names` from directly included package occurrences only,
    deduplicate exact persisted strings, and sort them in ascending Unicode
    code-point order. Database or deployment collation is not the API order.
+   Project the CVE summary with the `CNASummary` of its CNA
+   (`docs/features/tickets/cna.md`, Response Schemas) from the same
+   observation.
 7. Apply the requested order and an internal `Ticket.id` UUID tie-breaker in
    the direction of `sort_order`. `ticket_id` sorting uses numeric
    `sequence_id`; status, severity, and priority use the semantic ranks and
@@ -461,9 +471,10 @@ The result is the semantic projection represented by `TicketDetail` in
    due dates from
    [ticket-deadlines.md](ticket-deadlines.md#due-dates), complete current
    assignee reference, and expanded current
-   CVE fields, including the KEV, EPSS, SSVC, and grouped CWE evidence and their
-   ordering defined by `CVEDetail` in `tickets.md`. CVSS assessments are not
-   inline; they remain in their dedicated sub-resource.
+   CVE fields, including the `CNASummary` of its CNA and the KEV, EPSS, SSVC,
+   and grouped CWE evidence and their ordering defined by `CVEDetail` in
+   `tickets.md`. CVSS assessments are not inline; they remain in their
+   dedicated sub-resource.
 3. Orders CVE external identifiers by ascending Unicode code point of source,
    then identifier, with `CVEExternalIdentifier.id` as the final tie-breaker.
 4. If `duplicate_of_id` is non-null, selects only the target's immutable
@@ -611,7 +622,9 @@ same steps remain authoritative: initial status still comes only from step 4,
 and the function does not call `ignore_new_for_rejected_cve()` or create the
 automatic `CVE rejected` status event. The authorized user may invoke the
 ordinary manual ignore operation separately, for example with the reason
-`cve_rejected`.
+`cve_rejected`. Likewise, whatever the CNA of the CVE, the function never calls
+`ignore_new_for_cna_policy()` (`docs/features/tickets/cna.md`, When the Policy
+Applies).
 
 **Concurrency — CVE uniqueness**: concurrent creations for the same CVE
 serialize on the CVE `FOR NO KEY UPDATE` lock of step 2. The association state
@@ -728,7 +741,8 @@ association, the function still performs only the ordinary association,
 severity-source handover, Product, and gate sequence above. It does not invoke
 `ignore_new_for_rejected_cve()` or create an automatic `CVE rejected` event; the
 authorized user may ignore the Ticket through the ordinary manual operation,
-for example with the reason `cve_rejected`.
+for example with the reason `cve_rejected`. Likewise, whatever the CNA of the
+CVE, the function never calls `ignore_new_for_cna_policy()`.
 
 **Locking**: `FOR SHARE` on acting User, `FOR NO KEY UPDATE` on CVE, then
 `FOR UPDATE` on Ticket. CVE Resolution
@@ -1047,7 +1061,8 @@ async def ignore_ticket(
 
 - `reason` is one of the reasons that a user may choose: `not_shipped`,
   `cve_rejected`, or `other` ([tickets.md](tickets.md#ignore-reason), Set by);
-  any other value raises `ValueError` before any database access
+  any other value, the system reason `cna_policy` included, raises `ValueError`
+  before any database access
 - Ticket must be operable (`ensure_ticket_operable`) — catches
   Ignored and Duplicated tickets before the status check
 - Ticket must be in New or Analysis status (only valid source states;
@@ -1152,6 +1167,53 @@ The boundary is idempotent from current state: after one effective transition,
 re-invocation observes `Ignored` and is a no-op. Database, audit, flush,
 cancellation, and programming exceptions propagate unchanged and roll back the
 caller's complete per-CVE transaction.
+
+### `ignore_new_for_cna_policy()`
+
+Trusted system-only lifecycle boundary for the CNA auto-ignore policy
+(`docs/features/tickets/cna.md`, Auto-Ignore Policy). Only
+`cve_service.upsert_cve()` may call it, in step 7 of its composition, while the
+caller owns the CVE lock and already holds the unique associated Ticket lock.
+The caller decides whether the policy applies (published CVE, CNA under the
+policy, Ticket created or CNA recorded or changed by this invocation); this
+boundary decides only from the Ticket. It is not an API, task, CLI, or
+general-purpose ignore operation.
+
+```python
+async def ignore_new_for_cna_policy(
+    db: AsyncSession,
+    *,
+    cve_id: UUID,
+    ticket: Ticket,
+) -> Ticket:
+```
+
+`cve_id` is the internal UUID of the already locked CVE root; `ticket` is its
+already locked unique associated Ticket.
+
+**Preconditions and authority**: as for `ignore_new_for_rejected_cve()`. The
+function verifies `ticket.cve_id == cve_id`; an association violation raises
+`ValueError` before a Ticket mutation.
+
+**Behavior**:
+
+1. Read the supplied locked-current Ticket status and `is_confidential`
+   without reacquiring either root or querying audit history.
+2. If the status is `New` and the Ticket is not confidential, set the status to
+   `Ignored` and `ignore_reason` to `cna_policy` consecutively, before any
+   operation that may flush, and create exactly one system-attributed
+   `status_change` with `old_value = "New"`, `new_value = "Ignored"`,
+   `comment = "CNA auto-ignore policy"`, and
+   `detail = {"ignore_reason": "cna_policy"}`.
+3. Otherwise return the Ticket unchanged with no event; an `Ignored` Ticket
+   keeps its reason. Do not call `ensure_ticket_operable()`, assign,
+   reconcile, register convergence, or change any other field.
+4. Flush an effective transition and return the Ticket. Do not commit, roll
+   back, or perform external, Redis, or Celery I/O.
+
+The boundary is idempotent from current state, like
+`ignore_new_for_rejected_cve()`, and propagates the same exceptions with the
+same rollback of the caller's complete per-CVE transaction.
 
 ### mark_as_duplicate
 
@@ -2160,6 +2222,7 @@ ticket_mutations (infrastructure)
 | set_priority_override  | ✓                      | ✓                      | —                     | ✓                     | —                   |
 | ignore_ticket          | ✓                      | —                      | —                     | ✓                     | —                   |
 | ignore_new_for_rejected_cve | —                  | —                      | —                     | —                     | —                   |
+| ignore_new_for_cna_policy | —                    | —                      | —                     | —                     | —                   |
 | mark_as_duplicate      | ✓                      | —                      | —                     | ✓                     | —                   |
 | reopen_from_ignored    | —                      | ✓                      | —                     | ✓                     | ✓                   |
 | revert_duplicate       | —                      | ✓                      | —                     | ✓                     | ✓                   |
@@ -2273,7 +2336,8 @@ behavior of `ticket_service` operations:
     `ticket_created`, optional assignment, optional manual severity, optional
     Coordinated Release Date, optional CVE association, and optional
     manual-creation `priority_changed` order. Normal status transitions use NULL comments,
-    while the automatic rejection uses exactly `CVE rejected` and a user's
+    while the automatic rejection uses exactly `CVE rejected`, the automatic
+    CNA-policy ignore exactly `CNA auto-ignore policy`, and a user's
     ignore with the reason `cve_rejected` uses NULL. Every transition into
     `Ignored`, manual or automatic, carries `{"ignore_reason": ...}` in
     `detail` and every other status transition `NULL`
@@ -2325,8 +2389,8 @@ behavior of `ticket_service` operations:
     the current ingestion batch's assessment state, a Ticket that a user
     ignored with `cve_rejected` reopens like one that the system ignored, and
     an association, status, or reason mismatch causes no lifecycle call: a
-    Ticket ignored with `not_shipped` or `other` stays `Ignored` with its
-    reason and no event
+    Ticket ignored with `not_shipped`, `cna_policy`, or `other` stays `Ignored`
+    with its reason and no event
 19. **Priority composition**: manual creation refreshes the automatic priority
     after every creation event while ingestion creation does not; association
     refreshes it inside the chain after Product events and before the one final
@@ -2446,7 +2510,19 @@ behavior of `ticket_service` operations:
     `chk_ticket_ignore_reason_valid`. API tests cover an omitted body or
     member, `null`, and an unknown value as `422 VALIDATION_ERROR`, the mapping
     to `409 TICKET_CVE_NOT_REJECTED`, the published `enum` of `reason`, and the
-    `ignore_reason` filter and response fields
+    `ignore_reason` filter and response fields. The system reason `cna_policy`
+    raises `ValueError` in the service and is rejected with `422` by the API,
+    and the published `enum` of `reason` does not list it
+25. **System CNA-policy boundary**: `ignore_new_for_cna_policy()`, called only
+    with CVE-then-Ticket locks, moves a non-confidential `New` Ticket to
+    `Ignored` with the exact system event and comment and the reason
+    `cna_policy` on the Ticket and in the event `detail`; a confidential `New`
+    Ticket and every other status are no-ops, an `Ignored` Ticket keeping each
+    of its reasons; re-invocation is a no-op; an association violation raises
+    `ValueError` before any mutation; no audit history is queried; and an
+    audit or flush failure rolls back completely. The trigger conditions in
+    `upsert_cve()` are covered by `docs/features/tickets/cna.md` (Testing
+    Requirements)
 
 ## Cross-references
 
@@ -2467,4 +2543,6 @@ behavior of `ticket_service` operations:
   refresh contracts
 - `docs/features/tickets/ticket-deadlines.md` — due dates, milestones, Ticket
   current phase, overdue and current-phase filters, and evaluation instant
+- `docs/features/tickets/cna.md` — CNA auto-ignore policy behind
+  `ignore_new_for_cna_policy()`, `CNASummary`, and the `cna` filter
 - `docs/api-spec.md` — general API conventions, error code categories

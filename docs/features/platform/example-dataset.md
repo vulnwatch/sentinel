@@ -44,6 +44,7 @@ Out of scope:
 | `docs/features/platform/fetcher-infrastructure.md` (FetcherConfig; Data Model, FetcherRun) and `docs/features/platform/fetcher-operations.md` (`update_fetcher_config`) | Fetcher configuration bootstrap and disabling; the run records of Fetcher Runs |
 | `docs/features/packages/product-catalog.md` (Catalog Publication Boundaries) | Product, lifecycle, and threshold publication |
 | `docs/features/tickets/cve-service.md` and `docs/features/tickets/ticket-references.md` | CVE ingestion, CVE source records (`record_source_status()`), and automatic references |
+| `docs/features/tickets/cna.md` | CNA metadata (`update_cna_metadata()`) and the auto-ignore policy (`set_cna_auto_ignore()`) |
 | `docs/features/tickets/ticket-deadlines.md` | The due dates and current phases of the Aged Tickets and the Embargoes |
 | `docs/features/tickets/ticket-service.md`, `docs/features/tickets/ticket-mutations.md`, and `docs/features/tickets/ticket-priority.md` | Ticket creation, assignment, ignore, duplicate, confidentiality, coordinated release date, access grants, SUSE assessments, automatic priority and its basis, and priority override |
 | `docs/features/packages/package-service.md` | Package records, track status, and Product release |
@@ -154,7 +155,7 @@ A load runs these steps in this order:
 | `System settings` | System Settings |
 | `Fetchers` | Fetchers, with the earlier runs of Fetcher Runs and CVE Source Records |
 | `Product catalog` | Product Catalog |
-| `CVEs and tickets` | CVEs, the last run of `sync_nvd_cves` and the CVE source records of Fetcher Runs and CVE Source Records, and the creation of every Ticket (Tickets) |
+| `CVEs and tickets` | CVEs, the last run of `sync_nvd_cves` and the CVE source records of Fetcher Runs and CVE Source Records, the metadata and policy of CNAs, and the creation of every Ticket (Tickets) |
 | `Ticket work` | The Ticket work of Tickets, Packages, Tracks, and Maintainers, IBS Requests, and References, then the aging and the coordinated release date of Aged Tickets |
 
 Each operation of a step — one call of a service function named in Dataset
@@ -204,8 +205,9 @@ use:
 - A system operation passes no acting user and uses the service's system
   caller context. It stands for the system process that performs it in real
   use: CVE ingestion by the fetcher of the source that the data represents,
-  a single-CVE fetch of a CVE source, Product catalog synchronization, IBS
-  request reconciliation, and IBS track and Product release detection.
+  a single-CVE fetch of a CVE source, CNA metadata synchronization, Product
+  catalog synchronization, IBS request reconciliation, and IBS track and
+  Product release detection.
 - A run record of Fetcher Runs and CVE Source Records stands for the record
   that a scheduled run of its fetcher writes
   (`docs/features/platform/fetcher-infrastructure.md`, BaseFetcher Base
@@ -223,7 +225,8 @@ The loader also stands in for the external sources and system processes of a
 real installation. Where a specification names a source or process as the
 origin of a fact or event — SMELT for package trees and maintainers, an
 advisory in `updateinfo.xml` for a Product release, a fetcher for an external
-identifier, or IBS for request evidence — a dataset backend holds the same
+identifier, the CVE Program CNA list for the name, types, and scope of a CNA,
+or IBS for request evidence — a dataset backend holds the same
 fact or event with fictional data from the loader.
 
 ### Isolation
@@ -454,8 +457,9 @@ published date `T − n` days, where `n` is the number that ends the CVE ID
 the CVE of an aged Ticket, the modified date `T − 1d`, the CVSS vector of the
 table with provider `NVD`, and the CWE of the table with source `NVD`. A MITRE ingestion supplies the same description and
 published date, the title `Fictional flaw {CVE ID}`, the state `PUBLISHED`
-unless the table states otherwise, and the further data of the table. A KEV,
-EPSS, or GHSA ingestion supplies only the data of the table.
+unless the table states otherwise, the CNA that owns the record (CNAs), and the
+further data of the table. A KEV, EPSS, or GHSA ingestion supplies only the
+data of the table.
 
 | CVE | First | NVD CVSS vector | Severity | CWE | Further ingestions |
 |---|---|---|---|---|---|
@@ -484,6 +488,7 @@ EPSS, or GHSA ingestion supplies only the data of the table.
 | `CVE-2099-0023` | NVD | `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N` | medium | — | — |
 | `CVE-2099-0024` | NVD | `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N` | high | — | — |
 | `CVE-2099-0025` | Manual Ticket creation | `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H` | high | — | NVD after the Ticket creation |
+| `CVE-2099-0026` | MITRE | — | unresolved | — | — (its CNA is under the auto-ignore policy when it is first ingested) |
 
 The Severity column is the resolved Ticket severity after the load
 (`docs/features/tickets/cvss-scoring.md`, Severity Resolution Cascade).
@@ -500,14 +505,46 @@ references (References). The `CVEs and tickets` step runs:
    `sync_nvd_cves`;
 4. the manual Ticket creations of `SNTL-18` to `SNTL-22` (Tickets), in order;
 5. the first ingestion of `CVE-2099-0021` to `CVE-2099-0024`, in order;
-6. the manual Ticket creation of `SNTL-27`; and
+6. the manual Ticket creation of `SNTL-27`;
 7. the further ingestions: NVD for `CVE-2099-0018` to `CVE-2099-0020` and
    `CVE-2099-0025`, then MITRE, KEV, EPSS, and GHSA, each in ascending CVE
-   order.
+   order;
+8. the metadata and the policy of the CNAs (CNAs); and
+9. the first ingestion of `CVE-2099-0026`.
 
 The affected-version entry of `CVE-2099-0009` has the version type `semver`
 and the status `affected`. The automatic references of References are applied
 with no source reference.
+
+### CNAs
+
+Every MITRE ingestion supplies, as the owner of its record, one of these
+fictional CNAs: its `org_id` and, when the table gives one, its short name with
+the observation date `T − 1d` (`docs/features/tickets/cna.md`, Ingestion
+Writers). The first MITRE ingestion of a CVE of a CNA creates the CNA:
+
+| `org_id` | Short name | Organization name | Types | Scope | Auto-ignore | CVEs |
+|---|---|---|---|---|---|---|
+| `00000000-0000-4000-8000-0000000000a1` | `example` | Example Corporation | `Vendor` | `Example Corporation products only.` | No, after being enabled and disabled by `jdoe` | `CVE-2099-0008`, `CVE-2099-0009`, `CVE-2099-0010` |
+| `00000000-0000-4000-8000-0000000000a2` | `fictional-plugins` | Fictional Plugin Foundation | `Open Source`, `Researcher` | The two lines `Plugins of the fictional plugin directory.` and `Plugin list: https://plugins.example.com` | Yes, set by `jdoe` | `CVE-2099-0006`, `CVE-2099-0026` |
+| `00000000-0000-4000-8000-0000000000a3` | — | — | — | — | No | `CVE-2099-0013` |
+
+The third CNA has no short name, so it has no metadata and its display name is
+`null`, which shows how a client receives an unnamed CNA.
+
+Step 8 of `CVEs and tickets` runs one system operation of
+`update_cna_metadata()` for `example` and for `fictional-plugins`, in this
+order, with the organization name, types, and scope of the table, standing for
+`sync_mitre_cnas`. It then runs `set_cna_auto_ignore()` by `jdoe` three times:
+`true` and then `false` for `example`, and `true` for `fictional-plugins`,
+which create one `auto_ignore_enabled`, one `auto_ignore_disabled`, and one
+`auto_ignore_enabled` event. The CNA of `CVE-2099-0009`, `CVE-2099-0010`, and
+`CVE-2099-0013` is recorded by their further MITRE ingestion in step 7, after
+their Tickets exist and while no CNA is under the policy, so the Tickets keep
+their status. `SNTL-6`, the Ticket of `CVE-2099-0006`, stays `New`: enabling
+the policy changes no existing Ticket. The first ingestion of `CVE-2099-0026`
+in step 9 then creates `SNTL-28` and ignores it with the reason `cna_policy`
+(`docs/features/tickets/cna.md`, When the Policy Applies).
 
 The SUSE assessments are part of the Ticket work:
 
@@ -579,13 +616,13 @@ record.
 ### Tickets
 
 On a newly created database the Tickets receive the identifiers `SNTL-1` to
-`SNTL-27` in this order. Every Ticket with a CVE is created by the first
+`SNTL-28` in this order. Every Ticket with a CVE is created by the first
 ingestion of its CVE, except `SNTL-18` to `SNTL-20` and `SNTL-27`; every
 Ticket without a CVE is created manually. The table states the final state
 after the load.
 
 The dataset holds more than one page of Tickets at the default page size of
-20 (`docs/api-spec.md`) for every caller: 24 Tickets are not confidential and
+20 (`docs/api-spec.md`) for every caller: 25 Tickets are not confidential and
 are visible to every authenticated user.
 
 | Ticket | CVE | Created by | Status | Assignee | Confidential | Severity |
@@ -610,6 +647,7 @@ are visible to every authenticated user.
 | `SNTL-25` | `CVE-2099-0023` | Ingestion | `Ignored` with the reason `other` | `asmith` | No | medium |
 | `SNTL-26` | `CVE-2099-0024` | Ingestion | `Analyzed` | `bwilson` | No | high |
 | `SNTL-27` | `CVE-2099-0025` | `asmith` | `Analyzed` | `asmith` | Yes, with a coordinated release date `T − 2d`, without access grant | high |
+| `SNTL-28` | `CVE-2099-0026` | Ingestion | `Ignored` with the reason `cna_policy`, because its CNA `fictional-plugins` is under the auto-ignore policy (CNAs) | — | No | unresolved |
 
 The manual Ticket creations are `create_ticket()` calls with the `manual`
 source by the creator of the table, with the CVE and the manual severity of
@@ -680,13 +718,15 @@ The resulting states follow the gates of `docs/features/tickets/tickets.md`:
 - `SNTL-20` stays in `Analysis`, assigned to its creator `cwhite`: it has no
   package, so its Analyzed gate fails.
 
-`SNTL-8`, `SNTL-17`, and `SNTL-25` are the `Ignored` Tickets, one for each
-ignore reason (`docs/features/tickets/tickets.md`, Ignore Reason): the
+`SNTL-8`, `SNTL-17`, `SNTL-25`, and `SNTL-28` are the `Ignored` Tickets, one
+for each ignore reason (`docs/features/tickets/tickets.md`, Ignore Reason): the
 ingestion of the rejected `CVE-2099-0008` ignores `SNTL-8` with
-`cve_rejected`, and the ignores of `bwilson` and `asmith` record
-`not_shipped` and `other`. Each of those two ignores first assigns its
-unassigned `New` Ticket to the user who ignores it
-(`docs/features/tickets/tickets.md`, Auto-Assignment on Unassigned Tickets).
+`cve_rejected`, the ignores of `bwilson` and `asmith` record `not_shipped` and
+`other`, and the ingestion of `CVE-2099-0026` ignores `SNTL-28` with
+`cna_policy`. Each of the two ignores by a user first assigns its unassigned
+`New` Ticket to the user who ignores it
+(`docs/features/tickets/tickets.md`, Auto-Assignment on Unassigned Tickets);
+the two automatic ignores leave their Tickets unassigned.
 
 ### Aged Tickets
 
@@ -790,7 +830,7 @@ Every other Ticket has the exploitation level `unknown`, no deciding evidence,
 and no override; its automatic and effective priority is the `unknown` cell
 of its severity: `P2` for critical (`SNTL-18`), `P3` for high, `P4` for
 medium, low, and none, and no priority for an unresolved severity (`SNTL-6`,
-`SNTL-8`, and `SNTL-22`). The EPSS percentiles of `CVE-2099-0002` and
+`SNTL-8`, `SNTL-22`, and `SNTL-28`). The EPSS percentiles of `CVE-2099-0002` and
 `CVE-2099-0018` are below the threshold of the `likely` level, and that of
 `CVE-2099-0001` is not deciding evidence, because the KEV entry decides its
 level.
@@ -944,6 +984,7 @@ holds events after the load:
 | Identity | `user_created`, `role_added`, and `user_deactivated` |
 | Setting | Two `setting_changed` events by `jdoe` |
 | Fetcher | One `disabled` event by `jdoe` for every fetcher |
+| CNA | `auto_ignore_enabled` and `auto_ignore_disabled` for `example`, then `auto_ignore_enabled` for `fictional-plugins`, all by `jdoe` |
 | Ticket | The events of every Ticket creation and Ticket work operation, for example `ticket_created`, `assignment`, `status_change`, `cve_associated`, `cvss_assessment_changed`, `product_eligibility_changed`, `package_added`, `package_maintainer_added`, `track_status_changed`, `product_released`, `priority_changed`, `reference_added`, `coordinated_release_changed`, `confidentiality_changed`, `access_grant_added`, and `duplicate_set` |
 
 ## Operating a Dataset Backend

@@ -114,6 +114,7 @@ Sentinel requires outbound access to:
 | OSV API | `api.osv.dev` | 443 | CVE enrichment (affected versions, external identifiers, references, package names) |
 | GitHub REST API | `api.github.com` | 443 | GitHub Advisory Database sync (`sync_ghsa_advisories`) |
 | GitHub | `github.com` | 443 | MITRE cvelistV5 repository clone/fetch |
+| GitHub raw content | `raw.githubusercontent.com` | 443 | CVE Program CNA list download (`sync_mitre_cnas`) |
 | git.kernel.org | `git.kernel.org` | 443 | Linux kernel vulnerability repo clone/fetch |
 
 ---
