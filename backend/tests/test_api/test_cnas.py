@@ -401,8 +401,9 @@ class TestCNAInCVEAndTicketResponses:
         spy = AsyncMock(return_value=TicketPage(items=(), total=0, page=1, per_page=20))
         monkeypatch.setattr(ticket_service, "list_tickets", spy)
 
-        await authenticated_client.get("/api/v1/tickets")
+        response = await authenticated_client.get("/api/v1/tickets")
 
+        assert response.status_code == 200
         assert spy.await_args is not None
         assert spy.await_args.kwargs["cna"] is None
 

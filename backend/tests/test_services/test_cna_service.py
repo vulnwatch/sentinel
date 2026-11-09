@@ -506,11 +506,11 @@ class TestListCnas:
         """The later `created_at` sorts by its value, not by its id; two rows
         with an equal `created_at` are ordered by `CNA.id` in the same
         direction."""
-        older = await cna_factory(short_name=f"{token}-older")
+        first_inserted = await cna_factory(short_name=f"{token}-first_inserted")
         tied_a = await cna_factory(short_name=f"{token}-tied-a")
         tied_b = await cna_factory(short_name=f"{token}-tied-b")
         await db_session.execute(
-            update(CNA).where(CNA.id == older.id).values(created_at=NEW)
+            update(CNA).where(CNA.id == first_inserted.id).values(created_at=NEW)
         )
         for cna in (tied_a, tied_b):
             await db_session.execute(
@@ -525,7 +525,7 @@ class TestListCnas:
         )
 
         tied = sorted([tied_a.id, tied_b.id])
-        expected = [*tied, older.id]
+        expected = [*tied, first_inserted.id]
         if sort_order is SortOrder.DESC:
             expected.reverse()
         assert [c.id for c in result.items] == expected
