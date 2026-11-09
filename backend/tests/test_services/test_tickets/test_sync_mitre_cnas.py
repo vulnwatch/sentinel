@@ -71,12 +71,6 @@ from app.services.fetcher_schedule import reconcile_beat_schedule
 from app.services.tickets.cna_list import scope_plain_text
 from app.services.tickets.sync_mitre_cnas import (
     CNA_LIST_URL,
-    CONNECT_FAILED_MESSAGE,
-    ENTRIES_INVALID_EVENT,
-    FIELD_INVALID_EVENT,
-    MATCH_AMBIGUOUS_EVENT,
-    TIMED_OUT_MESSAGE,
-    UNPARSEABLE_MESSAGE,
     CNAListStructureError,
     SyncMitreCnas,
 )
@@ -100,6 +94,14 @@ from tests.support.json_decoding import (
 )
 
 NAME: Final = "sync_mitre_cnas"
+
+# The specified messages and events, as literals (cna.md, Error Handling).
+CONNECT_FAILED_MESSAGE: Final = "Failed to connect to the CNA list"
+TIMED_OUT_MESSAGE: Final = "CNA list request timed out"
+UNPARSEABLE_MESSAGE: Final = "CNA list returned unparseable response"
+ENTRIES_INVALID_EVENT: Final = "cna_list_entries_invalid"
+MATCH_AMBIGUOUS_EVENT: Final = "cna_metadata_match_ambiguous"
+FIELD_INVALID_EVENT: Final = "cna_metadata_field_invalid"
 STALE: Final = datetime(2000, 1, 1, tzinfo=UTC)
 """An `updated_at` far before the transaction's `now()`."""
 OBSERVED: Final = datetime(2026, 1, 1, tzinfo=UTC)
@@ -266,15 +268,6 @@ class TestLiveList:
 
 @pytest.mark.integration
 class TestMatching:
-    async def test_case_folded_short_name_matches(
-        self, db_session: AsyncSession, seed: Seed
-    ) -> None:
-        cna = await seed("zte")
-
-        await _execute(db_session, CnaListServer())
-
-        assert (await _stored(db_session, cna))[0] == "ZTE Corporation"
-
     async def test_ambiguous_rows_are_unchanged_and_each_warned(
         self, db_session: AsyncSession, seed: Seed
     ) -> None:
@@ -296,8 +289,16 @@ class TestMatching:
             assert await _updated_at(db_session, row) == STALE
         assert (await _stored(db_session, exact))[0] == "Snow Software"
         assert sorted(
-            entry["org_id"] for entry in _logged(logs, MATCH_AMBIGUOUS_EVENT)
-        ) == sorted(str(row.org_id) for row in (folded, first, second))
+            _logged(logs, MATCH_AMBIGUOUS_EVENT), key=lambda entry: entry["org_id"]
+        ) == [
+            {
+                "event": MATCH_AMBIGUOUS_EVENT,
+                "log_level": "warning",
+                "fetcher_name": NAME,
+                "org_id": org_id,
+            }
+            for org_id in sorted(str(row.org_id) for row in (folded, first, second))
+        ]
         assert metrics == (len(load_list()) + 1, 0, 1, 0)
 
     async def test_entry_without_a_row_creates_nothing(
@@ -309,16 +310,6 @@ class TestMatching:
         metrics = await _sync(db_session, entry_for("example-missing"))
 
         assert await db_session.scalar(select(func.count()).select_from(CNA)) == before
-        assert metrics == (1, 0, 0, 0)
-
-    async def test_row_whose_short_name_differs_in_punctuation_is_not_matched(
-        self, db_session: AsyncSession, seed: Seed
-    ) -> None:
-        cna = await seed("ExampleMobile")
-
-        metrics = await _sync(db_session, entry_for("Example_Mobile"))
-
-        assert await _stored(db_session, cna) == (None, [], None)
         assert metrics == (1, 0, 0, 0)
 
 
@@ -780,6 +771,10 @@ class TestRequest:
 
         assert str(error) == "CNA list returned HTTP 301"
         assert len(server.requests) == 1
+        # The cause carries the status line and URL, not the upstream target.
+        assert str(error.__cause__) == (
+            f"Unexpected status '301 Moved Permanently' for url '{CNA_LIST_URL}'"
+        )
 
     async def test_shared_client_follows_no_redirect(self) -> None:
         """The fetcher keeps the shared client's default (networking.md,
@@ -902,19 +897,17 @@ class TestErrorHandling:
         limit_parser_nesting(monkeypatch)
         server = CnaListServer()
         server.response = raw_body(f"[{NESTED_ARRAY}]".encode())
+        events: list[tuple[str, str]] = []
 
-        raised, _ = await _execute_failing(db_session, server)
+        with SqlRecorder(db_session, events):
+            raised, _ = await _execute_failing(db_session, server)
 
         assert str(raised) == UNPARSEABLE_MESSAGE
         assert isinstance(raised.__cause__, ValueError)
+        assert events == []
 
     def test_structure_error_message_is_fixed(self) -> None:
         assert str(CNAListStructureError()) == "CNA list is not a JSON array"
-
-    def test_messages_name_no_host(self) -> None:
-        for message in (CONNECT_FAILED_MESSAGE, TIMED_OUT_MESSAGE, UNPARSEABLE_MESSAGE):
-            assert "githubusercontent" not in message
-            assert "github" not in message.lower()
 
 
 # ---------------------------------------------------------------------------

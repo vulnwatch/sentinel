@@ -848,7 +848,8 @@ UUID. For each row with short name `s`:
    equals `s` after Unicode case folding of both values;
 2. the row matches an entry when the entry is its only candidate and the entry
    is the only candidate of no other row; and
-3. otherwise the row is ambiguous and is not updated.
+3. otherwise a row with at least one candidate is ambiguous and is not
+   updated. A row without a candidate matches no entry.
 
 In the list of November 2026, two entries, `Snow` and `SNOW`, differed only in
 case: a row whose short name equals one of them exactly matches that one,

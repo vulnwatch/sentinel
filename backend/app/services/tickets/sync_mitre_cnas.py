@@ -162,12 +162,9 @@ class SyncMitreCnas(BaseFetcher):
 
 def _status_error(response: httpx.Response) -> httpx.HTTPStatusError:
     """The `httpx.HTTPStatusError` of a status other than 200, carrying the
-    status line and URL only. `raise_for_status()` provides it for every
-    status outside 2xx; a 2xx other than 200 gets the same form."""
-    try:
-        response.raise_for_status()
-    except httpx.HTTPStatusError as e:
-        return e
+    status line and URL only. It is built here rather than by
+    `raise_for_status()`, which raises nothing for a 2xx and adds the
+    `Location` header of a redirect to its message."""
     return httpx.HTTPStatusError(
         f"Unexpected status '{response.status_code} {response.reason_phrase}' "
         f"for url '{response.request.url}'",
