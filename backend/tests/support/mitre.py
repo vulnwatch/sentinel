@@ -80,12 +80,53 @@ Record fixtures, source path, and purpose:
   references with `patch`, `third-party-advisory`, and an `x_` tag, and a
   CNA `cvssV4_0` vector.
 
+A second capture, made anonymously on 2026-11-09 for the owner of the record
+(docs/features/tickets/cna.md, CNA of a CVE), took its records from the
+release asset `2026-11-09_all_CVEs_at_midnight.zip.zip` of release
+`cve_2026-11-09_1200Z` (`main` at
+`7e54ca86be282cb48f6fc8adb7b7640721f635c7`). Full scan of its 421,272
+record files (402,131 `PUBLISHED`, 19,141 `REJECTED`):
+
+- `containers.cna.providerMetadata` is an object in every record, also a
+  rejected one, and its `orgId` is a lowercase hyphenated UUID in every
+  record. `shortName` is absent in 12 (`PUBLISHED`) and otherwise a trimmed
+  string of 2 to 30 characters without an inadmissible character;
+  `dateUpdated` is absent in 2, `YYYY-MM-DDTHH:MM:SS.fffZ` in 421,268, and
+  without offset or fraction in 2.
+- 494 organizations own records. 21 of them publish under more than one
+  short name over time, such as `@huntrdev` (1,585 records, `dateUpdated`
+  2021-06-26 to 2023-12-23) and `@huntr_ai` (911 records, 2023-11-07 to
+  2026-09-11) for `c09c270a-b464-47c1-9133-acb35b22c19a`; the date ranges of
+  two names of one organization can overlap. One short name, `mitre`,
+  occurs for two organizations: `8254265b-…` and, in 2 records,
+  `50d0f415-…`, whose other 109 records carry `Hitachi`.
+- `cveMetadata.assignerOrgId` differs from the owner in 74 records, the
+  transferred ones.
+- The Linux kernel CNA publishes 18,678 records as `416baaa9-…` / `Linux`.
+  The same capture day, every one of the 18,559 records of `vulns.git`
+  (`master` `47a51be7d7ad01c834715700b5969a22982d83d2`) carried only
+  `providerMetadata.orgId` `f4215fc3-5b6b-47ff-a258-f7189bd81038`
+  (`tests/support/kernel.py`).
+
+Its record fixtures:
+
+- `cna_linux_kernel` (`cves/2021/47xxx/CVE-2021-47658.json`, 5.2): a record
+  of the Linux kernel CNA as cvelistV5 publishes it;
+- `cna_transferred` (`cves/2025/57xxx/CVE-2025-57790.json`, 5.1): an owner
+  (`Commvault`) other than the assigner (`mitre`);
+- `cna_short_name_before_change` (`cves/2022/4xxx/CVE-2022-4685.json`, 5.0)
+  and `cna_short_name_after_change` (`cves/2024/7xxx/CVE-2024-7959.json`,
+  5.2): two rejected records of one organization, `@huntrdev` dated
+  2022-12-28 and `@huntr_ai` dated 2026-07-16. Their `rejectedReasons` are
+  kept: they are fixed texts of the CVE Program.
+
 Each record was re-serialized with a two-space indent, keeping every kept
 key in its original order. Trimming kept `dataType`, `dataVersion`, every
 key of `cveMetadata`, and, of each container, `providerMetadata`, `title`,
 `descriptions`, `affected`, `metrics`, `problemTypes`, and `references`;
 every other container member (`credits`, `datePublic`, `impacts`,
-`source`, `timeline`, `x_generator`, `x_adpType`) was removed. No array was
+`source`, `timeline`, `x_generator`, `x_adpType`, and, in the second
+capture, `cpeApplicability`) was removed. No array was
 shortened. Sanitization (docs/conventions.md, Example Data in
 Documentation): every CNA `title` is `example: fictional title of
 <CVE-ID>` (the ADP titles `CISA ADP Vulnrichment` and `CVE Program
@@ -124,6 +165,10 @@ RECORD_SOURCES: Mapping[str, str] = {
     "siemens_sadp": "cves/2022/23xxx/CVE-2022-23303.json",
     "cna_ssvc_not_consumed": "cves/2026/102xxx/CVE-2026-102670.json",
     "references_x_tags": "cves/2025/6xxx/CVE-2025-6545.json",
+    "cna_linux_kernel": "cves/2021/47xxx/CVE-2021-47658.json",
+    "cna_transferred": "cves/2025/57xxx/CVE-2025-57790.json",
+    "cna_short_name_before_change": "cves/2022/4xxx/CVE-2022-4685.json",
+    "cna_short_name_after_change": "cves/2024/7xxx/CVE-2024-7959.json",
 }
 """Record fixture name → repository path of its source file."""
 

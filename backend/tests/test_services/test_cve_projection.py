@@ -88,6 +88,7 @@ class TestRowAssembly:
             cve_date_rejected=None,
             cve_severity=Severity.NONE.value,
             cve_external_identifiers=[],
+            cna_org_id=None,
             kev_pk=None,
             epss_pk=None,
             ssvc_pk=None,
@@ -105,9 +106,54 @@ class TestRowAssembly:
             cve_state=CveState.REJECTED,
             date_rejected=None,
             severity=Severity.NONE,
+            cna=None,
             external_identifiers=(),
             kev=None,
             epss=None,
             ssvc=None,
             cwes=(cve_projection.CVEWeaknessProjection("CWE-79", ("NVD",)),),
         )
+
+
+_ORG_ID = uuid.UUID("00000000-0000-4000-8000-0000000000a1")
+
+
+@pytest.mark.unit
+class TestCNASummary:
+    """`CNASummary` and the display name (docs/features/tickets/cna.md,
+    Display Name; Response Schemas)."""
+
+    @pytest.mark.parametrize(
+        ("organization_name", "short_name", "name"),
+        [
+            ("Example Corporation", "example", "Example Corporation"),
+            ("Example Corporation", None, "Example Corporation"),
+            (None, "example", "example"),
+            (None, None, None),
+        ],
+    )
+    def test_display_name_falls_back_to_the_short_name_then_none(
+        self, organization_name: str | None, short_name: str | None, name: str | None
+    ) -> None:
+        row = _row(
+            cna_org_id=_ORG_ID,
+            cna_organization_name=organization_name,
+            cna_short_name=short_name,
+        )
+
+        assert cve_projection.cna_display_name(organization_name, short_name) == name
+        assert cve_projection.cna_summary_from_row(row) == (
+            cve_projection.CNASummaryProjection(org_id=_ORG_ID, name=name)
+        )
+
+    def test_row_without_a_cna_assembles_to_none(self) -> None:
+        row = _row(cna_org_id=None, cna_organization_name=None, cna_short_name=None)
+
+        assert cve_projection.cna_summary_from_row(row) is None
+
+    def test_detail_columns_include_the_summary_columns(self) -> None:
+        detail = {column.key for column in cve_projection.cve_detail_columns()}
+        summary = {column.key for column in cve_projection.cna_summary_columns()}
+
+        assert summary == {"cna_org_id", "cna_organization_name", "cna_short_name"}
+        assert summary <= detail

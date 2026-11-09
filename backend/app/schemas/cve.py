@@ -30,6 +30,7 @@ from app.core.enums import (
     SSVCExploitation,
     SSVCTechnicalImpact,
 )
+from app.schemas.cna import CNASummary
 from app.schemas.common import PaginationMeta, SeverityValue
 
 type CVEExternalIdentifierSourceValue = Literal["ghsa", "pysec", "rustsec"]
@@ -45,6 +46,13 @@ _CVE_STATE_DESCRIPTION = (
 )
 """Shared by `CVEDetail` and `CVEListItem` (`docs/features/tickets/tickets.md`,
 CVEDetail; `docs/features/tickets/cve-service.md`, Placeholder Records)."""
+
+_CNA_DESCRIPTION = (
+    "CNA that owns the CVE Record, with its display name; `null` when no CNA "
+    "is recorded."
+)
+"""Shared by `CVESummary`, `CVEDetail`, and `CVEListItem`
+(`docs/features/tickets/cna.md`, Response Schemas)."""
 
 _UNVALIDATED_URL = (
     "An upstream string that is not validated: it is not guaranteed to be an "
@@ -133,6 +141,7 @@ class CVESummary(BaseModel):
         )
     )
     description: str | None = Field(description="Vulnerability description.")
+    cna: CNASummary | None = Field(description=_CNA_DESCRIPTION)
 
 
 class CVEDetail(BaseModel):
@@ -166,6 +175,7 @@ class CVEDetail(BaseModel):
             "unresolved (no CVSS data). `none` is distinct from `null`."
         )
     )
+    cna: CNASummary | None = Field(description=_CNA_DESCRIPTION)
     external_identifiers: list[CVEExternalIdentifierResponse] = Field(
         description=(
             "External identifiers from other naming authorities, ordered by "
@@ -231,6 +241,7 @@ class CVEListItem(BaseModel):
     )
     cve_state: CveStateValue = Field(description=_CVE_STATE_DESCRIPTION)
     published_date: datetime | None = Field(description="CVE publication date (UTC).")
+    cna: CNASummary | None = Field(description=_CNA_DESCRIPTION)
     ticket: CVEAssociatedTicket | None = Field(
         description="Associated Ticket, if any; `null` for a ticketless CVE."
     )
@@ -484,15 +495,17 @@ class CVEListQuery(BaseModel):
     `cve_state` and the repeatable `severity` are intentionally raw
     strings: an invalid value yields an empty page rather than an error
     (`docs/api-spec.md`, Enum Filter Validation); `severity is None` means
-    omitted. The date bounds are already parsed, checked for inversion,
-    and normalized to UTC. `sort_by` and `sort_order` are typed, so an
-    invalid value is the global `422 VALIDATION_ERROR`.
+    omitted. The repeatable `cna` holds already validated hyphenated UUIDs,
+    an empty list when omitted. The date bounds are already parsed, checked
+    for inversion, and normalized to UTC. `sort_by` and `sort_order` are
+    typed, so an invalid value is the global `422 VALIDATION_ERROR`.
     """
 
     search: str | None = None
     cve_state: str | None = None
     severity: list[str] | None = None
     has_ticket: bool | None = None
+    cna: list[str] = Field(default_factory=list)
     from_date: datetime | None = None
     to_date: datetime | None = None
     page: int = Field(default=1, ge=1, le=2_147_483_647)

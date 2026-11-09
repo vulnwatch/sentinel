@@ -8,8 +8,10 @@ file. The module performs no Git, database, or logging work;
 the per-item failure outcome.
 
 `map_record()` derives `cve_state` from the directory, delegates the CVE
-Record 5.x field parsing to `cve_record_parser`, and builds the
-`CVEIngestPayload` and the ordered reference candidates. Every failure is
+Record 5.x field parsing to `cve_record_parser`, supplies the Linux kernel
+CNA constants as the owner of the record (the record's own `orgId` is not
+the CNA's CVE Services organization), and builds the `CVEIngestPayload` and
+the ordered reference candidates. Every failure is
 a per-item failure: a `KernelRecordError` subclass for a path, content, or
 state that cannot be mapped, or the payload's `pydantic.ValidationError`
 for a `title` or description containing an inadmissible character
@@ -19,6 +21,7 @@ for a `title` or description containing an inadmissible character
 from __future__ import annotations
 
 import re
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final
@@ -28,6 +31,7 @@ from app.core.identifiers import is_valid_cve_id
 from app.services.cve_ingest import (
     AffectedVersionOperation,
     AffectedVersionScopeOperation,
+    CNAEntry,
     CVEIngestPayload,
 )
 from app.services.cve_record_parser import (
@@ -46,6 +50,17 @@ PROVIDER_NAME: Final = "Linux"
 
 RESOLVED_PACKAGE: Final = "kernel-source"
 """The SUSE source package of every kernel CVE."""
+
+CNA_ORG_ID: Final = uuid.UUID("416baaa9-dc9f-4396-8d5f-8c081fb06d67")
+"""The CVE Services organization of the Linux kernel CNA, with which
+cvelistV5 publishes its records; the `vulns.git` `orgId` is another value."""
+
+CNA_SHORT_NAME: Final = "Linux"
+"""The short name of the Linux kernel CNA in cvelistV5."""
+
+CNA_OWNER: Final = CNAEntry(org_id=CNA_ORG_ID, short_name=CNA_SHORT_NAME)
+"""The `cna` of every kernel record: the constants, without an observation
+date (cve-sync-kernel.md, CVE JSON Field Mapping)."""
 
 SOURCE_CONTAINER: Final = "cna"
 """The affected-version scope shared with `sync_mitre_cves`."""
@@ -163,6 +178,7 @@ def _payload_fields(cve_state: CveState, cna: Mapping[str, Any]) -> dict[str, ob
     omitted and a literal `null` is an explicit clear."""
     fields: dict[str, object] = {
         "cve_state": cve_state,
+        "cna": CNA_OWNER,
         "resolved_packages": [RESOLVED_PACKAGE],
     }
     if "title" in cna:

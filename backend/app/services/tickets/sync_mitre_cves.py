@@ -14,8 +14,9 @@ docs/features/platform/git-fetcher-infrastructure.md:
   `cves/YEAR/NNNxxx/CVE-YEAR-SEQ.json` with a canonical CVE-ID, which drops
   `cves/delta.json` and `cves/deltaLog.json`; the default
   `deduplicate_items()` applies, since one CVE has one path;
-- `process_item()` maps the record (`mitre_cve_record.map_record()`), logs
-  the bounded WARNINGs of the facts the mapping reports, then ingests it
+- `process_item()` maps the record (`mitre_cve_record.map_record()`), with
+  the owner of the record as the CNA of the CVE, logs the bounded WARNINGs
+  of the facts the mapping reports, then ingests it
   through `cve_service.upsert_cve()` and
   `reference_service.upsert_references()` in the caller's per-CVE
   transaction. Every failure propagates to the template's per-item
@@ -44,6 +45,7 @@ logger = structlog.get_logger(__name__)
 
 ADP_ENTRY_SKIPPED_EVENT: Final = "mitre_adp_entry_skipped"
 CNA_PROVIDER_SKIPPED_EVENT: Final = "mitre_cna_provider_skipped"
+CNA_OWNER_SKIPPED_EVENT: Final = "mitre_cna_owner_skipped"
 SSVC_ASSESSMENT_SKIPPED_EVENT: Final = "mitre_ssvc_assessment_skipped"
 
 
@@ -141,6 +143,10 @@ def _log_skipped_data(record: mitre_cve_record.MitreRecord, fetcher_name: str) -
             fetcher_name=fetcher_name,
             reason=record.cna_guard.reason,
             **_org_id_field(record.cna_guard.org_id),
+        )
+    if record.cna_owner_skipped:
+        logger.warning(
+            CNA_OWNER_SKIPPED_EVENT, cve_id=record.cve_id, fetcher_name=fetcher_name
         )
     for skip in record.ssvc_skips:
         logger.warning(

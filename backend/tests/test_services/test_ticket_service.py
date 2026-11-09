@@ -71,6 +71,7 @@ from app.models.user import User
 from app.models.user_role import UserRole
 from app.services import cve_projection, package_service, ticket_service
 from app.services.cve_projection import (
+    CNASummaryProjection,
     CVEDetailProjection,
     CVEEPSSProjection,
     CVEExternalIdentifierProjection,
@@ -399,6 +400,7 @@ class TestDetailProjection:
             cve_state=CveState.PUBLISHED,
             date_rejected=None,
             severity=None,
+            cna=None,
             external_identifiers=(),
             kev=None,
             epss=None,
@@ -420,7 +422,11 @@ class TestDetailProjection:
         cve_cwe_factory: Factory,
         cve_external_identifier_factory: Factory,
         cve_cvss_assessment_factory: Factory,
+        cna_factory: Factory,
     ) -> None:
+        cna = await cna_factory(
+            short_name="example", organization_name="Example Corporation"
+        )
         cve = await cve_factory(
             cve_id="CVE-2099-40002",
             title="Fictional overflow",
@@ -430,6 +436,7 @@ class TestDetailProjection:
             cve_state=CveState.REJECTED.value,
             date_rejected=REJECTED,
             severity=Severity.CRITICAL.value,
+            cna_id=cna.id,
         )
         ticket: Ticket = await ticket_factory(cve_id=cve.id, created_at=CREATED_AT)
         await cve_kev_entry_factory(
@@ -486,6 +493,7 @@ class TestDetailProjection:
             cve_state=CveState.REJECTED,
             date_rejected=REJECTED,
             severity=Severity.CRITICAL,
+            cna=CNASummaryProjection(org_id=cna.org_id, name="Example Corporation"),
             external_identifiers=(
                 CVEExternalIdentifierProjection(
                     source="GHSA", identifier="GHSA-Zzzz-bbbb-cccc", url=None

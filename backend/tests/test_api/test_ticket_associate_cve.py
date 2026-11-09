@@ -1254,6 +1254,7 @@ def _placeholder_cve(cve_id: str) -> dict[str, Any]:
         "cve_state": "published",
         "date_rejected": None,
         "severity": None,
+        "cna": None,
         "external_identifiers": [],
         "kev": None,
         "epss": None,

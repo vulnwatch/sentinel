@@ -22,6 +22,7 @@ authentication, anti-enumeration, and handler delegation.
 from __future__ import annotations
 
 import re
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Final
@@ -82,6 +83,7 @@ _LIST_ITEM_FIELDS: Final = {
     "severity",
     "cve_state",
     "published_date",
+    "cna",
     "ticket",
     "created_at",
     "updated_at",
@@ -95,6 +97,7 @@ _CVE_DETAIL_FIELDS: Final = {
     "cve_state",
     "date_rejected",
     "severity",
+    "cna",
     "external_identifiers",
     "kev",
     "epss",
@@ -197,13 +200,19 @@ class TestCVEList:
         authenticated_client: AsyncClient,
         cve_factory: Factory,
         ticket_factory: Factory,
+        cna_factory: Factory,
     ) -> None:
+        cna = await cna_factory(
+            org_id=uuid.UUID("00000000-0000-4000-8000-0000000000a1"),
+            short_name="example",
+        )
         with_ticket: CVE = await cve_factory(
             cve_id="CVE-2099-50001",
             title="Fictional title",
             description=None,
             severity=Severity.HIGH.value,
             published_date=MAR_1,
+            cna_id=cna.id,
             created_at=CREATED_AT,
             updated_at=UPDATED_AT,
         )
@@ -233,6 +242,10 @@ class TestCVEList:
                 "severity": "high",
                 "cve_state": "published",
                 "published_date": "2099-03-01T12:00:00Z",
+                "cna": {
+                    "org_id": "00000000-0000-4000-8000-0000000000a1",
+                    "name": "example",
+                },
                 "ticket": {"ticket_id": _sntl(ticket), "is_confidential": False},
                 "created_at": "2099-01-10T08:00:00Z",
                 "updated_at": "2099-01-11T09:30:00Z",
@@ -244,6 +257,7 @@ class TestCVEList:
                 "severity": "none",
                 "cve_state": "rejected",
                 "published_date": None,
+                "cna": None,
                 "ticket": None,
                 "created_at": "2099-01-10T08:00:00Z",
                 "updated_at": "2099-01-11T09:30:00Z",
@@ -251,7 +265,7 @@ class TestCVEList:
         ]
         for item in body["data"]:
             assert set(item) == _LIST_ITEM_FIELDS
-        for secret in (with_ticket.id, ticketless.id, ticket.id):
+        for secret in (with_ticket.id, ticketless.id, ticket.id, cna.id):
             assert str(secret) not in response.text
 
     async def test_mixed_visibility_rows_and_total_per_caller(
@@ -420,7 +434,13 @@ class TestCVEDetail:
         cve_ssvc_assessment_factory: Factory,
         cve_cwe_factory: Factory,
         cve_cvss_assessment_factory: Factory,
+        cna_factory: Factory,
     ) -> None:
+        cna = await cna_factory(
+            org_id=uuid.UUID("00000000-0000-4000-8000-0000000000a2"),
+            short_name="fictional-plugins",
+            organization_name="Fictional Plugin Foundation",
+        )
         cve: CVE = await cve_factory(
             cve_id="CVE-2099-60001",
             title="Fictional detail title",
@@ -430,6 +450,7 @@ class TestCVEDetail:
             cve_state=CveState.REJECTED.value,
             date_rejected=datetime(2099, 3, 6, tzinfo=UTC),
             severity=Severity.CRITICAL.value,
+            cna_id=cna.id,
         )
         ticket: Ticket = await ticket_factory(cve_id=cve.id, priority_auto="P1")
         await cve_external_identifier_factory(
@@ -478,6 +499,10 @@ class TestCVEDetail:
             "cve_state": "rejected",
             "date_rejected": "2099-03-06T00:00:00Z",
             "severity": "critical",
+            "cna": {
+                "org_id": "00000000-0000-4000-8000-0000000000a2",
+                "name": "Fictional Plugin Foundation",
+            },
             "external_identifiers": [
                 {
                     "source": "ghsa",
@@ -506,7 +531,14 @@ class TestCVEDetail:
         }
         assert set(body["data"]) == _CVE_DETAIL_FIELDS | {"ticket"}
         assert set(body["data"]["ticket"]) == {"ticket_id", "is_confidential"}
-        for secret in (str(cve.id), str(ticket.id), "priority", "cvss", "SUSE"):
+        for secret in (
+            str(cve.id),
+            str(ticket.id),
+            str(cna.id),
+            "priority",
+            "cvss",
+            "SUSE",
+        ):
             assert secret not in response.text
 
     async def test_ticketless_cve_is_visible_to_a_role_less_caller_with_no_evidence(
@@ -527,6 +559,7 @@ class TestCVEDetail:
                 "cve_state": "published",
                 "date_rejected": None,
                 "severity": None,
+                "cna": None,
                 "external_identifiers": [],
                 "kev": None,
                 "epss": None,
@@ -1266,6 +1299,7 @@ class TestHandlerDelegation:
             "cve_state": None,
             "severity": None,
             "has_ticket": None,
+            "cna": None,
             "from_date": None,
             "to_date": None,
             "page": 1,
@@ -1295,6 +1329,10 @@ class TestHandlerDelegation:
                     "cve_state": "bogus",
                     "severity": ["high", "high,low", "unresolved"],
                     "has_ticket": "false",
+                    "cna": [
+                        "00000000-0000-4000-8000-0000000000A1",
+                        "00000000-0000-4000-8000-0000000000a2",
+                    ],
                     "from_date": "2099-03-01T14:00:00+02:00",
                     "to_date": "2099-03-02",
                     "page": 2,
@@ -1321,6 +1359,10 @@ class TestHandlerDelegation:
             "cve_state": "bogus",
             "severity": ["high", "high,low", "unresolved"],
             "has_ticket": False,
+            "cna": [
+                uuid.UUID("00000000-0000-4000-8000-0000000000a1"),
+                uuid.UUID("00000000-0000-4000-8000-0000000000a2"),
+            ],
             "page": 2,
             "per_page": 5,
             "sort_by": CVESortField.SEVERITY,
@@ -1346,6 +1388,7 @@ class TestHandlerDelegation:
             cve_state=CveState.PUBLISHED,
             date_rejected=None,
             severity=Severity.NONE,
+            cna=None,
             external_identifiers=(),
             kev=None,
             epss=None,
@@ -1509,6 +1552,7 @@ class TestOpenApiContract:
             "cve_state",
             "severity",
             "has_ticket",
+            "cna",
             "from_date",
             "to_date",
             "page",

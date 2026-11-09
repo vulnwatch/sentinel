@@ -55,6 +55,7 @@ from app.api.dependencies import (
     user_not_found_error,
 )
 from app.api.openapi import enum_filter_schema
+from app.api.v1.cnas import serialize_cna_summary
 from app.api.v1.cves import serialize_cve_detail
 from app.api.v1.ticket_packages import serialize_package
 from app.core.enums import (
@@ -84,6 +85,12 @@ from app.core.identifiers import (
 )
 from app.core.permissions import get_capabilities
 from app.database import DatabaseSession, async_session_factory
+from app.schemas.cna import (
+    CNA_ORG_ID_FILTER_DESCRIPTION,
+    CNA_ORG_ID_FILTER_SCHEMA,
+    cna_org_id_filter,
+    validate_cna_org_id_filter,
+)
 from app.schemas.common import PaginationMeta, UserReference
 from app.schemas.cve import (
     CVESummary,
@@ -245,6 +252,19 @@ def _ticket_list_query(
                 _IGNORE_REASON_FILTER, repeatable=True
             ),
         ),
+    ],
+    cna: Annotated[
+        list[str],
+        Query(
+            default_factory=list,
+            description=(
+                "Filter by the CNA that owns the record of the Ticket's CVE. "
+                f"{CNA_ORG_ID_FILTER_DESCRIPTION} A Ticket without a CVE, or "
+                "whose CVE has no CNA, matches no value."
+            ),
+            json_schema_extra=CNA_ORG_ID_FILTER_SCHEMA,
+        ),
+        AfterValidator(validate_cna_org_id_filter),
     ],
     assignee: Annotated[
         str | None,
@@ -426,6 +446,7 @@ def _ticket_list_query(
         search=search,
         status=status_filter,
         ignore_reason=ignore_reason,
+        cna=cna,
         assignee=assignee,
         severity=severity,
         priority=priority,
@@ -496,7 +517,10 @@ def serialize_ticket_summary(summary: TicketSummaryProjection) -> TicketSummary:
             "assignee": _user_reference(summary.assignee),
             "cve": (
                 CVESummary(
-                    cve_id=cve.cve_id, title=cve.title, description=cve.description
+                    cve_id=cve.cve_id,
+                    title=cve.title,
+                    description=cve.description,
+                    cna=serialize_cna_summary(cve.cna),
                 )
                 if cve is not None
                 else None
@@ -563,8 +587,9 @@ def serialize_ticket_detail(detail: TicketDetailProjection) -> TicketDetail:
     summary="List Tickets",
     description=(
         "Returns a paginated list of the Tickets visible to the caller, with "
-        "multi-field search, repeatable status, ignore reason, severity, priority, "
-        "overdue, and current phase filters, assignee, maintainer, Product, track, "
+        "multi-field search, repeatable status, ignore reason, CNA, severity, "
+        "priority, overdue, and current phase filters, assignee, maintainer, "
+        "Product, track, "
         "duplicate-original, confidentiality, and passed Coordinated Release "
         "Date filters, and sorting. "
         "Visibility is applied before every filter, sort, count, and page. Requires "
@@ -589,6 +614,7 @@ async def list_tickets(
         search=query.search,
         status=_parse_repeatable(query.status, _STATUS_FILTER),
         ignore_reason=_parse_repeatable(query.ignore_reason, _IGNORE_REASON_FILTER),
+        cna=cna_org_id_filter(query.cna),
         assignee=query.assignee,
         severity=_parse_repeatable(query.severity, _SEVERITY_FILTER),
         priority=_parse_repeatable(query.priority, _PRIORITY_FILTER),

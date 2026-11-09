@@ -1,6 +1,7 @@
 """SQLAlchemy ORM models."""
 
 from app.models.api_key import ApiKey
+from app.models.cna import CNA
 from app.models.cve import CVE
 from app.models.cve_affected_version import CVEAffectedVersion
 from app.models.cve_cvss_assessment import CVECVSSAssessment
@@ -36,6 +37,7 @@ from app.models.user import User
 from app.models.user_role import UserRole
 
 __all__ = [
+    "CNA",
     "CVE",
     "CVECWE",
     "ApiKey",

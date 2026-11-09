@@ -49,6 +49,7 @@ from app.models.ticket_access_grant import TicketAccessGrant
 from app.models.user import User
 from app.models.user_role import UserRole
 from app.services import ticket_service
+from app.services.cve_projection import CNASummaryProjection
 from app.services.ticket_deadlines import DueDates, TicketCurrentPhase
 from app.services.ticket_priority import ExploitationEvidence
 from app.services.ticket_service import (
@@ -203,6 +204,7 @@ class TestListEndpoint:
                 "cve_id": "CVE-2099-50001",
                 "title": "Fictional title",
                 "description": None,
+                "cna": None,
             },
             "duplicate_of_ticket_id": None,
             "is_confidential": False,
@@ -927,7 +929,10 @@ class TestSerializer:
                     bot=False,
                 ),
                 cve=CVESummaryProjection(
-                    cve_id="CVE-2099-1", title=None, description="d"
+                    cve_id="CVE-2099-1",
+                    title=None,
+                    description="d",
+                    cna=CNASummaryProjection(org_id=uuid.UUID(int=3), name=None),
                 ),
                 duplicate_of_ticket_id=None,
                 is_confidential=True,
@@ -976,6 +981,10 @@ class TestSerializer:
         assert serialized.assignee.active is False
         assert serialized.cve is not None
         assert serialized.cve.cve_id == "CVE-2099-1"
+        assert serialized.cve.model_dump(mode="json")["cna"] == {
+            "org_id": str(uuid.UUID(int=3)),
+            "name": None,
+        }
 
     def test_wire_filter_maps_cover_every_domain_member(self) -> None:
         assert set(route._STATUS_FILTER.values()) == set(TicketStatus)
@@ -1024,6 +1033,7 @@ class TestOpenApiContract:
             "search",
             "status",
             "ignore_reason",
+            "cna",
             "assignee",
             "severity",
             "priority",
@@ -1141,6 +1151,7 @@ class TestOpenApiContract:
             "cve_id",
             "title",
             "description",
+            "cna",
         }
 
     def test_summary_and_detail_share_the_consumer_guidance(self) -> None:

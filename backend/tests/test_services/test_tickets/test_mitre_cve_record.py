@@ -4,7 +4,8 @@
 Contract under test: docs/features/tickets/cve-sync-mitre.md (Algorithm
 step 1 path pattern and step 2 mapping; CVE JSON 5.x Field Path Mapping:
 global fields and presence rules including the `PUBLISHED` + `dateRejected`
-rejection, CNA fields and the CNA defensive guard, CVSS extraction and the
+rejection, CNA fields with the owner of the record (`cna`) and the CNA
+defensive and owner guards, CVSS extraction and the
 reserved provider, ADP fields and the ADP defensive guard, CISA-ADP SSVC,
 KEV, and CWE, the SSVC skip classification, scoped operation construction
 and duplicate scopes, CVE-ID cross-validation, additive child retention,
@@ -24,6 +25,7 @@ from __future__ import annotations
 
 import copy
 import json
+import uuid
 from datetime import UTC, date, datetime
 from typing import Any, Final
 
@@ -42,6 +44,7 @@ from app.services.cve_ingest import (
     AffectedVersionEntry,
     AffectedVersionOperation,
     AffectedVersionScopeOperation,
+    CNAEntry,
     CVEIngestPayload,
     CVSSAssessmentEntry,
     CWEEntry,
@@ -49,6 +52,7 @@ from app.services.cve_ingest import (
     SSVCEntry,
 )
 from app.services.reference_service import AutomaticReferenceInput
+from app.services.tickets.kernel_cve_record import CNA_OWNER as KERNEL_CNA_OWNER
 from app.services.tickets.mitre_cve_record import (
     CISA_ADP_CWE_SOURCE,
     CISA_ADP_ORG_ID,
@@ -596,6 +600,7 @@ class TestGlobalFields:
             "modified_date",
         }
         assert result.cna_guard == CnaGuard(org_id=None)
+        assert result.cna_owner_skipped is True
         assert result.upstream_references == ()
 
     @pytest.mark.parametrize("containers", [None, [], "containers"])
@@ -613,6 +618,7 @@ class TestGlobalFields:
         assert result.skipped_adps == ()
         assert result.ssvc_skips == ()
         assert result.cna_guard == CnaGuard(org_id=None)
+        assert result.cna_owner_skipped is True
 
     def test_resolved_packages_is_never_set(self) -> None:
         affected = [_affected(packageName="example-package")]
@@ -785,6 +791,11 @@ class TestCnaGuard:
         result = map_record(record_path(name), load_raw_record(name))
 
         assert result.cna_guard == CnaGuard(org_id=cna["providerMetadata"]["orgId"])
+        # The owner is still recorded, without a short name.
+        assert result.payload.cna == CNAEntry(
+            org_id=uuid.UUID(cna["providerMetadata"]["orgId"])
+        )
+        assert result.cna_owner_skipped is False
         # Its ADP containers carry no vector and no CWE.
         assert not {"cvss_assessments", "cwe_classifications"} & (
             result.payload.model_fields_set
@@ -793,6 +804,163 @@ class TestCnaGuard:
         assert _entries(result.payload, "cna") == (
             cve_record_parser.parse_affected_versions(cna["affected"])
         )
+
+
+class TestCnaOwner:
+    """`cna`, the owner of the record, and the CNA owner guard
+    (cve-sync-mitre.md, CNA container fields: `cna`; CNA owner guard;
+    docs/features/tickets/cna.md, Payload)."""
+
+    def test_owner_is_the_provider_metadata_of_the_cna_container(self) -> None:
+        provider = {
+            "orgId": CNA_ORG_ID,
+            "shortName": CNA_NAME,
+            "dateUpdated": "2026-01-02T03:04:05.000Z",
+        }
+
+        result = _map(_record(providerMetadata=provider))
+
+        assert result.payload.cna == CNAEntry(
+            org_id=uuid.UUID(CNA_ORG_ID),
+            short_name=CNA_NAME,
+            short_name_observed_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
+        )
+        assert result.cna_owner_skipped is False
+
+    def test_mapping_delegates_the_owner_to_the_parser(self) -> None:
+        record = _record()
+
+        payload = _payload(record)
+
+        assert payload.cna == cve_record_parser.parse_cna_owner(
+            record["containers"]["cna"]
+        )
+
+    def test_assigner_is_not_the_owner(self) -> None:
+        """After a transfer the assigner of the CVE ID differs from the
+        owner; only the owner is read."""
+        record = _record(metadata={"assignerOrgId": ADP_ORG_ID})
+
+        assert _payload(record).cna == CNAEntry(
+            org_id=uuid.UUID(CNA_ORG_ID), short_name=CNA_NAME
+        )
+
+    def test_rejected_record_names_its_owner(self) -> None:
+        record = _record(
+            state="REJECTED", metadata={"dateRejected": "2026-01-04T00:00:00.000Z"}
+        )
+
+        assert _payload(record).cna == CNAEntry(
+            org_id=uuid.UUID(CNA_ORG_ID), short_name=CNA_NAME
+        )
+
+    @pytest.mark.parametrize(
+        "provider",
+        [
+            {"orgId": CNA_ORG_ID},
+            {"orgId": CNA_ORG_ID, "shortName": " \t"},
+            {"orgId": CNA_ORG_ID, "shortName": "x" * 33},
+            {"orgId": CNA_ORG_ID, "shortName": 7},
+        ],
+        ids=["absent", "whitespace", "over-32", "number"],
+    )
+    def test_unusable_short_name_keeps_only_the_org_id(
+        self, provider: dict[str, Any]
+    ) -> None:
+        provider = {**provider, "dateUpdated": "2026-01-02T03:04:05.000Z"}
+
+        result = _map(_record(providerMetadata=provider))
+
+        assert result.payload.cna == CNAEntry(org_id=uuid.UUID(CNA_ORG_ID))
+        assert result.cna_owner_skipped is False
+
+    @pytest.mark.parametrize(
+        "provider",
+        [
+            {"shortName": CNA_NAME},
+            {"orgId": None, "shortName": CNA_NAME},
+            {"orgId": SECRET, "shortName": CNA_NAME},
+            {"orgId": CNA_ORG_ID.replace("-", ""), "shortName": CNA_NAME},
+            {"orgId": f"{{{CNA_ORG_ID}}}", "shortName": CNA_NAME},
+            None,
+            "ExampleCNA",
+        ],
+        ids=["absent", "null", "text", "unhyphenated", "braced", "null-pm", "string"],
+    )
+    def test_owner_guard_omits_cna_and_leaves_every_other_field(
+        self, provider: Any
+    ) -> None:
+        guarded = _map(_record(providerMetadata=provider, adp=[_adp(), _cisa()]))
+        unguarded = _map(_record(adp=[_adp(), _cisa()]))
+
+        assert "cna" not in guarded.payload.model_fields_set
+        assert guarded.cna_owner_skipped is True
+        assert unguarded.cna_owner_skipped is False
+        unaffected = (
+            "title",
+            "description",
+            "affected_version_operations",
+            "ssvc_assessment",
+            "kev_data",
+            "cve_state",
+        )
+        for field in unaffected:
+            assert getattr(guarded.payload, field) == getattr(unguarded.payload, field)
+        assert guarded.upstream_references == unguarded.upstream_references
+
+    def test_uppercase_org_id_is_normalized(self) -> None:
+        provider = {"orgId": CNA_ORG_ID.upper(), "shortName": CNA_NAME}
+
+        cna = _payload(_record(providerMetadata=provider)).cna
+
+        assert cna is not None
+        assert str(cna.org_id) == CNA_ORG_ID
+
+    def test_live_transferred_record_maps_its_owner(self) -> None:
+        name = "cna_transferred"
+        record = load_record(name)
+
+        payload = map_record(record_path(name), load_raw_record(name)).payload
+
+        assert payload.cna is not None
+        assert payload.cna.short_name == "Commvault"
+        assert (
+            str(payload.cna.org_id)
+            == (record["containers"]["cna"]["providerMetadata"]["orgId"])
+        )
+        assert str(payload.cna.org_id) != record["cveMetadata"]["assignerOrgId"]
+
+    def test_live_linux_record_maps_the_kernel_constants(self) -> None:
+        """cvelistV5 publishes the kernel CNA's records with the organization
+        and short name that `sync_kernel_cves` supplies as constants."""
+        name = "cna_linux_kernel"
+
+        payload = map_record(record_path(name), load_raw_record(name)).payload
+
+        assert payload.cna is not None
+        assert (payload.cna.org_id, payload.cna.short_name) == (
+            KERNEL_CNA_OWNER.org_id,
+            KERNEL_CNA_OWNER.short_name,
+        )
+        assert payload.cna.short_name_observed_at == datetime(
+            2026, 5, 11, 13, 58, 45, 799000, tzinfo=UTC
+        )
+
+    def test_live_records_of_one_organization_carry_its_changed_short_name(
+        self,
+    ) -> None:
+        before, after = (
+            map_record(record_path(name), load_raw_record(name)).payload.cna
+            for name in ("cna_short_name_before_change", "cna_short_name_after_change")
+        )
+
+        assert before is not None
+        assert after is not None
+        assert before.org_id == after.org_id
+        assert (before.short_name, after.short_name) == ("@huntrdev", "@huntr_ai")
+        assert before.short_name_observed_at is not None
+        assert after.short_name_observed_at is not None
+        assert before.short_name_observed_at < after.short_name_observed_at
 
 
 # ---------------------------------------------------------------------------
@@ -1340,6 +1508,7 @@ class TestAdditiveRetention:
             "description",
             "published_date",
             "modified_date",
+            "cna",
         }
 
 
@@ -1593,6 +1762,30 @@ class TestExternalStringAdmissibility:
         assert _cvss(result.payload) == {(f"Example{character}", V31)}
         assert "cwe_classifications" not in result.payload.model_fields_set
         assert result.cna_guard is None
+        # The owner carries no short name (`parse_cna_owner`).
+        assert result.payload.cna == CNAEntry(org_id=uuid.UUID(CNA_ORG_ID))
+
+    def test_cna_org_id_is_the_owner_guard(self, character: str) -> None:
+        provider = {"orgId": f"{CNA_ORG_ID}{character}", "shortName": CNA_NAME}
+
+        result = _map(_record(providerMetadata=provider))
+
+        assert "cna" not in result.payload.model_fields_set
+        assert result.cna_owner_skipped is True
+        assert _cvss(result.payload) == {(CNA_NAME, V31)}
+
+    def test_cna_date_updated_leaves_the_short_name_undated(
+        self, character: str
+    ) -> None:
+        provider = {
+            "orgId": CNA_ORG_ID,
+            "shortName": CNA_NAME,
+            "dateUpdated": f"2026-01-02T03:04:05{character}Z",
+        }
+
+        assert _payload(_record(providerMetadata=provider)).cna == CNAEntry(
+            org_id=uuid.UUID(CNA_ORG_ID), short_name=CNA_NAME
+        )
 
     def test_adp_short_name_skips_the_entry(self, character: str) -> None:
         result = _map(_record(adp=[_adp(f"Example{character}")]))
@@ -1620,7 +1813,6 @@ class TestExternalStringAdmissibility:
             lambda r, c: r["cveMetadata"].update(assignerOrgId=c),
             lambda r, c: r["cveMetadata"].update(dateReserved=c),
             lambda r, c: r["containers"]["cna"].update(x_generator={"engine": c}),
-            lambda r, c: r["containers"]["cna"]["providerMetadata"].update(orgId=c),
             lambda r, c: r["containers"]["cna"]["references"][0].update(name=c),
             lambda r, c: r["containers"]["cna"]["references"][0].update(
                 tags=["patch", f"x_{c}"]
@@ -1634,7 +1826,6 @@ class TestExternalStringAdmissibility:
             "assigner-org-id",
             "date-reserved",
             "x-generator",
-            "provider-org-id",
             "reference-name",
             "reference-tag",
             "supporting-media",
@@ -1666,6 +1857,10 @@ class TestLiveRecords:
         assert result.skipped_adps == ()
         assert result.ssvc_skips == ()
         assert (result.cna_guard is None) == (name != "cna_short_name_missing")
+        assert result.cna_owner_skipped is False
+        assert result.payload.cna == cve_record_parser.parse_cna_owner(
+            record["containers"]["cna"]
+        )
 
     def test_suse_cna_vector_is_not_ingested(self) -> None:
         name = "cna_suse_reserved_provider"

@@ -23,6 +23,7 @@ from app.api.openapi import API_V1_RESPONSES, SentinelAPI
 from app.api.v1 import (
     api_keys,
     auth,
+    cnas,
     cves,
     fetchers,
     ibs_consumer,
@@ -313,6 +314,7 @@ for _router in (
     ticket_references.router,
     ticket_ibs_requests.router,
     cves.router,
+    cnas.router,
     products.router,
     maintainer.router,
     platform.router,

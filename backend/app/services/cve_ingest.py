@@ -13,7 +13,8 @@ Every payload model is frozen, forbids unknown fields, and hides input
 values in validation errors, so a rejected payload cannot leak upstream
 content into a log. Construction raises `pydantic.ValidationError` for
 the canonical model-validation failures: explicit-null `cve_state`, an
-explicit `PUBLISHED` with a non-null `date_rejected`, malformed
+explicit `PUBLISHED` with a non-null `date_rejected`, a CNA
+`short_name_observed_at` without `short_name`, malformed
 affected-version operation shapes, any string value containing U+0000 or a
 surrogate code point outside the untyped CVSS candidates, and conflicting
 same-key child content whose canonical key is available here (CWE,
@@ -195,6 +196,33 @@ class ExternalIdentifierEntry(_PayloadModel):
     url: str | None = Field(None, max_length=2048)
 
 
+CNA_SHORT_NAME_MAX_LENGTH: Final = 32
+"""`CNA.short_name` is `VARCHAR(32)`, the `maxLength` of a CVE JSON 5.x
+`shortName`."""
+
+
+class CNAEntry(_PayloadModel):
+    """Owner of the CVE Record: the CVE Services organization of its CNA
+    container (`docs/features/tickets/cna.md`, Ingestion Writers).
+
+    The writers validate the short name before building the entry, so an
+    invalid upstream short name leaves only `org_id`. A date without a short
+    name is invalid.
+    """
+
+    org_id: uuid.UUID
+    short_name: str | None = Field(
+        None, min_length=1, max_length=CNA_SHORT_NAME_MAX_LENGTH
+    )
+    short_name_observed_at: UTCDateTime | None = None
+
+    @model_validator(mode="after")
+    def _date_only_with_short_name(self) -> Self:
+        if self.short_name is None and self.short_name_observed_at is not None:
+            raise ValueError("short_name_observed_at requires a short_name.")
+        return self
+
+
 # ---------------------------------------------------------------------------
 # Canonical child normalization (cve-service.md, Canonical Payload Duplicate
 # Handling; Affected-Version Snapshot Operations)
@@ -367,6 +395,10 @@ class CVEIngestPayload(_PayloadModel):
     modified_date: UTCDateTime | MISSING | None = MISSING
     cve_state: CveState | MISSING = MISSING
     date_rejected: UTCDateTime | MISSING | None = MISSING
+
+    # The owner of the record; only MITRE and the kernel supply it, and
+    # `None` (omission) preserves the recorded CNA.
+    cna: CNAEntry | None = None
 
     cvss_assessments: list[CVSSAssessmentEntry] | None = None
     cwe_classifications: list[CWEEntry] | None = None

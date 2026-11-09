@@ -412,13 +412,15 @@ class TicketListQuery(BaseModel):
     global `422 VALIDATION_ERROR` (Sort Parameter Validation). String
     parameters share the global 500-character limit;
     `duplicate_of_ticket_id` arrives already validated as a canonical
-    `SNTL-{n}` (`validate_duplicate_of_ticket_id()`). The boolean embargo
-    filters are `None` when omitted (no filter).
+    `SNTL-{n}` (`validate_duplicate_of_ticket_id()`), and each `cna` value
+    as a hyphenated UUID (`validate_cna_org_id_filter()`). The boolean
+    embargo filters are `None` when omitted (no filter).
     """
 
     search: str | None = None
     status: list[str] = Field(default_factory=list)
     ignore_reason: list[str] = Field(default_factory=list)
+    cna: list[str] = Field(default_factory=list)
     assignee: str | None = None
     severity: list[str] = Field(default_factory=list)
     priority: list[str] = Field(default_factory=list)

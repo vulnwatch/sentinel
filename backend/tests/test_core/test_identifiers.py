@@ -9,14 +9,18 @@ by later service work and are not exercised here.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from app.core.identifiers import (
+    CNA_ORG_ID_PATTERN,
     CVE_ID_MAX_LENGTH,
     CVE_ID_PATTERN,
     TICKET_SEQUENCE_ID_MAX,
     format_ticket_id,
     is_valid_cve_id,
+    parse_cna_org_id,
     parse_ticket_id,
 )
 from tests.support.module_imports import APP_ROOT, imported_modules
@@ -168,6 +172,78 @@ class TestFormatTicketId:
     def test_out_of_range_raises_value_error(self, sequence_id: int) -> None:
         with pytest.raises(ValueError, match="sequence_id"):
             format_ticket_id(sequence_id)
+
+
+@pytest.mark.unit
+class TestParseCnaOrgId:
+    """`docs/api-spec.md` (CNA Identifier Resolution): only the hyphenated
+    8-4-4-4-12 form, digits in either case, compared by value."""
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (
+                "00000000-0000-4000-8000-0000000000a1",
+                uuid.UUID("00000000-0000-4000-8000-0000000000a1"),
+            ),
+            (
+                "ABCDEF01-2345-6789-ABCD-EF0123456789",
+                uuid.UUID("abcdef01-2345-6789-abcd-ef0123456789"),
+            ),
+            ("00000000-0000-0000-0000-000000000000", uuid.UUID(int=0)),
+        ],
+        ids=["lowercase", "uppercase", "any-version"],
+    )
+    def test_hyphenated_uuid_parses_by_value(
+        self, value: str, expected: uuid.UUID
+    ) -> None:
+        assert parse_cna_org_id(value) == expected
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "",
+            "not-a-uuid",
+            "00000000000040008000000000000000a1",
+            "000000000000400080000000000000a1",
+            "{00000000-0000-4000-8000-0000000000a1}",
+            "urn:uuid:00000000-0000-4000-8000-0000000000a1",
+            " 00000000-0000-4000-8000-0000000000a1",
+            "00000000-0000-4000-8000-0000000000a1\n",
+            "00000000-0000-4000-8000-0000000000a1x",
+            "0000000g-0000-4000-8000-0000000000a1",
+            "00000000-0000-4000-8000-0000000000a",
+            "\uff100000000-0000-4000-8000-0000000000a1",
+            "00000000-0000-4000-8000-0000000000a1\x00",
+        ],
+        ids=[
+            "empty",
+            "text",
+            "unhyphenated-long",
+            "unhyphenated",
+            "braced",
+            "urn",
+            "leading-space",
+            "trailing-newline",
+            "trailing-character",
+            "non-hex",
+            "short",
+            "fullwidth-digit",
+            "nul",
+        ],
+    )
+    def test_other_forms_are_malformed(self, value: str) -> None:
+        assert parse_cna_org_id(value) is None
+
+    @pytest.mark.parametrize("value", [None, 7, b"x", uuid.UUID(int=1)])
+    def test_non_strings_are_malformed_without_raising(self, value: object) -> None:
+        assert parse_cna_org_id(value) is None
+
+    def test_pattern_is_the_anchored_hyphenated_form(self) -> None:
+        assert CNA_ORG_ID_PATTERN.pattern == (
+            "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-"
+            "[0-9A-Fa-f]{12}$"
+        )
 
 
 @pytest.mark.unit
