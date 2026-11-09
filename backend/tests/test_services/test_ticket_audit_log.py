@@ -2472,9 +2472,10 @@ class TestListTicketActorsProjection:
         ticket_audit_event_factory: _Factory,
     ) -> None:
         """With a population of other Tickets' user-attributed events and
-        fresh statistics (both rolled back with the test), so the plan does
-        not depend on what earlier tests left in the worker database's
-        statistics: statistics in which nearly every `user_id` is `NULL`
+        fresh statistics (the population and its column statistics roll
+        back with the test), so the plan does not depend on what earlier
+        tests left in the worker database's statistics: statistics in which
+        nearly every `user_id` is `NULL`
         make the `user_id IS NOT NULL` condition look selective enough for
         the planner to prefer `ix_ticket_audit_event_user_id`."""
         ticket: Ticket = await ticket_factory()
