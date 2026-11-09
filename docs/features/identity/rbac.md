@@ -26,7 +26,7 @@ endpoint contract.
 | `manage_packages` | Add/remove packages from tickets, exclude/restore (package, track, product), change track affectedness to any non-`FIXED` status, set `FIXED` only on a locked-current CVE-less Ticket, override product eligibility |
 | `manage_cvss` | Add/edit/delete SUSE CVSS assessments |
 | `manage_references` | Add/edit/delete ticket references |
-| `manage_confidentiality` | Set ticket confidentiality flag, list/grant/revoke access grants, set the Coordinated Release Date of a confidential ticket and change/clear the Coordinated Release Date of a ticket that has one |
+| `manage_confidentiality` | Set ticket confidentiality flag, grant/revoke access grants, set the Coordinated Release Date of a confidential ticket and change/clear the Coordinated Release Date of a ticket that has one |
 
 #### Admin Capabilities
 
@@ -133,7 +133,7 @@ Design notes:
   both roles (unchanged from current design)
 - `restricted_analyst` shares all VA capabilities except
   `manage_confidentiality` — this role cannot set the confidentiality
-  flag or manage access grants
+  flag or grant and revoke access grants
 - A user holding multiple roles receives the **union** of all capabilities
   and the **least restrictive** scope (i.e., if any role has `all`, the
   effective scope is `all`). The admin is responsible for role assignments
@@ -213,6 +213,7 @@ Confidential Ticket Visibility). Authenticated access covers:
 - View tickets, CVEs, CNAs, products, packages, and ticket package trees
 - View ticket references, CVSS assessments, and submission/release requests
 - View ticket audit logs and the users who acted on a ticket
+- View the access grants of a confidential ticket
 - View fetchers (list, run history, run detail, timeline, error messages, and
   the users who triggered runs or disabled and enabled a fetcher)
 - View IBS consumer status
@@ -263,7 +264,7 @@ no response to a caller that the operation does not already admit.
 | Add/edit/delete SUSE CVSS assessments | `manage_cvss` |
 | Add/edit/delete ticket references | `manage_references` |
 | Set ticket confidentiality | `manage_confidentiality` |
-| Manage access grants on confidential tickets | `manage_confidentiality` |
+| Grant/revoke access on confidential tickets | `manage_confidentiality` |
 | Set the Coordinated Release Date of a confidential ticket; change/clear the Coordinated Release Date of a ticket that has one | `manage_confidentiality` |
 | Set track affectedness to `FIXED` from any status | `admin_ticket_ops` |
 | Rerun complete Ticket convergence | `triage_ticket` OR `manage_fetchers` |
@@ -317,6 +318,7 @@ no response to a caller that the operation does not already admit.
 | View maintainer workbench | Authenticated |
 | View ticket audit log | Authenticated |
 | View the users who acted on a ticket | Authenticated |
+| View the access grants of a confidential ticket | Authenticated |
 | View the user directory (list and detail) | Authenticated |
 | View tickets / CVEs | Authenticated |
 | View CNAs | Authenticated |
@@ -588,7 +590,7 @@ here with the required authorization level and a link to the owning spec.
 | POST | `/api/v1/tickets/{ticket_id}/rerun-reactivation` | `triage_ticket` OR `manage_fetchers` | [tickets](../tickets/tickets.md#rerun-ticket-convergence) |
 | PATCH | `/api/v1/tickets/{ticket_id}/confidentiality` | `manage_confidentiality` | [tickets](../tickets/tickets.md#set-confidentiality) |
 | PATCH | `/api/v1/tickets/{ticket_id}/coordinated-release-date` | `manage_confidentiality` | [tickets](../tickets/tickets.md#set-coordinated-release-date) |
-| GET | `/api/v1/tickets/{ticket_id}/access` | `manage_confidentiality` | [tickets](../tickets/tickets.md#list-access-grants) |
+| GET | `/api/v1/tickets/{ticket_id}/access` | Authenticated | [tickets](../tickets/tickets.md#list-access-grants) |
 | POST | `/api/v1/tickets/{ticket_id}/access` | `manage_confidentiality` | [tickets](../tickets/tickets.md#grant-access) |
 | DELETE | `/api/v1/tickets/{ticket_id}/access/{user}` | `manage_confidentiality` | [tickets](../tickets/tickets.md#revoke-access) |
 

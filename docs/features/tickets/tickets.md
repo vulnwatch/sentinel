@@ -2669,7 +2669,8 @@ Response: `TicketDetail` object in standard `{"data": ...}` envelope
 
 ### Access Grant Management
 
-Endpoints to manage `TicketAccessGrant` records. Requires the
+Endpoints to list and manage `TicketAccessGrant` records. Listing requires only
+that the caller can see the Ticket; granting and revoking require the
 `manage_confidentiality` capability.
 
 #### List Access Grants
@@ -2680,7 +2681,7 @@ GET /api/v1/tickets/{ticket_id}/access
 
 List all users with explicit access grants for a confidential ticket.
 
-**`Capability: manage_confidentiality`**
+**`Access: Authenticated`**
 - **Response** (200 OK, unpaginated):
   ```json
   {
@@ -2713,6 +2714,27 @@ The response uses `TicketAccessGrantResponse` and is ordered by
 projected from current User state with `active = false`. This fixed order is not
 client-configurable; `sort_by` and `sort_order` are not accepted because the
 unpaginated dataset is bounded and has one canonical provenance order.
+
+Every caller who can see the Ticket (`docs/features/identity/rbac.md`, Scope
+and Confidential Ticket Visibility) lists the same grants, whatever the
+caller's capabilities. The accessible parent Ticket and its grants derive from
+one database operation or equivalent single database view
+([ticket-service.md](ticket-service.md#list_access_grants)). Missing and
+inaccessible Tickets both return `404 TICKET_NOT_FOUND`; an inaccessible Ticket
+never produces an empty list.
+
+> **Design note — visibility, not capability**: the users that this list
+> returns are no secret from a caller who can see the Ticket. Its audit log
+> names the target and the acting user of every manual grant and revoke
+> ([ticket-audit-log.md](ticket-audit-log.md#event-type-contract)), and the
+> user directory describes every user
+> (`docs/features/identity/user-management.md`, Security Considerations).
+> Requiring a capability to list them would therefore protect no one, while a
+> client that shows who has access to an embargoed Ticket would have to
+> reconstruct the current grants from audit history, which records event-time
+> usernames and is never an input to current state
+> ([ticket-audit-log.md](ticket-audit-log.md#service-contract)). Changing the
+> grants remains reserved to `manage_confidentiality`.
 
 **Error responses**:
 
@@ -2812,12 +2834,12 @@ table:
 
 ## Security
 
-- Viewing ticket lists and details, and the ticket audit log
-  (`docs/features/tickets/ticket-audit-log.md`): any authenticated user,
-  regardless of role. Confidential tickets are invisible
-  to users whose effective scope is not `all` (unless they have an explicit
-  `TicketAccessGrant` or included-package maintainer association) — see
-  [Confidential Tickets](#confidential-tickets)
+- Viewing ticket lists and details, the ticket audit log
+  (`docs/features/tickets/ticket-audit-log.md`), and the access grants of a
+  confidential ticket: any authenticated user, regardless of role.
+  Confidential tickets are invisible to users whose effective scope is not
+  `all` (unless they have an explicit `TicketAccessGrant` or included-package
+  maintainer association) — see [Confidential Tickets](#confidential-tickets)
 - Creating tickets: `create_ticket` capability
 - Assigning, unassigning oneself, changing status, associating CVE, setting
   manual severity, and setting, changing, or clearing the priority override:
@@ -2826,8 +2848,8 @@ table:
 - Rerunning complete Ticket convergence: `triage_ticket` OR
   `manage_fetchers`, plus ordinary Ticket visibility
 - Managing packages: `manage_packages` capability
-- Setting confidentiality, managing access grants, setting the Coordinated
-  Release Date: `manage_confidentiality` capability
+- Setting confidentiality, granting and revoking access, setting the
+  Coordinated Release Date: `manage_confidentiality` capability
 - See `docs/features/identity/rbac.md` for the full permission model
 
 ## Cross-references
