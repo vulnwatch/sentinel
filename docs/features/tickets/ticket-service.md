@@ -2140,7 +2140,8 @@ implementation choice.
 
 - Ticket must be confidential (`is_confidential = true`; else
   `TicketNotConfidentialError`)
-- Requires `manage_confidentiality` capability (enforced at API layer)
+- Requires no capability: Ticket visibility in step 1 is the only
+  authorization (`tickets.md`, List Access Grants)
 
 **Behavioral steps**:
 

@@ -1930,8 +1930,9 @@ _TICKET_NOT_FOUND_DESCRIPTION: Final = (
         "grants per Ticket are a bounded dataset, so the response has no "
         "`meta` object. The order is fixed, `granted_at` ascending then user "
         "UUID ascending, and not client-configurable: supplied `sort_by` or "
-        "`sort_order` values are ignored. "
-        "Requires `manage_confidentiality`."
+        "`sort_order` values are ignored. Every caller who can see the Ticket "
+        "lists its grants, whatever the caller's capabilities; granting and "
+        "revoking require `manage_confidentiality`."
     ),
     responses={
         404: {"model": ErrorResponse, "description": _TICKET_NOT_FOUND_DESCRIPTION},
@@ -1944,20 +1945,16 @@ _TICKET_NOT_FOUND_DESCRIPTION: Final = (
 async def list_ticket_access_grants(
     ticket_id: TicketIdPath,
     db: DatabaseSession,
-    _principal: Annotated[
-        AuthenticatedPrincipal,
-        Depends(require_capability(Capability.MANAGE_CONFIDENTIALITY)),
-    ],
     caller: AuthenticatedTicketCaller,
     ticket: Annotated[ResolvedTicket, Depends(require_accessible_ticket)],
 ) -> TicketAccessGrantListResponse:
     """List Access Grants — see `docs/features/tickets/tickets.md`.
 
     Authorization follows `docs/api-spec.md` (Authorization Chain
-    Evaluation Order, flow 2): authentication, then
-    `manage_confidentiality` before any Ticket lookup, then the delegated
-    preliminary SNTL resolution. `list_access_grants()` re-applies Ticket
-    visibility in the one statement that selects the parent and its
+    Evaluation Order, flow 1): authentication, then the delegated
+    preliminary SNTL resolution; no capability is required, because Ticket
+    visibility is the only authorization. `list_access_grants()` re-applies
+    Ticket visibility in the one statement that selects the parent and its
     grants, so the response never relies on that preliminary decision.
     """
     try:

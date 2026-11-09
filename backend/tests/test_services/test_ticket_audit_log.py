@@ -31,7 +31,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from sqlalchemy import delete, event, func, select, update
+from sqlalchemy import delete, event, func, select, text, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -2249,6 +2249,13 @@ class TestListTicketActorsInputGuards:
         assert excinfo.value is failure
 
 
+_INDEX_POPULATION_TICKETS = 20
+_INDEX_POPULATION_EVENTS = 10
+"""Other Tickets, and user-attributed events per Ticket, that make the
+statistics of the index plan test representative: `ticket_id` equality is
+selective, while `user_id IS NOT NULL` matches nearly every event."""
+
+
 @pytest.mark.integration
 class TestListTicketActorsProjection:
     async def test_each_actor_is_listed_once_in_code_point_order(
@@ -2464,9 +2471,26 @@ class TestListTicketActorsProjection:
         user_factory: _Factory,
         ticket_audit_event_factory: _Factory,
     ) -> None:
+        """With a population of other Tickets' user-attributed events and
+        fresh statistics (the population and its column statistics roll
+        back with the test), so the plan does not depend on what earlier
+        tests left in the worker database's statistics: statistics in which
+        nearly every `user_id` is `NULL`
+        make the `user_id IS NOT NULL` condition look selective enough for
+        the planner to prefer `ix_ticket_audit_event_user_id`."""
         ticket: Ticket = await ticket_factory()
         actor: User = await user_factory()
         await ticket_audit_event_factory(ticket_id=ticket.id, user_id=actor.id)
+        for _ in range(_INDEX_POPULATION_TICKETS):
+            other: Ticket = await ticket_factory()
+            db_session.add_all(
+                TicketAuditEvent(
+                    ticket_id=other.id, event_type="ticket_created", user_id=actor.id
+                )
+                for _ in range(_INDEX_POPULATION_EVENTS)
+            )
+        await db_session.flush()
+        await db_session.execute(text("ANALYZE ticket_audit_event"))
         captured: list[tuple[str, Any]] = []
 
         def _record(*args: Any) -> None:

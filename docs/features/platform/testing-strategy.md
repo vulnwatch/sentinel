@@ -3168,6 +3168,11 @@ visibility predicate.
   An accessible non-confidential Ticket returns
   `409 TICKET_NOT_CONFIDENTIAL`, while missing or inaccessible Tickets retain
   the scoped `404 TICKET_NOT_FOUND` outcome rather than returning an empty list.
+  Callers without `manage_confidentiality` who see the Ticket through effective
+  scope `all`, an explicit grant, or included-package maintainership receive
+  the same list as a caller with the capability; one whose only path is an
+  excluded package's maintainership, or who has none, receives the `404`.
+  Grant and revoke keep their `403` without the capability.
 - Grant creation exercises target UUID and username forms, target absence,
   confidential-state guard, new active target, new inactive target, existing
   active target, and existing inactive target. New creation returns 201 with
