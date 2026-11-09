@@ -8,25 +8,28 @@ See docs/features/tickets/tickets.md (Access Grant Management > List Access
 Grants, Grant Access, Revoke Access; Response Schemas >
 TicketAccessGrantResponse; Endpoint -> Schema Mapping; Confidential
 Tickets > Audit Trail), docs/api-spec.md (Authorization Chain Evaluation
-Order flows 2 and 3, Response Format, Global Responses, Ticket
+Order flows 1 and 3, Response Format, Global Responses, Ticket
 Accessibility Check, Manual-Zone Mutability Guard exceptions, Response
 Applicability Derivation, User Identifier Resolution and User References in
 Responses, JSON Request Body Scalar Types, Undeclared Query Parameters),
-docs/features/identity/rbac.md (Predefined Roles; Endpoint Permission Map:
-`manage_confidentiality` on all three `/access` rows), and
+docs/features/identity/rbac.md (Predefined Roles; Scope and Confidential
+Ticket Visibility; Endpoint Permission Map: `Authenticated` on the GET
+`/access` row, `manage_confidentiality` on the POST and DELETE rows), and
 docs/features/platform/testing-strategy.md (Tier Responsibility and
-Proportionality; Ticket Accessibility > Authentication, authorization, and
-anti-enumeration, Ticket identifier and read-contract coverage, and
-Confidentiality and explicit access grants).
+Proportionality; Ticket Accessibility > Canonical predicate, Authentication,
+authorization, and anti-enumeration, Ticket identifier and read-contract
+coverage, and Confidentiality and explicit access grants).
 
 These tests cover only the HTTP boundary, parametrized over the three
-endpoints where the contract is shared: authentication, capability before
-any Ticket lookup, the identical 404 family (which discloses nothing about
-the target user), the confidentiality-before-target precedence as seen
-through HTTP, request validation, the complete body of each error mapping,
-the success status codes and response shapes (201/200/204, the unpaginated
-list), the manual-zone opt-out, one role resolution per request, the
-handler mapping of the locked-current denial, and OpenAPI. The service
+endpoints where the contract is shared: authentication, the capability of
+Grant Access and Revoke Access before any Ticket lookup, List Access Grants
+for every caller who can see the Ticket without the capability, the
+identical 404 family (which discloses nothing about the target user), the
+confidentiality-before-target precedence as seen through HTTP, request
+validation, the complete body of each error mapping, the success status
+codes and response shapes (201/200/204, the unpaginated list), the
+manual-zone opt-out, one role resolution per request, the handler mapping
+of the locked-current denial, and OpenAPI. The service
 matrix (every Ticket status, exact event values and no-op classification,
 precedence permutations, lock order, rollback, listing statement count and
 visibility paths, the grant/revoke, confidentiality, lifecycle, and rename
@@ -42,7 +45,10 @@ tests below narrow the request-resolved caller scope to `non_confidential`
 scope `all`). The converse self-loss case (revoking the caller's own last
 visibility path) is reachable only through that synthetic scope as well and
 is proven at the service tier only
-(`tests/test_services/test_access_grants.py::TestSelfLoss`).
+(`tests/test_services/test_access_grants.py::TestSelfLoss`). List Access
+Grants requires no capability, so `TestListWithoutCapability` produces its
+visible and inaccessible callers through real roles, grants, and
+maintainership instead.
 
 Expected values are transcribed from the specifications, never computed
 with the module under test.
@@ -158,10 +164,12 @@ _SUCCESS = {"GET": 200, "POST": 201, "DELETE": 204}
 
 @dataclass(frozen=True, slots=True)
 class _World:
-    """A confidential Ticket with one existing grant (`grantee`) and one
-    active user without a grant (`candidate`)."""
+    """A confidential Ticket with one existing grant (`grantee`, granted by
+    `grantor` at `_PAST`) and one active user without a grant
+    (`candidate`)."""
 
     ticket: Ticket
+    grantor: User
     grantee: User
     candidate: User
 
@@ -206,7 +214,7 @@ async def _world(
         granted_by_id=grantor.id,
         granted_at=_PAST,
     )
-    return _World(ticket, grantee, candidate)
+    return _World(ticket, grantor, grantee, candidate)
 
 
 async def _grants(db: AsyncSession, ticket_id: uuid.UUID) -> set[GrantRow]:
@@ -333,7 +341,7 @@ async def committed_app(
 
 
 # ---------------------------------------------------------------------------
-# Authentication and capability (flow 2 / flow 3, step 1)
+# Authentication and capability (flow 1 / flow 3, step 1)
 # ---------------------------------------------------------------------------
 
 
@@ -366,7 +374,7 @@ class TestAuthenticationAndCapability:
         resolver.assert_not_awaited()
         operation.assert_not_awaited()
 
-    @pytest.mark.parametrize("endpoint", ENDPOINTS)
+    @pytest.mark.parametrize("endpoint", MUTATIONS)
     @pytest.mark.parametrize(
         "roles",
         [
@@ -1028,6 +1036,207 @@ class TestListAccessGrants:
 
 
 # ---------------------------------------------------------------------------
+# List Access Grants without `manage_confidentiality` (tickets.md, List
+# Access Grants; rbac.md, Scope and Confidential Ticket Visibility)
+# ---------------------------------------------------------------------------
+
+_EXCLUDED_AT = datetime(2026, 9, 1, 8, 0, tzinfo=UTC)
+
+
+async def _give_roles(
+    user_role_factory: Factory, user: User, roles: Iterable[Role]
+) -> None:
+    for role in roles:
+        await user_role_factory(user_id=user.id, role=role.value)
+
+
+async def _maintain(
+    ticket_package_factory: Factory,
+    ticket_package_maintainer_factory: Factory,
+    ticket: Ticket,
+    user: User,
+    *,
+    excluded: bool,
+) -> None:
+    """Make `user` a maintainer of one package of `ticket`, directly
+    excluded when `excluded` is true."""
+    package = await ticket_package_factory(
+        ticket_id=ticket.id, deleted_at=_EXCLUDED_AT if excluded else None
+    )
+    await ticket_package_maintainer_factory(
+        ticket_package_id=package.id, user_id=user.id
+    )
+
+
+@pytest.mark.e2e
+class TestListWithoutCapability:
+    @pytest.mark.parametrize(
+        ("roles", "path"),
+        [
+            pytest.param([Role.ADMIN], "scope-all", id="admin-scope-all"),
+            pytest.param([], "grant", id="no-roles-own-grant"),
+            pytest.param(
+                [Role.RESTRICTED_ANALYST], "grant", id="restricted-analyst-own-grant"
+            ),
+            pytest.param([], "maintainer", id="no-roles-included-package-maintainer"),
+            pytest.param(
+                [Role.RESTRICTED_ANALYST],
+                "maintainer",
+                id="restricted-analyst-included-package-maintainer",
+            ),
+        ],
+    )
+    async def test_caller_who_sees_the_ticket_lists_its_grants_but_cannot_change_them(
+        self,
+        authenticated_client: AsyncClient,
+        authenticated_user: User,
+        db_session: AsyncSession,
+        ticket_factory: Factory,
+        user_factory: Factory,
+        ticket_access_grant_factory: Factory,
+        ticket_package_factory: Factory,
+        ticket_package_maintainer_factory: Factory,
+        user_role_factory: Factory,
+        roles: list[Role],
+        path: str,
+    ) -> None:
+        """Each visibility branch, through real roles and without
+        `manage_confidentiality`, returns the complete list; Grant Access
+        and Revoke Access still return the generic 403 for the same caller
+        with no grant write or event (testing-strategy.md, Visibility
+        without capability)."""
+        await _give_roles(user_role_factory, authenticated_user, roles)
+        world = await _world(ticket_factory, user_factory, ticket_access_grant_factory)
+        listed_grantee = {
+            "user": _profile(
+                world.grantee,
+                username="ivan.qa",
+                full_name="Ivan Reviewer",
+                active=True,
+            ),
+            "granted_at": _PAST_WIRE,
+            "granted_by": _profile(
+                world.grantor,
+                username="heidi.va",
+                full_name="Heidi Grantor",
+                active=True,
+            ),
+        }
+        expected = [listed_grantee]
+        if path == "grant":
+            await ticket_access_grant_factory(
+                ticket_id=world.ticket.id,
+                user_id=authenticated_user.id,
+                granted_by_id=world.grantor.id,
+                granted_at=_EARLIER,
+            )
+            own = _profile(
+                authenticated_user,
+                username=authenticated_user.username,
+                full_name=None,
+                active=True,
+            )
+            expected = [
+                {
+                    "user": own,
+                    "granted_at": _EARLIER_WIRE,
+                    "granted_by": listed_grantee["granted_by"],
+                },
+                listed_grantee,
+            ]
+        elif path == "maintainer":
+            await _maintain(
+                ticket_package_factory,
+                ticket_package_maintainer_factory,
+                world.ticket,
+                authenticated_user,
+                excluded=False,
+            )
+        grants = await _grants(db_session, world.ticket.id)
+
+        listed = await LIST.send(authenticated_client, world.ticket)
+        granted = await GRANT.send(
+            authenticated_client, world.ticket, world.candidate.username
+        )
+        revoked = await REVOKE.send(
+            authenticated_client, world.ticket, world.grantee.username
+        )
+
+        assert authenticated_user.full_name is None
+        assert listed.status_code == 200
+        assert listed.json() == {"data": expected}
+        assert (granted.status_code, revoked.status_code) == (403, 403)
+        assert granted.json() == revoked.json() == FORBIDDEN
+        assert await _grants(db_session, world.ticket.id) == grants
+        assert await event_count(db_session, world.ticket.id) == 0
+
+    @pytest.mark.parametrize(
+        ("roles", "excluded_maintainer"),
+        [
+            pytest.param([], False, id="no-roles-without-path"),
+            pytest.param(
+                [Role.RESTRICTED_ANALYST], False, id="restricted-analyst-without-path"
+            ),
+            pytest.param([], True, id="no-roles-excluded-package-maintainer"),
+            pytest.param(
+                [Role.RESTRICTED_ANALYST],
+                True,
+                id="restricted-analyst-excluded-package-maintainer",
+            ),
+        ],
+    )
+    async def test_caller_who_cannot_see_the_ticket_gets_the_identical_404(
+        self,
+        authenticated_client: AsyncClient,
+        authenticated_user: User,
+        db_session: AsyncSession,
+        ticket_factory: Factory,
+        user_factory: Factory,
+        ticket_access_grant_factory: Factory,
+        ticket_package_factory: Factory,
+        ticket_package_maintainer_factory: Factory,
+        user_role_factory: Factory,
+        roles: list[Role],
+        excluded_maintainer: bool,
+    ) -> None:
+        """Without scope `all`, a grant, or an included maintained
+        package, the confidential Ticket returns the complete 404 of a
+        missing one, never an empty list or the other users' grants; the
+        maintainership of an excluded package alone does not qualify."""
+        await _give_roles(user_role_factory, authenticated_user, roles)
+        world = await _world(ticket_factory, user_factory, ticket_access_grant_factory)
+        if excluded_maintainer:
+            await _maintain(
+                ticket_package_factory,
+                ticket_package_maintainer_factory,
+                world.ticket,
+                authenticated_user,
+                excluded=True,
+            )
+
+        inaccessible = await LIST.send(authenticated_client, world.ticket)
+        missing = await LIST.send(authenticated_client, f"SNTL-{MAX_SEQUENCE}")
+
+        assert inaccessible.status_code == missing.status_code == 404
+        assert inaccessible.content == missing.content == NOT_FOUND
+        assert await event_count(db_session, world.ticket.id) == 0
+
+    async def test_non_confidential_ticket_is_rejected_for_a_caller_without_roles(
+        self,
+        authenticated_client: AsyncClient,
+        ticket_factory: Factory,
+    ) -> None:
+        """Every caller sees a non-confidential Ticket, so a role-less
+        caller receives the complete `409 TICKET_NOT_CONFIDENTIAL`."""
+        ticket: Ticket = await ticket_factory(is_confidential=False)
+
+        response = await LIST.send(authenticated_client, ticket)
+
+        assert response.status_code == 409
+        assert response.json() == _NOT_CONFIDENTIAL
+
+
+# ---------------------------------------------------------------------------
 # Manual-zone opt-out (api-spec.md, Manual-Zone Mutability Guard exceptions)
 # ---------------------------------------------------------------------------
 
@@ -1126,9 +1335,7 @@ class TestOpenApiContract:
     @pytest.mark.parametrize(
         ("endpoint", "codes"),
         [
-            pytest.param(
-                LIST, {"200", "401", "403", "404", "409", "422", "500"}, id="list"
-            ),
+            pytest.param(LIST, {"200", "401", "404", "409", "422", "500"}, id="list"),
             pytest.param(
                 GRANT,
                 {"200", "201", "401", "403", "404", "409", "422", "500"},
@@ -1217,6 +1424,14 @@ class TestOpenApiContract:
         assert "`meta`" in description
         assert "`granted_at` ascending then user UUID ascending" in description
 
+    def test_list_description_states_visibility_as_its_only_authorization(
+        self,
+    ) -> None:
+        description = self._operation(LIST)["description"]
+
+        assert "whatever the caller's capabilities" in description
+        assert "Requires `manage_confidentiality`" not in description
+
     def test_revoke_user_path_parameter_is_an_unconstrained_string(self) -> None:
         operation = self._operation(REVOKE)
 
@@ -1233,7 +1448,7 @@ class TestOpenApiContract:
 
 # ---------------------------------------------------------------------------
 # Locked-current accessibility through HTTP (handler mapping of the
-# service's authoritative denial; api-spec.md, flows 2 and 3)
+# service's authoritative denial; api-spec.md, flows 1 and 3)
 # ---------------------------------------------------------------------------
 
 
