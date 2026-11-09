@@ -20,6 +20,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 if TYPE_CHECKING:
+    from app.models.cna_audit_event import CNAAuditEvent
     from app.models.cve import CVE
 
 
@@ -74,4 +75,9 @@ class CNA(Base):
     # delete instead.
     cves: Mapped[list[CVE]] = relationship(
         "CVE", back_populates="cna", passive_deletes="all"
+    )
+    # Audit rows are append-only and CNA rows are never deleted; the
+    # `cna_audit_event.cna_id` FK uses ON DELETE RESTRICT.
+    audit_events: Mapped[list[CNAAuditEvent]] = relationship(
+        "CNAAuditEvent", back_populates="cna", passive_deletes="all"
     )

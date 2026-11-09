@@ -244,9 +244,10 @@ def _ticket_list_query(
             default_factory=list,
             description=(
                 "Filter by ignore reason: `not_shipped`, `cve_rejected`, "
-                "`other`. A Ticket that is not `ignored` has no reason and "
-                "matches no value. Repeatable; OR semantics. Invalid values are "
-                "ignored."
+                "`cna_policy`, `other`. `cna_policy` lists the Tickets that "
+                "the CNA auto-ignore policy ignored. A Ticket that is not "
+                "`ignored` has no reason and matches no value. Repeatable; OR "
+                "semantics. Invalid values are ignored."
             ),
             json_schema_extra=enum_filter_schema(
                 _IGNORE_REASON_FILTER, repeatable=True

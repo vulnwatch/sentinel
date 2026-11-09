@@ -53,6 +53,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import (
+    USER_IGNORE_REASONS,
     CveState,
     Role,
     Scope,
@@ -326,7 +327,7 @@ CVEFactory = Callable[..., Awaitable[CVE]]
 
 @pytest.mark.integration
 class TestReason:
-    @pytest.mark.parametrize("reason", list(TicketIgnoreReason), ids=lambda r: r.value)
+    @pytest.mark.parametrize("reason", USER_IGNORE_REASONS, ids=lambda r: r.value)
     @pytest.mark.parametrize(
         "source", [TicketStatus.NEW, TicketStatus.ANALYSIS], ids=lambda s: s.value
     )
@@ -487,6 +488,7 @@ class TestReason:
             pytest.param("not_for_us", id="unknown"),
             pytest.param("other", id="plain-string"),
             pytest.param(None, id="none"),
+            pytest.param(TicketIgnoreReason.CNA_POLICY, id="system-only-cna-policy"),
         ],
     )
     async def test_value_outside_the_user_reasons_raises_before_any_statement(

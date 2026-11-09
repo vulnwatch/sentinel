@@ -2085,6 +2085,17 @@ async def _persist_children(
     return changed
 
 
+async def _recorded_cna_auto_ignore(db: AsyncSession, cna_id: uuid.UUID) -> bool:
+    """The `auto_ignore` of the CNA already recorded for the locked CVE, for
+    a payload that omits `cna` (cve-service.md, Complete `upsert_cve()`
+    Composition, step 4). One column statement, never a `CNA` entity the
+    session may already hold, and no lock: the CNA row is not a root of
+    this invocation (cna.md, Concurrency)."""
+    auto_ignore = await db.scalar(select(CNA.auto_ignore).where(CNA.id == cna_id))
+    assert auto_ignore is not None, "CNA rows are never deleted"
+    return auto_ignore
+
+
 async def _lock_ticket_of(db: AsyncSession, cve: CVE) -> Ticket | None:
     """The unique Ticket associated with the locked `cve`, `FOR UPDATE`."""
     return (
@@ -2127,11 +2138,13 @@ async def upsert_cve(
     `evaluation_date`; (2) CVSS candidates parsed, skipped with one
     sanitized warning each, and grouped (contradictory duplicates reject
     the payload); (3) the conflict-safe CVE create-or-lock, preserving the
-    locked pre-merge `cve_state`; (4) presence-sensitive global merge, for
-    a supplied `cna` its row through `cna_service.resolve_ingested_cna()`
-    (after the CVE root, before the Ticket root) and the merge of
-    `CVE.cna_id` (an omitted `cna` preserves it), and child persistence,
-    flushed; (5) the unique Ticket loaded `FOR UPDATE`
+    locked pre-merge `cve_state` and `cna_id`; (4) presence-sensitive
+    global merge, for a supplied `cna` its row through
+    `cna_service.resolve_ingested_cna()` (after the CVE root, before the
+    Ticket root), whose `auto_ignore` is kept, and the merge of
+    `CVE.cna_id` (an omitted `cna` preserves it, and the `auto_ignore` of
+    the recorded CNA, if any, is read without a lock), and child
+    persistence, flushed; (5) the unique Ticket loaded `FOR UPDATE`
     or created through `ticket_service.create_ticket()` (ingestion
     source); (6) `ticket_mutations.upsert_external_cvss_batch()` with the
     valid candidates and the captured date, then one
@@ -2139,7 +2152,10 @@ async def upsert_cve(
     rejection boundary for `PUBLISHED -> REJECTED` or a newly created
     Ticket whose CVE is `REJECTED`; for `REJECTED -> PUBLISHED`, the system
     `reopen_from_ignored()` form only when the locked Ticket is still the
-    CVE's association, `Ignored`, and ignored with `cve_rejected`; otherwise
+    CVE's association, `Ignored`, and ignored with `cve_rejected`; for a
+    post-merge `PUBLISHED` CVE whose CNA, as step 4 read it, is under the
+    auto-ignore policy, `ticket_service.ignore_new_for_cna_policy()` when
+    step 5 created the Ticket or step 4 changed `CVE.cna_id`; otherwise
     nothing, and a Ticket with another reason keeps it; (8)
     `record_source_status(SUCCESS)`; (9) flush. No HTTP, Redis, Celery,
     DNS, or package work; never commits or rolls back.
@@ -2176,12 +2192,17 @@ async def upsert_cve(
 
     cve, created = await _obtain_cve(db, cve_id, lock=True)
     previous_state = cve.cve_state
+    previous_cna_id = cve.cna_id
 
     changed = _merge_global_fields(cve, cve_data)
     resulting_state = cve.cve_state
+    cna_auto_ignore = False
     if cve_data.cna is not None:
         cna = await cna_service.resolve_ingested_cna(db, cve_data.cna)
         changed |= _assign(cve, "cna_id", cna.id)
+        cna_auto_ignore = cna.auto_ignore
+    elif cve.cna_id is not None:
+        cna_auto_ignore = await _recorded_cna_auto_ignore(db, cve.cna_id)
     changed |= await _persist_children(db, cve.id, cve_data)
     await db.flush()
 
@@ -2218,6 +2239,12 @@ async def upsert_cve(
         ticket = await ticket_service.reopen_from_ignored_as_system(
             db, ticket_id=ticket.id, evaluation_date=evaluation_date
         )
+    elif (
+        resulting_state == CveState.PUBLISHED
+        and cna_auto_ignore
+        and (ticket_created or cve.cna_id != previous_cna_id)
+    ):
+        await ticket_service.ignore_new_for_cna_policy(db, cve_id=cve.id, ticket=ticket)
 
     await record_source_status(db, cve.id, source, CVESourceFetchStatus.SUCCESS)
     await db.flush()

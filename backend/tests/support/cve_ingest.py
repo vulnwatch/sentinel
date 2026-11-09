@@ -314,6 +314,7 @@ class CompositionTimeline:
         (ticket_mutations, "refresh_priority_auto"),
         (ticket_service, "ignore_new_for_rejected_cve"),
         (ticket_service, "reopen_from_ignored_as_system"),
+        (ticket_service, "ignore_new_for_cna_policy"),
         (cve_service, "record_source_status"),
     )
 

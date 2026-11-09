@@ -7,7 +7,9 @@ Exceptions, `resolve_ingested_cna()`, `update_cna_metadata()`,
 and docs/api-spec.md (CNA Identifier Resolution). The independent-session
 races are in `tests/test_services/test_cna_atomicity.py`; the merge of
 `CVE.cna_id` through `upsert_cve()` in
-`tests/test_services/test_upsert_cve_cna.py`.
+`tests/test_services/test_upsert_cve_cna.py`; the auto-ignore policy
+operation and the CNA audit trail in
+`tests/test_services/test_cna_policy_service.py`.
 
 Every test runs in the rolled-back `db_session`, so its CNA rows are
 invisible to other tests; each uses fictional organization UUIDs and short
@@ -38,8 +40,10 @@ from app.services.cna_service import (
     CNAServiceError,
     cna_filter_condition,
     get_cna,
+    list_cna_audit_events,
     list_cnas,
     resolve_ingested_cna,
+    set_cna_auto_ignore,
     update_cna_metadata,
 )
 from app.services.cve_ingest import CNAEntry
@@ -945,7 +949,14 @@ class TestModuleContract:
         } == set()
 
     def test_public_functions_have_the_specified_async_shape(self) -> None:
-        for function in (resolve_ingested_cna, update_cna_metadata, list_cnas, get_cna):
+        for function in (
+            resolve_ingested_cna,
+            update_cna_metadata,
+            set_cna_auto_ignore,
+            list_cnas,
+            get_cna,
+            list_cna_audit_events,
+        ):
             assert inspect.iscoroutinefunction(function), function.__name__
         assert not inspect.iscoroutinefunction(cna_filter_condition)
 

@@ -415,6 +415,7 @@ _CVES: Final = (
     _CVE("CVE-2099-0023", _NVD, "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N"),
     _CVE("CVE-2099-0024", _NVD, "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N"),
     _CVE("CVE-2099-0025", None, "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"),
+    _CVE("CVE-2099-0026", _MITRE),
 )
 _CVE_DATA: Final = {cve.cve_id: cve for cve in _CVES}
 
@@ -427,6 +428,10 @@ _NVD_AFTER_MANUAL: Final = (
     "CVE-2099-0025",
 )
 _MITRE_FURTHER: Final = ("CVE-2099-0009", "CVE-2099-0010", "CVE-2099-0013")
+_UNDER_POLICY: Final = "CVE-2099-0026"
+"""The CVE whose first ingestion, after the policy of its CNA is set,
+creates `SNTL-28` and ignores it with the reason `cna_policy` (CVEs, step
+9)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -460,7 +465,7 @@ _CNAS: Final = (
     _CNA(
         uuid.UUID("00000000-0000-4000-8000-0000000000a2"),
         "fictional-plugins",
-        ("CVE-2099-0006",),
+        ("CVE-2099-0006", "CVE-2099-0026"),
         _CNAMetadata(
             "Fictional Plugin Foundation",
             ("Open Source", "Researcher"),
@@ -473,6 +478,13 @@ _CNAS: Final = (
 """The fictional CNAs (CNAs); the third has no short name and therefore no
 metadata."""
 _CNA_OF: Final = {cve_id: cna for cna in _CNAS for cve_id in cna.cve_ids}
+_AUTO_IGNORE_CHANGES: Final = (
+    (uuid.UUID("00000000-0000-4000-8000-0000000000a1"), True),
+    (uuid.UUID("00000000-0000-4000-8000-0000000000a1"), False),
+    (uuid.UUID("00000000-0000-4000-8000-0000000000a2"), True),
+)
+"""The `set_cna_auto_ignore()` operations of `jdoe`, in order (CNAs):
+`example` enabled and disabled, then `fictional-plugins` enabled."""
 _KEV_ADDED: Final = {"CVE-2099-0001": -2}
 """KEV date added, in days from `D`."""
 _EPSS: Final = {
@@ -1380,6 +1392,22 @@ class _Load:
         for cna in _CNAS:
             if cna.metadata is not None:
                 await self.cna_metadata(cna.org_id, cna.metadata)
+        for org_id, auto_ignore in _AUTO_IGNORE_CHANGES:
+            await self.cna_auto_ignore(org_id, auto_ignore)
+        await self.first_ingestion(_UNDER_POLICY)
+
+    async def cna_auto_ignore(self, org_id: uuid.UUID, auto_ignore: bool) -> None:
+        """Step 8: one `set_cna_auto_ignore()` by `jdoe` (CNAs)."""
+
+        async def change(db: AsyncSession) -> None:
+            await cna_service.set_cna_auto_ignore(
+                db,
+                org_id=str(org_id),
+                auto_ignore=auto_ignore,
+                acting_user_id=self.user_ids[_ADMIN],
+            )
+
+        await self.run(change)
 
     async def cna_metadata(self, org_id: uuid.UUID, metadata: _CNAMetadata) -> None:
         """Step 8: one system operation of `update_cna_metadata()`, standing

@@ -10,8 +10,9 @@ Operations > `get_ticket_detail()`), Ticket creation
 assignment (`assign_ticket()`), self-unassignment (`unassign_ticket()`),
 and the manual priority override
 (`set_priority_override()`), the manual-zone entries (`ignore_ticket()`,
-`mark_as_duplicate()`, and the trusted system CVE-rejection boundary
-`ignore_new_for_rejected_cve()`), and the manual-zone exits
+`mark_as_duplicate()`, and the trusted system boundaries of the CVE
+rejection, `ignore_new_for_rejected_cve()`, and of the CNA auto-ignore
+policy, `ignore_new_for_cna_policy()`), and the manual-zone exits
 (`reopen_from_ignored()` with its trusted system form
 `reopen_from_ignored_as_system()`, and `revert_duplicate()`), which
 compose the package-owned eligibility convergence with one final
@@ -141,6 +142,7 @@ from app.services.cve_projection import (
 from app.services.package_service import PackageProjection
 from app.services.sql_patterns import LIKE_ESCAPE, escape_like
 from app.services.ticket_audit_log import (
+    CNA_POLICY_COMMENT,
     CVE_REJECTED_COMMENT,
     CVE_SOURCE_AUDIT_LABELS,
     MANUAL_TICKET_CREATED_COMMENT,
@@ -2495,6 +2497,72 @@ async def ignore_new_for_rejected_cve(
         new_value=TicketStatus.IGNORED.value,
         comment=CVE_REJECTED_COMMENT,
         detail={"ignore_reason": TicketIgnoreReason.CVE_REJECTED.value},
+    )
+    await db.flush()
+    return ticket
+
+
+async def ignore_new_for_cna_policy(
+    db: AsyncSession,
+    *,
+    cve_id: UUID,
+    ticket: Ticket,
+) -> Ticket:
+    """Apply the CNA auto-ignore policy to the locked Ticket of a CVE.
+
+    Category A trusted system-only lifecycle boundary (ticket-service.md,
+    `ignore_new_for_cna_policy()`; cna.md, Auto-Ignore Policy; tickets.md,
+    Status Transitions). Its only caller is `cve_service.upsert_cve()`, in
+    step 7 of its composition, which has decided that the policy applies
+    (published CVE, CNA under the policy, Ticket created or CNA recorded or
+    changed by the invocation). It is never an API, task, CLI, or
+    general-purpose ignore operation and has no actor parameter.
+
+    Q1: `cve_id` is the internal UUID of the CVE root the caller locked;
+    `ticket` is its unique associated Ticket, already locked by the caller.
+
+    Q2: trusted preconditions, not rediscovered: the caller explicitly uses
+    this boundary and holds the CVE root then the Ticket `FOR UPDATE`.
+    Acquires no lock and does not call `ensure_ticket_operable()`.
+
+    Q3: (1) reads the supplied locked-current status and `is_confidential`
+    without any query or audit-history read. (2) A non-confidential `New`
+    Ticket becomes `Ignored` with the reason `cna_policy`, set together
+    before anything may flush, with exactly one system `status_change`
+    (`New` to `Ignored`, `comment = "CNA auto-ignore policy"`,
+    `detail = {"ignore_reason": "cna_policy"}`). (3) A confidential Ticket
+    and every other status return unchanged with no event; an `Ignored`
+    Ticket keeps its reason. Never assigns, reconciles, registers
+    convergence, or changes another field. (4) Flushes an effective
+    transition. Never commits, rolls back, or performs network, Redis, or
+    Celery I/O.
+
+    Q4: returns the supplied Ticket.
+
+    Q5: idempotent from current state: after one effective transition a
+    re-invocation observes `Ignored` and is a no-op.
+
+    Q6: raises `ValueError` before any mutation when `ticket` is not
+    associated with `cve_id` (including a missing `cve_id` or a CVE-less
+    Ticket). Database, audit, flush, cancellation, and programming
+    exceptions propagate and roll back the caller's per-CVE transaction.
+    """
+    if cve_id is None or ticket.cve_id != cve_id:
+        raise ValueError("ticket must be the unique association of the locked CVE.")
+    if ticket.status != TicketStatus.NEW or ticket.is_confidential:
+        return ticket
+
+    ticket.status = TicketStatus.IGNORED.value
+    ticket.ignore_reason = TicketIgnoreReason.CNA_POLICY.value
+    await TicketAuditLog.log_event(
+        db,
+        ticket_id=ticket.id,
+        event_type=TicketAuditEventType.STATUS_CHANGE,
+        user_id=None,
+        old_value=TicketStatus.NEW.value,
+        new_value=TicketStatus.IGNORED.value,
+        comment=CNA_POLICY_COMMENT,
+        detail={"ignore_reason": TicketIgnoreReason.CNA_POLICY.value},
     )
     await db.flush()
     return ticket
