@@ -29,7 +29,6 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import command
 from app.config import settings
-from app.core.enums import TicketIgnoreReason
 from tests.test_migrations.conftest import isolated_alembic_config, run_sync
 
 _PREVIOUS_HEAD = "b169c9f216f2"
@@ -189,9 +188,13 @@ def _assert_upgraded(url: str, previous_ticket_constraints: dict[str, str]) -> N
         k: v for k, v in previous_ticket_constraints.items() if k != _VALID
     }
     # `alembic check` does not compare CHECK expressions: the literal value
-    # list of the migration must be exactly `TicketIgnoreReason`.
+    # list is that of this revision, transcribed so that a later revision
+    # adding a reason does not change what this suite proves.
     assert _check_values(constraints[_VALID]) == {
-        reason.value for reason in TicketIgnoreReason
+        "not_shipped",
+        "cve_rejected",
+        "cna_policy",
+        "other",
     }
 
 

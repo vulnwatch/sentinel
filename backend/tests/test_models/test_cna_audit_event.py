@@ -5,7 +5,7 @@ See docs/data-model.md (CNAAuditEvent) and docs/features/tickets/cna.md
 persistence contract (columns, constraints, indexes) by constructing rows
 directly, bypassing `CNAAuditLog.log_event()` validation on purpose —
 service-layer validation is covered by
-tests/test_services/test_cna_audit_log.py.
+tests/test_services/test_cna_policy_service.py.
 """
 
 from __future__ import annotations

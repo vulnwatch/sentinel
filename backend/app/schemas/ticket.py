@@ -104,9 +104,11 @@ _STATUS_DESCRIPTION = (
 )
 _IGNORE_REASON_DESCRIPTION = (
     "Why the Ticket is ignored: `not_shipped` (SUSE ships none of the affected "
-    "software), `cve_rejected` (the associated CVE is rejected), or `other`; "
-    "`null` unless `status` is `ignored`. Only `cve_rejected` reopens the "
-    "Ticket automatically, when the rejection of its CVE is reverted."
+    "software), `cve_rejected` (the associated CVE is rejected), `cna_policy` "
+    "(the CNA of the associated CVE is under the auto-ignore policy; set only "
+    "by the system), or `other`; `null` unless `status` is `ignored`. Only "
+    "`cve_rejected` reopens the Ticket automatically, when the rejection of "
+    "its CVE is reverted."
 )
 _SEVERITY_DESCRIPTION = (
     "Resolved severity (the CVE severity for a Ticket with a CVE, otherwise "

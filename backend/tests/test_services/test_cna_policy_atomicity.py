@@ -238,12 +238,14 @@ class TestPolicyChangeAndIngestion:
             [("auto_ignore_enabled", admin.id)],
         )
 
-    async def test_change_committed_after_the_ingestion_read_applies_later(
+    async def test_change_committed_after_the_ingestion_read_alters_nothing(
         self, world: IngestionWorld
     ) -> None:
         """Change committed first: the ingestion has already read `false`
         and still holds its CVE and Ticket; the change neither waits for it
-        nor alters its decision, and commits before the ingestion."""
+        nor alters its decision, and commits before the ingestion. That a
+        later ingestion applies the change is proven by
+        `test_ingestion_does_not_wait_for_an_uncommitted_change`."""
         admin = await world.user(role=Role.ADMIN)
         cna = await _cna(world, auto_ignore=False)
         ingester = await world.open_session()
@@ -324,6 +326,41 @@ class TestPolicyChangeAndIngestion:
         assert await _committed_policy(world, cna) == (
             True,
             [("auto_ignore_enabled", admin.id)],
+        )
+
+    async def test_reused_ingestion_session_reads_a_change_committed_meanwhile(
+        self, world: IngestionWorld
+    ) -> None:
+        """A fetcher ingests every record of a run in one session whose
+        objects survive each commit. A change committed between two
+        ingestions applies to the second, although the session still holds
+        the CNA row that it read for the first (Flag: a change applies to
+        the ingestions that read it after its commit)."""
+        admin = await world.user(role=Role.ADMIN)
+        cna = await _cna(world, auto_ignore=False)
+        ingester = await world.open_session()
+        changer = await world.open_session()
+        first_id, second_id = world.new_cve_id(), world.new_cve_id()
+
+        await _ingest(ingester, first_id, _owner(cna))
+        await ingester.commit()
+        held = await ingester.get(CNA, cna.id)
+        assert held is not None
+        assert held.auto_ignore is False
+        await _set(changer, cna, admin, True)
+        await changer.commit()
+        await _ingest(ingester, second_id, _owner(cna))
+        await ingester.commit()
+
+        first = await _ticket_of(world, first_id)
+        second = await _ticket_of(world, second_id)
+        assert await _observe(world, lambda s: _status_and_reason(s, first)) == (
+            "New",
+            None,
+        )
+        assert await _observe(world, lambda s: _status_and_reason(s, second)) == (
+            "Ignored",
+            "cna_policy",
         )
 
     async def test_read_of_the_recorded_cna_does_not_wait(

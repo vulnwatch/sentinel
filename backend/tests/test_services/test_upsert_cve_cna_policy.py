@@ -125,14 +125,6 @@ REJECTION = EventRow(
 )
 """The exact system rejection event (cve-tracking.md, Rejection handling)."""
 
-NOT_NEW = (
-    TicketStatus.ANALYSIS,
-    TicketStatus.ANALYZED,
-    TicketStatus.RESOLVED,
-    TicketStatus.IGNORED,
-    TicketStatus.DUPLICATED,
-)
-
 
 @pytest.fixture(autouse=True)
 async def default_setting(system_setting_factory: Factory) -> SystemSetting:
@@ -446,7 +438,6 @@ class TestExistingTicket:
             == package.id
         )
 
-    @pytest.mark.parametrize("status", NOT_NEW, ids=str)
     async def test_ticket_in_another_status_is_unchanged(
         self,
         db_session: AsyncSession,
@@ -454,13 +445,16 @@ class TestExistingTicket:
         ticket_factory: TicketFactory,
         cna_factory: Factory,
         monkeypatch: pytest.MonkeyPatch,
-        status: TicketStatus,
     ) -> None:
         """Order of Arrival, row 4, and Precedence and Exclusions: a Ticket
-        that is no longer `New` stays as it is; the boundary is called and
-        decides from the Ticket."""
+        that a user already works on stays as it is; the boundary is called
+        and decides from the Ticket. Every status is covered by
+        `test_ignore_new_for_cna_policy.py` (test_every_other_status_is_a_no_op);
+        the `sync_mitre_cnas` row by `test_tickets/test_sync_mitre_cnas.py`."""
         cna = await cna_factory(auto_ignore=True)
-        cve, ticket = await _existing(cve_factory, ticket_factory, status=status.value)
+        cve, ticket = await _existing(
+            cve_factory, ticket_factory, status=TicketStatus.ANALYSIS.value
+        )
         before = await _status_and_reason(db_session, ticket.id)
         timeline = CompositionTimeline(db_session, monkeypatch)
 
@@ -825,27 +819,6 @@ class TestNoAutomaticReopen:
             *_creation(cve_id, MITRE),
             POLICY,
         ]
-
-    async def test_cna_metadata_synchronization_changes_no_ticket(
-        self,
-        db_session: AsyncSession,
-        cve_factory: Factory,
-        ticket_factory: TicketFactory,
-        cna_factory: Factory,
-    ) -> None:
-        """Order of Arrival, last row: `sync_mitre_cnas` (through
-        `update_cna_metadata()`) writes no CVE or Ticket, also for a `New`
-        Ticket whose CNA is under the policy."""
-        cna = await cna_factory(auto_ignore=True)
-        _, ticket = await _existing(cve_factory, ticket_factory, cna=cna)
-
-        changed = await cna_service.update_cna_metadata(
-            db_session, cna_id=cna.id, organization_name="Example Corporation"
-        )
-
-        assert changed is True
-        assert await _status_and_reason(db_session, ticket.id) == ("New", None)
-        assert await ticket_events(db_session, ticket) == []
 
 
 # ---------------------------------------------------------------------------
