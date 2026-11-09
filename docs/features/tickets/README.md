@@ -18,6 +18,7 @@ cve-sync-osv.md         OSV enrichment fetcher specification
 cve-sync-redhat.md      Red Hat Security Data fetcher specification
 cve-sync-kev.md         CISA KEV fetcher specification
 cve-sync-epss.md        EPSS fetcher specification
+cna.md                  CNA of a CVE, CNA metadata sync, auto-ignore policy of new Tickets by CNA
 cvss-scoring.md         Multi-provider CVSS assessments, severity resolution
 ticket-priority.md      Ticket priority (P1–P4) from severity and exploitation evidence, manual override
 ticket-deadlines.md     Remediation due dates from the SLA or the Coordinated Release Date, per-track actor milestones, Ticket current phase, overdue and current-phase filters, current-due-date sorting
@@ -46,6 +47,10 @@ ticket-references.md    External links on tickets (auto-classified by type, manu
   defines the `cve_service` module contract through which every fetcher and
   on-demand lookup upserts CVE data and through which the Ticket creation
   decision is made.
+- `cna.md` records the CNA that owns each CVE Record, written by the MITRE and
+  kernel fetchers through `cve-service.md`, and defines the auto-ignore policy
+  that moves new Tickets of selected CNAs to `Ignored` through
+  `ticket-service.md`.
 - `cvss-scoring.md` drives ticket severity and product eligibility
   (consumed by `tickets.md` and `packages/package-model.md`).
 - `ticket-priority.md` derives the informational Ticket priority from resolved

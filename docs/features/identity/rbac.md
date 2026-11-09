@@ -34,7 +34,7 @@ endpoint contract.
 |---|---|
 | `manage_users` | List users and view their complete profiles, create local users, update user fields, manage user roles, reset password, deactivate/reactivate, unlock, view deactivation impact, view/revoke all API keys, view admin-scoped identity audit log |
 | `manage_role_mappings` | Group-to-role mapping CRUD, preview role mapping. These operations belong to [identity-provisioning](identity-provisioning.md), a deferred specification |
-| `manage_settings` | View/update system settings, preview the impact of a default-CVSS version change, trigger CVSS recalculation, view settings audit log |
+| `manage_settings` | View/update system settings, preview the impact of a default-CVSS version change, trigger CVSS recalculation, view settings audit log, set the auto-ignore policy of a CNA, view the CNA audit log |
 | `manage_fetchers` | Trigger manual fetcher run, rerun complete Ticket convergence for an accessible eligible Ticket, enable/disable fetchers, view/modify fetcher config, view fetcher audit log, view error details, view error tracebacks |
 | `admin_ticket_ops` | Set track affectedness to `FIXED` from any status |
 
@@ -210,7 +210,7 @@ Confidential Ticket Visibility). Authenticated access covers:
 - View maintainer workbench (own pending, in-progress, and completed packages)
 - View the user directory (list and detail; the complete user profile requires
   `manage_users`)
-- View tickets, CVEs, products, packages, and ticket package trees
+- View tickets, CVEs, CNAs, products, packages, and ticket package trees
 - View ticket references, CVSS assessments, and submission/release requests
 - View ticket audit logs
 - View fetchers (list, run history, run detail, timeline, error messages, and
@@ -283,6 +283,8 @@ no response to a caller that the operation does not already admit.
 | Preview impact of a default-CVSS version change | `manage_settings` |
 | Trigger CVSS recalculation | `manage_settings` |
 | View settings audit log | `manage_settings` |
+| Set the auto-ignore policy of a CNA | `manage_settings` |
+| View CNA audit log | `manage_settings` |
 | Trigger manual fetcher run | `manage_fetchers` |
 | Enable/disable fetchers | `manage_fetchers` |
 | View fetcher config | `manage_fetchers` |
@@ -316,6 +318,7 @@ no response to a caller that the operation does not already admit.
 | View ticket audit log | Authenticated |
 | View the user directory (list and detail) | Authenticated |
 | View tickets / CVEs | Authenticated |
+| View CNAs | Authenticated |
 | View packages and ticket package trees | Authenticated |
 | View products | Authenticated |
 | View ticket references | Authenticated |
@@ -633,6 +636,13 @@ here with the required authorization level and a link to the owning spec.
 | POST | `/api/v1/cves/{cve_id}/refetch` | `triage_ticket` | [cve-tracking](../tickets/cve-tracking.md#re-fetch-cve-data) |
 | GET | `/api/v1/cve-sources` | Authenticated | [cve-service](../tickets/cve-service.md#global-cve-source-listing) |
 
+### CNAs
+
+| Method | Endpoint | Authorization | Owning Spec |
+|--------|----------|---------------|-------------|
+| GET | `/api/v1/cnas` | Authenticated | [cna](../tickets/cna.md#list-cnas) |
+| GET | `/api/v1/cnas/{org_id}` | Authenticated | [cna](../tickets/cna.md#get-cna) |
+
 ### Ticket Events
 
 | Method | Endpoint | Authorization | Owning Spec |
@@ -683,6 +693,8 @@ here with the required authorization level and a link to the owning spec.
 | GET | `/api/v1/admin/settings/audit-log` | `manage_settings` | [system-settings](../platform/system-settings.md#list-settings-audit-events) |
 | GET | `/api/v1/admin/settings/default-cvss-version/impact` | `manage_settings` | [default-cvss-version-operations](../platform/default-cvss-version-operations.md#get-default-cvss-impact-preview) |
 | POST | `/api/v1/admin/settings/default-cvss-version/recalculate` | `manage_settings` | [default-cvss-version-operations](../platform/default-cvss-version-operations.md#trigger-cvss-recalculation) |
+| PATCH | `/api/v1/admin/cnas/{org_id}` | `manage_settings` | [cna](../tickets/cna.md#set-cna-auto-ignore) |
+| GET | `/api/v1/admin/cnas/audit-log` | `manage_settings` | [cna](../tickets/cna.md#list-cna-audit-events) |
 | GET | `/api/v1/admin/identity/audit-log` | `manage_users` | [identity-audit-log](identity-audit-log.md#list-identity-audit-events) |
 | GET | `/api/v1/admin/api-keys` | `manage_users` | [api-key-management](api-key-management.md#list-all-api-keys) |
 | POST | `/api/v1/admin/api-keys/{key_id}/revoke` | `manage_users` | [api-key-management](api-key-management.md#revoke-api-key) |

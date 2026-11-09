@@ -985,10 +985,10 @@ mutation or its audit values, it must acquire the root lock first.
 #### Cross-Domain Root Lock Order
 
 When one transaction needs pessimistic locks from more than one of the User,
-CVE, and Ticket domains, it acquires existing roots in this order:
+CVE, CNA, and Ticket domains, it acquires existing roots in this order:
 
 ```text
-User rows by UUID -> optional CVE row -> Ticket rows by UUID -> child rows
+User rows by UUID -> optional CVE row -> optional CNA row -> Ticket rows by UUID -> child rows
 ```
 
 The order applies to every root that participates in the transaction; it does
@@ -1043,6 +1043,15 @@ transaction writing its locked Ticket a second time would wait for a CVE holder
 that is itself waiting for that Ticket, and deadlock. `FOR UPDATE` on the CVE
 row is required only to delete a CVE or change its key, which no workflow does.
 The Ticket root keeps `FOR UPDATE`.
+
+A `CNA` row (`docs/features/tickets/cna.md`) is acquired only in these ways. A
+CVE ingestion acquires at most one, by creating it or by an effective update of
+its short name, after its CVE root and before its Ticket root. The CNA metadata
+fetcher acquires CNA rows in ascending `CNA.id` order and no other root, and
+the auto-ignore operation acquires only its one CNA row, with
+`FOR NO KEY UPDATE`. The foreign-key `FOR KEY SHARE` that a CVE write takes on
+its CNA row is not a root in this protocol and conflicts with none of these
+locks.
 
 When one workflow affects multiple Users or Tickets, it locks every applicable
 User in ascending UUID order before locking the union of applicable Tickets in

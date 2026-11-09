@@ -24,7 +24,7 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`, except
 
 ## Entity Relationship Overview
 
-The data model comprises 34 entities organized into five domains. The
+The data model comprises 36 entities organized into five domains. The
 overview below shows the core entities and their cross-domain
 relationships. Domain-specific diagrams follow with key columns (primary
 keys, foreign keys, and discriminant fields). Full column definitions
@@ -40,6 +40,7 @@ implicit relationships (joined by convention, no FK constraint).
 flowchart TB
     subgraph cve_tickets["CVE & Tickets"]
         CVE
+        CNA
         CVESource
         CVEExternalIdentifier
         Ticket
@@ -85,6 +86,7 @@ flowchart TB
         IBSRequestActionTrack
     end
 
+    CVE -->|cna_id| CNA
     CVE --> CVESource
     CVE --> CVEExternalIdentifier
     CVE --> CVECVSSAssessment
@@ -125,6 +127,20 @@ erDiagram
         VARCHAR_20 severity "nullable"
         VARCHAR_20 cve_state "NOT NULL, DEFAULT PUBLISHED"
         TIMESTAMPTZ date_rejected "nullable"
+        UUID cna_id FK "nullable"
+    }
+    CNA {
+        UUID id PK
+        UUID org_id UK "NOT NULL"
+        VARCHAR_32 short_name "nullable"
+        BOOLEAN auto_ignore "NOT NULL, DEFAULT FALSE"
+    }
+    CNAAuditEvent {
+        UUID id PK
+        UUID cna_id FK "NOT NULL"
+        UUID user_id FK "nullable"
+        VARCHAR_50 event_type "NOT NULL"
+        JSONB detail "nullable"
     }
     CVESource {
         UUID id PK
@@ -216,6 +232,9 @@ erDiagram
         UUID id PK
     }
 
+    CNA |o--o{ CVE : "owns record of"
+    CNA ||--o{ CNAAuditEvent : "has policy events"
+    CNAAuditEvent }o--o| User : "performed by"
     CVE ||--o{ CVESource : "has sources"
     CVE ||--o{ CVECVSSAssessment : "has assessments"
     CVE ||--o{ CVEExternalIdentifier : "has external identifiers"
@@ -513,8 +532,14 @@ Represents a Common Vulnerability and Exposure entry.
 | modified_date  | TIMESTAMPTZ    |                      | Date CVE was last modified     |
 | cve_state      | VARCHAR(20)  | NOT NULL, DEFAULT PUBLISHED | CveState: PUBLISHED, REJECTED. Populated by the discovery fetchers that report CVE state: `sync_mitre_cves` (from `cveMetadata.state`), `sync_nvd_cves` (from `vulnStatus = Rejected`), `sync_kernel_cves` (from file path: `published/` vs `rejected/`). `PUBLISHED` requires `date_rejected IS NULL`; the service enforces this invariant. See `docs/features/tickets/cve-tracking.md` for rejection handling rules |
 | date_rejected  | TIMESTAMPTZ  | nullable             | From CVE JSON 5.x `cveMetadata.dateRejected`. May be present only while `cve_state = REJECTED`; any resulting `PUBLISHED` state clears it even when the current source omits the field |
+| cna_id         | UUID         | FK(cna.id) ON DELETE RESTRICT, nullable | CNA that owns the CVE Record. Written only by `sync_mitre_cves` and `sync_kernel_cves` through `upsert_cve()`; an omitted value preserves it and no source clears it. `NULL` until such a source ingests the record. See `docs/features/tickets/cna.md` |
 | created_at     | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record creation timestamp      |
 | updated_at     | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record update timestamp        |
+
+**Indexes**:
+
+- `ix_cve_cna_id`: non-unique B-tree index on `cna_id`, for the `cna` filters
+  of the CVE list and the Ticket list.
 
 `CVE.severity` uses the same unified five-label scale regardless of the
 winning assessment's CVSS version. Assessment persistence recalculates it for
@@ -952,6 +977,66 @@ its next run.
 See `docs/features/tickets/cve-sync-epss.md` (Retained scores) for the refresh
 scope of a retained score.
 
+#### CNA
+
+Physical table: `cna`.
+
+A CVE Numbering Authority that has owned the record of at least one ingested
+CVE: one row per CVE Services organization. Rows are created only by CVE
+ingestion and are never deleted, also when a transfer leaves a CNA without a
+CVE. See `docs/features/tickets/cna.md` for the writers of each
+column and the auto-ignore policy.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| id | UUID | PK | Internal identifier; never exposed by the API |
+| org_id | UUID | UNIQUE, NOT NULL | CVE Services UUID of the organization (`providerMetadata.orgId` of the CVE Records it owns); the public identity of the CNA. Never changes |
+| short_name | VARCHAR(32) | nullable | Short name of the CNA in CVE Services; `NULL` until a writer supplies one. Maintained under the rules of `cna.md` (Short Name); never cleared |
+| short_name_observed_at | TIMESTAMPTZ | nullable | `providerMetadata.dateUpdated` of the record from which `short_name` or this date was taken; `NULL` when that writer supplied no date |
+| organization_name | VARCHAR(256) | nullable | Organization name from the CNA list, written only by `sync_mitre_cnas` |
+| types | JSONB | NOT NULL, DEFAULT `'[]'` | Array of the CNA type strings of the CNA list, without duplicates, in ascending Unicode code-point order; written only by `sync_mitre_cnas` |
+| scope | TEXT | nullable | Scope from the CNA list as plain text (at most 4096 characters), never markup; written only by `sync_mitre_cnas` |
+| auto_ignore | BOOLEAN | NOT NULL, DEFAULT FALSE | Whether the CNA is under the auto-ignore policy; written only by `cna_service.set_cna_auto_ignore()` |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
+| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record update timestamp; advances only with an effective change |
+
+No index beyond the primary key and the `org_id` unique constraint: the table
+holds at most a few thousand rows, and its list and search read it whole.
+
+#### CNAAuditEvent
+
+Physical table: `cna_audit_event`.
+
+Audit trail for administrative changes of the auto-ignore policy of a CNA.
+Inherits `id`, `created_at`, and `user_id` from `AuditEventMixin`. See
+`docs/features/tickets/cna.md` (CNA Audit Log).
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| id | UUID | Inherited from AuditEventMixin | Internal identifier |
+| cna_id | UUID | FK(cna.id) ON DELETE RESTRICT, NOT NULL, indexed | The CNA whose policy changed |
+| event_type | VARCHAR(50) | NOT NULL | See CNAAuditEventType enum below |
+| user_id | UUID | Inherited from AuditEventMixin | Administrator who changed the policy. Nullable at DB level; `CNAAuditLog.log_event()` validates presence |
+| old_value | TEXT | nullable | Always `NULL` for the current event types |
+| new_value | TEXT | nullable | Always `NULL` for the current event types |
+| detail | JSONB | nullable | `{"cna_name": ...}`: event-time snapshot of the display name of the CNA |
+| created_at | TIMESTAMPTZ | Inherited from AuditEventMixin | When the event occurred |
+
+**Indexes**:
+
+- `ix_cna_audit_event_cna_id`: non-unique B-tree index on `cna_id`, for the
+  `cna` filter of the CNA audit log.
+
+#### CNAAuditEventType Enum
+
+Classifies the action recorded in a `CNAAuditEvent`. Category B —
+classification (Python Enum only). Adding a value requires only a code change.
+
+| Value | Description |
+|---|---|
+| `auto_ignore_enabled` | An administrator placed the CNA under the auto-ignore policy |
+| `auto_ignore_disabled` | An administrator removed the CNA from the auto-ignore policy |
+
 #### Ticket
 
 Represents the internal workflow unit for a security issue. A ticket may
@@ -965,7 +1050,7 @@ See `docs/features/tickets/tickets.md` for the full ticket specification.
 | sequence_id       | INTEGER     | UNIQUE, NOT NULL, auto-increment | Human-readable ticket ID, exposed as `SNTL-{n}` (e.g., `SNTL-42`) |
 | cve_id            | UUID        | FK(cve.id), UNIQUE, nullable | Associated CVE. NULL for tickets created without a CVE. A CVE can be associated later via `POST /api/v1/tickets/{ticket_id}/associate-cve` |
 | status            | VARCHAR(20) | NOT NULL, DEFAULT New        | TicketStatus: New, Analysis, Analyzed, Resolved, Ignored, Duplicated |
-| ignore_reason     | VARCHAR(20) | nullable                     | TicketIgnoreReason: why the Ticket is ignored. Set exactly while `status = Ignored` (see CHECK below): written together with the transition into `Ignored` by `ticket_service.ignore_ticket()` or `ignore_new_for_rejected_cve()`, unchanged while the Ticket stays `Ignored`, and cleared by `ticket_service.reopen_from_ignored()`. Only `cve_rejected` makes the Ticket reopen automatically, when the rejection of its CVE is reverted. Never derived from audit history. Not indexed: the Ticket-list `ignore_reason` filter uses the same unindexed approach as the `status` filter. See `docs/features/tickets/tickets.md` (Ignore Reason) |
+| ignore_reason     | VARCHAR(20) | nullable                     | TicketIgnoreReason: why the Ticket is ignored. Set exactly while `status = Ignored` (see CHECK below): written together with the transition into `Ignored` by `ticket_service.ignore_ticket()`, `ignore_new_for_rejected_cve()`, or `ignore_new_for_cna_policy()`, unchanged while the Ticket stays `Ignored`, and cleared by `ticket_service.reopen_from_ignored()`. Only `cve_rejected` makes the Ticket reopen automatically, when the rejection of its CVE is reverted. Never derived from audit history. Not indexed: the Ticket-list `ignore_reason` filter uses the same unindexed approach as the `status` filter. See `docs/features/tickets/tickets.md` (Ignore Reason) |
 | severity_manual | VARCHAR(20) | nullable                     | Manual severity set by the VA (Critical, High, Medium, Low, None). `NULL` = not set (unresolved). `None` = VA explicitly assessed as informational (equivalent to CVSS score 0.0). Used for severity resolution when `cve_id IS NULL`. Cannot be set when `cve_id IS NOT NULL` (severity is derived from CVSS). Cleared to `NULL` by `associate_cve` when a CVE is linked. Mutually exclusive with `cve_id` (see CHECK below). See `docs/features/tickets/tickets.md` (Severity Resolution) |
 | priority_auto     | VARCHAR(10) | nullable                     | TicketPriority derived automatically from the resolved severity and the associated CVE's exploitation evidence. `NULL` = not yet prioritizable. Written only by `ticket_mutations.refresh_priority_auto()`. See `docs/features/tickets/ticket-priority.md` |
 | priority_override | VARCHAR(10) | nullable                     | Sticky manual TicketPriority override set by an authorized user. `NULL` = no override. Never modified by automatic processing. The effective priority is `COALESCE(priority_override, priority_auto)` and is not stored. See `docs/features/tickets/ticket-priority.md` |
@@ -1014,8 +1099,8 @@ for the full transition diagram, gates, and rules.
 Summary:
 - New -> Analysis (manual: assignment, or any modifying operation by a user
   eligible to be the assignee)
-- New -> Ignored (manual or automatic: CVE rejection); every transition into
-  Ignored writes `ignore_reason`
+- New -> Ignored (manual or automatic: CVE rejection or CNA auto-ignore
+  policy); every transition into Ignored writes `ignore_reason`
 - Analysis -> Analyzed (automatic: all gates met — at least one manually
   included track, no actionable track in ANALYSIS, severity set, and at least
   one canonical SUSE assessment in any accepted CVSS version if a CVE is
@@ -1101,6 +1186,7 @@ decides when a value is required. API wire values equal the stored values.
 |-------|-------------|
 | `not_shipped` | SUSE ships none of the affected software; set by a user |
 | `cve_rejected` | The associated CVE is rejected; set by the automatic ignore of a rejected CVE or by a user while the CVE is `REJECTED`. The only value that reopens the Ticket automatically, when the rejection is reverted |
+| `cna_policy` | The CNA of the associated CVE is under the auto-ignore policy; set only by the automatic ignore of the policy (`docs/features/tickets/cna.md`) |
 | `other` | The Ticket is not worked for another reason; set by a user |
 
 See `docs/features/tickets/tickets.md` (Ignore Reason).
@@ -1205,7 +1291,7 @@ contract is in `docs/features/tickets/ticket-audit-log.md`.
 
 | Value                      | Description                                        |
 |----------------------------|----------------------------------------------------|
-| status_change              | Ticket status changed. Direct manual transitions use the acting user; derived transitions use NULL. `comment` is exactly `CVE rejected` for the automatic CVE rejection and NULL otherwise, also for a user's ignore with the reason `cve_rejected`. `detail` carries `{"ignore_reason": "..."}` for a transition into `Ignored` and is NULL otherwise. |
+| status_change              | Ticket status changed. Direct manual transitions use the acting user; derived transitions use NULL. `comment` is exactly `CVE rejected` for the automatic CVE rejection, exactly `CNA auto-ignore policy` for the automatic ignore of the CNA policy, and NULL otherwise, also for a user's ignore with the reason `cve_rejected`. `detail` carries `{"ignore_reason": "..."}` for a transition into `Ignored` and is NULL otherwise. |
 | assignment                 | Ticket was assigned, reassigned, unassigned by its assignee, or system-unassigned. Direct assignment, reassignment, auto-assignment, and self-unassignment use the acting user; system unassignment uses NULL. System unassignment uses `Unassigned from {username}: {reason}` with the closed reason vocabulary in `ticket-audit-log.md`; other assignment comments are NULL. |
 | duplicate_set              | Ticket was marked as duplicate of another          |
 | duplicate_removed          | Duplicate mark was reverted                        |
@@ -2141,7 +2227,7 @@ retained provenance.
   `TicketAccessGrant` uses a composite PK `(ticket_id, user_id)`)
 - All tables include `created_at` and `updated_at` timestamps (exceptions:
   `TicketAuditEvent`, `IdentityAuditEvent`, `SettingAuditEvent`,
-  `UserRole`,
+  `CNAAuditEvent`, `UserRole`,
   `TicketPackageMaintainer`, `FetcherRun`, `FetcherAuditEvent`,
   `IBSRequestActionTrack`, `RoleMapping`, `ApiKey`,
   and `CVEAffectedVersion`

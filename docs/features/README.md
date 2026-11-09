@@ -81,6 +81,7 @@ Index of all feature specification domains.
 - [cve-sync-redhat.md](tickets/cve-sync-redhat.md) — Red Hat Security Data fetcher specification
 - [cve-sync-kev.md](tickets/cve-sync-kev.md) — CISA KEV fetcher
 - [cve-sync-epss.md](tickets/cve-sync-epss.md) — EPSS score fetcher specification
+- [cna.md](tickets/cna.md) — CNA of a CVE, CNA metadata sync, and the auto-ignore policy of new Tickets by CNA
 - [cvss-scoring.md](tickets/cvss-scoring.md) — Multi-provider CVSS assessments, severity resolution
 - [ticket-priority.md](tickets/ticket-priority.md) — Ticket priority (P1–P4) from severity and exploitation evidence, manual override
 - [ticket-deadlines.md](tickets/ticket-deadlines.md) — Remediation SLA due dates, per-track actor milestones, Ticket current phase, overdue and current-phase filters, current-due-date sorting

@@ -10,7 +10,7 @@ emitted to stdout/stderr by every runtime process role.
 defined and persisted per
 `docs/features/platform/audit-trail-infrastructure.md`. Audit trails
 (`TicketAuditEvent`, `IdentityAuditEvent`, `SettingAuditEvent`,
-`FetcherAuditEvent`) are authoritative historical evidence: persisted in
+`FetcherAuditEvent`, `CNAAuditEvent`) are authoritative historical evidence: persisted in
 PostgreSQL, queryable, and retained indefinitely, but not authoritative current
 operational state. Operational logs, by
 contrast, are diagnostic: transient, never persisted by the

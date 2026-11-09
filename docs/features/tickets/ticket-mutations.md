@@ -549,6 +549,9 @@ function.
 
 - `ticket_service.ignore_new_for_rejected_cve` — owns its explicit all-status
   system matrix and must treat non-`New` states as no-ops
+- `ticket_service.ignore_new_for_cna_policy` — owns its explicit all-status
+  system matrix and must treat a confidential Ticket and non-`New` states as
+  no-ops
 - `ticket_service.reopen_from_ignored` — must operate on Ignored tickets; skips
   mutability guard
 - `ticket_service.revert_duplicate` — must operate on Duplicated tickets; skips

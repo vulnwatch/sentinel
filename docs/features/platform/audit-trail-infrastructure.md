@@ -10,7 +10,7 @@ Audit Trail Index.
 
 This is the single canonical source for all cross-cutting audit trail
 rules. Domain-specific audit trail specifications (ticket, identity,
-setting, fetcher) reference this document for shared conventions and
+setting, fetcher, CNA) reference this document for shared conventions and
 extend it with their domain-specific event types and data.
 
 ## AuditEventMixin
@@ -176,11 +176,17 @@ class FetcherAuditLog(BaseAuditLog):
     name = "fetcher"
     description = "Administrative actions on fetchers"
     model_class = FetcherAuditEvent
+
+
+class CNAAuditLog(BaseAuditLog):
+    name = "cna"
+    description = "Auto-ignore policy changes of CNAs"
+    model_class = CNAAuditEvent
 ```
 
-`SettingAuditLog`, `IdentityAuditLog`, and `FetcherAuditLog` override
-`log_event()` with the typed domain signatures and validation defined in
-their owning specifications. They inherit the flush-before-return,
+`SettingAuditLog`, `IdentityAuditLog`, `FetcherAuditLog`, and `CNAAuditLog`
+override `log_event()` with the typed domain signatures and validation defined
+in their owning specifications. They inherit the flush-before-return,
 no-commit, exception propagation, and caller-owned transaction guarantees
 below.
 
@@ -260,7 +266,8 @@ BaseAuditLog                            AuditEventMixin (id, created_at, user_id
   ├── TicketAuditLog ──model_class──▶  TicketAuditEvent (Base + Mixin)
   ├── IdentityAuditLog ─model_class─▶  IdentityAuditEvent (Base + Mixin)
   ├── SettingAuditLog ──model_class──▶  SettingAuditEvent (Base + Mixin)
-  └── FetcherAuditLog ─model_class──▶  FetcherAuditEvent (Base + Mixin)
+  ├── FetcherAuditLog ─model_class──▶  FetcherAuditEvent (Base + Mixin)
+  └── CNAAuditLog ─────model_class──▶  CNAAuditEvent (Base + Mixin)
 ```
 
 `BaseAuditLog` references the model via `model_class` and provides
@@ -391,6 +398,7 @@ When adding a new audit trail, update this index.
 | Fetcher | `fetcher_audit_event` | 4 | Indefinite | `docs/features/platform/fetcher-infrastructure.md` |
 | Identity | `identity_audit_event` | 15 | Indefinite | `docs/features/identity/identity-audit-log.md` |
 | Setting | `setting_audit_event` | 1 | Indefinite | `docs/features/platform/system-settings.md` |
+| CNA | `cna_audit_event` | 2 | Indefinite | `docs/features/tickets/cna.md` |
 
 The Identity count includes `role_mapping_created`, `role_mapping_deleted`,
 and `manager_changed`. These events, and the variants of other identity events
@@ -464,6 +472,7 @@ All audit trail endpoints MUST apply standard pagination as defined in
 - `docs/features/identity/identity-audit-log.md` — identity audit trail
 - `docs/features/platform/system-settings.md` — setting audit trail
 - `docs/features/platform/fetcher-infrastructure.md` — fetcher audit trail
+- `docs/features/tickets/cna.md` — CNA audit trail
 - `AGENTS.md` — Audit trail atomicity guardrail
 - `docs/features/platform/testing-strategy.md` — Audit trail testing
   requirements, immutability verification

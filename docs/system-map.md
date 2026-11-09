@@ -101,7 +101,7 @@ Entity-relationship diagram showing all database tables and their
 connections. Only primary keys and foreign keys are shown for readability.
 See [data-model.md](data-model.md) for full column details.
 
-The diagram contains 34 tables across the groups summarized below.
+The diagram contains 36 tables across the groups summarized below.
 `RoleMapping` belongs to
 [identity-provisioning.md](features/identity/identity-provisioning.md#status),
 a deferred specification, and has no physical table while that specification
@@ -114,6 +114,20 @@ erDiagram
         VARCHAR cve_id UK
         VARCHAR severity
         VARCHAR cve_state
+        UUID cna_id FK "nullable"
+    }
+
+    CNA {
+        UUID id PK
+        UUID org_id UK
+        BOOLEAN auto_ignore
+    }
+
+    CNAAuditEvent {
+        UUID id PK
+        UUID cna_id FK
+        UUID user_id FK "nullable"
+        VARCHAR event_type
     }
 
     CVESource {
@@ -360,6 +374,9 @@ erDiagram
         UUID user_id FK "nullable"
     }
 
+    CNA |o--o{ CVE : "owns record of"
+    CNA ||--o{ CNAAuditEvent : "has policy events"
+    CNAAuditEvent }o--o| User : "performed by"
     CVE ||--o{ CVESource : "has sources"
     CVE ||--o{ CVECVSSAssessment : "has assessments"
     CVE ||--o{ CVEExternalIdentifier : "has external identifiers"
@@ -414,7 +431,7 @@ erDiagram
 
 | Group | Tables | Purpose |
 |-------|--------|---------|
-| **CVE Core** | CVE, CVESource, CVECVSSAssessment, CVEExternalIdentifier | Vulnerability data from external sources — drives ticket creation and severity |
+| **CVE Core** | CVE, CVESource, CVECVSSAssessment, CVEExternalIdentifier, CNA, CNAAuditEvent | Vulnerability data from external sources — drives ticket creation and severity; the CNA that owns each record, its auto-ignore policy, and that policy's audit trail |
 | **CVE Enrichment** | CVEAffectedVersion, CVECWE, CVESSVCAssessment, CVEKEVEntry, CVEEPSSScore | Supplementary CVE intelligence from secondary sources (CISA, FIRST) |
 | **Ticket Domain** | Ticket, TicketAuditEvent, TicketAccessGrant, TicketReference, TicketPackage, TicketPackageMaintainer, TicketPackageTrack, TicketPackageProduct | Security workflow, audit trail, and access control |
 | **Product Domain** | Product, ProductRepository | SUSE distribution products and update repositories |
@@ -634,7 +651,7 @@ flowchart TD
     DUPLICATED["🔗 Duplicated"]
 
     NEW -->|"assignment or<br/>any modifying operation"| ANALYSIS
-    NEW -->|"manual or<br/>CVE rejection"| IGNORED
+    NEW -->|"manual, CVE rejection,<br/>or CNA policy"| IGNORED
 
     ANALYSIS -->|"✓ all gates met:<br/>≥1 included track,<br/>no actionable ANALYSIS tracks,<br/>severity set,<br/>≥1 accepted-version SUSE CVSS (if CVE)"| ANALYZED
     ANALYSIS -->|"manual"| IGNORED
@@ -739,7 +756,7 @@ flowchart TD
     NEW -->|"first assignment<br/>(irreversible)"| ANALYSIS
 
     %% Exit to manual zone
-    NEW -->|"ignore / CVE rejection"| IGNORED
+    NEW -->|"ignore / CVE rejection /<br/>CNA policy"| IGNORED
     ANALYSIS -->|"ignore"| IGNORED
     ANALYSIS -->|"mark duplicate"| DUPLICATED
     ANALYZED -->|"mark duplicate"| DUPLICATED
