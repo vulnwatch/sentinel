@@ -10,7 +10,7 @@ boundary and must not be implemented. Audit events record semantic domain
 changes, not mutation attempts, operational workflow progress, or every factual
 write associated with a Ticket.
 Users can browse, filter, and search the history through the audit-log API
-endpoint.
+endpoint, and list the users who acted on a Ticket through List Ticket Actors.
 
 The `TicketAuditLog` subclass of `BaseAuditLog` provides the event creation
 helper and registers this audit trail in the global registry. See
@@ -555,6 +555,77 @@ page or a zero count. Ticket accessibility constrains the query before actor,
 event-type, search, or date filters and before pagination. The count and page
 therefore cannot be derived from different visibility decisions.
 
+### List Ticket Actors
+
+```
+GET /api/v1/tickets/{ticket_id}/actors
+```
+
+Returns the users who acted on a Ticket: each User who is the actor of at least
+one of its events, once. A client reads it, for example, to offer the values of
+the `actor` filter of List Ticket Events without reading every page of the log.
+
+**Path parameters**:
+
+| Parameter   | Type | Description          |
+|-------------|------|----------------------|
+| `ticket_id` | string | Canonical Ticket identity (`SNTL-{n}`) |
+
+The endpoint declares no query parameter.
+
+**Response** (200 OK, unpaginated):
+
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "username": "fictional.analyst",
+      "full_name": "Fictional Analyst",
+      "active": true,
+      "bot": false
+    }
+  ]
+}
+```
+
+**Notes**:
+
+- `data` holds each User whose UUID is the `user_id` of at least one event of
+  the Ticket exactly once, whatever the number, types, and times of its events,
+  and no other User. A system event (`user_id IS NULL`) adds no entry, so a
+  Ticket whose events are all system events returns an empty array.
+- Each entry is the complete current User reference (`docs/api-spec.md`, User
+  References in Responses): `id`, `username`, nullable `full_name`, current
+  `active`, and current `bot`. An inactive User and a bot account are listed
+  like every other actor. A username that an event carries as content, such
+  as the target of an `assignment` or `access_grant_added`, adds no entry.
+- Entries are ordered by `username` in ascending Unicode code-point order,
+  independent of database collation; usernames are unique, so the order is
+  total. The order is fixed: `sort_by` and `sort_order` are not accepted.
+- The endpoint is unpaginated because its size is bounded by the number of
+  users who acted on one Ticket, typically a handful, and not by the length of
+  the Ticket's history.
+- Every caller who can see the Ticket receives the same actors, as from List
+  Ticket Events (`docs/features/identity/rbac.md`, Actor Identities).
+- The list is a presentational projection of the Ticket audit trail
+  (`docs/features/platform/audit-trail-infrastructure.md`, Operational State
+  Authority), not an audit trail retrieval endpoint: it returns users, not
+  events. The `/audit-log` suffix (`docs/api-spec.md`, Audit Trail Endpoint
+  Naming) and the date filters and pagination of audit trail endpoints
+  (`docs/features/platform/audit-trail-infrastructure.md`, Date Filtering;
+  Filtering) therefore do not apply to it.
+
+**`Access: Authenticated`**
+
+Confidentiality filtering is enforced centrally — see `docs/api-spec.md`
+([Scoped Responses](../../api-spec.md#scoped-responses)). As for List Ticket
+Events, the accessible parent Ticket and the actors derive from one database
+operation or equivalent single database view, using the canonical predicate in
+`docs/features/identity/rbac.md` (Scope and Confidential Ticket Visibility).
+Missing and inaccessible Tickets both return `404 TICKET_NOT_FOUND`; an
+inaccessible Ticket never produces an empty list.
+
 ## Service Contract
 
 Every event required by the owning domain contract is part of the same database
@@ -564,11 +635,11 @@ created. An explicit no-event boundary in the canonical matrix is intentional
 and is not a failure of atomicity.
 
 Audit reads are model-aware service operations. API handlers delegate list and
-count construction to `list_ticket_events()` in the service layer rather than
-issuing business ORM queries, and Core has no model imports. Audit history is
-historical evidence only: no event, actor, payload, or inferred history may be
-an input to Ticket accessibility or any current authorization or operational
-state decision.
+count construction to `list_ticket_events()` and `list_ticket_actors()` in the
+service layer rather than issuing business ORM queries, and Core has no model
+imports. Audit history is historical evidence only: no event, actor, payload,
+or inferred history may be an input to Ticket accessibility or any current
+authorization or operational state decision.
 
 ### `list_ticket_events()`
 
@@ -616,6 +687,34 @@ page derive from one coherent PostgreSQL observation. Concurrent changes may be
 observed entirely before or after that view, never as a page/count or actor/event
 mixture from incompatible views. Join fan-out cannot duplicate events or inflate
 the total.
+
+### `list_ticket_actors()`
+
+This Category B operation accepts `db: AsyncSession`, public `ticket_id: str`,
+and request-resolved authenticated caller information. The result contains the
+service-layer actor projections in their documented order; it does not return
+or depend on Pydantic schemas. It creates no event, acquires no mutation lock,
+and does not commit or roll back.
+
+Behavior:
+
+1. Resolve `ticket_id` and select the parent exactly as step 1 of
+   `list_ticket_events()` does. Malformed values, Ticket UUIDs, missing
+   Tickets, and inaccessible Tickets raise `TicketNotFoundError`.
+2. Select the distinct non-null `user_id` values of the parent's events. A
+   system event contributes nothing, and several events of one actor
+   contribute one entry.
+3. Project each actor from the current User row as the complete reference
+   (`id`, `username`, nullable `full_name`, current `active`, current `bot`),
+   ordered by `username` in ascending Unicode code-point order, independent of
+   database collation. An accessible Ticket without a user-attributed event
+   yields an empty result.
+
+Parent accessibility, the actor set, and the actor projections derive from one
+coherent PostgreSQL observation, with the same concurrency guarantee as
+`list_ticket_events()`: a result never combines a successful access decision
+with actors selected after visibility was lost. `TicketNotFoundError` and
+database exceptions propagate unchanged.
 
 ### Implementation Guidelines
 
@@ -773,6 +872,15 @@ required event sequence or explicit no-event outcome. For audited mutations:
     before an ignore and the final event of a reopen; `log_event()` rejects a
     missing, extra-key, or unknown-valued `detail` on a transition into
     `Ignored` and any non-NULL `detail` on another transition
+31. List Ticket Actors tests assert one entry for an actor of several events of
+    different types, no entry for system events or for a username carried only
+    as event content, an empty list for a Ticket whose events are all system
+    events, no actor of another Ticket's events, the current `username`,
+    `full_name`, `active`, and `bot` of a renamed, inactive, and bot actor, and
+    ascending code-point `username` order. They cover the visibility cases of
+    requirement 26, a role-less caller, and loss of visibility after the
+    preliminary boundary, each inaccessible case returning `TICKET_NOT_FOUND`
+    rather than an empty list
 
 `AGENTS.md` enforces these requirements through Quality and findings
 (mandatory tests) and its audit routing rule, and its Reviewer Trigger Matrix

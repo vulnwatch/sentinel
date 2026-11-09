@@ -2159,9 +2159,10 @@ the response carries the actor's complete user reference and, where the read
 can report an action without a recorded actor, `null` for that action. This
 includes the self-service identity audit log, the fetcher list (`last_run`),
 run list, run detail, and timeline (`disabled_periods`), the self-service API
-key list (`revoked_by`), and the Ticket audit log (a `track_status_changed`
-to `fixed` through `admin_ticket_ops`). For the same caller, the fetcher run
-detail contains neither the `error_detail` nor the `error_traceback` key.
+key list (`revoked_by`), and the Ticket audit log and Ticket actors (a
+`track_status_changed` to `fixed` through `admin_ticket_ops`). For the same
+caller, the fetcher run detail contains neither the `error_detail` nor the
+`error_traceback` key.
 
 ### Service Functions
 
@@ -2937,13 +2938,13 @@ visibility predicate.
 
 **Single, nested, and assembled reads:**
 
-- Parameterize Ticket detail, package tree, references, Ticket audit,
-  submission requests, release requests, CVSS assessments, and per-CVE source
-  status over missing, visible, and inaccessible resources and over concurrent
-  confidentiality, grant, included-package, and CVE-to-Ticket association
-  changes where the resource is CVE-derived. Maintainer per-Ticket detail is
-  included and evaluates accessibility before status or package membership
-  projection.
+- Parameterize Ticket detail, package tree, references, Ticket audit, Ticket
+  actors, submission requests, release requests, CVSS assessments, and per-CVE
+  source status over missing, visible, and inaccessible resources and over
+  concurrent confidentiality, grant, included-package, and CVE-to-Ticket
+  association changes where the resource is CVE-derived. Maintainer
+  per-Ticket detail is included and evaluates accessibility before status or
+  package membership projection.
 - A successful response's root and all PostgreSQL-backed nested or separately
   assembled content are bound to one coherent database view in which the
   caller can access the Ticket. A response must never combine a stale
@@ -3137,6 +3138,9 @@ visibility predicate.
   `bot`; system events use `null`. Tests also prove the parent-scope query can use the required
   `TicketAuditEvent.ticket_id` index and never derives current state from audit
   history.
+- Ticket actor API and service tests cover the cases that
+  `docs/features/tickets/ticket-audit-log.md` (Testing Requirements) lists for
+  List Ticket Actors.
 
 **Confidentiality and explicit access grants:**
 

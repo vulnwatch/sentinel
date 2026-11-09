@@ -212,7 +212,7 @@ Confidential Ticket Visibility). Authenticated access covers:
   `manage_users`)
 - View tickets, CVEs, CNAs, products, packages, and ticket package trees
 - View ticket references, CVSS assessments, and submission/release requests
-- View ticket audit logs
+- View ticket audit logs and the users who acted on a ticket
 - View fetchers (list, run history, run detail, timeline, error messages, and
   the users who triggered runs or disabled and enabled a fetcher)
 - View IBS consumer status
@@ -316,6 +316,7 @@ no response to a caller that the operation does not already admit.
 | View own identity audit log | Authenticated |
 | View maintainer workbench | Authenticated |
 | View ticket audit log | Authenticated |
+| View the users who acted on a ticket | Authenticated |
 | View the user directory (list and detail) | Authenticated |
 | View tickets / CVEs | Authenticated |
 | View CNAs | Authenticated |
@@ -648,6 +649,7 @@ here with the required authorization level and a link to the owning spec.
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
 | GET | `/api/v1/tickets/{ticket_id}/audit-log` | Authenticated | [ticket-audit-log](../tickets/ticket-audit-log.md#list-ticket-events) |
+| GET | `/api/v1/tickets/{ticket_id}/actors` | Authenticated | [ticket-audit-log](../tickets/ticket-audit-log.md#list-ticket-actors) |
 
 ### Submission Tracking
 
