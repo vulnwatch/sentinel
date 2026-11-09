@@ -370,6 +370,12 @@ class TestRequestValidation:
                 id="unknown",
             ),
             pytest.param(
+                {"reason": "cna_policy"},
+                ["body", "reason"],
+                "literal_error",
+                id="system-only-cna-policy",
+            ),
+            pytest.param(
                 {"reason": "Not_Shipped"},
                 ["body", "reason"],
                 "literal_error",

@@ -31,6 +31,7 @@ from app.core.enums import (
     OPERABLE_TICKET_STATUSES,
     USER_IGNORE_REASONS,
     Capability,
+    CNAAuditEventType,
     CNASortField,
     CredentialKind,
     CurrentPhase,
@@ -241,6 +242,18 @@ class TestFetcherAuditEventTypeEnum:
 
     def test_count(self) -> None:
         assert len(list(FetcherAuditEventType)) == 4
+
+
+@pytest.mark.unit
+class TestCNAAuditEventTypeEnum:
+    """CNAAuditEventType must have exactly the two members defined in
+    data-model.md (CNAAuditEventType Enum) and cna.md (CNA Audit Log)."""
+
+    def test_exact_values(self) -> None:
+        assert [member.value for member in CNAAuditEventType] == [
+            "auto_ignore_enabled",
+            "auto_ignore_disabled",
+        ]
 
 
 @pytest.mark.unit
@@ -574,8 +587,13 @@ class TestTicketIgnoreReasonEnum:
         assert [member.value for member in TicketIgnoreReason] == [
             "not_shipped",
             "cve_rejected",
+            "cna_policy",
             "other",
         ]
+
+    def test_user_reasons_exclude_the_system_only_cna_policy(self) -> None:
+        """No user can choose `cna_policy` (tickets.md, Ignore Reason)."""
+        assert TicketIgnoreReason.CNA_POLICY not in USER_IGNORE_REASONS
 
     def test_user_reasons_are_every_listed_reason_in_order(self) -> None:
         assert type(USER_IGNORE_REASONS) is tuple

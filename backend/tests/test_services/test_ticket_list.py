@@ -633,7 +633,10 @@ class TestEnumFilters:
             )
         ) == _set([shipped, rejected])
         assert await _ids(db_session, ignore_reason=[]) == []
-        assert len(await _ids(db_session, ignore_reason=None)) == 4
+        # One Ticket per reason, plus the active one.
+        assert len(await _ids(db_session, ignore_reason=None)) == (
+            len(TicketIgnoreReason) + 1
+        )
         assert (
             await _ids(
                 db_session,

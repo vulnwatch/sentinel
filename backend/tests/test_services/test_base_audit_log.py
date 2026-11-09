@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.user import User
 from app.services import base_audit_log
 from app.services.base_audit_log import BaseAuditLog
+from app.services.cna_service import CNAAuditLog
 from app.services.fetcher_audit_log import FetcherAuditLog
 from app.services.identity_audit_log import IdentityAuditLog
 from app.services.settings import SettingAuditLog
@@ -441,13 +442,14 @@ class TestRegisteredTrailsInheritActorFilter:
     `AUDIT_LOG_REGISTRY`, so a future trail is enforced automatically."""
 
     def test_production_trails_are_registered(self) -> None:
-        # The imports above register the four production trails; this
+        # The imports above register the five production trails; this
         # keeps the registry-driven check below from passing vacuously.
         registry = base_audit_log.AUDIT_LOG_REGISTRY
         assert registry["ticket"] is TicketAuditLog
         assert registry["identity"] is IdentityAuditLog
         assert registry["setting"] is SettingAuditLog
         assert registry["fetcher"] is FetcherAuditLog
+        assert registry["cna"] is CNAAuditLog
 
     def test_no_registered_trail_overrides_filter_by_actor(self) -> None:
         overriding = [

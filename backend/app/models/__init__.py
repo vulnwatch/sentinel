@@ -2,6 +2,7 @@
 
 from app.models.api_key import ApiKey
 from app.models.cna import CNA
+from app.models.cna_audit_event import CNAAuditEvent
 from app.models.cve import CVE
 from app.models.cve_affected_version import CVEAffectedVersion
 from app.models.cve_cvss_assessment import CVECVSSAssessment
@@ -42,6 +43,7 @@ __all__ = [
     "CVECWE",
     "ApiKey",
     "AuditEventMixin",
+    "CNAAuditEvent",
     "CVEAffectedVersion",
     "CVECVSSAssessment",
     "CVEEPSSScore",

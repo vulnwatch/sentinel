@@ -39,9 +39,11 @@ the first violation, before any row is added or flushed:
    - `assignment`: a user actor requires `NULL`; the system actor
      (system unassignment) requires exactly
      `Unassigned from {old_value}: {reason}` with a closed reason.
-   - `status_change`: the system `New -> Ignored` transition (automatic
-     only for CVE rejection) requires `CVE rejected`; every other
-     transition requires `NULL`.
+   - `status_change`: the system `New -> Ignored` transition requires the
+     comment of the automatic ignore that its `detail.ignore_reason`
+     names: `CVE rejected` for `cve_rejected` and `CNA auto-ignore policy`
+     for `cna_policy`; every other transition, including a user's ignore
+     with `cve_rejected`, requires `NULL`.
    - Every other event type requires `NULL`.
 6. Insert through `BaseAuditLog.log_event()`, which flushes in the
    caller's transaction, never commits, and propagates database
@@ -107,6 +109,14 @@ CVE_SOURCE_AUDIT_LABELS: Final[Mapping[CVESourceType, str]] = {
 }
 
 CVE_REJECTED_COMMENT: Final = "CVE rejected"
+CNA_POLICY_COMMENT: Final = "CNA auto-ignore policy"
+
+# The canonical comment of each automatic `New -> Ignored`, keyed by the
+# ignore reason that the transition writes (its `detail.ignore_reason`).
+_AUTOMATIC_IGNORE_COMMENTS: Final[Mapping[str, str]] = {
+    TicketIgnoreReason.CVE_REJECTED.value: CVE_REJECTED_COMMENT,
+    TicketIgnoreReason.CNA_POLICY.value: CNA_POLICY_COMMENT,
+}
 
 PACKAGE_ADDED_AUTOMATIC_COMMENTS: Final = frozenset(
     {"CVE package resolution", "Product catalog backfill", "Ticket convergence"}
@@ -332,8 +342,13 @@ def _allowed_comments(
     user_id: uuid.UUID | None,
     old_value: str | None,
     new_value: str | None,
+    detail: Mapping[str, object] | None,
 ) -> frozenset[str | None]:
-    """The exact `comment` values allowed for this event and context."""
+    """The exact `comment` values allowed for this event and context.
+
+    `detail` has already passed schema validation, so a system
+    `New -> Ignored` carries exactly one valid `ignore_reason`.
+    """
     is_system = user_id is None
     if event_type is TicketAuditEventType.TICKET_CREATED:
         return (
@@ -362,8 +377,13 @@ def _allowed_comments(
         and is_system
         and old_value == TicketStatus.NEW.value
         and new_value == TicketStatus.IGNORED.value
+        and detail is not None
+        and (
+            automatic := _AUTOMATIC_IGNORE_COMMENTS.get(str(detail[_IGNORE_REASON_KEY]))
+        )
+        is not None
     ):
-        return frozenset({CVE_REJECTED_COMMENT})
+        return frozenset({automatic})
     return frozenset({None})
 
 
@@ -372,9 +392,11 @@ def _validate_comment(
     user_id: uuid.UUID | None,
     old_value: str | None,
     new_value: str | None,
+    detail: Mapping[str, object] | None,
     comment: str | None,
 ) -> None:
-    if comment not in _allowed_comments(event_type, user_id, old_value, new_value):
+    allowed = _allowed_comments(event_type, user_id, old_value, new_value, detail)
+    if comment not in allowed:
         actor = "system" if user_id is None else "user"
         raise ValueError(
             f"comment {comment!r} is not the canonical value for event type "
@@ -425,7 +447,7 @@ class TicketAuditLog(BaseAuditLog):
         _validate_detail_schema(event_type, user_id, new_value, detail)
         if detail is not None:
             _check_detail_size(detail)
-        _validate_comment(event_type, user_id, old_value, new_value, comment)
+        _validate_comment(event_type, user_id, old_value, new_value, detail, comment)
 
         await super().log_event(
             session,

@@ -358,6 +358,33 @@ class TestListEndpoint:
             _sntl(active): None,
         }
 
+    async def test_ignore_reason_cna_policy_lists_the_tickets_of_the_policy(
+        self,
+        authenticated_client: AsyncClient,
+        fixed_clock: list[datetime],
+        ticket_factory: Factory,
+    ) -> None:
+        """cna.md, A Curated Policy per CNA: analysts review the Tickets
+        that the policy ignored with `ignore_reason=cna_policy`."""
+        policy = await ticket_factory(
+            status=TicketStatus.IGNORED.value,
+            ignore_reason=TicketIgnoreReason.CNA_POLICY.value,
+        )
+        await ticket_factory(
+            status=TicketStatus.IGNORED.value,
+            ignore_reason=TicketIgnoreReason.OTHER.value,
+        )
+        await ticket_factory(status=TicketStatus.NEW.value)
+
+        assert await _ids(authenticated_client, ignore_reason=["cna_policy"]) == [
+            _sntl(policy)
+        ]
+        response = await authenticated_client.get(
+            _PATH, params={"ignore_reason": "cna_policy"}
+        )
+        (item,) = response.json()["data"]
+        assert (item["status"], item["ignore_reason"]) == ("ignored", "cna_policy")
+
     async def test_overdue_filter_parses_phases(
         self,
         authenticated_client: AsyncClient,
@@ -1012,6 +1039,7 @@ class TestSerializer:
         assert route._IGNORE_REASON_FILTER == {
             "not_shipped": TicketIgnoreReason.NOT_SHIPPED,
             "cve_rejected": TicketIgnoreReason.CVE_REJECTED,
+            "cna_policy": TicketIgnoreReason.CNA_POLICY,
             "other": TicketIgnoreReason.OTHER,
         }
 

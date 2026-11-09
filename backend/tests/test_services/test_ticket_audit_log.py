@@ -109,6 +109,7 @@ _ALL_CANONICAL_COMMENTS = (
     *(f"CVE ingested from {label}" for label in _EXPECTED_SOURCE_LABELS.values()),
     *_AUTOMATIC_PACKAGE_COMMENTS,
     "CVE rejected",
+    "CNA auto-ignore policy",
     *(f"Unassigned from {_USERNAME}: {reason}" for reason in _UNASSIGNMENT_REASONS),
 )
 
@@ -911,6 +912,63 @@ class TestStatusChangeComment:
                 detail=None,
             )
         )
+
+
+@pytest.mark.unit
+class TestCNAPolicyStatusChangeComment:
+    """ticket-audit-log.md, Canonical Automatic Comment Vocabulary and
+    Testing Requirement 30: the automatic CNA-policy `New -> Ignored` uses
+    exactly `CNA auto-ignore policy`, selected by the reason that the
+    transition records; each automatic comment belongs to its own reason."""
+
+    _POLICY = _Case(
+        _T.STATUS_CHANGE,
+        system=True,
+        old_value="New",
+        new_value="Ignored",
+        comment="CNA auto-ignore policy",
+        detail={"ignore_reason": "cna_policy"},
+    )
+
+    async def test_system_new_to_ignored_with_cna_policy_accepted(self) -> None:
+        await _accept(self._POLICY)
+
+    @pytest.mark.parametrize("comment", [None, "CVE rejected", "CNA policy"])
+    async def test_other_comment_for_cna_policy_rejected(
+        self, comment: str | None
+    ) -> None:
+        await _reject(replace(self._POLICY, comment=comment), "is not the canonical")
+
+    async def test_cna_policy_comment_for_cve_rejected_rejected(self) -> None:
+        case = replace(self._POLICY, detail={"ignore_reason": "cve_rejected"})
+        await _reject(case, "is not the canonical")
+
+    async def test_user_transition_with_cna_policy_comment_rejected(self) -> None:
+        await _reject(replace(self._POLICY, system=False), "is not the canonical")
+
+    @pytest.mark.parametrize("reason", ["not_shipped", "other"])
+    async def test_system_ignore_with_a_reason_of_no_automatic_ignore_uses_null(
+        self, reason: str
+    ) -> None:
+        """Only the two automatic ignores have a canonical comment;
+        otherwise the comment is `NULL` (Event Type Contract)."""
+        case = replace(self._POLICY, detail={"ignore_reason": reason})
+        await _accept(replace(case, comment=None))
+        await _reject(case, "is not the canonical")
+        await _reject(replace(case, comment="CVE rejected"), "is not the canonical")
+
+    @pytest.mark.parametrize(
+        ("old_value", "new_value"),
+        [("Analysis", "Ignored"), ("New", "Analysis"), ("Ignored", "New")],
+    )
+    async def test_cna_policy_comment_outside_system_new_to_ignored_rejected(
+        self, old_value: str, new_value: str
+    ) -> None:
+        detail = self._POLICY.detail if new_value == "Ignored" else None
+        case = replace(
+            self._POLICY, old_value=old_value, new_value=new_value, detail=detail
+        )
+        await _reject(case, "is not the canonical")
 
 
 @pytest.mark.unit

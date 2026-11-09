@@ -32,6 +32,7 @@ from app.core.enums import (
     TicketStatus,
 )
 from app.models.cna import CNA
+from app.models.cna_audit_event import CNAAuditEvent
 from app.models.cve import CVE
 from app.models.cve_cvss_assessment import CVECVSSAssessment
 from app.models.product import Product
@@ -50,6 +51,11 @@ from tests.support.ticket_mutations import (
     EVAL,
     StatementRecorder,
 )
+
+_UNREFERENCED_CNA = (
+    select(CNA.id).where(~exists(select(CVE.id).where(CVE.cna_id == CNA.id))).subquery()
+)
+"""The CNA rows that no CVE references."""
 
 
 class CommittedWorld:
@@ -265,7 +271,11 @@ class CommittedWorld:
             # Ingestion under test creates CNA rows and never deletes one,
             # also after a transfer (docs/features/tickets/cna.md, The CNA
             # Entity). Every committed test cleans up its CVEs, so a CNA row
-            # that no CVE references is a leftover of this world.
+            # that no CVE references is a leftover of this world, and so are
+            # its policy audit events, which reference it.
+            delete(CNAAuditEvent).where(
+                CNAAuditEvent.cna_id.in_(select(_UNREFERENCED_CNA.c.id))
+            ),
             delete(CNA).where(~exists(select(CVE.id).where(CVE.cna_id == CNA.id))),
             delete(Product).where(Product.id.in_(self.product_ids)),
             delete(UserRole).where(UserRole.user_id.in_(self.user_ids)),

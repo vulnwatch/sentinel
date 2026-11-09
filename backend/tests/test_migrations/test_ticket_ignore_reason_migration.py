@@ -3,7 +3,9 @@
 
 Verifies that upgrading from the previous head adds the nullable
 `ignore_reason` column, `chk_ticket_ignore_reason_valid` with exactly the
-TicketIgnoreReason values, and `chk_ticket_ignore_reason_status_coherence`
+TicketIgnoreReason values of its time (`not_shipped`, `cve_rejected`, and
+`other`; revision bd5d2327569b adds `cna_policy`), and
+`chk_ticket_ignore_reason_status_coherence`
 (`docs/data-model.md`, Ticket, TicketIgnoreReason Enum). Every Ticket that is
 already `Ignored` receives `cve_rejected` when its CVE is `REJECTED` and
 `other` otherwise, whether its CVE is `PUBLISHED` or it has none; no other
@@ -29,13 +31,14 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import command
 from app.config import settings
-from app.core.enums import TicketIgnoreReason
 from tests.test_migrations.conftest import isolated_alembic_config, run_sync
 
 _PREVIOUS_HEAD = "a522444f26a5"
 _REVISION = "57504b9961b3"
 
 _VALID = "chk_ticket_ignore_reason_valid"
+_REVISION_REASONS = frozenset({"not_shipped", "cve_rejected", "other"})
+"""The values that this revision's CHECK admits."""
 _COHERENCE = "chk_ticket_ignore_reason_status_coherence"
 _EXPECTED_COHERENCE = (
     "CHECK (((((status)::text = 'Ignored'::text) AND (ignore_reason IS NOT NULL)) "
@@ -198,11 +201,11 @@ def _assert_upgraded(
     assert constraints == {**previous_constraints, **added}
     assert added[_COHERENCE] == _EXPECTED_COHERENCE
     # `alembic check` does not compare CHECK expressions: the literal value
-    # list of the migration must be exactly `TicketIgnoreReason`.
+    # list of this revision is the TicketIgnoreReason of its time; the later
+    # `cna_policy` is added by its own revision
+    # (`test_cna_audit_event_migration.py`).
     assert added[_VALID].startswith("CHECK (((ignore_reason)::text = ANY (")
-    assert set(re.findall(r"'([^']*)'", added[_VALID])) == {
-        reason.value for reason in TicketIgnoreReason
-    }
+    assert set(re.findall(r"'([^']*)'", added[_VALID])) == _REVISION_REASONS
     assert columns == {
         **previous_columns,
         "ignore_reason": ("character varying", "YES"),

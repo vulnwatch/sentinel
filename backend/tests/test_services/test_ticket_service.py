@@ -1792,6 +1792,7 @@ class TestTicketServiceQueryBoundary:
             "set_priority_override",
             "ignore_ticket",
             "ignore_new_for_rejected_cve",
+            "ignore_new_for_cna_policy",
             "mark_as_duplicate",
             "reopen_from_ignored",
             "reopen_from_ignored_as_system",

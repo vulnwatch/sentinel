@@ -62,6 +62,7 @@ from app.core.passwords import verify_password
 from app.core.permissions import get_effective_scope
 from app.database import Base, register_post_commit_callback
 from app.models.cna import CNA
+from app.models.cna_audit_event import CNAAuditEvent
 from app.models.cve import CVE
 from app.models.cve_affected_version import CVEAffectedVersion
 from app.models.cve_cvss_assessment import CVECVSSAssessment
@@ -332,7 +333,7 @@ CWES: Final = {
     "CVE-2099-0018": "CWE-287",
 }
 
-CVE_IDS: Final = tuple(f"CVE-2099-{n:04d}" for n in range(1, 26))
+CVE_IDS: Final = tuple(f"CVE-2099-{n:04d}" for n in range(1, 27))
 AGED_PUBLISHED_DAYS: Final = {
     "CVE-2099-0012": 21,
     "CVE-2099-0013": 26,
@@ -348,6 +349,7 @@ MITRE_INGESTED: Final = frozenset(
         "CVE-2099-0009",
         "CVE-2099-0010",
         "CVE-2099-0013",
+        "CVE-2099-0026",
     }
 )
 """CVEs with a MITRE ingestion (first or further), which supplies the title."""
@@ -381,9 +383,41 @@ CNA_OF: Final = {
     "CVE-2099-0009": "00000000-0000-4000-8000-0000000000a1",
     "CVE-2099-0010": "00000000-0000-4000-8000-0000000000a1",
     "CVE-2099-0013": "00000000-0000-4000-8000-0000000000a3",
+    "CVE-2099-0026": "00000000-0000-4000-8000-0000000000a2",
 }
 """CNAs: the CNA that each MITRE ingestion supplies as the owner of its
 record; every other CVE has none."""
+CNAS_UNDER_POLICY: Final = frozenset({"00000000-0000-4000-8000-0000000000a2"})
+"""CNAs: `fictional-plugins` is under the auto-ignore policy; `example` was
+enabled and disabled, and the unnamed CNA was never changed."""
+CNA_AUDIT_EVENTS: Final = [
+    (
+        "auto_ignore_enabled",
+        "00000000-0000-4000-8000-0000000000a1",
+        "jdoe",
+        None,
+        None,
+        {"cna_name": "Example Corporation"},
+    ),
+    (
+        "auto_ignore_disabled",
+        "00000000-0000-4000-8000-0000000000a1",
+        "jdoe",
+        None,
+        None,
+        {"cna_name": "Example Corporation"},
+    ),
+    (
+        "auto_ignore_enabled",
+        "00000000-0000-4000-8000-0000000000a2",
+        "jdoe",
+        None,
+        None,
+        {"cna_name": "Fictional Plugin Foundation"},
+    ),
+]
+"""Audit Trails, CNA: `(event_type, org_id, actor, old_value, new_value,
+detail)` in the order of the operations of step 8."""
 
 EPSS: Final = {
     "CVE-2099-0001": (0.94, 0.99),
@@ -457,6 +491,8 @@ TICKETS: Final[
     25: ("CVE-2099-0023", IGNORED, "asmith", False, MEDIUM),
     26: ("CVE-2099-0024", ANALYZED, "bwilson", False, HIGH),
     27: ("CVE-2099-0025", ANALYZED, "asmith", True, HIGH),
+    # Ignored by the auto-ignore policy of its CNA (CNAs).
+    28: ("CVE-2099-0026", IGNORED, None, False, None),
 }
 """Tickets: `SNTL-n` -> (CVE, status, assignee, confidential, resolved
 severity; `None` is unresolved)."""
@@ -465,9 +501,16 @@ IGNORE_REASONS: Final[dict[int, tuple[TicketIgnoreReason, str | None]]] = {
     8: (TicketIgnoreReason.CVE_REJECTED, None),
     17: (TicketIgnoreReason.NOT_SHIPPED, "bwilson"),
     25: (TicketIgnoreReason.OTHER, "asmith"),
+    28: (TicketIgnoreReason.CNA_POLICY, None),
 }
 """The `Ignored` Tickets: `SNTL-n` -> (ignore reason, actor of the ignore;
-`None` is the system ignore of a rejected CVE)."""
+`None` is a system ignore: of a rejected CVE, or of the CNA policy)."""
+SYSTEM_IGNORE_COMMENTS: Final = {
+    TicketIgnoreReason.CVE_REJECTED: "CVE rejected",
+    TicketIgnoreReason.CNA_POLICY: "CNA auto-ignore policy",
+}
+"""The comment of each system ignore (ticket-audit-log.md, Canonical
+Automatic Comment Vocabulary); a user's ignore has none."""
 
 PRIORITIES: Final[
     dict[
@@ -893,7 +936,7 @@ TICKET_EVENT_TYPES: Final = frozenset(
 ATTRIBUTED_TICKET_EVENTS: Final = frozenset(
     {
         # Tickets, "Created by": ingestion (system) or the manual creator.
-        *((n, "ticket_created", None) for n in (*range(1, 18), 23, 24, 25, 26)),
+        *((n, "ticket_created", None) for n in (*range(1, 18), 23, 24, 25, 26, 28)),
         (18, "ticket_created", "asmith"),
         (19, "ticket_created", "bwilson"),
         (20, "ticket_created", "cwhite"),
@@ -1576,8 +1619,9 @@ def test_products_lifecycle_and_thresholds(loaded: Loaded) -> None:
 class TestCNAs:
     """CNAs: the rows that the MITRE ingestions create, the metadata that
     step 8 writes through `update_cna_metadata()` in place of
-    `sync_mitre_cnas`, and the CNA of every CVE. The auto-ignore policy is
-    not loaded yet, so every CNA has `auto_ignore = false`."""
+    `sync_mitre_cnas`, the policy that it then sets through
+    `set_cna_auto_ignore()` by `jdoe`, with its CNA audit events, and the
+    CNA of every CVE."""
 
     def test_cna_rows(self, loaded: Loaded) -> None:
         async def reader(db: AsyncSession) -> list[CNA]:
@@ -1593,7 +1637,33 @@ class TestCNAs:
             assert (cna.organization_name, cna.types, cna.scope) == (
                 CNA_METADATA[org_id]
             ), org_id
-            assert cna.auto_ignore is False, org_id
+            assert cna.auto_ignore is (org_id in CNAS_UNDER_POLICY), org_id
+
+    def test_cna_audit_events(self, loaded: Loaded) -> None:
+        """Audit Trails, CNA row: one enable and one disable for `example`,
+        then one enable for `fictional-plugins`, all by `jdoe`, each with
+        the display name that the metadata of step 8 already gives."""
+
+        async def reader(db: AsyncSession) -> list[tuple[Any, ...]]:
+            rows = await db.execute(
+                select(
+                    CNAAuditEvent.event_type,
+                    CNA.org_id,
+                    User.username,
+                    CNAAuditEvent.old_value,
+                    CNAAuditEvent.new_value,
+                    CNAAuditEvent.detail,
+                )
+                .join(CNA, CNA.id == CNAAuditEvent.cna_id)
+                .outerjoin(User, User.id == CNAAuditEvent.user_id)
+                .order_by(CNAAuditEvent.id)
+            )
+            return [
+                (event_type, str(org_id), username, old, new, detail)
+                for event_type, org_id, username, old, new, detail in rows.all()
+            ]
+
+        assert read(loaded.url, reader) == CNA_AUDIT_EVENTS
 
     def test_display_names(self, loaded: Loaded) -> None:
         """The organization name when the list supplied one; `null` for the
@@ -1792,7 +1862,7 @@ class TestTickets:
             for n, (cve_id, status, assignee, confidential, severity) in TICKETS.items()
         }
         assert (
-            sum(not confidential for _, _, _, confidential, _ in tickets.values()) == 24
+            sum(not confidential for _, _, _, confidential, _ in tickets.values()) == 25
         )
 
     def test_ignore_reasons_and_their_events(self, loaded: Loaded) -> None:
@@ -1835,7 +1905,7 @@ class TestTickets:
         assert events == {
             n: (
                 actor,
-                "CVE rejected" if actor is None else None,
+                SYSTEM_IGNORE_COMMENTS.get(reason),
                 {"ignore_reason": reason.value},
             )
             for n, (reason, actor) in IGNORE_REASONS.items()
@@ -2589,6 +2659,7 @@ def test_every_audit_trail_holds_events(loaded: Loaded) -> None:
         "identity_audit_event",
         "fetcher_audit_event",
         "setting_audit_event",
+        "cna_audit_event",
     }
     assert {trail for trail in trails if counts[trail] == 0} == set()
 

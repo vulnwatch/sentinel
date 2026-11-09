@@ -47,6 +47,7 @@ _AUDIT_TRAIL_MODULE = "app.services.ticket_audit_log"
 _AUDIT_WRITE_SURFACE = frozenset(
     {
         "TicketAuditLog",
+        "CNA_POLICY_COMMENT",
         "CVE_REJECTED_COMMENT",
         "CVE_SOURCE_AUDIT_LABELS",
         "MANUAL_TICKET_CREATED_COMMENT",

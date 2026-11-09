@@ -231,6 +231,20 @@ class FetcherAuditEventType(StrEnum):
     CONFIG_CHANGED = "config_changed"
 
 
+class CNAAuditEventType(StrEnum):
+    """Classifies the action recorded in a `CNAAuditEvent`.
+
+    Category B — classification (Python Enum only, no CHECK constraint;
+    adding a value requires only a code change). See
+    `docs/data-model.md` (CNAAuditEventType Enum) and
+    `docs/features/tickets/cna.md` (CNA Audit Log) for the event type
+    contract.
+    """
+
+    AUTO_IGNORE_ENABLED = "auto_ignore_enabled"
+    AUTO_IGNORE_DISABLED = "auto_ignore_disabled"
+
+
 class SessionCreationReason(StrEnum):
     """The login provider that created a `Session`.
 
@@ -891,6 +905,7 @@ class TicketIgnoreReason(StrEnum):
 
     NOT_SHIPPED = "not_shipped"
     CVE_REJECTED = "cve_rejected"
+    CNA_POLICY = "cna_policy"
     OTHER = "other"
 
 
