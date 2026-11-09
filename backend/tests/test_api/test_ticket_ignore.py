@@ -38,7 +38,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1 import tickets as route
-from app.core.enums import USER_IGNORE_REASONS, CveState, Role, TicketStatus
+from app.core.enums import USER_IGNORE_REASONS, Role, TicketStatus
 from app.main import app
 from app.models.ticket import Ticket
 from app.models.user import User
@@ -170,27 +170,6 @@ class TestIgnoreTicket:
             TicketStatus.IGNORED.value,
             "not_shipped",
             caller.id,
-        )
-
-    async def test_cve_rejected_is_accepted_for_a_rejected_cve(
-        self,
-        authenticated_client: AsyncClient,
-        va_user: User,
-        db_session: AsyncSession,
-        cve_factory: Factory,
-        ticket_factory: Factory,
-    ) -> None:
-        cve = await cve_factory(cve_state=CveState.REJECTED.value)
-        target: Ticket = await ticket_factory(cve_id=cve.id)
-
-        response = await authenticated_client.post(
-            _url(target), json={"reason": "cve_rejected"}
-        )
-
-        assert response.status_code == 200
-        assert response.json()["data"]["ignore_reason"] == "cve_rejected"
-        assert (await ticket_row(db_session, target.id))["ignore_reason"] == (
-            "cve_rejected"
         )
 
 

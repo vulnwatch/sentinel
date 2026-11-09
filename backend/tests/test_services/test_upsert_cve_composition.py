@@ -535,6 +535,7 @@ class TestIngestionPaths:
             TicketStatus.IGNORED,
             None,
         )
+        assert await _ignore_reason(db_session, result.ticket.id) == "cve_rejected"
         assert await ticket_events(db_session, result.ticket) == [
             *_high_creation(NEW_CVE_ID),
             REJECTION,
@@ -641,17 +642,17 @@ class TestIngestionPaths:
         assert await ticket_events(db_session, ticket) == ([REJECTION] if new else [])
         assert pending_ticket_convergence_effects(db_session) == ()
 
-    @pytest.mark.parametrize("reason", list(TicketIgnoreReason), ids=lambda r: r.value)
     async def test_rejection_of_an_ignored_ticket_keeps_its_reason(
         self,
         db_session: AsyncSession,
         cve_ticket: CVETicket,
         monkeypatch: pytest.MonkeyPatch,
-        reason: TicketIgnoreReason,
     ) -> None:
         """tickets.md, Ignore Reason: a later rejection of the CVE of an
         `Ignored` Ticket leaves its status and reason unchanged, with no
-        event."""
+        event. The boundary tests cover every reason
+        (`test_ignore_new_for_rejected_cve.py`); one represents them here."""
+        reason = TicketIgnoreReason.NOT_SHIPPED
         cve, ticket = await cve_ticket(
             status=TicketStatus.IGNORED, ignore_reason=reason.value
         )
@@ -760,6 +761,7 @@ class TestRejectedCreationOrder:
 
         assert timeline.top_level() == [CREATE, BATCH, REFRESH, IGNORE, SOURCE_STATUS]
         assert (await ticket_state(db_session, result.ticket.id))[0] == "Ignored"
+        assert await _ignore_reason(db_session, result.ticket.id) == "cve_rejected"
         # Severity: no SUSE, so the non-SUSE default-version (3.1) `High`
         # wins over the non-default `4.0` (cvss-scoring.md cascade).
         assert await ticket_events(db_session, result.ticket) == [
