@@ -551,11 +551,16 @@ If `eligible` is `bool` (override):
    `is_eligible_override == true`, return `no_op` before assignment
 6. Call `auto_assign_actor()`
 7. Update `TicketPackageProduct.eligible` to the given value
-8. Set `TicketPackageProduct.is_eligible_override = true`
+8. Set `TicketPackageProduct.is_eligible_override = true` with the override
+   provenance (`docs/features/packages/package-model.md`, Override Model):
+   `eligibility_override_by_id = acting_user_id` and
+   `eligibility_override_at` = the transaction's `now()`, for `set` and for
+   `changed` alike
 9. Create `TicketAuditEvent` (`product_eligibility_changed`) with the standard
    Product subject, `reason = "va_override"`, and `override_action = "set"`
    when the previous value was system-managed or `override_action = "changed"`
-   when an existing override changed value
+   when an existing override changed value. Its `created_at` is the same
+   transaction `now()`, so it equals `eligibility_override_at`
 10. Call `reconcile_ticket_status()`
 11. Flush and return `changed` with the updated product
 
@@ -569,7 +574,8 @@ If `eligible` is `None` (reset to automatic):
 4. Reload and validate the complete declared path
 5. If `is_eligible_override == false`, return `no_op` before assignment
 6. Call `auto_assign_actor()`
-7. Set `TicketPackageProduct.is_eligible_override = false`
+7. Set `TicketPackageProduct.is_eligible_override = false` and clear both
+   override provenance columns
 8. Recalculate eligibility using all automatic rules in
    `docs/features/packages/package-model.md` (Axis 2: Eligibility), including
    the Reactive Support rule and the threshold comparison based on
@@ -600,8 +606,10 @@ any response containing package-tree state.
 
 Every no-op above occurs before auto-assignment and therefore produces no
 assignment, eligibility event, Ticket reconciliation, or post-commit effect.
-After a concurrent winner commits, the waiting caller determines override
-action and audit old/new values from the reloaded locked state.
+It keeps the override provenance of the change that set the current override,
+also when another user sends the request. After a concurrent winner commits,
+the waiting caller determines override action, provenance, and audit old/new
+values from the reloaded locked state.
 
 Clearing an existing override is effective even when the automatic evaluator
 returns the same boolean already stored in `eligible`: the marker changes from
@@ -614,7 +622,7 @@ lifecycle, or Ticket convergence workflows may update it.
 lookup raises `TicketNotFoundError`, `PackageNotFoundError`,
 `TrackNotFoundError`, or `ProductNotFoundError`. Operability, eligibility
 resolution, database, audit, and reconciliation failures propagate and roll
-back the caller-owned transaction.
+back the caller-owned transaction, the override and its provenance included.
 
 ---
 
@@ -1669,7 +1677,13 @@ implementation choice.
    `docs/features/packages/package-maintainership.md` (Maintainers in the
    Package Tree) defines them, from the same coherent observation and
    without per-package N+1 queries.
-6. Return the assembled tree. Sort packages by `package_name`, tracks by
+6. For every Product occurrence, project its eligibility override provenance
+   (`docs/features/packages/package-model.md`, Override Model):
+   `eligibility_override_at` and the complete current User reference of
+   `eligibility_override_by_id` (`docs/api-spec.md`, User References in
+   Responses), both `null` without an override, from the same coherent
+   observation and without per-Product N+1 queries.
+7. Return the assembled tree. Sort packages by `package_name`, tracks by
    `reference`, and Products by `product_cpe`, all in ascending Unicode
    code-point order independent of database collation. Use the corresponding
    `TicketPackage.id`, `TicketPackageTrack.id`, or
@@ -2083,6 +2097,22 @@ transitions. The test must cover:
   existing override is effective even when the boolean remains equal, creates
   exactly one event with equal old/new values and `override_action = cleared`,
   and permits later automatic CVSS mutation
+- **Override provenance**: each override case asserts the provenance it
+  leaves: the acting user and an `eligibility_override_at` equal to the
+  `created_at` of the `product_eligibility_changed` event for `set` and for
+  `changed` by another user in a later transaction; both `NULL` after
+  `cleared`; and the unchanged provenance of the earlier change after the
+  no-op, also when another user sends it, after every rejection and rollback,
+  and after the automatic recalculation of this module and of the CVSS chain
+  skips the overridden occurrence.
+  `chk_ticket_package_product_eligibility_override_provenance` rejects an
+  override missing either column and either column set without an override.
+  The migration that adds the provenance succeeds on occurrences without an
+  override and fails on an occurrence that holds one, leaving the database at
+  the previous revision with its rows unchanged. The package tree and the
+  override response project the setter's current profile, including a
+  deactivated setter with `active = false`, and both `null` without an
+  override, also to a caller without `manage_packages`
 - **Synchronous manual-zone-exit eligibility**: for both `Ignored` and
   `Duplicated`, every existing automatic Product
   occurrence converges from current PostgreSQL assessment, setting, threshold,

@@ -1616,6 +1616,8 @@ ascending Unicode code point of `cwe_id`:
 | `product_name` | string | Product display name (from `Product.display_name`) |
 | `eligible` | boolean | Whether this product receives the fix |
 | `is_eligible_override` | boolean | `true` if an authorized acting user manually set eligibility |
+| `eligibility_override_by` | UserSummary \| null | Current profile of the user who set the current eligibility override, including `active = false` when deactivated; `null` when `is_eligible_override` is `false`. See `docs/features/packages/package-model.md` (Override Model) |
+| `eligibility_override_at` | datetime \| null | When the current eligibility override was set (UTC): the time of the change that set its current value, equal to the `created_at` of that change's `product_eligibility_changed` event; `null` when `is_eligible_override` is `false` |
 | `released_at` | datetime \| null | Authoritative issued time of the validated stable security advisory that established Product release, serialized in UTC; `null` until confirmed |
 | `lifecycle_phase` | string \| null | Current Product lifecycle phase for the response's UTC evaluation date |
 | `deleted_at` | datetime \| null | Direct manual-exclusion timestamp |
