@@ -429,6 +429,9 @@ class TestAuthenticationAndCapability:
         monkeypatch: pytest.MonkeyPatch,
         endpoint: _Endpoint,
     ) -> None:
+        """One role load serves the capability check and the scope of the
+        mutations; List Access Grants checks no capability, so its one load
+        serves the scope alone."""
         world = await _world(ticket_factory, user_factory, ticket_access_grant_factory)
         calls: list[uuid.UUID] = []
         original = user_service.get_user_roles
@@ -461,6 +464,8 @@ _ENDPOINT_TARGETS = [
 ]
 """Every endpoint, and for the two mutations both an existing and an absent
 target user (List Access Grants has no target)."""
+_MUTATION_TARGETS = _ENDPOINT_TARGETS[1:]
+"""The two mutations with an existing and an absent target user."""
 
 
 @pytest.mark.e2e
@@ -499,7 +504,7 @@ class TestTicketNotFound:
         assert await _grants(db_session, world.ticket.id) == grants
         assert await event_count(db_session, world.ticket.id) == 0
 
-    @pytest.mark.parametrize(("endpoint", "existing_target"), _ENDPOINT_TARGETS)
+    @pytest.mark.parametrize(("endpoint", "existing_target"), _MUTATION_TARGETS)
     async def test_inaccessible_ticket_is_indistinguishable_from_a_missing_one(
         self,
         authenticated_client: AsyncClient,
@@ -515,7 +520,9 @@ class TestTicketNotFound:
         """A `manage_confidentiality` holder without scope `all` and
         without a visibility path gets the identical 404, whether the
         target user exists or not; the same caller with an explicit grant
-        is served, so the denial is the visibility predicate's."""
+        is served, so the denial is the visibility predicate's. List Access
+        Grants proves the same with real callers
+        (`TestListWithoutCapability`)."""
         _narrow_caller_scope(monkeypatch)
         world = await _world(ticket_factory, user_factory, ticket_access_grant_factory)
         user = world.target(endpoint) if existing_target else _ABSENT_USERNAME
@@ -1040,53 +1047,24 @@ class TestListAccessGrants:
 # Access Grants; rbac.md, Scope and Confidential Ticket Visibility)
 # ---------------------------------------------------------------------------
 
-_EXCLUDED_AT = datetime(2026, 9, 1, 8, 0, tzinfo=UTC)
-
-
-async def _give_roles(
-    user_role_factory: Factory, user: User, roles: Iterable[Role]
-) -> None:
-    for role in roles:
-        await user_role_factory(user_id=user.id, role=role.value)
-
-
-async def _maintain(
-    ticket_package_factory: Factory,
-    ticket_package_maintainer_factory: Factory,
-    ticket: Ticket,
-    user: User,
-    *,
-    excluded: bool,
-) -> None:
-    """Make `user` a maintainer of one package of `ticket`, directly
-    excluded when `excluded` is true."""
-    package = await ticket_package_factory(
-        ticket_id=ticket.id, deleted_at=_EXCLUDED_AT if excluded else None
-    )
-    await ticket_package_maintainer_factory(
-        ticket_package_id=package.id, user_id=user.id
-    )
-
 
 @pytest.mark.e2e
 class TestListWithoutCapability:
+    """The caller holds no role, or only `admin`, so it never holds
+    `manage_confidentiality` (rbac.md, Predefined Roles). The role-less
+    caller is the strictest one: the endpoint checks no capability. The
+    excluded-package maintainer, whose only path does not qualify, is proven
+    at the service tier (`test_access_grants.py::TestListing`)."""
+
     @pytest.mark.parametrize(
-        ("roles", "path"),
+        "path",
         [
-            pytest.param([Role.ADMIN], "scope-all", id="admin-scope-all"),
-            pytest.param([], "grant", id="no-roles-own-grant"),
-            pytest.param(
-                [Role.RESTRICTED_ANALYST], "grant", id="restricted-analyst-own-grant"
-            ),
-            pytest.param([], "maintainer", id="no-roles-included-package-maintainer"),
-            pytest.param(
-                [Role.RESTRICTED_ANALYST],
-                "maintainer",
-                id="restricted-analyst-included-package-maintainer",
-            ),
+            pytest.param("scope-all", id="admin-scope-all"),
+            pytest.param("grant", id="no-roles-own-grant"),
+            pytest.param("maintainer", id="no-roles-included-package-maintainer"),
         ],
     )
-    async def test_caller_who_sees_the_ticket_lists_its_grants_but_cannot_change_them(
+    async def test_caller_who_sees_the_ticket_lists_its_grants(
         self,
         authenticated_client: AsyncClient,
         authenticated_user: User,
@@ -1097,15 +1075,16 @@ class TestListWithoutCapability:
         ticket_package_factory: Factory,
         ticket_package_maintainer_factory: Factory,
         user_role_factory: Factory,
-        roles: list[Role],
         path: str,
     ) -> None:
-        """Each visibility branch, through real roles and without
-        `manage_confidentiality`, returns the complete list; Grant Access
-        and Revoke Access still return the generic 403 for the same caller
-        with no grant write or event (testing-strategy.md, Visibility
-        without capability)."""
-        await _give_roles(user_role_factory, authenticated_user, roles)
+        """Each visibility branch without `manage_confidentiality` returns
+        the complete list: effective scope `all` through `admin`, the
+        caller's own explicit grant, and the maintainership of an included
+        package."""
+        if path == "scope-all":
+            await user_role_factory(
+                user_id=authenticated_user.id, role=Role.ADMIN.value
+            )
         world = await _world(ticket_factory, user_factory, ticket_access_grant_factory)
         listed_grantee = {
             "user": _profile(
@@ -1145,74 +1124,30 @@ class TestListWithoutCapability:
                 listed_grantee,
             ]
         elif path == "maintainer":
-            await _maintain(
-                ticket_package_factory,
-                ticket_package_maintainer_factory,
-                world.ticket,
-                authenticated_user,
-                excluded=False,
+            package = await ticket_package_factory(ticket_id=world.ticket.id)
+            await ticket_package_maintainer_factory(
+                ticket_package_id=package.id, user_id=authenticated_user.id
             )
-        grants = await _grants(db_session, world.ticket.id)
 
         listed = await LIST.send(authenticated_client, world.ticket)
-        granted = await GRANT.send(
-            authenticated_client, world.ticket, world.candidate.username
-        )
-        revoked = await REVOKE.send(
-            authenticated_client, world.ticket, world.grantee.username
-        )
 
         assert authenticated_user.full_name is None
         assert listed.status_code == 200
         assert listed.json() == {"data": expected}
-        assert (granted.status_code, revoked.status_code) == (403, 403)
-        assert granted.json() == revoked.json() == FORBIDDEN
-        assert await _grants(db_session, world.ticket.id) == grants
         assert await event_count(db_session, world.ticket.id) == 0
 
-    @pytest.mark.parametrize(
-        ("roles", "excluded_maintainer"),
-        [
-            pytest.param([], False, id="no-roles-without-path"),
-            pytest.param(
-                [Role.RESTRICTED_ANALYST], False, id="restricted-analyst-without-path"
-            ),
-            pytest.param([], True, id="no-roles-excluded-package-maintainer"),
-            pytest.param(
-                [Role.RESTRICTED_ANALYST],
-                True,
-                id="restricted-analyst-excluded-package-maintainer",
-            ),
-        ],
-    )
     async def test_caller_who_cannot_see_the_ticket_gets_the_identical_404(
         self,
         authenticated_client: AsyncClient,
-        authenticated_user: User,
         db_session: AsyncSession,
         ticket_factory: Factory,
         user_factory: Factory,
         ticket_access_grant_factory: Factory,
-        ticket_package_factory: Factory,
-        ticket_package_maintainer_factory: Factory,
-        user_role_factory: Factory,
-        roles: list[Role],
-        excluded_maintainer: bool,
     ) -> None:
-        """Without scope `all`, a grant, or an included maintained
-        package, the confidential Ticket returns the complete 404 of a
-        missing one, never an empty list or the other users' grants; the
-        maintainership of an excluded package alone does not qualify."""
-        await _give_roles(user_role_factory, authenticated_user, roles)
+        """A role-less caller without a grant or maintainership receives the
+        complete 404 of a missing Ticket, never an empty list or the other
+        users' grants."""
         world = await _world(ticket_factory, user_factory, ticket_access_grant_factory)
-        if excluded_maintainer:
-            await _maintain(
-                ticket_package_factory,
-                ticket_package_maintainer_factory,
-                world.ticket,
-                authenticated_user,
-                excluded=True,
-            )
 
         inaccessible = await LIST.send(authenticated_client, world.ticket)
         missing = await LIST.send(authenticated_client, f"SNTL-{MAX_SEQUENCE}")
