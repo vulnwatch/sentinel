@@ -7,22 +7,27 @@ Owning specifications:
   category and Ticket accessibility; Operability guard, including the
   ordering constraint for `ignore_ticket`; `ignore_ticket`; Service
   Exceptions; Architectural Test Requirement 4 (`ignore_ticket()` path,
-  in `tests/test_services/test_new_to_analysis_promotion.py`) and 15
-  (single-session part)).
+  in `tests/test_services/test_new_to_analysis_promotion.py`), 15
+  (single-session part), and 24 (single-session part)).
+- docs/features/tickets/tickets.md (Ignore Reason; Ignore Ticket).
 - docs/features/tickets/tickets.md (Status Transitions, including the
   VA/non-VA note after the matrix; Auto-Assignment on Unassigned
   Tickets).
 - docs/features/tickets/ticket-audit-log.md (Event Type Contract:
-  `status_change`, `assignment`; Canonical Mutation and No-Event Matrix:
-  Ignore, mark duplicate, reopen, or revert duplicate; Cross-Event
-  Ordering, Locking, and Rollback; Testing Requirements 1-7).
+  `status_change`, `assignment`; `detail` JSONB Schema Contract:
+  `status_change`; Canonical Mutation and No-Event Matrix: Ignore, mark
+  duplicate, reopen, or revert duplicate; Cross-Event Ordering, Locking,
+  and Rollback; Testing Requirements 1-7 and 30).
 - docs/features/platform/testing-strategy.md (Tier Responsibility and
   Proportionality; Audit Trail Testing, What to Assert).
 
 The independent-session tests (lock serialization, the winner/loser old
 value of audit Testing Requirement 23, and the locked-current
-accessibility races of Architectural Test Requirement 15) are owned by a
-separate atomicity module.
+accessibility races of Architectural Test Requirement 15) are owned by
+`tests/test_services/test_manual_zone_entry_atomicity.py`; the
+`cve_rejected` races with ingestion and the CVE lock-freedom of
+Architectural Test Requirement 24 by
+`tests/test_services/test_upsert_cve_atomicity.py`.
 
 Not reachable, hence not tested: the converse self-loss case of
 Architectural Test Requirement 15 (an authorized mutation that itself
@@ -41,18 +46,26 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import Role, Scope, TicketAuditEventType, TicketStatus
+from app.core.enums import (
+    CveState,
+    Role,
+    Scope,
+    TicketAuditEventType,
+    TicketIgnoreReason,
+    TicketStatus,
+)
 from app.core.exceptions import (
     InvalidTransitionError,
     TicketNotFoundError,
     TicketNotMutableError,
 )
+from app.models.cve import CVE
 from app.models.ticket import Ticket
 from app.models.ticket_access_grant import TicketAccessGrant
 from app.models.ticket_audit_event import TicketAuditEvent
@@ -62,7 +75,7 @@ from app.services.ticket_audit_log import TicketAuditLog
 from app.services.ticket_convergence_registry import (
     pending_ticket_convergence_effects,
 )
-from app.services.ticket_service import ignore_ticket
+from app.services.ticket_service import TicketCVENotRejectedError, ignore_ticket
 from app.services.ticket_visibility import TicketCaller
 from tests.support.database import rollback_test_scope
 from tests.support.ticket_mutations import (
@@ -87,12 +100,22 @@ PROMOTION = status_event(TicketStatus.NEW.value, TicketStatus.ANALYSIS.value)
 # ---------------------------------------------------------------------------
 
 
-def _ignored(actor: User, old: TicketStatus) -> EventRow:
+OTHER = TicketIgnoreReason.OTHER
+
+
+def _ignored(
+    actor: User, old: TicketStatus, reason: TicketIgnoreReason = OTHER
+) -> EventRow:
     """The acting-user manual-zone entry (ticket-audit-log.md, Event Type
-    Contract: `status_change` of a direct manual transition, `comment` and
-    `detail` `NULL`)."""
+    Contract: `status_change` of a direct manual transition, `comment`
+    `NULL` for every reason, `detail` the reason)."""
     return EventRow(
-        "status_change", actor.id, old.value, TicketStatus.IGNORED.value, None, None
+        "status_change",
+        actor.id,
+        old.value,
+        TicketStatus.IGNORED.value,
+        None,
+        {"ignore_reason": reason.value},
     )
 
 
@@ -102,7 +125,12 @@ def _assignment(actor: User) -> EventRow:
 
 
 async def _ignore(
-    db: AsyncSession, ticket_id: uuid.UUID, actor: User, *, scope: Scope = Scope.ALL
+    db: AsyncSession,
+    ticket_id: uuid.UUID,
+    actor: User,
+    *,
+    scope: Scope = Scope.ALL,
+    reason: TicketIgnoreReason = OTHER,
 ) -> Ticket:
     """Call the service as an API handler would."""
     return await ignore_ticket(
@@ -110,19 +138,23 @@ async def _ignore(
         ticket_id=ticket_id,
         acting_user_id=actor.id,
         caller=TicketCaller.authenticated(actor.id, scope),
+        reason=reason,
     )
 
 
 async def _state(
     db: AsyncSession, ticket_id: uuid.UUID
-) -> tuple[str, uuid.UUID | None] | None:
-    """The persisted `(status, assignee_id)` of a Ticket, `None` if absent."""
+) -> tuple[str, uuid.UUID | None, str | None] | None:
+    """The persisted `(status, assignee_id, ignore_reason)` of a Ticket,
+    `None` if absent."""
     row = (
         await db.execute(
-            select(Ticket.status, Ticket.assignee_id).where(Ticket.id == ticket_id)
+            select(Ticket.status, Ticket.assignee_id, Ticket.ignore_reason).where(
+                Ticket.id == ticket_id
+            )
         )
     ).one_or_none()
-    return (row.status, row.assignee_id) if row is not None else None
+    return (row.status, row.assignee_id, row.ignore_reason) if row is not None else None
 
 
 class _Spy:
@@ -148,6 +180,7 @@ async def _assert_rejected(
     ticket_id: uuid.UUID,
     actor: User,
     scope: Scope = Scope.ALL,
+    reason: TicketIgnoreReason = OTHER,
 ) -> None:
     """Call the service and assert the zero-side-effect contract of a
     rejected call: the expected error, no write, no assignment, no
@@ -158,7 +191,7 @@ async def _assert_rejected(
     before = await _state(db, ticket_id)
 
     with StatementRecorder(db) as recorder, pytest.raises(error_type):
-        await _ignore(db, ticket_id, actor, scope=scope)
+        await _ignore(db, ticket_id, actor, scope=scope, reason=reason)
 
     assert recorder.writes() == []
     assert (assign.calls, reconcile.calls) == ([], [])
@@ -194,7 +227,11 @@ class TestIgnore:
 
         assert result.id == ticket.id
         assert (result.status, result.assignee_id) == (TicketStatus.IGNORED, actor.id)
-        assert await _state(db_session, ticket.id) == (TicketStatus.IGNORED, actor.id)
+        assert await _state(db_session, ticket.id) == (
+            TicketStatus.IGNORED,
+            actor.id,
+            OTHER,
+        )
         assert await ticket_events(db_session, ticket) == [
             _assignment(actor),
             PROMOTION,
@@ -234,7 +271,11 @@ class TestIgnore:
 
         await _ignore(db_session, ticket.id, actor, scope=scope)
 
-        assert await _state(db_session, ticket.id) == (TicketStatus.IGNORED, None)
+        assert await _state(db_session, ticket.id) == (
+            TicketStatus.IGNORED,
+            None,
+            OTHER,
+        )
         assert await ticket_events(db_session, ticket) == [
             _ignored(actor, TicketStatus.NEW)
         ]
@@ -267,11 +308,209 @@ class TestIgnore:
         assert await _state(db_session, ticket.id) == (
             TicketStatus.IGNORED,
             expected_assignee,
+            OTHER,
         )
         assert await ticket_events(db_session, ticket) == [
             *claim,
             _ignored(actor, TicketStatus.ANALYSIS),
         ]
+
+
+# ---------------------------------------------------------------------------
+# Ignore reason (ticket-service.md, Architectural Test Requirement 24;
+# ticket-audit-log.md, Testing Requirement 30)
+# ---------------------------------------------------------------------------
+
+CVEFactory = Callable[..., Awaitable[CVE]]
+
+
+@pytest.mark.integration
+class TestReason:
+    @pytest.mark.parametrize("reason", list(TicketIgnoreReason), ids=lambda r: r.value)
+    @pytest.mark.parametrize(
+        "source", [TicketStatus.NEW, TicketStatus.ANALYSIS], ids=lambda s: s.value
+    )
+    async def test_each_reason_is_stored_and_recorded_from_each_source(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        cve_factory: CVEFactory,
+        va_user: VAUser,
+        reason: TicketIgnoreReason,
+        source: TicketStatus,
+    ) -> None:
+        """The reason is written together with `Ignored` and recorded in the
+        `detail` of the acting-user `status_change`, with `comment = NULL`
+        also for `cve_rejected`; the optional `assignment` and system
+        `New -> Analysis` keep `detail = NULL`. Every Ticket has a rejected
+        CVE, so `cve_rejected` is admissible."""
+        actor = await va_user()
+        cve = await cve_factory(cve_state=CveState.REJECTED.value)
+        ticket = await ticket_factory(status=source.value, cve_id=cve.id)
+
+        result = await _ignore(db_session, ticket.id, actor, reason=reason)
+
+        assert result.ignore_reason == reason
+        assert await _state(db_session, ticket.id) == (
+            TicketStatus.IGNORED,
+            actor.id,
+            reason,
+        )
+        promotion = [PROMOTION] if source is TicketStatus.NEW else []
+        assert await ticket_events(db_session, ticket) == [
+            _assignment(actor),
+            *promotion,
+            _ignored(actor, TicketStatus.ANALYSIS, reason),
+        ]
+
+    @pytest.mark.parametrize(
+        "source", [TicketStatus.NEW, TicketStatus.ANALYSIS], ids=lambda s: s.value
+    )
+    @pytest.mark.parametrize(
+        "cve_state", [None, CveState.PUBLISHED], ids=["cve-less", "published"]
+    )
+    async def test_cve_rejected_without_a_rejected_cve_is_rejected(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        cve_factory: CVEFactory,
+        va_user: VAUser,
+        monkeypatch: pytest.MonkeyPatch,
+        source: TicketStatus,
+        cve_state: CveState | None,
+    ) -> None:
+        """A CVE-less Ticket and a `PUBLISHED` CVE raise
+        `TicketCVENotRejectedError` with no assignment, status change, or
+        event: an unassigned `New` Ticket and an eligible actor make an
+        assignment before the check observable, and the `New` Ticket stays
+        `New`."""
+        actor = await va_user()
+        cve = None if cve_state is None else await cve_factory(cve_state=cve_state)
+        ticket = await ticket_factory(
+            status=source.value, cve_id=cve.id if cve is not None else None
+        )
+
+        await _assert_rejected(
+            db_session,
+            monkeypatch,
+            TicketCVENotRejectedError,
+            ticket_id=ticket.id,
+            actor=actor,
+            reason=TicketIgnoreReason.CVE_REJECTED,
+        )
+        assert await _state(db_session, ticket.id) == (source, None, None)
+
+    async def test_cve_state_is_read_after_the_lock_without_a_cve_lock(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        cve_factory: CVEFactory,
+        va_user: VAUser,
+    ) -> None:
+        """ticket-service.md, `ignore_ticket` step 6: one column statement
+        on `cve` issued after the Ticket `FOR UPDATE`, which takes no row
+        lock; the root locks stay the acting User and the Ticket."""
+        actor = await va_user()
+        cve = await cve_factory(cve_state=CveState.REJECTED.value)
+        ticket = await ticket_factory(status=TicketStatus.ANALYSIS.value, cve_id=cve.id)
+
+        with StatementRecorder(db_session) as recorder:
+            await _ignore(
+                db_session, ticket.id, actor, reason=TicketIgnoreReason.CVE_REJECTED
+            )
+
+        statements = recorder.statements
+        ticket_lock = next(
+            i
+            for i, s in enumerate(statements)
+            if "FROM ticket" in s and "FOR UPDATE" in s
+        )
+        cve_reads = [
+            i
+            for i, s in enumerate(statements)
+            if s.lstrip().startswith("SELECT cve.cve_state")
+        ]
+        assert len(cve_reads) == 1
+        assert cve_reads[0] > ticket_lock
+        assert "FOR " not in statements[cve_reads[0]]
+        assert len(recorder.row_locks()) == 2
+
+    @pytest.mark.parametrize(
+        ("status", "confidential", "error"),
+        [
+            pytest.param(
+                TicketStatus.NEW, True, TicketNotFoundError, id="inaccessible"
+            ),
+            pytest.param(
+                TicketStatus.IGNORED, False, TicketNotMutableError, id="not-mutable"
+            ),
+            pytest.param(
+                TicketStatus.DUPLICATED, False, TicketNotMutableError, id="duplicated"
+            ),
+            pytest.param(
+                TicketStatus.ANALYZED,
+                False,
+                InvalidTransitionError,
+                id="invalid-transition",
+            ),
+        ],
+    )
+    async def test_earlier_guards_precede_the_cve_rejected_check(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+        monkeypatch: pytest.MonkeyPatch,
+        status: TicketStatus,
+        confidential: bool,
+        error: type[Exception],
+    ) -> None:
+        """tickets.md, Ignore Ticket: accessibility, then operability, then
+        the transition guard decide before `TICKET_CVE_NOT_REJECTED`; each
+        CVE-less Ticket would also fail the reason check."""
+        actor = await va_user()
+        ticket = await ticket_factory(status=status.value, is_confidential=confidential)
+
+        await _assert_rejected(
+            db_session,
+            monkeypatch,
+            error,
+            ticket_id=ticket.id,
+            actor=actor,
+            scope=Scope.NON_CONFIDENTIAL,
+            reason=TicketIgnoreReason.CVE_REJECTED,
+        )
+
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            pytest.param("not_for_us", id="unknown"),
+            pytest.param("other", id="plain-string"),
+            pytest.param(None, id="none"),
+        ],
+    )
+    async def test_value_outside_the_user_reasons_raises_before_any_statement(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: TicketFactory,
+        va_user: VAUser,
+        reason: object,
+    ) -> None:
+        """Only a `TicketIgnoreReason` member that a user may choose is
+        accepted; anything else raises `ValueError` before any database
+        access."""
+        actor = await va_user()
+        ticket = await ticket_factory(status=TicketStatus.NEW.value)
+
+        with (
+            StatementRecorder(db_session) as recorder,
+            pytest.raises(ValueError, match="reason"),
+        ):
+            await _ignore(db_session, ticket.id, actor, reason=cast(Any, reason))
+
+        assert recorder.statements == []
+        assert await _state(db_session, ticket.id) == (TicketStatus.NEW, None, None)
+        assert await ticket_events(db_session, ticket) == []
 
 
 # ---------------------------------------------------------------------------
@@ -391,10 +630,11 @@ class TestGuards:
                 ticket_id=ticket.id,
                 acting_user_id=actor.id,
                 caller=TicketCaller.authenticated(other.id, Scope.ALL),
+                reason=OTHER,
             )
 
         assert recorder.statements == []
-        assert await _state(db_session, ticket.id) == (TicketStatus.NEW, None)
+        assert await _state(db_session, ticket.id) == (TicketStatus.NEW, None, None)
         assert await ticket_events(db_session, ticket) == []
 
 
@@ -442,7 +682,11 @@ class TestLockOrder:
         assert _bound(recorder.parameters[ticket_lock]) == [ticket.id]
         assert "ticket_access_grant" not in statements[ticket_lock]
         assert len(recorder.row_locks()) == 2
-        assert await _state(db_session, ticket.id) == (TicketStatus.IGNORED, None)
+        assert await _state(db_session, ticket.id) == (
+            TicketStatus.IGNORED,
+            None,
+            OTHER,
+        )
         assert await ticket_events(db_session, ticket) == [
             _ignored(actor, TicketStatus.ANALYSIS)
         ]
@@ -506,7 +750,7 @@ class TestRollback:
 
         assert reached
 
-        assert await _state(db_session, ticket_id) == (TicketStatus.NEW, None)
+        assert await _state(db_session, ticket_id) == (TicketStatus.NEW, None, None)
         assert await ticket_events_by_id(db_session, ticket_id) == []
 
     async def test_never_commits(

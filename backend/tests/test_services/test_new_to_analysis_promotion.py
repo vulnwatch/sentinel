@@ -45,6 +45,7 @@ from app.core.enums import (
     PackageStatus,
     Scope,
     Severity,
+    TicketIgnoreReason,
     TicketPriority,
     TicketStatus,
 )
@@ -216,6 +217,7 @@ async def test_assignment_of_a_new_ticket_is_followed_by_one_promotion(
                 ticket_id=ticket.id,
                 acting_user_id=actor.id,
                 caller=caller,
+                reason=TicketIgnoreReason.OTHER,
             )
             entry = [
                 EventRow(
@@ -224,7 +226,7 @@ async def test_assignment_of_a_new_ticket_is_followed_by_one_promotion(
                     TicketStatus.ANALYSIS.value,
                     TicketStatus.IGNORED.value,
                     None,
-                    None,
+                    {"ignore_reason": "other"},
                 )
             ]
         case "mark_as_duplicate":

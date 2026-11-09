@@ -985,6 +985,7 @@ class TestCreateTicket:
         due = {field: data.pop(field) for field in _DUE_MILESTONES}
         assert data == {
             "status": "analysis",
+            "ignore_reason": None,
             "severity": None,
             "priority": None,
             "priority_automatic": None,

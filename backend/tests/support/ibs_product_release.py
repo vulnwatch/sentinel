@@ -81,7 +81,12 @@ from tests.support.ibs_download import (
 )
 from tests.support.suse_cvss import V31_CRITICAL
 from tests.support.suse_cvss_races import CommittedWorld
-from tests.support.ticket_mutations import AFTER_EVAL, EventRow, ticket_events_by_id
+from tests.support.ticket_mutations import (
+    AFTER_EVAL,
+    EventRow,
+    ignore_reason_for,
+    ticket_events_by_id,
+)
 
 FETCHER: Final = "detect_ibs_product_releases"
 
@@ -256,6 +261,7 @@ class Seed:
             duplicate_of_id = canonical.id
         ticket = Ticket(
             status=status.value,
+            ignore_reason=ignore_reason_for(status),
             cve_id=cve.id if cve is not None else None,
             duplicate_of_id=duplicate_of_id,
         )

@@ -155,7 +155,7 @@ from tests.support.ibs_request_reconciliation import (
 from tests.support.ibs_track_release import WAIT, events_of, logged, raising
 from tests.support.module_imports import APP_ROOT, imported_modules
 from tests.support.suse_cvss_races import SessionStatementRecorder
-from tests.support.ticket_mutations import StatementRecorder
+from tests.support.ticket_mutations import StatementRecorder, ignore_reason_for
 
 Factory = Callable[[], Awaitable[AsyncSession]]
 Outcome = tuple[str, int, int, int, int]
@@ -390,7 +390,10 @@ def _leaves(world: RequestWorld, scope: IBSRequestScope, status: TicketStatus) -
     `status`."""
 
     async def change() -> None:
-        values: dict[str, Any] = {"status": status.value}
+        values: dict[str, Any] = {
+            "status": status.value,
+            "ignore_reason": ignore_reason_for(status),
+        }
         if status is TicketStatus.DUPLICATED:
             seed = RequestSeed(world)
             canonical = await seed.ticket(with_cve=False)

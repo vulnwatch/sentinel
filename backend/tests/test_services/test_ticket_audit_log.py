@@ -873,6 +873,7 @@ class TestStatusChangeComment:
         old_value="New",
         new_value="Ignored",
         comment="CVE rejected",
+        detail={"ignore_reason": "cve_rejected"},
     )
 
     async def test_system_new_to_ignored_with_cve_rejected_accepted(self) -> None:
@@ -894,7 +895,10 @@ class TestStatusChangeComment:
     async def test_cve_rejected_outside_system_new_to_ignored_rejected(
         self, old_value: str, new_value: str
     ) -> None:
-        case = replace(self._REJECTION, old_value=old_value, new_value=new_value)
+        detail = self._REJECTION.detail if new_value == "Ignored" else None
+        case = replace(
+            self._REJECTION, old_value=old_value, new_value=new_value, detail=detail
+        )
         await _reject(case, "is not the canonical")
 
     async def test_system_gate_transition_with_null_comment_accepted(self) -> None:
@@ -904,8 +908,99 @@ class TestStatusChangeComment:
                 old_value="Analysis",
                 new_value="Analyzed",
                 comment=None,
+                detail=None,
             )
         )
+
+
+@pytest.mark.unit
+class TestStatusChangeDetail:
+    """ticket-audit-log.md, `detail` JSONB Schema Contract (`status_change`)
+    and Testing Requirement 30: a transition into `Ignored` requires exactly
+    `{"ignore_reason": ...}` with a TicketIgnoreReason value, by a user or
+    the system; every other `status_change` requires `NULL`."""
+
+    _INTO_IGNORED = _Case(
+        _T.STATUS_CHANGE,
+        old_value="Analysis",
+        new_value="Ignored",
+        detail={"ignore_reason": "not_shipped"},
+    )
+
+    @pytest.mark.parametrize("reason", ["not_shipped", "cve_rejected", "other"])
+    @pytest.mark.parametrize("old_value", ["New", "Analysis"])
+    async def test_user_transition_into_ignored_with_each_reason_accepted(
+        self, reason: str, old_value: str
+    ) -> None:
+        await _accept(
+            replace(
+                self._INTO_IGNORED,
+                old_value=old_value,
+                detail={"ignore_reason": reason},
+            )
+        )
+
+    async def test_system_rejection_with_cve_rejected_accepted(self) -> None:
+        await _accept(
+            replace(
+                self._INTO_IGNORED,
+                system=True,
+                old_value="New",
+                comment="CVE rejected",
+                detail={"ignore_reason": "cve_rejected"},
+            )
+        )
+
+    @pytest.mark.parametrize("system", [False, True], ids=["user", "system"])
+    async def test_transition_into_ignored_without_detail_rejected(
+        self, system: bool
+    ) -> None:
+        case = replace(
+            self._INTO_IGNORED,
+            system=system,
+            old_value="New",
+            comment="CVE rejected" if system else None,
+            detail=None,
+        )
+        await _reject(case, "detail with ignore_reason is required")
+
+    async def test_extra_key_rejected(self) -> None:
+        case = replace(
+            self._INTO_IGNORED,
+            detail={"ignore_reason": "other", "package": "fictional-package"},
+        )
+        await _reject(case, "undocumented keys")
+
+    async def test_other_key_without_ignore_reason_rejected(self) -> None:
+        case = replace(self._INTO_IGNORED, detail={"reason": "other"})
+        await _reject(case, "undocumented keys")
+
+    @pytest.mark.parametrize("value", ["not_for_us", "Other", "cna_unknown", ""])
+    async def test_unknown_value_rejected(self, value: str) -> None:
+        case = replace(self._INTO_IGNORED, detail={"ignore_reason": value})
+        await _reject(case, "detail.ignore_reason must be one of")
+
+    async def test_non_string_value_rejected(self) -> None:
+        detail: dict[str, Any] = {"ignore_reason": 1}
+        await _reject(
+            replace(self._INTO_IGNORED, detail=detail),
+            "detail.ignore_reason must be a string",
+        )
+
+    @pytest.mark.parametrize(
+        ("old_value", "new_value"),
+        [("New", "Analysis"), ("Ignored", "Analysis"), ("Ignored", "Resolved")],
+    )
+    async def test_detail_on_another_transition_rejected(
+        self, old_value: str, new_value: str
+    ) -> None:
+        case = replace(
+            self._INTO_IGNORED,
+            old_value=old_value,
+            new_value=new_value,
+            detail={"ignore_reason": "other"},
+        )
+        await _reject(case, "detail must be NULL")
 
 
 # ---------------------------------------------------------------------------

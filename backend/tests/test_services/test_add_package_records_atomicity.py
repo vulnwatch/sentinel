@@ -151,6 +151,7 @@ from tests.support.suse_cvss_races import (
 )
 from tests.support.ticket_mutations import (
     EVAL,
+    ignore_reason_for,
 )
 from tests.support.track_status import Spy
 
@@ -593,6 +594,7 @@ class TestActiveTicketOnlyRace:
             .where(Ticket.id == ticket.id)
             .values(
                 status=status.value,
+                ignore_reason=ignore_reason_for(status),
                 duplicate_of_id=duplicate_of.id if duplicate_of else None,
             )
         )
@@ -986,7 +988,9 @@ class TestLockedCurrentAccessibilityRaces:
         }.get(request_kind, TicketStatus.ANALYSIS)
         if status is not TicketStatus.ANALYSIS:
             statements.append(
-                update(Ticket).where(Ticket.id == ticket.id).values(status=status.value)
+                update(Ticket)
+                .where(Ticket.id == ticket.id)
+                .values(status=status.value, ignore_reason=ignore_reason_for(status))
             )
         before = await protected_state(world, ticket.id)
         assign = Spy(monkeypatch, "auto_assign_actor")

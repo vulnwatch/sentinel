@@ -80,6 +80,7 @@ from tests.support.ticket_mutations import (
     REACTIVE_GS_END,
     EventRow,
     Prod,
+    ignore_reason_for,
     status_event,
     ticket_events_by_id,
 )
@@ -402,7 +403,9 @@ class TestTicketStatusChange:
         holder = await h.world.open_session()
         await _lock_ticket(holder, ticket.id)
         await holder.execute(
-            update(Ticket).where(Ticket.id == ticket.id).values(status=committed.value)
+            update(Ticket)
+            .where(Ticket.id == ticket.id)
+            .values(status=committed.value, ignore_reason=ignore_reason_for(committed))
         )
         task_id = await h.admit()
 

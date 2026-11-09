@@ -125,7 +125,10 @@ from tests.support.parallel import (
     worker_database_url,
     worker_id,
 )
-from tests.support.ticket_mutations import PRIORITY_OVERRIDE_SET_AT
+from tests.support.ticket_mutations import (
+    DEFAULT_IGNORE_REASON,
+    PRIORITY_OVERRIDE_SET_AT,
+)
 
 # The runtime keeps CPython's default integer-string conversion limit
 # (docs/deployment.md, Python Interpreter Limits); pin it so that an
@@ -1672,9 +1675,14 @@ def ticket_factory(
       `priority_override` with a value defaults `priority_override_by_id`
       to a freshly created User and `priority_override_at` to
       `PRIORITY_OVERRIDE_SET_AT`, each unless overridden.
+    - `chk_ticket_ignore_reason_status_coherence`: overriding
+      `status="Ignored"` and not `ignore_reason` defaults it to
+      `DEFAULT_IGNORE_REASON` (`other`, which never reopens automatically).
     """
 
     async def _create(**overrides: Any) -> Ticket:
+        if overrides.get("status") == TicketStatus.IGNORED:
+            overrides.setdefault("ignore_reason", DEFAULT_IGNORE_REASON.value)
         if overrides.get("priority_override") is not None:
             if "priority_override_by_id" not in overrides:
                 overrides["priority_override_by_id"] = (await user_factory()).id

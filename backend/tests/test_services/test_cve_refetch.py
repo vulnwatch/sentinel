@@ -99,6 +99,7 @@ from tests.support.suse_cvss_races import (
     SessionStatementRecorder,
     prepare_loss,
 )
+from tests.support.ticket_mutations import ignore_reason_for
 
 Factory = Callable[..., Awaitable[Any]]
 SessionFactory = Callable[[], Awaitable[AsyncSession]]
@@ -218,6 +219,7 @@ async def _ticket(
 ) -> Ticket:
     ticket = Ticket(
         status=status.value,
+        ignore_reason=ignore_reason_for(status),
         cve_id=cve.id if cve is not None else None,
         is_confidential=confidential,
         duplicate_of_id=duplicate_of.id if duplicate_of is not None else None,

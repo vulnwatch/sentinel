@@ -17,6 +17,9 @@ the first violation, before any row is added or flushed:
    - `priority_changed`: a user actor requires exactly
      `{"override_action": "set" | "changed" | "cleared"}`; the system
      actor requires `NULL`.
+   - `status_change`: a transition into `Ignored` (`new_value`), by a
+     user or the system, requires exactly `{"ignore_reason": ...}` with a
+     `TicketIgnoreReason` value; every other transition requires `NULL`.
    - Other event types listed in the schema contract require a mapping
      with every required key, no undocumented key, and string values;
      `product_eligibility_changed` additionally enforces its closed
@@ -68,7 +71,12 @@ from sqlalchemy import Text, cast, false, func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.core.enums import CVESourceType, TicketAuditEventType, TicketStatus
+from app.core.enums import (
+    CVESourceType,
+    TicketAuditEventType,
+    TicketIgnoreReason,
+    TicketStatus,
+)
 from app.core.exceptions import TicketNotFoundError
 from app.core.identifiers import format_ticket_id, parse_ticket_id
 from app.models.ticket import Ticket
@@ -132,9 +140,10 @@ _PRODUCT_SUBJECT: Final = _TRACK_SUBJECT | {"product_name", "product_cpe"}
 _REFERENCE_SUBJECT: Final = frozenset({"url"})
 
 # Required keys of every event type whose `detail` is a fixed-key mapping
-# of string values. `priority_changed` is validated separately because
-# its presence depends on the actor. Event types absent from this
-# mapping (and not `priority_changed`) MUST have `detail = NULL`.
+# of string values. `priority_changed` and `status_change` are validated
+# separately because their presence depends on the actor and on
+# `new_value`. Event types absent from this mapping (and neither of those
+# two) MUST have `detail = NULL`.
 _REQUIRED_DETAIL_KEYS: Final[Mapping[TicketAuditEventType, frozenset[str]]] = {
     TicketAuditEventType.TRACK_STATUS_CHANGED: _TRACK_SUBJECT,
     TicketAuditEventType.TRACK_EXCLUDED: _TRACK_SUBJECT,
@@ -157,6 +166,9 @@ OVERRIDE_ACTIONS: Final = frozenset({"set", "changed", "cleared"})
 
 _VA_OVERRIDE_REASON: Final = "va_override"
 _OVERRIDE_ACTION_KEY: Final = "override_action"
+
+IGNORE_REASONS: Final = frozenset(reason.value for reason in TicketIgnoreReason)
+_IGNORE_REASON_KEY: Final = "ignore_reason"
 
 
 def _validate_detail_shape(detail: object) -> None:
@@ -218,6 +230,29 @@ def _validate_priority_changed_detail(
     _validate_override_action(detail[_OVERRIDE_ACTION_KEY])
 
 
+def _validate_status_change_detail(
+    new_value: str | None, detail: Mapping[str, object] | None
+) -> None:
+    event_type = TicketAuditEventType.STATUS_CHANGE
+    if new_value != TicketStatus.IGNORED.value:
+        if detail is not None:
+            raise ValueError(
+                "detail must be NULL for a status_change that does not enter Ignored"
+            )
+        return
+    if detail is None:
+        raise ValueError(
+            "detail with ignore_reason is required for a status_change into Ignored"
+        )
+    _check_keys(event_type, detail, frozenset({_IGNORE_REASON_KEY}))
+    reason = detail[_IGNORE_REASON_KEY]
+    if reason not in IGNORE_REASONS:
+        raise ValueError(
+            f"detail.ignore_reason must be one of {sorted(IGNORE_REASONS)}, "
+            f"got {reason!r}"
+        )
+
+
 def _validate_eligibility_conditionals(detail: Mapping[str, object]) -> None:
     reason = detail["reason"]
     if reason not in ELIGIBILITY_REASONS:
@@ -241,10 +276,14 @@ def _validate_eligibility_conditionals(detail: Mapping[str, object]) -> None:
 def _validate_detail_schema(
     event_type: TicketAuditEventType,
     user_id: uuid.UUID | None,
+    new_value: str | None,
     detail: Mapping[str, object] | None,
 ) -> None:
     if event_type is TicketAuditEventType.PRIORITY_CHANGED:
         _validate_priority_changed_detail(user_id, detail)
+        return
+    if event_type is TicketAuditEventType.STATUS_CHANGE:
+        _validate_status_change_detail(new_value, detail)
         return
 
     required = _REQUIRED_DETAIL_KEYS.get(event_type)
@@ -383,7 +422,7 @@ class TicketAuditLog(BaseAuditLog):
                 f"event_type must be a TicketAuditEventType member, got {event_type!r}"
             )
         _validate_detail_shape(detail)
-        _validate_detail_schema(event_type, user_id, detail)
+        _validate_detail_schema(event_type, user_id, new_value, detail)
         if detail is not None:
             _check_detail_size(detail)
         _validate_comment(event_type, user_id, old_value, new_value, comment)

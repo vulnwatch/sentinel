@@ -1552,6 +1552,7 @@ class TestAssociateCve:
         assert data == {
             "ticket_id": world.locator,
             "status": "analyzed",
+            "ignore_reason": None,
             "severity": "critical",
             "priority": "p1",
             "priority_automatic": "p1",
@@ -1699,6 +1700,7 @@ class TestAssociateCve:
         assert data == {
             "ticket_id": _locator(target),
             "status": "analysis",
+            "ignore_reason": None,
             "severity": None,
             "priority": None,
             "priority_automatic": None,

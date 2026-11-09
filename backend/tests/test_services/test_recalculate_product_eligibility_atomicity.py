@@ -57,7 +57,14 @@ import pytest
 from sqlalchemy import delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import PackageStatus, Role, Scope, Severity, TicketStatus
+from app.core.enums import (
+    PackageStatus,
+    Role,
+    Scope,
+    Severity,
+    TicketIgnoreReason,
+    TicketStatus,
+)
 from app.models.product import Product
 from app.models.system_setting import SystemSetting
 from app.models.ticket import Ticket
@@ -260,6 +267,7 @@ def _ignore(
         ticket_id=ticket.id,
         acting_user_id=actor.id,
         caller=TicketCaller.authenticated(actor.id, Scope.ALL),
+        reason=TicketIgnoreReason.OTHER,
     )
 
 
@@ -306,7 +314,9 @@ def _override_event(
 
 def _ignored_event(actor: User) -> EventRow:
     """The acting-user manual-zone entry `status_change`."""
-    return EventRow("status_change", actor.id, ANALYSIS, IGNORED, None, None)
+    return EventRow(
+        "status_change", actor.id, ANALYSIS, IGNORED, None, {"ignore_reason": "other"}
+    )
 
 
 def _sessions(spy: Spy) -> list[Any]:

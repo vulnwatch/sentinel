@@ -100,7 +100,11 @@ from tests.support.ibs_product_release import (
     ticket_status,
 )
 from tests.support.suse_cvss_races import SessionStatementRecorder
-from tests.support.ticket_mutations import EVAL
+from tests.support.ticket_mutations import (
+    DEFAULT_IGNORE_REASON,
+    EVAL,
+    ignore_reason_for,
+)
 from tests.support.track_status import Spy
 
 pytestmark = pytest.mark.integration
@@ -372,7 +376,10 @@ class TestInactiveTicketRaces:
         seed = Seed(world.session, world)
         canonical = await seed.ticket(TicketStatus.ANALYSIS, with_cve=False)
         await seed.commit()
-        values: dict[str, Any] = {"status": status.value}
+        values: dict[str, Any] = {
+            "status": status.value,
+            "ignore_reason": ignore_reason_for(status),
+        }
         if status is TicketStatus.DUPLICATED:
             values["duplicate_of_id"] = canonical.id
         between_phases(
@@ -914,7 +921,10 @@ class TestSiblingContinuation:
                 .values(released_at=WINNER_AT),
                 update(Ticket)
                 .where(Ticket.id == stale.ticket_id)
-                .values(status=TicketStatus.IGNORED.value),
+                .values(
+                    status=TicketStatus.IGNORED.value,
+                    ignore_reason=DEFAULT_IGNORE_REASON.value,
+                ),
             )
 
         between_phases(monkeypatch, concurrent)

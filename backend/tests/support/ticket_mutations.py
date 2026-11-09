@@ -37,7 +37,7 @@ from typing import Any
 from sqlalchemy import Connection, Engine, event, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import PackageStatus, Severity, TicketStatus
+from app.core.enums import PackageStatus, Severity, TicketIgnoreReason, TicketStatus
 from app.models.ticket import Ticket
 from app.models.ticket_audit_event import TicketAuditEvent
 from app.models.ticket_package_track import TicketPackageTrack
@@ -57,6 +57,19 @@ RELEASED_AT = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
 PRIORITY_OVERRIDE_SET_AT = datetime(2001, 2, 3, 4, 5, 6, tzinfo=UTC)
 """Default `priority_override_at` of a `ticket_factory` Ticket created with
 a priority override (`tests/conftest.py`)."""
+
+DEFAULT_IGNORE_REASON = TicketIgnoreReason.OTHER
+"""Default `ignore_reason` of an `Ignored` Ticket that a test builder writes
+without naming one (`chk_ticket_ignore_reason_status_coherence`). `other`
+never reopens automatically, so a test that relies on the reopen of a
+reverted rejection states `cve_rejected`."""
+
+
+def ignore_reason_for(status: str) -> str | None:
+    """The `ignore_reason` that a test builder writes together with
+    `status`: `DEFAULT_IGNORE_REASON` for `Ignored`, otherwise `NULL`."""
+    return DEFAULT_IGNORE_REASON.value if status == TicketStatus.IGNORED else None
+
 
 TicketFactory = Callable[..., Awaitable[Ticket]]
 UserFactory = Callable[..., Awaitable[User]]

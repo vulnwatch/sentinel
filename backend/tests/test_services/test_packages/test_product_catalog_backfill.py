@@ -146,6 +146,7 @@ from tests.support.suse_cvss_races import CommittedWorld
 from tests.support.ticket_mutations import (
     EVAL,
     EventRow,
+    ignore_reason_for,
     status_event,
     ticket_events_by_id,
 )
@@ -389,6 +390,7 @@ async def _ticket(
     """A committed CVE-less `High` Ticket, optionally with a fixed UUID."""
     ticket = Ticket(
         status=status.value,
+        ignore_reason=ignore_reason_for(status),
         severity_manual=Severity.HIGH.value,
         duplicate_of_id=duplicate_of,
     )
@@ -433,7 +435,9 @@ async def _set_status(world: CommittedWorld, ticket: Ticket, status: str) -> Non
     """Commit a Ticket status change from an independent session."""
     concurrent = await world.open_session()
     await concurrent.execute(
-        update(Ticket).where(Ticket.id == ticket.id).values(status=status)
+        update(Ticket)
+        .where(Ticket.id == ticket.id)
+        .values(status=status, ignore_reason=ignore_reason_for(status))
     )
     await concurrent.commit()
 

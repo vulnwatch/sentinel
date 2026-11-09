@@ -63,6 +63,7 @@ from app.core.enums import (
     MilestonePhase,
     Severity,
     SortOrder,
+    TicketIgnoreReason,
     TicketPriority,
     TicketSortField,
     TicketStatus,
@@ -109,6 +110,7 @@ from app.schemas.ticket import (
     TicketDetail,
     TicketDetailResponse,
     TicketDuplicateRequest,
+    TicketIgnoreRequest,
     TicketListQuery,
     TicketListResponse,
     TicketPriorityUpdateRequest,
@@ -135,6 +137,7 @@ from app.services.ticket_service import (
     TicketCreationSource,
     TicketCVEAlreadySetError,
     TicketCVEConflictError,
+    TicketCVENotRejectedError,
     TicketDetailProjection,
     TicketNotConfidentialError,
     TicketSummaryProjection,
@@ -180,6 +183,9 @@ _OVERDUE_FILTER: Final[Mapping[str, MilestonePhase]] = {
 _CURRENT_PHASE_FILTER: Final[Mapping[str, CurrentPhase]] = {
     member.value: member for member in CurrentPhase
 }
+_IGNORE_REASON_FILTER: Final[Mapping[str, TicketIgnoreReason]] = {
+    member.value: member for member in TicketIgnoreReason
+}
 
 
 def _parse_repeatable[T](raw: list[str], members: Mapping[str, T]) -> list[T] | None:
@@ -223,6 +229,21 @@ def _ticket_list_query(
                 "Invalid values are ignored."
             ),
             json_schema_extra=enum_filter_schema(_STATUS_FILTER, repeatable=True),
+        ),
+    ],
+    ignore_reason: Annotated[
+        list[str],
+        Query(
+            default_factory=list,
+            description=(
+                "Filter by ignore reason: `not_shipped`, `cve_rejected`, "
+                "`other`. A Ticket that is not `ignored` has no reason and "
+                "matches no value. Repeatable; OR semantics. Invalid values are "
+                "ignored."
+            ),
+            json_schema_extra=enum_filter_schema(
+                _IGNORE_REASON_FILTER, repeatable=True
+            ),
         ),
     ],
     assignee: Annotated[
@@ -404,6 +425,7 @@ def _ticket_list_query(
     return TicketListQuery(
         search=search,
         status=status_filter,
+        ignore_reason=ignore_reason,
         assignee=assignee,
         severity=severity,
         priority=priority,
@@ -461,6 +483,7 @@ def serialize_ticket_summary(summary: TicketSummaryProjection) -> TicketSummary:
         {
             "ticket_id": summary.ticket_id,
             "status": summary.status.lower(),
+            "ignore_reason": summary.ignore_reason,
             "severity": _lower(summary.severity),
             "priority": _lower(summary.priority),
             "priority_automatic": _lower(summary.priority_automatic),
@@ -507,6 +530,7 @@ def serialize_ticket_detail(detail: TicketDetailProjection) -> TicketDetail:
         {
             "ticket_id": detail.ticket_id,
             "status": detail.status.lower(),
+            "ignore_reason": detail.ignore_reason,
             "severity": _lower(detail.severity),
             "priority": _lower(detail.priority),
             "priority_automatic": _lower(detail.priority_automatic),
@@ -539,8 +563,8 @@ def serialize_ticket_detail(detail: TicketDetailProjection) -> TicketDetail:
     summary="List Tickets",
     description=(
         "Returns a paginated list of the Tickets visible to the caller, with "
-        "multi-field search, repeatable status, severity, priority, overdue, and "
-        "current phase filters, assignee, maintainer, Product, track, "
+        "multi-field search, repeatable status, ignore reason, severity, priority, "
+        "overdue, and current phase filters, assignee, maintainer, Product, track, "
         "duplicate-original, confidentiality, and passed Coordinated Release "
         "Date filters, and sorting. "
         "Visibility is applied before every filter, sort, count, and page. Requires "
@@ -564,6 +588,7 @@ async def list_tickets(
         caller=caller,
         search=query.search,
         status=_parse_repeatable(query.status, _STATUS_FILTER),
+        ignore_reason=_parse_repeatable(query.ignore_reason, _IGNORE_REASON_FILTER),
         assignee=query.assignee,
         severity=_parse_repeatable(query.severity, _SEVERITY_FILTER),
         priority=_parse_repeatable(query.priority, _PRIORITY_FILTER),
@@ -1188,17 +1213,25 @@ def _duplicate_concurrent_modification_error() -> AppError:
     )
 
 
+def _cve_not_rejected_error() -> AppError:
+    return AppError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=ErrorCode.TICKET_CVE_NOT_REJECTED,
+        detail="The Ticket has no rejected CVE.",
+    )
+
+
 @router.post(
     "/tickets/{ticket_id}/ignore",
     response_model=TicketDetailResponse,
     summary="Ignore Ticket",
     description=(
-        "Moves a `new` or `analysis` Ticket to `ignored` (manual zone). No "
-        "request body. An unassigned Ticket is first auto-assigned to the "
-        "caller when the caller is eligible to be its assignee, which "
+        "Moves a `new` or `analysis` Ticket to `ignored` (manual zone) with the "
+        "`reason` why it is ignored, which the Ticket carries as `ignore_reason` "
+        "until it is reopened. An unassigned Ticket is first auto-assigned to "
+        "the caller when the caller is eligible to be its assignee, which "
         "records `new` -> `analysis` before the transition. Returns the "
-        "post-mutation Ticket "
-        "detail. Requires `triage_ticket`."
+        "post-mutation Ticket detail. Requires `triage_ticket`."
     ),
     responses={
         404: {
@@ -1211,15 +1244,26 @@ def _duplicate_concurrent_modification_error() -> AppError:
         409: {
             "model": ErrorResponse,
             "description": (
-                "`TICKET_INVALID_TRANSITION`: the Ticket is `analyzed` or "
-                "`resolved`. `TICKET_NOT_MUTABLE`: the Ticket is already "
-                "Ignored or Duplicated."
+                "`TICKET_NOT_MUTABLE`: the Ticket is already Ignored or "
+                "Duplicated. `TICKET_INVALID_TRANSITION`: the Ticket is "
+                "`analyzed` or `resolved`. `TICKET_CVE_NOT_REJECTED`: `reason` "
+                "is `cve_rejected` and the Ticket has no CVE or its CVE is not "
+                "`rejected`."
+            ),
+        },
+        422: {
+            "model": ValidationErrorResponse,
+            "description": (
+                "`VALIDATION_ERROR`: the request fails validation, for example "
+                "`reason` is missing, `null`, or not one of `not_shipped`, "
+                "`cve_rejected`, and `other`."
             ),
         },
     },
 )
 async def ignore_ticket(
     ticket_id: TicketIdPath,
+    body: TicketIgnoreRequest,
     db: DatabaseSession,
     principal: Annotated[
         AuthenticatedPrincipal, Depends(require_capability(Capability.TRIAGE_TICKET))
@@ -1233,10 +1277,11 @@ async def ignore_ticket(
     Evaluation Order, flow 3): authentication, then `triage_ticket`
     before any Ticket lookup, then the delegated preliminary SNTL
     resolution. `ignore_ticket()` revalidates accessibility from
-    locked-current state and does not reconcile, so the handler captures
-    one UTC date at workflow entry solely for the `TicketDetail`
-    assembled from the locked post-state inside the same transaction
-    (`docs/features/tickets/ticket-service.md`, `get_ticket_detail()`).
+    locked-current state, decides whether `cve_rejected` applies, and does
+    not reconcile, so the handler captures one UTC date at workflow entry
+    solely for the `TicketDetail` assembled from the locked post-state
+    inside the same transaction (`docs/features/tickets/ticket-service.md`,
+    `get_ticket_detail()`).
     """
     evaluation_date = _utc_now().date()
     try:
@@ -1245,6 +1290,7 @@ async def ignore_ticket(
             ticket_id=ticket.id,
             acting_user_id=principal.user.id,
             caller=caller,
+            reason=TicketIgnoreReason(body.reason),
         )
     except TicketNotFoundError:
         raise ticket_not_found_error() from None
@@ -1252,6 +1298,8 @@ async def ignore_ticket(
         raise ticket_not_mutable_error() from None
     except InvalidTransitionError:
         raise _invalid_transition_error() from None
+    except TicketCVENotRejectedError:
+        raise _cve_not_rejected_error() from None
     detail = await ticket_service.assemble_ticket_detail(
         db, ticket_id=ticket.id, evaluation_date=evaluation_date
     )

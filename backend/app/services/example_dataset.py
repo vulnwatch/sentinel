@@ -56,6 +56,7 @@ from app.core.enums import (
     SSVCAutomatable,
     SSVCExploitation,
     SSVCTechnicalImpact,
+    TicketIgnoreReason,
     TicketPriority,
     WorkflowType,
 )
@@ -1468,6 +1469,21 @@ class _Load:
 
         await self.run(prioritize)
 
+    async def ignore(self, number: int, reason: TicketIgnoreReason, actor: str) -> None:
+        """`ignore_ticket()` of `SNTL-{number}` with `reason` by `actor`."""
+        ticket_id = self.ticket_ids[number]
+
+        async def mark_ignored(db: AsyncSession) -> None:
+            await ticket_service.ignore_ticket(
+                db,
+                ticket_id=ticket_id,
+                acting_user_id=self.user_ids[actor],
+                caller=await self.caller(db, actor),
+                reason=reason,
+            )
+
+        await self.run(mark_ignored)
+
     async def age(self, number: int, days: int) -> None:
         """Set the creation time of `SNTL-{number}` to `T - days` under its
         lock; no other value but `updated_at` changes and no event is
@@ -1560,17 +1576,7 @@ class _Load:
         await self.track_status("fictional-kernel", _SP5_UPDATE, affected, "asmith")
         await self.suse_assessment("CVE-2099-0016")
         # SNTL-17
-        sntl_17 = self.ticket_ids[17]
-
-        async def ignore(db: AsyncSession) -> None:
-            await ticket_service.ignore_ticket(
-                db,
-                ticket_id=sntl_17,
-                acting_user_id=self.user_ids["bwilson"],
-                caller=await self.caller(db, "bwilson"),
-            )
-
-        await self.run(ignore)
+        await self.ignore(17, TicketIgnoreReason.NOT_SHIPPED, "bwilson")
         # SNTL-18
         await self.add_package("fictional-openssh")
         await self.track_status("fictional-openssh", _SP7_UPDATE, affected, "asmith")
@@ -1613,6 +1619,8 @@ class _Load:
             )
 
         await self.run(duplicate)
+        # SNTL-25
+        await self.ignore(25, TicketIgnoreReason.OTHER, "asmith")
         # SNTL-26
         await self.add_package("fictional-glibc")
         await self.track_status("fictional-glibc", _SP7_UPDATE, affected, "bwilson")

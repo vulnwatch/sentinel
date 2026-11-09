@@ -52,6 +52,7 @@ from app.models.ticket_audit_event import TicketAuditEvent
 from app.models.user import User
 from app.models.user_role import UserRole
 from app.services.session_service import create_session
+from tests.support.ticket_mutations import ignore_reason_for
 
 NOT_FOUND = b'{"code":"TICKET_NOT_FOUND","detail":"Ticket not found."}'
 UNAUTHENTICATED = {
@@ -69,6 +70,7 @@ MAX_SEQUENCE = 2_147_483_647
 TICKET_DETAIL_FIELDS = {
     "ticket_id",
     "status",
+    "ignore_reason",
     "severity",
     "priority",
     "priority_automatic",
@@ -151,6 +153,7 @@ async def ticket_row(db: AsyncSession, ticket_id: uuid.UUID) -> dict[str, Any]:
         await db.execute(
             select(
                 Ticket.status,
+                Ticket.ignore_reason,
                 Ticket.assignee_id,
                 Ticket.priority_auto,
                 Ticket.priority_override,
@@ -255,6 +258,7 @@ class CommittedApp:
     async def ticket(self, **columns: Any) -> Ticket:
         db = await self.session()
         columns.setdefault("status", TicketStatus.NEW.value)
+        columns.setdefault("ignore_reason", ignore_reason_for(columns["status"]))
         ticket = Ticket(created_at=datetime(2026, 3, 10, 14, 37, tzinfo=UTC), **columns)
         db.add(ticket)
         await db.flush()

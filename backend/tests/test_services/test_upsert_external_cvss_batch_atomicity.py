@@ -153,6 +153,7 @@ from tests.support.ticket_mutations import (
     TicketFactory,
     TreeBuilder,
     VAUser,
+    ignore_reason_for,
     status_event,
     ticket_events,
     ticket_events_by_id,
@@ -676,6 +677,7 @@ async def _ticket(
     ticket = Ticket(
         id=uuid.uuid7(),
         status=status,
+        ignore_reason=ignore_reason_for(status),
         cve_id=cve.id if cve is not None else None,
         duplicate_of_id=duplicate_of.id if duplicate_of is not None else None,
         assignee_id=assignee.id if assignee is not None else None,

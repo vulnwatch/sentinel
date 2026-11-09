@@ -58,7 +58,7 @@ from sqlalchemy import Select, select, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import Role, Scope, TicketStatus
+from app.core.enums import Role, Scope, TicketIgnoreReason, TicketStatus
 from app.core.exceptions import TicketNotFoundError, TicketNotMutableError
 from app.models.ticket import Ticket
 from app.models.ticket_audit_event import TicketAuditEvent
@@ -79,7 +79,12 @@ from tests.support.suse_cvss_races import (
     SessionStatementRecorder,
     prepare_loss,
 )
-from tests.support.ticket_mutations import EVAL, EventRow, status_event
+from tests.support.ticket_mutations import (
+    EVAL,
+    EventRow,
+    ignore_reason_for,
+    status_event,
+)
 
 Factory = Callable[[], Awaitable[AsyncSession]]
 State = tuple[str, uuid.UUID | None, uuid.UUID | None]
@@ -112,8 +117,14 @@ def _sntl(ticket: Ticket) -> str:
 
 
 def _entered(actor: User, old: TicketStatus, new: TicketStatus) -> EventRow:
-    """The acting-user manual-zone entry `status_change`."""
-    return EventRow("status_change", actor.id, old.value, new.value, None, None)
+    """The acting-user manual-zone entry `status_change`; an ignore carries
+    its reason, `other`, in `detail`."""
+    detail = (
+        {"ignore_reason": TicketIgnoreReason.OTHER.value}
+        if new is TicketStatus.IGNORED
+        else None
+    )
+    return EventRow("status_change", actor.id, old.value, new.value, None, detail)
 
 
 def _duplicate_set(actor: User, target: Ticket) -> EventRow:
@@ -146,6 +157,7 @@ async def _ticket(
     ticket = Ticket(
         id=ticket_id or uuid.uuid7(),
         status=status.value,
+        ignore_reason=ignore_reason_for(status),
         duplicate_of_id=duplicate_of.id if duplicate_of is not None else None,
         assignee_id=assignee.id if assignee is not None else None,
     )
@@ -187,6 +199,7 @@ async def _ignore(
         ticket_id=ticket.id,
         acting_user_id=actor.id,
         caller=TicketCaller.authenticated(actor.id, scope),
+        reason=TicketIgnoreReason.OTHER,
     )
 
 

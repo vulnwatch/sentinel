@@ -84,6 +84,7 @@ from tests.support.ibs_request_reconciliation import (
 )
 from tests.support.no_outbound import OutboundGuard
 from tests.support.post_ingest_resolution import record_publications
+from tests.support.ticket_mutations import ignore_reason_for
 
 pytestmark = pytest.mark.integration
 
@@ -111,7 +112,9 @@ async def _seed(
     cve = CVE(cve_id=f"CVE-2099-{uuid.uuid4().int % 10**8:08d}")
     db.add(cve)
     await db.flush()
-    ticket = Ticket(status=status.value, cve_id=cve.id)
+    ticket = Ticket(
+        status=status.value, ignore_reason=ignore_reason_for(status), cve_id=cve.id
+    )
     db.add(ticket)
     await db.flush()
     package = unique_package()
@@ -599,7 +602,7 @@ def _before_lock(monkeypatch: pytest.MonkeyPatch, status: TicketStatus) -> None:
         await db.execute(
             update(Ticket)
             .where(Ticket.id == scope.ticket_id)
-            .values(status=status.value)
+            .values(status=status.value, ignore_reason=ignore_reason_for(status))
         )
         return await original(db, scope, snapshot, observation)
 

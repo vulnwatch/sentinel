@@ -326,7 +326,9 @@ class TestManualZoneExit:
         occurrence_id = await catalog.affected_product(ticket, eligible=False)
         if exit_ is REOPEN:
             entered = await committed_client.post(
-                f"/api/v1/tickets/{locator(ticket)}/ignore", headers=headers
+                f"/api/v1/tickets/{locator(ticket)}/ignore",
+                json={"reason": "other"},
+                headers=headers,
             )
         else:
             target = await world.ticket(status=TicketStatus.ANALYSIS.value)
@@ -342,6 +344,7 @@ class TestManualZoneExit:
             )
         ).json()["data"]
         assert manual["status"] == exit_.source.value.lower()
+        assert manual["ignore_reason"] == ("other" if exit_ is REOPEN else None)
         assert manual["assignee"] == user_reference(other)
         assert {field: manual[field] for field in _DUE_DAYS} == dict.fromkeys(_DUE_DAYS)
 
@@ -355,11 +358,12 @@ class TestManualZoneExit:
         data = response.json()["data"]
         assert set(data) == TICKET_DETAIL_FIELDS
         assert data == detail.json()["data"]
-        assert (data["ticket_id"], data["status"], data["duplicate_of_ticket_id"]) == (
-            locator(ticket),
-            "analyzed",
-            None,
-        )
+        assert (
+            data["ticket_id"],
+            data["status"],
+            data["ignore_reason"],
+            data["duplicate_of_ticket_id"],
+        ) == (locator(ticket), "analyzed", None, None)
         assert data["assignee"] == user_reference(caller)
         assert {field: data[field] for field in _DUE_DAYS} == {
             field: _iso(_CREATED_AT + timedelta(days=days))
@@ -371,11 +375,12 @@ class TestManualZoneExit:
         assert (product["id"], product["eligible"]) == (str(occurrence_id), True)
         fresh = await world.session()
         state = await ticket_row(fresh, ticket.id)
-        assert (state["status"], state["duplicate_of_id"], state["assignee_id"]) == (
-            TicketStatus.ANALYZED.value,
-            None,
-            caller.id,
-        )
+        assert (
+            state["status"],
+            state["ignore_reason"],
+            state["duplicate_of_id"],
+            state["assignee_id"],
+        ) == (TicketStatus.ANALYZED.value, None, None, caller.id)
         assert await _eligible(fresh, occurrence_id) is True
 
     @pytest.mark.parametrize("exit_", EXITS)
@@ -392,7 +397,9 @@ class TestManualZoneExit:
         ticket = await world.ticket(severity_manual="High")
         if exit_ is REOPEN:
             entered = await committed_client.post(
-                f"/api/v1/tickets/{locator(ticket)}/ignore", headers=headers
+                f"/api/v1/tickets/{locator(ticket)}/ignore",
+                json={"reason": "other"},
+                headers=headers,
             )
         else:
             target = await world.ticket(status=TicketStatus.ANALYSIS.value)

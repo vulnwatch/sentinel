@@ -140,6 +140,7 @@ from tests.support.ticket_mutations import (
     EVAL,
     EventRow,
     StatementRecorder,
+    ignore_reason_for,
     status_event,
     ticket_events_by_id,
 )
@@ -233,6 +234,7 @@ async def _ticket(
     ticket = Ticket(
         id=uuid.uuid7(),
         status=status.value,
+        ignore_reason=ignore_reason_for(status),
         cve_id=cve.id if cve is not None else None,
         duplicate_of_id=duplicate_of.id if duplicate_of is not None else None,
         priority_auto=priority_auto,
@@ -707,6 +709,7 @@ class TestLockedCurrentAccessibilityRaces:
             .where(Ticket.id == ticket.id)
             .values(
                 status=SOURCE[exit_].value,
+                ignore_reason=ignore_reason_for(SOURCE[exit_]),
                 duplicate_of_id=target.id if target is not None else None,
                 assignee_id=owner.id,
             )
@@ -719,7 +722,11 @@ class TestLockedCurrentAccessibilityRaces:
                 *statements,
                 update(Ticket)
                 .where(Ticket.id == ticket.id)
-                .values(status=TicketStatus.ANALYSIS.value, duplicate_of_id=None),
+                .values(
+                    status=TicketStatus.ANALYSIS.value,
+                    ignore_reason=None,
+                    duplicate_of_id=None,
+                ),
             ]
         committed: State = (
             (TicketStatus.ANALYSIS, None, owner.id)

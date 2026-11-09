@@ -158,6 +158,12 @@ class TestErrorCode:
             == "TICKET_DUPLICATE_CONCURRENT_MODIFICATION"
         )
 
+    def test_ticket_cve_not_rejected_is_registered(self) -> None:
+        """See docs/api-spec.md (Error Code Categories, `TICKET_*`) and
+        docs/features/tickets/ticket-service.md (Service Exceptions:
+        `TicketCVENotRejectedError`)."""
+        assert ErrorCode.TICKET_CVE_NOT_REJECTED == "TICKET_CVE_NOT_REJECTED"
+
     def test_ticket_not_confidential_is_registered(self) -> None:
         """See docs/api-spec.md (Error Code Categories, `TICKET_*`) and
         docs/features/tickets/ticket-service.md (Service Exceptions:

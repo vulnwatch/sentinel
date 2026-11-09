@@ -49,6 +49,7 @@ from app.core.enums import (
     Role,
     Scope,
     Severity,
+    TicketIgnoreReason,
     TicketPriority,
     TicketStatus,
     WorkflowType,
@@ -308,6 +309,29 @@ class TestResolveTicketLocator:
 
 @pytest.mark.integration
 class TestDetailProjection:
+    @pytest.mark.parametrize("reason", list(TicketIgnoreReason), ids=lambda r: r.value)
+    async def test_ignored_ticket_projects_its_ignore_reason(
+        self,
+        db_session: AsyncSession,
+        clock: Clock,
+        ticket_factory: Factory,
+        reason: TicketIgnoreReason,
+    ) -> None:
+        """ticket-service.md, `get_ticket_detail()` step 2: the root fields
+        include `ignore_reason`, in the consumer and the mutation-assembly
+        mode."""
+        ticket: Ticket = await ticket_factory(
+            status=TicketStatus.IGNORED.value, ignore_reason=reason.value
+        )
+
+        detail = await _detail(db_session, ticket)
+        assembled = await assemble_ticket_detail(
+            db_session, ticket_id=ticket.id, evaluation_date=clock.default.date()
+        )
+
+        assert (detail.status, detail.ignore_reason) == (TicketStatus.IGNORED, reason)
+        assert assembled.ignore_reason == reason
+
     async def test_cve_less_ticket_projects_every_root_field(
         self, db_session: AsyncSession, clock: Clock, ticket_factory: Factory
     ) -> None:
@@ -325,6 +349,7 @@ class TestDetailProjection:
         assert detail == TicketDetailProjection(
             ticket_id=_sntl(ticket),
             status=TicketStatus.NEW,
+            ignore_reason=None,
             severity=Severity.MEDIUM,
             priority=TicketPriority.P4,
             priority_automatic=TicketPriority.P4,
