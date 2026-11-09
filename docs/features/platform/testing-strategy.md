@@ -2189,7 +2189,9 @@ Ticket gate and convergence changes additionally require:
   overrides, CVE-less `FIXED`, CVE association after CVE-less resolution, and
   forward/reverse corrections;
 - `REJECTED -> PUBLISHED` reopening the unique associated Ticket only when its
-  locked-current status is `Ignored`, without consulting audit history.
+  locked-current status is `Ignored` and its ignore reason is `cve_rejected`,
+  whoever set that reason, without consulting audit history; a Ticket ignored
+  with another reason stays `Ignored` with its reason.
 
 The owning service specifications define the module-level Ticket-convergence
 test summaries (`ticket-service.md`, Architectural Test Requirement, manual-zone
@@ -2647,7 +2649,8 @@ changed, integration tests additionally cover:
 - brand-new-already-rejected and rejected-orphan event order:
   `ticket_created`, `cve_associated`, canonical CVSS events, optional one
   severity/Product/final-gate sequence, then exact system `New -> Ignored` with
-  `comment = "CVE rejected"`;
+  `comment = "CVE rejected"` and `detail = {"ignore_reason": "cve_rejected"}`,
+  the reason that the Ticket then carries;
 - the system-only rejection boundary across every Ticket status, idempotent
   retry, no audit-history query, and lock/association contract violations;
 - one multi-assessment trusted-external CVSS batch with canonical version then
@@ -2668,6 +2671,11 @@ changed, integration tests additionally cover:
   Ticket's Product and final gate state derive from the newly persisted complete
   assessment set, and that the Ticket reselect in `reopen_from_ignored()` is a
   same-transaction re-lock preserving the CVE-then-Ticket order;
+- republication reopens a Ticket that the system or a user ignored with
+  `cve_rejected` and clears its reason, while a Ticket ignored with
+  `not_shipped` or `other` keeps its status, its reason, and its deferred
+  Product and gate effects and receives no lifecycle event; a rejection of the
+  CVE of an `Ignored` Ticket keeps its reason;
 - the accepted `REJECTED -> PUBLISHED -> REJECTED` oscillation sequence: once
   the intermediate republication moves the Ticket into an active status, the
   later rejection changes CVE state but creates no Ticket lifecycle event and
@@ -4988,8 +4996,9 @@ and the dedicated database starts its Ticket identifiers at `SNTL-1`.
   fetcher runs with their times, statuses, counters, and errors; the
   Products with their lifecycle phases and thresholds; the CVEs with their
   source data and CVE source records, and the failure drill-down of the last
-  NVD run; the Tickets with their identifiers, status, assignee,
-  confidentiality, access grant, coordinated release date, and severity; the
+  NVD run; the Tickets with their identifiers, status, ignore reason,
+  assignee, confidentiality, access grant, coordinated release date, and
+  severity; the
   priorities of every Ticket: the automatic priority with its basis, the
   priority override with its provenance and its `priority_changed` event, and
   the effective priority; the aged Tickets with their creation times, current
@@ -5018,8 +5027,9 @@ and the dedicated database starts its Ticket identifiers at `SNTL-1`.
 - **Coverage**: after one complete load, every table of the SQLAlchemy
   metadata holds at least one row, except the tables of the test's exception
   list (`api_key`, `session`, and `track_release_checkpoint`).
-  Every member of `Role`, `TicketStatus`, `PackageStatus`, `DeliveryStatus`,
-  `WorkflowType`, `Severity`, and `LifecyclePhase` occurs in the dataset, as
+  Every member of `Role`, `TicketStatus`, `TicketIgnoreReason`,
+  `PackageStatus`, `DeliveryStatus`, `WorkflowType`, `Severity`, and
+  `LifecyclePhase` occurs in the dataset, as
   do a user without roles, a bot account, an unresolved Ticket severity, and
   an unavailable lifecycle phase. Every member of `ExploitationLevel` and
   `ExploitationEvidenceKind` occurs in the automatic priority basis of a
