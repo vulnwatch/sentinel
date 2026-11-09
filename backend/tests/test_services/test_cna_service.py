@@ -2,9 +2,10 @@
 
 Owning specification: docs/features/tickets/cna.md (The CNA Entity; Display
 Name; Short Name; Service: `cna_service` — Module-Level Defaults, Service
-Exceptions, `resolve_ingested_cna()`, `list_cnas()`, `get_cna()`) and
-docs/api-spec.md (CNA Identifier Resolution). The independent-session races
-are in `tests/test_services/test_cna_atomicity.py`; the merge of
+Exceptions, `resolve_ingested_cna()`, `update_cna_metadata()`,
+`list_cnas()`, `get_cna()`; Fetcher: `sync_mitre_cnas`, Field Mapping bounds)
+and docs/api-spec.md (CNA Identifier Resolution). The independent-session
+races are in `tests/test_services/test_cna_atomicity.py`; the merge of
 `CVE.cna_id` through `upsert_cve()` in
 `tests/test_services/test_upsert_cve_cna.py`.
 
@@ -39,8 +40,10 @@ from app.services.cna_service import (
     get_cna,
     list_cnas,
     resolve_ingested_cna,
+    update_cna_metadata,
 )
 from app.services.cve_ingest import CNAEntry
+from tests.support.inadmissible import INADMISSIBLE_CHARACTERS, NUL, SURROGATE
 from tests.support.module_imports import APP_ROOT, imported_modules
 
 CNAFactory = Callable[..., Awaitable[CNA]]
@@ -601,6 +604,322 @@ class TestGetCna:
 
 
 # ---------------------------------------------------------------------------
+# update_cna_metadata()
+# ---------------------------------------------------------------------------
+
+
+async def _metadata(db: AsyncSession, cna_id: uuid.UUID) -> tuple[Any, ...]:
+    """`(organization_name, types, scope, updated_at)` as stored."""
+    row = (
+        await db.execute(
+            select(CNA.organization_name, CNA.types, CNA.scope, CNA.updated_at).where(
+                CNA.id == cna_id
+            )
+        )
+    ).one()
+    return tuple(row)
+
+
+async def _stale_cna(cna_factory: CNAFactory, **overrides: Any) -> CNA:
+    """A CNA row whose `updated_at` lies far before the transaction's
+    `now()`, so an effective update is visible."""
+    return await cna_factory(org_id=_org_id(), updated_at=STALE, **overrides)
+
+
+@pytest.mark.integration
+class TestUpdateCnaMetadata:
+    async def test_writes_the_supplied_fields_and_advances_updated_at(
+        self, db_session: AsyncSession, cna_factory: CNAFactory
+    ) -> None:
+        cna = await _stale_cna(cna_factory)
+
+        changed = await update_cna_metadata(
+            db_session,
+            cna_id=cna.id,
+            organization_name="Example Corporation",
+            types=["Vendor", "Open Source"],
+            scope="Example Corporation products only.\nNothing else.",
+        )
+
+        now = await db_session.scalar(select(func.now()))
+        assert changed is True
+        assert await _metadata(db_session, cna.id) == (
+            "Example Corporation",
+            ["Open Source", "Vendor"],
+            "Example Corporation products only.\nNothing else.",
+            now,
+        )
+
+    async def test_types_are_stored_without_duplicates_in_code_point_order(
+        self, db_session: AsyncSession, cna_factory: CNAFactory
+    ) -> None:
+        cna = await _stale_cna(cna_factory)
+
+        await update_cna_metadata(
+            db_session,
+            cna_id=cna.id,
+            types=("researcher", "Vendor", "Ärzte", "Researcher", "Vendor"),
+        )
+
+        assert (await _metadata(db_session, cna.id))[1] == [
+            "Researcher",
+            "Vendor",
+            "researcher",
+            "Ärzte",
+        ]
+
+    async def test_empty_types_store_an_empty_array(
+        self, db_session: AsyncSession, cna_factory: CNAFactory
+    ) -> None:
+        cna = await _stale_cna(cna_factory, types=["Vendor"])
+
+        assert await update_cna_metadata(db_session, cna_id=cna.id, types=[]) is True
+
+        assert (await _metadata(db_session, cna.id))[1] == []
+
+    @pytest.mark.parametrize(
+        ("supplied", "expected"),
+        [
+            pytest.param(
+                {"organization_name": "New Name"},
+                ("New Name", ["Vendor"], "Old scope."),
+                id="organization-name-only",
+            ),
+            pytest.param(
+                {"types": ["CERT"]},
+                ("Old Name", ["CERT"], "Old scope."),
+                id="types-only",
+            ),
+            pytest.param(
+                {"scope": "New scope."},
+                ("Old Name", ["Vendor"], "New scope."),
+                id="scope-only",
+            ),
+            pytest.param(
+                {"scope": None},
+                ("Old Name", ["Vendor"], None),
+                id="scope-cleared",
+            ),
+        ],
+    )
+    async def test_an_omitted_field_keeps_its_stored_value(
+        self,
+        db_session: AsyncSession,
+        cna_factory: CNAFactory,
+        supplied: dict[str, Any],
+        expected: tuple[Any, ...],
+    ) -> None:
+        cna = await _stale_cna(
+            cna_factory,
+            organization_name="Old Name",
+            types=["Vendor"],
+            scope="Old scope.",
+        )
+
+        assert await update_cna_metadata(db_session, cna_id=cna.id, **supplied)
+
+        assert (await _metadata(db_session, cna.id))[:3] == expected
+
+    async def test_equal_values_write_nothing_and_return_false(
+        self, db_session: AsyncSession, cna_factory: CNAFactory
+    ) -> None:
+        cna = await _stale_cna(
+            cna_factory,
+            organization_name="Example Corporation",
+            types=["Open Source", "Vendor"],
+            scope=None,
+        )
+
+        changed = await update_cna_metadata(
+            db_session,
+            cna_id=cna.id,
+            organization_name="Example Corporation",
+            types=["Vendor", "Open Source", "Vendor"],
+            scope=None,
+        )
+
+        assert changed is False
+        assert (await _metadata(db_session, cna.id))[3] == STALE
+
+    async def test_one_differing_field_is_an_effective_change(
+        self, db_session: AsyncSession, cna_factory: CNAFactory
+    ) -> None:
+        cna = await _stale_cna(
+            cna_factory, organization_name="Example Corporation", types=["Vendor"]
+        )
+
+        changed = await update_cna_metadata(
+            db_session,
+            cna_id=cna.id,
+            organization_name="Example Corporation",
+            types=["Vendor"],
+            scope="Example products.",
+        )
+
+        assert changed is True
+        assert (await _metadata(db_session, cna.id))[3] > STALE
+
+    async def test_repeated_call_returns_false(
+        self, db_session: AsyncSession, cna_factory: CNAFactory
+    ) -> None:
+        cna = await _stale_cna(cna_factory)
+        values: dict[str, Any] = {
+            "organization_name": "Example Corporation",
+            "types": ["Vendor"],
+            "scope": "Example products.",
+        }
+
+        first = await update_cna_metadata(db_session, cna_id=cna.id, **values)
+        stored = await _metadata(db_session, cna.id)
+        second = await update_cna_metadata(db_session, cna_id=cna.id, **values)
+
+        assert (first, second) == (True, False)
+        assert await _metadata(db_session, cna.id) == stored
+
+    async def test_no_supplied_field_returns_false(
+        self, db_session: AsyncSession, cna_factory: CNAFactory
+    ) -> None:
+        cna = await _stale_cna(cna_factory)
+
+        assert await update_cna_metadata(db_session, cna_id=cna.id) is False
+        assert (await _metadata(db_session, cna.id))[3] == STALE
+
+    @pytest.mark.parametrize(
+        "supplied",
+        [
+            pytest.param({}, id="no-field"),
+            pytest.param({"organization_name": "Example"}, id="with-a-field"),
+        ],
+    )
+    async def test_unknown_cna_id_raises_value_error(
+        self, db_session: AsyncSession, supplied: dict[str, Any]
+    ) -> None:
+        with pytest.raises(ValueError, match="No CNA row has this id"):
+            await update_cna_metadata(db_session, cna_id=uuid.uuid7(), **supplied)
+
+    async def test_never_writes_identity_short_name_or_policy(
+        self, db_session: AsyncSession, cna_factory: CNAFactory
+    ) -> None:
+        cna = await _stale_cna(
+            cna_factory,
+            short_name="example",
+            short_name_observed_at=OLD,
+            auto_ignore=True,
+        )
+        before = (cna.org_id, cna.short_name, cna.short_name_observed_at)
+
+        await update_cna_metadata(
+            db_session,
+            cna_id=cna.id,
+            organization_name="Example Corporation",
+            types=["Vendor"],
+            scope="Example products.",
+        )
+
+        row = await _row(db_session, cna.org_id)
+        assert (row.org_id, row.short_name, row.short_name_observed_at) == before
+        assert row.auto_ignore is True
+
+    async def test_writes_only_the_one_row_and_no_audit_event(
+        self, db_session: AsyncSession, cna_factory: CNAFactory
+    ) -> None:
+        cna = await _stale_cna(cna_factory)
+        other = await _stale_cna(cna_factory)
+        events = await db_session.scalar(
+            select(func.count()).select_from(TicketAuditEvent)
+        )
+
+        await update_cna_metadata(
+            db_session, cna_id=cna.id, organization_name="Example Corporation"
+        )
+
+        assert await _metadata(db_session, other.id) == (None, [], None, STALE)
+        assert (
+            await db_session.scalar(select(func.count()).select_from(TicketAuditEvent))
+            == events
+        )
+
+    @pytest.mark.parametrize(
+        "supplied",
+        [
+            pytest.param({"organization_name": "x" * 256}, id="name-256"),
+            pytest.param({"types": [f"t{i}" for i in range(16)]}, id="16-types"),
+            pytest.param({"types": ["t" * 128]}, id="type-128"),
+            pytest.param({"scope": "s" * 4096}, id="scope-4096"),
+            pytest.param({"scope": ""}, id="scope-empty"),
+            pytest.param({"organization_name": "\U0001f600 Example"}, id="emoji"),
+        ],
+    )
+    async def test_values_at_the_bounds_are_accepted(
+        self,
+        db_session: AsyncSession,
+        cna_factory: CNAFactory,
+        supplied: dict[str, Any],
+    ) -> None:
+        cna = await _stale_cna(cna_factory)
+
+        assert await update_cna_metadata(db_session, cna_id=cna.id, **supplied)
+
+
+_OUT_OF_BOUNDS: list[Any] = [
+    pytest.param({"organization_name": ""}, id="name-empty"),
+    pytest.param({"organization_name": "   "}, id="name-blank"),
+    pytest.param({"organization_name": "x" * 257}, id="name-257"),
+    pytest.param({"organization_name": None}, id="name-none"),
+    pytest.param({"types": "Vendor"}, id="types-string"),
+    pytest.param({"types": [f"t{i}" for i in range(17)]}, id="17-types"),
+    pytest.param({"types": [""]}, id="type-empty"),
+    pytest.param({"types": [" "]}, id="type-blank"),
+    pytest.param({"types": ["t" * 129]}, id="type-129"),
+    pytest.param({"types": [1]}, id="type-not-a-string"),
+    pytest.param({"scope": "s" * 4097}, id="scope-4097"),
+    pytest.param({"scope": 1}, id="scope-not-a-string"),
+]
+
+
+@pytest.mark.integration
+class TestUpdateCnaMetadataGuards:
+    @pytest.mark.parametrize("supplied", _OUT_OF_BOUNDS)
+    async def test_out_of_bounds_value_raises_before_any_database_access(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+        supplied: dict[str, Any],
+    ) -> None:
+        execute = AsyncMock(side_effect=AssertionError("no query expected"))
+        scalar = AsyncMock(side_effect=AssertionError("no query expected"))
+        monkeypatch.setattr(db_session, "execute", execute)
+        monkeypatch.setattr(db_session, "scalar", scalar)
+
+        with pytest.raises(ValueError, match="must be"):
+            await update_cna_metadata(db_session, cna_id=uuid.uuid7(), **supplied)
+
+        execute.assert_not_awaited()
+        scalar.assert_not_awaited()
+
+    @pytest.mark.parametrize("character", INADMISSIBLE_CHARACTERS)
+    @pytest.mark.parametrize("field", ["organization_name", "types", "scope"])
+    async def test_inadmissible_character_raises_before_any_database_access(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+        field: str,
+        character: str,
+    ) -> None:
+        value = f"Example{character}"
+        supplied: dict[str, Any] = {field: [value] if field == "types" else value}
+        execute = AsyncMock(side_effect=AssertionError("no query expected"))
+        monkeypatch.setattr(db_session, "execute", execute)
+
+        with pytest.raises(ValueError, match="inadmissible") as raised:
+            await update_cna_metadata(db_session, cna_id=uuid.uuid7(), **supplied)
+
+        execute.assert_not_awaited()
+        assert NUL not in str(raised.value)
+        assert SURROGATE not in str(raised.value)
+
+
+# ---------------------------------------------------------------------------
 # Module contract
 # ---------------------------------------------------------------------------
 
@@ -626,7 +945,7 @@ class TestModuleContract:
         } == set()
 
     def test_public_functions_have_the_specified_async_shape(self) -> None:
-        for function in (resolve_ingested_cna, list_cnas, get_cna):
+        for function in (resolve_ingested_cna, update_cna_metadata, list_cnas, get_cna):
             assert inspect.iscoroutinefunction(function), function.__name__
         assert not inspect.iscoroutinefunction(cna_filter_condition)
 

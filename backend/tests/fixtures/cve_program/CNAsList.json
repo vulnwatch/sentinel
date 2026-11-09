@@ -1,0 +1,658 @@
+[
+  {
+    "shortName": "CERTVDE",
+    "cnaID": "CNA-2020-0010",
+    "organizationName": "CERT@VDE",
+    "scope": "<strong>Root Scope:</strong> Organizations that are cooperative partners of CERT@VDE.<br/><strong>CNA Scope:</strong> Products of CERT@VDE cooperative partners and brands listed at <a href='https://cert.vde.com/en/cna/' target='_blank'>https://cert.vde.com/en/cna/</a>. Also, industrial and infrastructure control systems (and its components) of European Union (EU) based vendors unless covered by the scope of another CNA.  Partners and brands include but are not limited to: ADS-TEC Industrial IT, Auma, sipos, Beckhoff, Bender, Bucher Automation, CLAAS, 365FarmNet, Satinfo, Carlo Gavazzi Controls, Codesys, DURAG GROUP, Draeger, Endress+Hauser, Euchner, Festo Didactic, Festo, Frauscher, GEA, HIMA, Harman, Helmholz, Hilscher, K4 DIGITAL, KEB, Krohne, Kuka, Lenze, BHN Services, MB connect line, Miele, Murrelektronik, PHOENIX CONTACT, Etherwan Systems, Innominate, Pepperl+Fuchs, Pilz, SMA, SWARCO, Trumpf, TRUMPF Laser, TRUMPF Werkzeugmaschinen, VARTA Storage, VEGA, WAGO, M&amp;M Software, Weidmueller, Welotec, Wiesemann &amp; Theis, ifm.",
+    "contact": [
+      {
+        "email": [
+          {
+            "label": "Email",
+            "emailAddr": "security-1@example.com"
+          }
+        ],
+        "contact": [],
+        "form": []
+      }
+    ],
+    "disclosurePolicy": [
+      {
+        "label": "Policy",
+        "language": "",
+        "url": "https://example.com/policy/2"
+      }
+    ],
+    "securityAdvisories": {
+      "alerts": [],
+      "advisories": [
+        {
+          "label": "Advisories",
+          "url": "https://example.com/advisories/3"
+        }
+      ]
+    },
+    "resources": [],
+    "CNA": {
+      "isRoot": false,
+      "root": {
+        "shortName": "icscert",
+        "organizationName": "Cybersecurity and Infrastructure Security Agency (CISA) Industrial Control Systems (ICS)"
+      },
+      "type": [
+        "CERT"
+      ],
+      "TLR": {
+        "shortName": "CISA",
+        "organizationName": "Cybersecurity and Infrastructure Security Agency (CISA)"
+      },
+      "roles": [
+        {
+          "helpText": "",
+          "role": "Root"
+        },
+        {
+          "helpText": "",
+          "role": "CNA"
+        }
+      ]
+    },
+    "country": "Germany"
+  },
+  {
+    "shortName": "GitHub_M",
+    "cnaID": "CNA-2019-0009",
+    "organizationName": "GitHub, Inc.",
+    "scope": "CVEs requested by code owners using the GitHub Security Advisories feature and vulnerabilities affecting open source projects discovered by security researchers at GitHub or Microsoft not covered by another CNA’s scope.",
+    "contact": [
+      {
+        "email": [
+          {
+            "label": "Email",
+            "emailAddr": "security-4@example.com"
+          }
+        ],
+        "contact": [],
+        "form": []
+      }
+    ],
+    "disclosurePolicy": [
+      {
+        "label": "Policy",
+        "language": "",
+        "url": "https://example.com/policy/5"
+      }
+    ],
+    "securityAdvisories": {
+      "alerts": [],
+      "advisories": [
+        {
+          "label": "Advisories",
+          "url": "https://example.com/advisories/6"
+        }
+      ]
+    },
+    "resources": [],
+    "CNA": {
+      "isRoot": false,
+      "root": {
+        "shortName": "n/a",
+        "organizationName": "n/a"
+      },
+      "type": [
+        "Vendor",
+        "Open Source",
+        "Researcher"
+      ],
+      "TLR": {
+        "shortName": "mitre",
+        "organizationName": "MITRE Corporation"
+      },
+      "roles": [
+        {
+          "helpText": "",
+          "role": "CNA"
+        }
+      ]
+    },
+    "country": "USA"
+  },
+  {
+    "shortName": "Google",
+    "cnaID": "CNA-2020-0005",
+    "organizationName": "Google LLC",
+    "scope": "<strong>Root Scope:</strong> Alphabet organizations.<br/><strong>CNA Scope:</strong> Google products, including open source software published and maintained by Google, and vulnerabilities in third-party software discovered by Google that are not in another CNA’s scope.",
+    "contact": [
+      {
+        "email": [
+          {
+            "label": "Email",
+            "emailAddr": "security-7@example.com"
+          }
+        ],
+        "contact": [],
+        "form": []
+      }
+    ],
+    "disclosurePolicy": [
+      {
+        "label": "Policy",
+        "language": "",
+        "url": "https://example.com/policy/8"
+      }
+    ],
+    "securityAdvisories": {
+      "alerts": [],
+      "advisories": [
+        {
+          "label": "Cloud Advisories",
+          "url": "https://example.com/advisories/9"
+        },
+        {
+          "label": "Advisories",
+          "url": "https://example.com/advisories/10"
+        }
+      ]
+    },
+    "resources": [],
+    "CNA": {
+      "isRoot": false,
+      "root": {
+        "shortName": "n/a",
+        "organizationName": "n/a"
+      },
+      "role": [
+        "Root",
+        "CNA"
+      ],
+      "type": [
+        "Vendor",
+        "Open Source",
+        "Researcher"
+      ],
+      "TLR": {
+        "shortName": "mitre",
+        "organizationName": "MITRE Corporation"
+      },
+      "roles": [
+        {
+          "helpText": "",
+          "role": "Root"
+        },
+        {
+          "helpText": "",
+          "role": "CNA"
+        }
+      ]
+    },
+    "country": "USA"
+  },
+  {
+    "shortName": "Patchstack",
+    "cnaID": "CNA-2021-0025",
+    "organizationName": "Patchstack",
+    "scope": "Vulnerabilities in third-party PHP and JavaScript software discovered by Patchstack and researchers participating in the Patchstack Bug Bounty Program.",
+    "contact": [
+      {
+        "email": [
+          {
+            "label": "Email",
+            "emailAddr": "security-11@example.com"
+          }
+        ],
+        "contact": [],
+        "form": []
+      }
+    ],
+    "disclosurePolicy": [
+      {
+        "label": "Policy",
+        "language": "",
+        "url": "https://example.com/policy/12"
+      }
+    ],
+    "securityAdvisories": {
+      "alerts": [],
+      "advisories": [
+        {
+          "label": "Database",
+          "url": "https://example.com/advisories/13"
+        },
+        {
+          "label": "Advisories",
+          "url": "https://example.com/advisories/14"
+        }
+      ]
+    },
+    "resources": [],
+    "CNA": {
+      "isRoot": false,
+      "root": {
+        "shortName": "n/a",
+        "organizationName": "n/a"
+      },
+      "type": [
+        "Bug Bounty Provider",
+        "Hosted Service",
+        "Open Source",
+        "Researcher",
+        "Vendor"
+      ],
+      "TLR": {
+        "shortName": "mitre",
+        "organizationName": "MITRE Corporation"
+      },
+      "roles": [
+        {
+          "helpText": "",
+          "role": "CNA"
+        }
+      ]
+    },
+    "country": "Estonia"
+  },
+  {
+    "shortName": "ZTE",
+    "cnaID": "CNA-2017-0019",
+    "organizationName": "ZTE Corporation",
+    "scope": "<a href='https://www.zte.com.cn/global/products' target='_blank'>ZTE products</a> only.",
+    "contact": [
+      {
+        "email": [],
+        "contact": [],
+        "form": [
+          {
+            "label": "ZTE PSIRT contact form",
+            "url": "https://example.com/form/15"
+          }
+        ]
+      }
+    ],
+    "disclosurePolicy": [
+      {
+        "label": "Policy",
+        "language": "",
+        "url": "https://example.com/policy/16"
+      }
+    ],
+    "securityAdvisories": {
+      "alerts": [],
+      "advisories": [
+        {
+          "label": "Advisories",
+          "url": "https://example.com/advisories/17"
+        }
+      ]
+    },
+    "resources": [],
+    "CNA": {
+      "isRoot": false,
+      "root": {
+        "shortName": "n/a",
+        "organizationName": "n/a"
+      },
+      "type": [
+        "Vendor"
+      ],
+      "TLR": {
+        "shortName": "mitre",
+        "organizationName": "MITRE Corporation"
+      },
+      "roles": [
+        {
+          "helpText": "",
+          "role": "CNA"
+        }
+      ]
+    },
+    "country": "China"
+  },
+  {
+    "shortName": "Snow",
+    "cnaID": "CNA-2021-0036",
+    "organizationName": "Snow Software",
+    "scope": "All Snow Software products.",
+    "contact": [
+      {
+        "email": [
+          {
+            "label": "Email",
+            "emailAddr": "security-18@example.com"
+          }
+        ],
+        "contact": [],
+        "form": []
+      }
+    ],
+    "disclosurePolicy": [
+      {
+        "label": "Policy",
+        "language": "English",
+        "url": "https://example.com/policy/19"
+      }
+    ],
+    "securityAdvisories": {
+      "alerts": [],
+      "advisories": [
+        {
+          "label": "Advisories",
+          "url": "https://example.com/advisories/20"
+        }
+      ]
+    },
+    "resources": [],
+    "CNA": {
+      "isRoot": false,
+      "root": {
+        "shortName": "n/a",
+        "organizationName": "n/a"
+      },
+      "type": [
+        "Vendor"
+      ],
+      "TLR": {
+        "shortName": "mitre",
+        "organizationName": "MITRE Corporation"
+      },
+      "roles": [
+        {
+          "helpText": "",
+          "role": "CNA"
+        }
+      ]
+    },
+    "country": "Sweden"
+  },
+  {
+    "shortName": "samsung.tv_appliance",
+    "cnaID": "CNA-2023-0034",
+    "organizationName": "Samsung TV & Appliance",
+    "scope": "Samsung TV &amp; Appliance products, Samsung-owned open source projects listed on <a href='https://github.com/Samsung/' target='_blank'>https://github.com/Samsung/</a>, as well as vulnerabilities in third-party software discovered by Samsung that are not in another CNA’s scope. Vulnerabilities affecting end-of-life/end-of-service products are in scope. The following categories of Samsung Products are in scope: Internet-connected home appliances, B2C product (smart TV, smart monitor, soundbar, and projector), and B2B products (digital signage, interactive display, and kiosk).",
+    "contact": [
+      {
+        "email": [
+          {
+            "label": "Email",
+            "emailAddr": "security-21@example.com"
+          }
+        ],
+        "contact": [],
+        "form": []
+      }
+    ],
+    "disclosurePolicy": [
+      {
+        "label": "Policy",
+        "language": "",
+        "url": "https://example.com/policy/22"
+      }
+    ],
+    "securityAdvisories": {
+      "alerts": [],
+      "advisories": [
+        {
+          "label": "Smart TV, Audio, and Displays Advisories",
+          "url": "https://example.com/advisories/23"
+        },
+        {
+          "label": "Digital Appliances Advisories",
+          "url": "https://example.com/advisories/24"
+        }
+      ]
+    },
+    "resources": [],
+    "CNA": {
+      "isRoot": false,
+      "root": {
+        "shortName": "n/a",
+        "organizationName": "n/a"
+      },
+      "roles": [
+        {
+          "helpText": "",
+          "role": "CNA"
+        }
+      ],
+      "TLR": {
+        "shortName": "mitre",
+        "organizationName": "MITRE Corporation"
+      },
+      "type": [
+        "Open Source",
+        "Researcher",
+        "Vendor"
+      ]
+    },
+    "country": "South Korea"
+  },
+  {
+    "shortName": "CISA",
+    "cnaID": "CNA-2023-0047",
+    "organizationName": "Cybersecurity and Infrastructure Security Agency (CISA)",
+    "scope": "<strong>Top-Level Root Hierarchy:</strong> Roots, CNA-LRs, and CNAs formally assigned to the CISA TL-Root hierarchy, including organizations associated with CISA’s U.S. civilian government, critical infrastructure, industrial control systems, and medical-device mission, as agreed through CVE Program processes.<br/><strong>ADP Scope:</strong> View scope <a href='/ProgramOrganization/ADPs#ActiveAdps'>here</a>.",
+    "contact": [
+      {
+        "email": [],
+        "contact": [],
+        "form": [
+          {
+            "label": "Submit a Report",
+            "url": "https://example.com/form/25"
+          }
+        ]
+      }
+    ],
+    "disclosurePolicy": [
+      {
+        "label": "Policy",
+        "language": "",
+        "url": "https://example.com/policy/26"
+      }
+    ],
+    "securityAdvisories": {
+      "alerts": [],
+      "advisories": [
+        {
+          "label": "Advisories",
+          "url": "https://example.com/advisories/27"
+        }
+      ]
+    },
+    "resources": [],
+    "CNA": {
+      "isRoot": true,
+      "root": {
+        "shortName": "n/a",
+        "organizationName": "n/a"
+      },
+      "type": [
+        "N/A"
+      ],
+      "TLR": {
+        "shortName": "n/a",
+        "organizationName": "n/a"
+      },
+      "roles": [
+        {
+          "helpText": "reports to CVE Board",
+          "role": "Top-Level Root"
+        },
+        {
+          "helpText": "Authorized Data Publisher",
+          "role": "ADP"
+        }
+      ]
+    },
+    "country": "USA"
+  },
+  {
+    "shortName": "Linux",
+    "cnaID": "CNA-2024-0016",
+    "organizationName": "kernel.org",
+    "scope": "Any vulnerabilities in the Linux kernel as listed on kernel.org, excluding end-of-life (EOL) versions.",
+    "contact": [
+      {
+        "email": [
+          {
+            "label": "Email",
+            "emailAddr": "security-28@example.com"
+          }
+        ],
+        "contact": [],
+        "form": []
+      }
+    ],
+    "disclosurePolicy": [
+      {
+        "label": "Policy",
+        "language": "",
+        "url": "https://example.com/policy/29"
+      }
+    ],
+    "securityAdvisories": {
+      "alerts": [],
+      "advisories": [
+        {
+          "label": "Advisories",
+          "url": "https://example.com/advisories/30"
+        }
+      ]
+    },
+    "resources": [],
+    "CNA": {
+      "isRoot": false,
+      "root": {
+        "shortName": "n/a",
+        "organizationName": "n/a"
+      },
+      "roles": [
+        {
+          "helpText": "",
+          "role": "CNA"
+        }
+      ],
+      "TLR": {
+        "shortName": "mitre",
+        "organizationName": "MITRE Corporation"
+      },
+      "type": [
+        "Vendor",
+        "Open Source"
+      ]
+    },
+    "country": "USA"
+  },
+  {
+    "shortName": "SNOW",
+    "cnaID": "CNA-2026-0021",
+    "organizationName": "Snowflake",
+    "scope": "Snowflake products, including those of its subsidiaries, and vulnerabilities in third-party software that are discovered by, or reported to, Snowflake that are not within another CNA’s scope.",
+    "contact": [
+      {
+        "email": [
+          {
+            "label": "Email",
+            "emailAddr": "security-31@example.com"
+          }
+        ],
+        "contact": [],
+        "form": []
+      }
+    ],
+    "disclosurePolicy": [
+      {
+        "label": "Policy",
+        "language": "",
+        "url": "https://example.com/policy/32"
+      }
+    ],
+    "securityAdvisories": {
+      "alerts": [],
+      "advisories": [
+        {
+          "label": "Advisories",
+          "url": "https://example.com/advisories/33"
+        }
+      ]
+    },
+    "resources": [],
+    "CNA": {
+      "isRoot": false,
+      "root": {
+        "shortName": "n/a",
+        "organizationName": "n/a"
+      },
+      "roles": [
+        {
+          "helpText": "",
+          "role": "CNA"
+        }
+      ],
+      "TLR": {
+        "shortName": "mitre",
+        "organizationName": "MITRE Corporation"
+      },
+      "type": [
+        "Vendor"
+      ]
+    },
+    "country": "USA"
+  },
+  {
+    "shortName": "OAI",
+    "cnaID": "CNA-2026-0026",
+    "organizationName": "OpenAI",
+    "scope": "<strong>CNA Scope:</strong> Vulnerabilities in OpenAI installed software including desktop apps, mobile apps, and SDKs only.<br/><br/><strong><a href='/Resources/Roles/Cnas/FrontierAiResearcherCNAsPilot.pdf' target='_blank'>Frontier AI Researcher CVE Numbering Authorities (CNAs) Pilot</a> Scope:</strong> Vulnerabilities discovered by OpenAI that are not within another CNA’s scope.",
+    "contact": [
+      {
+        "email": [
+          {
+            "label": "Email",
+            "emailAddr": "security-34@example.com"
+          }
+        ],
+        "contact": [],
+        "form": []
+      }
+    ],
+    "disclosurePolicy": [
+      {
+        "label": "Policy",
+        "language": "",
+        "url": "https://example.com/policy/35"
+      }
+    ],
+    "securityAdvisories": {
+      "alerts": [],
+      "advisories": [
+        {
+          "label": "Advisories",
+          "url": "https://example.com/advisories/36"
+        }
+      ]
+    },
+    "resources": [],
+    "CNA": {
+      "isRoot": false,
+      "root": {
+        "shortName": "n/a",
+        "organizationName": "n/a"
+      },
+      "roles": [
+        {
+          "helpText": "",
+          "role": "CNA"
+        }
+      ],
+      "TLR": {
+        "shortName": "mitre",
+        "organizationName": "MITRE Corporation"
+      },
+      "type": [
+        "Vendor",
+        "AI Researcher (Frontier AI Researcher CVE Numbering Authorities (CNAs) Pilot)"
+      ]
+    },
+    "country": "USA"
+  }
+]

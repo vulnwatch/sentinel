@@ -1,13 +1,14 @@
 """Independent-session race tests for the CNA row of an ingested record
 (backend/app/services/cna_service.py, `resolve_ingested_cna()`, composed by
-`cve_service.upsert_cve()`).
+`cve_service.upsert_cve()`, and `update_cna_metadata()`).
 
 Owning specifications: docs/features/tickets/cna.md (`resolve_ingested_cna()`
-Q3 and Locking; Concurrency; Short Name; Testing Requirements, item 3:
-concurrent first ingestions of two CVEs of a new CNA create one row and
-commit both CVEs), docs/features/tickets/cve-service.md (Concurrency > CVE
-Upsert Serialization: CNA row), and docs/conventions.md (Cross-Domain Root
-Lock Order: the CNA row after the CVE root, before the Ticket root).
+Q3 and Locking; `update_cna_metadata()` Q3; Concurrency; Short Name; Testing
+Requirements, item 3: concurrent first ingestions of two CVEs of a new CNA
+create one row and commit both CVEs), docs/features/tickets/cve-service.md
+(Concurrency > CVE Upsert Serialization: CNA row), and docs/conventions.md
+(Cross-Domain Root Lock Order: the CNA row after the CVE root, before the
+Ticket root).
 
 Every race keeps the holder's transaction open, proves the waiter blocked by
 the holder with `assert_lock_wait()` (never a sleep), releases the holder,
@@ -32,7 +33,7 @@ from app.core.enums import CVESourceType, CveState
 from app.models.cna import CNA
 from app.models.cve import CVE
 from app.services import cve_service
-from app.services.cna_service import resolve_ingested_cna
+from app.services.cna_service import resolve_ingested_cna, update_cna_metadata
 from app.services.cve_ingest import CNAEntry, CVEIngestPayload, UpsertAction
 from tests.support.cve_ingest import IngestionWorld, root_lock_order
 from tests.support.database import assert_lock_wait
@@ -245,3 +246,108 @@ class TestShortNameWrites:
 
         [(_, short_name, observed_at)] = await _committed_cna(world, org_id)
         assert (short_name, observed_at) == result
+
+
+async def _committed_metadata(
+    world: IngestionWorld, org_id: uuid.UUID
+) -> tuple[str | None, str | None, list[str], str | None]:
+    """`(short_name, organization_name, types, scope)` of the committed row."""
+    try:
+        row = (
+            await world.probe.execute(
+                select(
+                    CNA.short_name, CNA.organization_name, CNA.types, CNA.scope
+                ).where(CNA.org_id == org_id)
+            )
+        ).one()
+        return (row[0], row[1], row[2], row[3])
+    finally:
+        await world.probe.rollback()
+
+
+async def _cna_id(world: IngestionWorld, org_id: uuid.UUID) -> uuid.UUID:
+    try:
+        cna_id = await world.probe.scalar(select(CNA.id).where(CNA.org_id == org_id))
+        assert cna_id is not None
+        return cna_id
+    finally:
+        await world.probe.rollback()
+
+
+@pytest.mark.integration
+class TestMetadataWrites:
+    """`update_cna_metadata()` (cna.md, `update_cna_metadata()` Q3;
+    Concurrency) against a concurrent short-name writer of the same row: the
+    two serialize on the row lock and neither write is lost, because each
+    writes only its own columns."""
+
+    async def test_metadata_update_waits_for_a_short_name_writer(
+        self, world: IngestionWorld
+    ) -> None:
+        org_id = await _seed_cna(world, "old", OLD)
+        cna_id = await _cna_id(world, org_id)
+        a = await world.open_session()
+        b = await world.open_session()
+        await resolve_ingested_cna(a, _entry(org_id, "renamed", NEW))
+
+        task = world.start(
+            b,
+            update_cna_metadata(b, cna_id=cna_id, organization_name="Example Corp"),
+        )
+        await assert_lock_wait(task, waiter=b, blocked_by=a)
+        await a.commit()
+        assert await asyncio.wait_for(task, timeout=WAIT) is True
+        await b.commit()
+
+        assert await _committed_metadata(world, org_id) == (
+            "renamed",
+            "Example Corp",
+            [],
+            None,
+        )
+
+    async def test_short_name_writer_waits_for_a_metadata_update(
+        self, world: IngestionWorld
+    ) -> None:
+        org_id = await _seed_cna(world, "old", OLD)
+        cna_id = await _cna_id(world, org_id)
+        a = await world.open_session()
+        b = await world.open_session()
+        assert await update_cna_metadata(
+            a, cna_id=cna_id, types=["Vendor"], scope="Example products."
+        )
+
+        task = world.start(b, resolve_ingested_cna(b, _entry(org_id, "renamed", NEW)))
+        await assert_lock_wait(task, waiter=b, blocked_by=a)
+        await a.commit()
+        await asyncio.wait_for(task, timeout=WAIT)
+        await b.commit()
+
+        assert await _committed_metadata(world, org_id) == (
+            "renamed",
+            None,
+            ["Vendor"],
+            "Example products.",
+        )
+
+    async def test_unchanged_metadata_re_evaluated_after_the_holder_commits(
+        self, world: IngestionWorld
+    ) -> None:
+        """A waiter whose values the holder already committed changes
+        nothing once the holder commits: the comparison uses the committed
+        row."""
+        org_id = await _seed_cna(world, "old", OLD)
+        cna_id = await _cna_id(world, org_id)
+        a = await world.open_session()
+        b = await world.open_session()
+        assert await update_cna_metadata(a, cna_id=cna_id, organization_name="Same")
+
+        task = world.start(
+            b, update_cna_metadata(b, cna_id=cna_id, organization_name="Same")
+        )
+        await assert_lock_wait(task, waiter=b, blocked_by=a)
+        await a.commit()
+        assert await asyncio.wait_for(task, timeout=WAIT) is False
+        await b.commit()
+
+        assert (await _committed_metadata(world, org_id))[1] == "Same"
