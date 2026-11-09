@@ -127,9 +127,12 @@ from app.models.ticket_package_maintainer import TicketPackageMaintainer
 from app.models.ticket_package_product import TicketPackageProduct
 from app.models.ticket_package_track import TicketPackageTrack
 from app.models.user import User
-from app.services import cve_service, package_service
+from app.services import cna_service, cve_service, package_service
 from app.services.cve_projection import (
+    CNASummaryProjection,
     CVEDetailProjection,
+    cna_summary_columns,
+    cna_summary_from_row,
     cve_detail_columns,
     cve_detail_from_row,
     cve_priority_evidence_columns,
@@ -290,11 +293,13 @@ class TicketDetailProjection:
 
 @dataclass(frozen=True, slots=True)
 class CVESummaryProjection:
-    """The compact current CVE of a Ticket (`CVESummary`)."""
+    """The compact current CVE of a Ticket (`CVESummary`), with the CNA
+    that owns its record, `None` while none is recorded."""
 
     cve_id: str
     title: str | None
     description: str | None
+    cna: CNASummaryProjection | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1080,6 +1085,7 @@ def _summary(row: Row[*tuple[Any, ...]]) -> TicketSummaryProjection:
                 cve_id=row.cve_id,
                 title=row.cve_title,
                 description=row.cve_description,
+                cna=cna_summary_from_row(row),
             )
             if row.cve_id is not None
             else None
@@ -1131,6 +1137,7 @@ async def list_tickets(
     search: str | None = None,
     status: Collection[TicketStatus] | None = None,
     ignore_reason: Collection[TicketIgnoreReason] | None = None,
+    cna: Collection[UUID] | None = None,
     assignee: str | None = None,
     severity: Collection[Severity | None] | None = None,
     priority: Collection[TicketPriority | None] | None = None,
@@ -1160,8 +1167,10 @@ async def list_tickets(
     so an empty collection (every supplied value was invalid) matches
     nothing. A
     `None` member of `severity` or `priority` is the `unresolved` value
-    (SQL `NULL`). `assignee` is a User UUID, exact username, or the
-    literal `none`; `maintainer` a User UUID or exact username. `product`
+    (SQL `NULL`). `cna` holds the CNA `org_id` values that the API already
+    validated, `None` when omitted (OR within the filter). `assignee` is a
+    User UUID, exact username, or the literal `none`; `maintainer` a User
+    UUID or exact username. `product`
     is a canonical Product CPE and `track` a track reference, each `None`
     when omitted. `duplicate_of_ticket_id` is the canonical `SNTL-{n}` of
     an original Ticket, `None` when omitted. `is_confidential` and
@@ -1187,8 +1196,10 @@ async def list_tickets(
        `duplicate_of_ticket_id` matches the duplicates of the Ticket with
        that sequence, whatever that Ticket's visibility, and an unknown
        value matches nothing; `ignore_reason` compares the stored reason,
-       so a Ticket outside `Ignored` matches no value; `is_confidential`
-       matches the Ticket's
+       so a Ticket outside `Ignored` matches no value; `cna` matches a
+       Ticket whose current CVE's CNA has one of the `org_id` values, so a
+       Ticket without a CVE or whose CVE has no CNA matches none, and an
+       unknown value matches nothing; `is_confidential` matches the Ticket's
        confidentiality; `coordinated_release_passed=True` matches a
        confidential Ticket whose Coordinated Release Date is at or before
        the one instant, and `False` every other Ticket, a `NULL` date
@@ -1266,6 +1277,12 @@ async def list_tickets(
     if ignore_reason is not None:
         reasons = sorted({member.value for member in ignore_reason})
         conditions.append(Ticket.ignore_reason.in_(reasons) if reasons else false())
+    if cna is not None:
+        conditions.append(
+            Ticket.cve_id.in_(
+                select(CVE.id).where(cna_service.cna_filter_condition(CVE.cna_id, cna))
+            )
+        )
     if severity is not None:
         conditions.append(_nullable_member_condition(resolved_severity, severity))
     if priority is not None:
@@ -1398,6 +1415,7 @@ async def list_tickets(
             CVE.cve_id.label("cve_id"),
             CVE.title.label("cve_title"),
             CVE.description.label("cve_description"),
+            *cna_summary_columns(),
             package_names.label("package_names"),
         )
         .select_from(total)

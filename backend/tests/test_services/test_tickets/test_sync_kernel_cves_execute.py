@@ -345,6 +345,14 @@ class TestPublishedRecord:
         # Dates are never read from kernel JSON.
         assert cve.published_date is None
         assert cve.modified_date is None
+        # The owner of the record is the Linux kernel CNA, from constants
+        # (cve-sync-kernel.md, CVE JSON Field Mapping: `cna`).
+        owner = await harness.cna_of(cve)
+        assert (str(owner.org_id), owner.short_name) == (
+            "416baaa9-dc9f-4396-8d5f-8c081fb06d67",
+            "Linux",
+        )
+        assert owner.short_name_observed_at is None
         state = await source_state(harness.factory, cve.id, KERNEL)
         assert state is not None
         assert state.status == CVESourceFetchStatus.SUCCESS

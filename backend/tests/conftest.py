@@ -10,6 +10,7 @@ import atexit
 import itertools
 import os
 import sys
+import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -60,6 +61,7 @@ from app.main import app
 # refs, like UserRole — are registered on Base.metadata before
 # _engine's create_all runs.
 from app.models import (
+    CNA,
     CVE,
     CVECWE,
     ApiKey,
@@ -1333,6 +1335,42 @@ def cve_factory(db_session: AsyncSession) -> Callable[..., Awaitable[CVE]]:
         defaults: dict[str, Any] = {"cve_id": f"CVE-2099-{10000 + n}"}
         defaults.update(overrides)
         instance = CVE(**defaults)
+        db_session.add(instance)
+        await db_session.flush()
+        return instance
+
+    return _create
+
+
+@pytest.fixture
+def cna_factory(db_session: AsyncSession) -> Callable[..., Awaitable[CNA]]:
+    """Factory fixture for `CNA` model instances.
+
+    See docs/features/platform/testing-strategy.md (Model Factory
+    Fixtures) for the canonical shape this fixture follows. Bypasses
+    `cna_service` on purpose: model-layer and read tests set any column
+    directly.
+
+    Defaults:
+    - `org_id`: a per-fixture-counter-derived fictional UUID
+      (`00000000-0000-4000-8000-0000000000<n>`), so multiple calls within
+      one test don't collide on the UNIQUE constraint.
+    - `short_name`: the counter-derived fictional `example-cna-<n>`.
+    - Every other column uses its model default: `types` is `[]`,
+      `auto_ignore` is `false`, and the observation date, organization
+      name, and scope are `NULL`.
+    """
+
+    counter = itertools.count(1)
+
+    async def _create(**overrides: Any) -> CNA:
+        n = next(counter)
+        defaults: dict[str, Any] = {
+            "org_id": uuid.UUID(f"00000000-0000-4000-8000-{n:012x}"),
+            "short_name": f"example-cna-{n}",
+        }
+        defaults.update(overrides)
+        instance = CNA(**defaults)
         db_session.add(instance)
         await db_session.flush()
         return instance

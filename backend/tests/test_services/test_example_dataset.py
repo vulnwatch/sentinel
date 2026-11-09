@@ -61,6 +61,7 @@ from app.core.enums import (
 from app.core.passwords import verify_password
 from app.core.permissions import get_effective_scope
 from app.database import Base, register_post_commit_callback
+from app.models.cna import CNA
 from app.models.cve import CVE
 from app.models.cve_affected_version import CVEAffectedVersion
 from app.models.cve_cvss_assessment import CVECVSSAssessment
@@ -101,6 +102,7 @@ from app.services import (
 )
 from app.services import settings as settings_service
 from app.services.base_fetcher import FETCHER_REGISTRY
+from app.services.cve_projection import cna_display_name
 from app.services.example_dataset import (
     ExampleDatasetEffectError,
     ExampleDatasetNotEmptyError,
@@ -350,6 +352,22 @@ MITRE_INGESTED: Final = frozenset(
 )
 """CVEs with a MITRE ingestion (first or further), which supplies the title."""
 REJECTED_CVE: Final = "CVE-2099-0008"
+
+CNAS: Final = {
+    "00000000-0000-4000-8000-0000000000a1": "example",
+    "00000000-0000-4000-8000-0000000000a2": "fictional-plugins",
+    "00000000-0000-4000-8000-0000000000a3": None,
+}
+"""CNAs: `org_id` -> short name; the third has none."""
+CNA_OF: Final = {
+    "CVE-2099-0006": "00000000-0000-4000-8000-0000000000a2",
+    "CVE-2099-0008": "00000000-0000-4000-8000-0000000000a1",
+    "CVE-2099-0009": "00000000-0000-4000-8000-0000000000a1",
+    "CVE-2099-0010": "00000000-0000-4000-8000-0000000000a1",
+    "CVE-2099-0013": "00000000-0000-4000-8000-0000000000a3",
+}
+"""CNAs: the CNA that each MITRE ingestion supplies as the owner of its
+record; every other CVE has none."""
 
 EPSS: Final = {
     "CVE-2099-0001": (0.94, 0.99),
@@ -1537,6 +1555,50 @@ def test_products_lifecycle_and_thresholds(loaded: Loaded) -> None:
     assert sorted(repositories) == sorted(
         (cpe, values[3], loaded.now) for cpe, values in PRODUCTS.items()
     )
+
+
+class TestCNAs:
+    """CNAs: the rows that the MITRE ingestions create and the CNA of every
+    CVE. The metadata of the CNA list and the auto-ignore policy are not
+    loaded yet, so every CNA has no organization name, no types, no scope,
+    and `auto_ignore = false`, and its display name is its short name."""
+
+    def test_cna_rows(self, loaded: Loaded) -> None:
+        async def reader(db: AsyncSession) -> list[CNA]:
+            return list((await db.scalars(select(CNA))).all())
+
+        cnas = {str(cna.org_id): cna for cna in read(loaded.url, reader)}
+
+        assert {org_id: cna.short_name for org_id, cna in cnas.items()} == CNAS
+        for org_id, cna in cnas.items():
+            assert cna.short_name_observed_at == (
+                loaded.ago(1) if CNAS[org_id] is not None else None
+            ), org_id
+            assert (cna.organization_name, cna.types, cna.scope) == (
+                None,
+                [],
+                None,
+            ), org_id
+            assert cna.auto_ignore is False, org_id
+            assert (
+                cna_display_name(cna.organization_name, cna.short_name)
+                == (CNAS[org_id])
+            ), org_id
+
+    def test_cna_of_every_cve(self, loaded: Loaded) -> None:
+        async def reader(db: AsyncSession) -> dict[str, str | None]:
+            rows = await db.execute(
+                select(CVE.cve_id, CNA.org_id).outerjoin(CNA, CNA.id == CVE.cna_id)
+            )
+            return {
+                cve_id: None if org_id is None else str(org_id)
+                for cve_id, org_id in rows.all()
+            }
+
+        assert read(loaded.url, reader) == {
+            cve_id: CNA_OF.get(cve_id) for cve_id in CVE_IDS
+        }
+        assert set(CNA_OF) == MITRE_INGESTED
 
 
 class TestCVEs:

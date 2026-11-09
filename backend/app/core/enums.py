@@ -448,6 +448,20 @@ class CVESortField(StrEnum):
     CREATED_AT = "created_at"
 
 
+class CNASortField(StrEnum):
+    """Sortable fields for the CNA list query.
+
+    Category B — classification (Python Enum only; never stored in the
+    database). See `docs/features/tickets/cna.md` (List CNAs,
+    `list_cnas()`): `name` is the display name; the two names sort in
+    Unicode code-point order with `NULL` last.
+    """
+
+    NAME = "name"
+    SHORT_NAME = "short_name"
+    CREATED_AT = "created_at"
+
+
 class CVESourceSortField(StrEnum):
     """Sortable fields for the global persisted CVE-source listing.
 

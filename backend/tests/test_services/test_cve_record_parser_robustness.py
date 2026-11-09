@@ -13,7 +13,7 @@ The mutation tests are deterministic property tests: every consumed member
 of every sanitized fixture (`tests/support/cve_record.py`), at every nesting
 level, is replaced by each value of a fixed malformed set, deleted, and
 swapped between array and object; a seeded `random.Random` then combines
-several mutations per variant. Each variant goes through all ten functions,
+several mutations per variant. Each variant goes through all eleven functions,
 which must not raise and must return their documented types and invariants.
 No database, network, or log is involved.
 """
@@ -39,6 +39,7 @@ from app.services.cve_ingest import (
     AffectedVersionEntry,
     AffectedVersionOperation,
     AffectedVersionScopeOperation,
+    CNAEntry,
     CVEIngestPayload,
     CVSSAssessmentEntry,
     CWEEntry,
@@ -51,6 +52,7 @@ from app.services.cve_record_parser import (
     extract_cve_state,
     extract_dates,
     parse_affected_versions,
+    parse_cna_owner,
     parse_cvss_assessments,
     parse_cwe_classifications,
     parse_description,
@@ -98,6 +100,7 @@ _PUBLIC_FUNCTIONS: Final = (
     "parse_kev_data",
     "extract_cve_state",
     "extract_dates",
+    "parse_cna_owner",
 )
 
 _CONSUMED_MEMBERS: Final = (
@@ -233,6 +236,24 @@ def _check_state(state: object) -> None:
     assert state is None or isinstance(state, CveState)
 
 
+def _check_owner(owner: object) -> None:
+    """`None`, or an entry with a lowercase-serialized UUID, a trimmed short
+    name of 1-32 admissible characters or none, and a UTC date only with a
+    short name (`parse_cna_owner`)."""
+    if owner is None:
+        return
+    assert isinstance(owner, CNAEntry)
+    assert str(owner.org_id) == str(owner.org_id).lower()
+    if owner.short_name is None:
+        assert owner.short_name_observed_at is None
+    else:
+        assert owner.short_name == owner.short_name.strip()
+        assert 1 <= len(owner.short_name) <= 32
+        assert not contains_inadmissible_character(owner.short_name)
+        _check_utc(owner.short_name_observed_at)
+    CVEIngestPayload(cna=owner)
+
+
 # ---------------------------------------------------------------------------
 # Exercising a (mutated) record
 # ---------------------------------------------------------------------------
@@ -269,6 +290,7 @@ def _exercise_container(container: Any) -> None:
     _check_title(parse_title(container))
     _check_ssvc(parse_ssvc_assessment(metrics))
     _check_kev(parse_kev_data(metrics))
+    _check_owner(parse_cna_owner(container))
 
 
 def _containers(record: Any) -> list[Any]:
@@ -477,6 +499,7 @@ class TestPurity:
                     parse_title(container),
                     parse_ssvc_assessment(metrics),
                     parse_kev_data(metrics),
+                    parse_cna_owner(container),
                 ]
             return found
 
@@ -537,6 +560,7 @@ class TestWrongTypedArguments:
         assert extract_cve_state(argument) is None
         assert extract_dates(argument) == (None, None, None)
         assert validate_cve_id(CVE_ID, argument) == CVE_ID
+        assert parse_cna_owner(argument) is None
 
     @pytest.mark.parametrize(
         ("call", "expected"),
@@ -800,6 +824,40 @@ def _title(value: str) -> None:
         CVEIngestPayload(title=parse_title({"title": value}))
 
 
+_OWNER_ORG_ID: Final = "00000000-0000-4000-8000-0000000000a1"
+_OWNER_DATE: Final = "2024-01-01T00:00:00.000Z"
+
+
+def _owner(**metadata: Any) -> CNAEntry | None:
+    values = {
+        "orgId": _OWNER_ORG_ID,
+        "shortName": "example",
+        "dateUpdated": _OWNER_DATE,
+        **metadata,
+    }
+    return parse_cna_owner({"providerMetadata": values})
+
+
+def _owner_org_id(value: str) -> None:
+    """Not a UUID: the owner guard applies."""
+    assert _owner(orgId=value) is None
+
+
+def _owner_short_name(value: str) -> None:
+    """Only the short name, and with it its date, is absent."""
+    owner = _owner(shortName=value)
+
+    assert owner is not None
+    assert (owner.short_name, owner.short_name_observed_at) == (None, None)
+
+
+def _owner_date(value: str) -> None:
+    owner = _owner(dateUpdated=value)
+
+    assert owner is not None
+    assert (owner.short_name, owner.short_name_observed_at) == ("example", None)
+
+
 _ADMISSIBILITY: Final[dict[str, tuple[str, Callable[[str], None]]]] = {
     **{
         f"affected.{key}": ("example-value", _affected_element_field(key))
@@ -837,6 +895,9 @@ _ADMISSIBILITY: Final[dict[str, tuple[str, Callable[[str], None]]]] = {
     "cveMetadata.dateRejected": ("2024-01-01T00:00:00.000Z", _date_field(2)),
     "descriptions.value": ("Fictional description.", _description),
     "title": ("t" * 300, _title),
+    "providerMetadata.orgId": (_OWNER_ORG_ID, _owner_org_id),
+    "providerMetadata.shortName": ("example", _owner_short_name),
+    "providerMetadata.dateUpdated": (_OWNER_DATE, _owner_date),
 }
 """Consumed string → (valid base value, check of the named outcome for a
 value containing an inadmissible character) per the spec table (External
@@ -1066,6 +1127,7 @@ class TestModuleBoundary:
         assert {m for m in modules if m.startswith("app.")} == {
             "app.core.enums",
             "app.core.external_strings",
+            "app.core.identifiers",
             "app.services.cve_ingest",
             "app.services.cvss",
             "app.services.ticket_mutations_errors",

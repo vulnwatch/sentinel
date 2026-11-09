@@ -1,8 +1,9 @@
 """Pure mapping of one MITRE `cvelistV5` record file.
 
 Implements docs/features/tickets/cve-sync-mitre.md (Algorithm step 2,
-mapping only; CVE JSON 5.x Field Path Mapping: global fields, CNA fields and
-the CNA defensive guard, ADP fields and the ADP defensive guard, CISA-ADP
+mapping only; CVE JSON 5.x Field Path Mapping: global fields, CNA fields with
+the owner of the record (`cna`, docs/features/tickets/cna.md, Payload), the
+CNA defensive and owner guards, ADP fields and the ADP defensive guard, CISA-ADP
 SSVC, KEV, and CWE, scoped affected-version operations, CVE-ID
 cross-validation, additive child retention, caller WARNING fields, External
 String Admissibility) for one `cves/YEAR/NNNxxx/CVE-YEAR-SEQ.json` file. The
@@ -48,6 +49,7 @@ from app.services.cve_record_parser import (
     extract_cve_state,
     extract_dates,
     parse_affected_versions,
+    parse_cna_owner,
     parse_cvss_assessments,
     parse_cwe_classifications,
     parse_description,
@@ -168,9 +170,9 @@ class MitreRecord:
 
     `cve_id` is the authoritative file-name CVE-ID; `source_reference` and
     `upstream_references` are the `upsert_references()` candidates in
-    processing order. `skipped_adps`, `cna_guard`, and `ssvc_skips` are the
-    bounded facts of the caller WARNINGs (cve-sync-mitre.md, Caller WARNING
-    fields).
+    processing order. `skipped_adps`, `cna_guard`, `cna_owner_skipped`, and
+    `ssvc_skips` are the bounded facts of the caller WARNINGs
+    (cve-sync-mitre.md, Caller WARNING fields).
     """
 
     cve_id: str
@@ -179,6 +181,8 @@ class MitreRecord:
     upstream_references: tuple[AutomaticReferenceInput, ...]
     skipped_adps: tuple[SkippedAdp, ...]
     cna_guard: CnaGuard | None
+    cna_owner_skipped: bool
+    """The CNA owner guard omitted `cna`: the record names no valid owner."""
     ssvc_skips: tuple[SsvcSkip, ...]
 
 
@@ -249,6 +253,9 @@ def map_record(path: str, content: bytes) -> MitreRecord:
         cwe.extend(
             parse_cwe_classifications(cna.get("problemTypes"), f"cna:{short_name}")
         )
+    owner = parse_cna_owner(cna)
+    if owner is not None:
+        fields["cna"] = owner
 
     contributions, skipped_adps, ssvc_skips = _adp_contributions(containers.get("adp"))
     ssvc = _single({c.ssvc for c in contributions} - {None})
@@ -287,6 +294,7 @@ def map_record(path: str, content: bytes) -> MitreRecord:
         upstream_references=_upstream_references(cna.get("references")),
         skipped_adps=skipped_adps,
         cna_guard=cna_guard,
+        cna_owner_skipped=owner is None,
         ssvc_skips=ssvc_skips,
     )
 

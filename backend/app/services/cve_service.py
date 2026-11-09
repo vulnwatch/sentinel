@@ -19,9 +19,11 @@ active-Ticket CVE scope of the per-CVE API fetchers (Red Hat, EPSS, OSV).
 
 `upsert_cve()`, `record_source_status()`, and `build_post_ingest_tasks()`
 implement source-neutral ingestion. `upsert_cve()` composes
-`ticket_service` (Ticket creation and lifecycle) and `ticket_mutations`
-(trusted-external CVSS batch, automatic priority). `ticket_service` also
-imports this module (`ensure_cve_exists()`), so each side imports only
+`cna_service` (the CNA row of the owner of the record), `ticket_service`
+(Ticket creation and lifecycle), and `ticket_mutations` (trusted-external
+CVSS batch, automatic priority); this module writes only `CVE.cna_id`.
+`ticket_service` also imports this module (`ensure_cve_exists()`), so each
+side imports only
 the other's module object and dereferences it at call time; neither uses
 the other while being imported.
 
@@ -127,6 +129,7 @@ from app.core.enums import (
 from app.core.exceptions import CVENotFoundError, ServiceError
 from app.core.identifiers import format_ticket_id, is_valid_cve_id
 from app.database import register_post_commit_callback
+from app.models.cna import CNA
 from app.models.cve import CVE
 from app.models.cve_affected_version import CVEAffectedVersion
 from app.models.cve_cvss_assessment import CVECVSSAssessment
@@ -141,6 +144,7 @@ from app.models.fetcher_run import FetcherRun
 from app.models.ticket import Ticket
 from app.services import (
     base_cve_fetcher,
+    cna_service,
     task_publication,
     ticket_mutations,
     ticket_service,
@@ -163,7 +167,10 @@ from app.services.cve_ingest import (
 )
 from app.services.cve_projection import (
     CODE_POINT_COLLATION,
+    CNASummaryProjection,
     CVEDetailProjection,
+    cna_summary_columns,
+    cna_summary_from_row,
     cve_detail_columns,
     cve_detail_from_row,
     join_cve_evidence,
@@ -671,6 +678,7 @@ class CVEListItemProjection:
     """The semantic projection represented by `CVEListItem`.
 
     `severity` is the CVE-owned unified severity (`None` is unresolved).
+    `cna` is the CNA that owns the record, `None` while none is recorded.
     `ticket` is the associated Ticket, or `None` for a ticketless CVE; the
     internal UUIDs are never part of it.
     """
@@ -681,6 +689,7 @@ class CVEListItemProjection:
     severity: Severity | None
     cve_state: CveState
     published_date: datetime | None
+    cna: CNASummaryProjection | None
     ticket: CVEAssociatedTicketProjection | None
     created_at: datetime
     updated_at: datetime
@@ -811,6 +820,7 @@ async def list_cves(
     cve_state: str | None,
     severity: Sequence[str] | None,
     has_ticket: bool | None,
+    cna: Sequence[uuid.UUID] | None,
     from_date: datetime | None,
     to_date: datetime | None,
     page: int,
@@ -827,14 +837,15 @@ async def list_cves(
     authenticated caller. `search` is the raw
     free-text input. `cve_state` and each `severity` entry are raw wire
     values; `None` means omitted and an empty `severity` sequence means
-    supplied with no value. `from_date`/`to_date` are UTC-normalized
-    inclusive bounds over `published_date`. `page` is positive and
-    `per_page` is 1-100.
+    supplied with no value. `cna` holds the CNA `org_id` values that the
+    API already validated, `None` when omitted. `from_date`/`to_date` are
+    UTC-normalized inclusive bounds over `published_date`. `page` is
+    positive and `per_page` is 1-100.
 
     Q3: in one SQL statement, and therefore one PostgreSQL observation
     (a CTE chain: filtered CVEs, their total, the requested page, then
-    the page rows with their associated Ticket's `sequence_id` and
-    `is_confidential`):
+    the page rows with their CNA and their associated Ticket's
+    `sequence_id` and `is_confidential`):
     1. selects CVEs outer-joined to their at most one Ticket under the
        CVE accessibility projection of the canonical Ticket predicate,
        so inaccessible associated CVEs are absent from rows and total;
@@ -844,10 +855,13 @@ async def list_cves(
     3. applies `cve_state` (an undocumented value matches nothing),
        severity (valid values OR-combined; `none` is the resolved
        `None` label, `unresolved` SQL `NULL`; no valid value matches
-       nothing), `has_ticket`, and the inclusive date bounds (a `NULL`
-       `published_date` satisfies neither bound), AND-combined;
+       nothing), `has_ticket`, `cna` (a CVE whose CNA has one of the
+       values; a CVE without a CNA and an unknown value match nothing),
+       and the inclusive date bounds (a `NULL` `published_date`
+       satisfies neither bound), AND-combined;
     4. never multiplies a CVE row: the Ticket join is unique by
-       `Ticket.cve_id` and no child relation is joined;
+       `Ticket.cve_id`, the CNA join by its primary key, and no child
+       relation is joined;
     5. orders by `cve_id` (code point), `published_date`, `created_at`,
        or the semantic severity rank, `NULL` last in both directions,
        then by `CVE.id` in the same direction;
@@ -877,6 +891,8 @@ async def list_cves(
         conditions.append(_cve_severity_condition(severity))
     if has_ticket is not None:
         conditions.append(Ticket.id.is_not(None) if has_ticket else Ticket.id.is_(None))
+    if cna is not None:
+        conditions.append(cna_service.cna_filter_condition(CVE.cna_id, cna))
     if from_date is not None:
         conditions.append(CVE.published_date >= from_date)
     if to_date is not None:
@@ -909,12 +925,14 @@ async def list_cves(
             CVE.published_date,
             CVE.created_at,
             CVE.updated_at,
+            *cna_summary_columns(),
             Ticket.sequence_id.label("ticket_sequence_id"),
             Ticket.is_confidential.label("ticket_is_confidential"),
         )
         .select_from(total)
         .outerjoin(page_rows, true())
         .outerjoin(CVE, CVE.id == page_rows.c.id)
+        .outerjoin(CNA, CNA.id == CVE.cna_id)
         .outerjoin(Ticket, Ticket.cve_id == CVE.id)
         .order_by(*_ordered(page_rows.c.sort_key, page_rows.c.id, sort_order))
     )
@@ -928,6 +946,7 @@ async def list_cves(
                 severity=Severity(row.severity) if row.severity is not None else None,
                 cve_state=CveState(row.cve_state),
                 published_date=row.published_date,
+                cna=cna_summary_from_row(row),
                 ticket=_associated_ticket(
                     row.ticket_sequence_id, row.ticket_is_confidential
                 ),
@@ -961,8 +980,8 @@ async def get_cve_detail(
     observation, selects the CVE by the unique `CVE.cve_id`, outer-joined
     to its at most one Ticket and constrained by the CVE accessibility
     projection of the canonical Ticket predicate, together with the
-    shared `CVEDetail` evidence (severity, ordered external identifiers,
-    KEV, EPSS, SSVC, grouped CWEs) and the Ticket's `sequence_id` and
+    shared `CVEDetail` evidence (severity, the CNA, ordered external
+    identifiers, KEV, EPSS, SSVC, grouped CWEs) and the Ticket's `sequence_id` and
     `is_confidential`. (3) Projects the shared `CVEDetailProjection` and
     the associated Ticket's `SNTL-{n}` identity and confidentiality;
     never the internal UUIDs, other Ticket content, a
@@ -1719,6 +1738,10 @@ _NULLABLE_GLOBAL_FIELDS: Final[tuple[str, ...]] = (
     "modified_date",
 )
 
+_CNA_WRITERS: Final = frozenset({CVESourceType.MITRE, CVESourceType.KERNEL})
+"""The only sources that supply `cna`, the owner of the CVE Record
+(cve-service.md, Merge Strategy, CNA of the CVE)."""
+
 
 def _utc_now() -> datetime:
     """The current instant; the single injection point of `upsert_cve()`'s
@@ -2099,12 +2122,16 @@ async def upsert_cve(
     `FOR UPDATE` (delegates re-lock both as same-transaction no-ops). No
     User root.
 
-    Q3: (1) format guard, source and payload type checks, then one UTC
+    Q3: (1) format guard, source and payload type checks, and the check
+    that only MITRE and the kernel supply `cna`, then one UTC
     `evaluation_date`; (2) CVSS candidates parsed, skipped with one
     sanitized warning each, and grouped (contradictory duplicates reject
     the payload); (3) the conflict-safe CVE create-or-lock, preserving the
-    locked pre-merge `cve_state`; (4) presence-sensitive global merge and
-    child persistence, flushed; (5) the unique Ticket loaded `FOR UPDATE`
+    locked pre-merge `cve_state`; (4) presence-sensitive global merge, for
+    a supplied `cna` its row through `cna_service.resolve_ingested_cna()`
+    (after the CVE root, before the Ticket root) and the merge of
+    `CVE.cna_id` (an omitted `cna` preserves it), and child persistence,
+    flushed; (5) the unique Ticket loaded `FOR UPDATE`
     or created through `ticket_service.create_ticket()` (ingestion
     source); (6) `ticket_mutations.upsert_external_cvss_batch()` with the
     valid candidates and the captured date, then one
@@ -2118,18 +2145,20 @@ async def upsert_cve(
     DNS, or package work; never commits or rolls back.
 
     Q4: `UpsertResult` with the CVE, the Ticket, and `created` (this call
-    won the CVE insert), `updated` (an effective global, child, or CVSS
-    change), or `unchanged`.
+    won the CVE insert), `updated` (an effective global, `CVE.cna_id`,
+    child, or CVSS change; a write to the CNA row alone is not one), or
+    `unchanged`.
 
     Q5: re-invocation derives every outcome from locked-current state;
     equal data creates no row or Ticket event (source status may advance
     its timestamp).
 
     Q6: before any database operation, `CVEIdFormatError` for a malformed
-    `cve_id`, `ValueError` for a non-Enum `source` or a non-payload
-    `cve_data`, and `pydantic.ValidationError` for contradictory CVSS
-    duplicates. `RequiredSystemSettingMissingError`,
-    `TicketCVEConflictError` (invariant failure), and database, audit,
+    `cve_id`, `ValueError` for a non-Enum `source`, a non-payload
+    `cve_data`, or a `cna` from a source other than MITRE and the kernel,
+    and `pydantic.ValidationError` for contradictory CVSS duplicates.
+    `RequiredSystemSettingMissingError`, `TicketCVEConflictError`
+    (invariant failure), and database, audit,
     flush, cancellation, and programming exceptions from the delegates
     propagate; the caller rolls back the complete per-CVE transaction.
     """
@@ -2139,6 +2168,8 @@ async def upsert_cve(
         raise ValueError("source must be a CVESourceType member.")
     if not isinstance(cve_data, CVEIngestPayload):
         raise ValueError("cve_data must be a CVEIngestPayload.")
+    if cve_data.cna is not None and source not in _CNA_WRITERS:
+        raise ValueError("Only MITRE and kernel ingestion supply the CNA of a CVE.")
     evaluation_date: date = _utc_now().date()
 
     candidates = _canonical_cvss_candidates(cve_id, source, cve_data)
@@ -2148,6 +2179,9 @@ async def upsert_cve(
 
     changed = _merge_global_fields(cve, cve_data)
     resulting_state = cve.cve_state
+    if cve_data.cna is not None:
+        cna = await cna_service.resolve_ingested_cna(db, cve_data.cna)
+        changed |= _assign(cve, "cna_id", cna.id)
     changed |= await _persist_children(db, cve.id, cve_data)
     await db.flush()
 

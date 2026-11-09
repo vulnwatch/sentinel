@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, DateTime, String, Text, func, text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, Text, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -21,6 +21,7 @@ from app.core.enums import CveState
 from app.database import Base
 
 if TYPE_CHECKING:
+    from app.models.cna import CNA
     from app.models.cve_affected_version import CVEAffectedVersion
     from app.models.cve_cvss_assessment import CVECVSSAssessment
     from app.models.cve_cwe import CVECWE
@@ -42,7 +43,9 @@ class CVE(Base):
     the writing service. `cve_state` is Category A and protected by
     `chk_cve_cve_state_valid`. The `PUBLISHED` ⇒ `date_rejected IS NULL`
     invariant is enforced by the service, not by a database constraint
-    (`docs/data-model.md`, CVE).
+    (`docs/data-model.md`, CVE). `cna_id` references the CNA that owns the
+    CVE Record (`docs/features/tickets/cna.md`, CNA of a CVE); only the
+    MITRE and kernel ingestions write it, and none clears it.
     """
 
     __tablename__ = "cve"
@@ -78,6 +81,14 @@ class CVE(Base):
     date_rejected: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Indexed (`ix_cve_cna_id`) for the `cna` filters of the CVE and Ticket
+    # lists (`docs/data-model.md`, CVE, Indexes).
+    cna_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cna.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -87,6 +98,8 @@ class CVE(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+    cna: Mapped[CNA | None] = relationship("CNA", back_populates="cves")
 
     # Child rows are owned by the CVE and removed with it by the database
     # (`FK(cve.id) ON DELETE CASCADE`). `passive_deletes=True` leaves

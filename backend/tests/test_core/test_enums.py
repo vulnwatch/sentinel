@@ -31,6 +31,7 @@ from app.core.enums import (
     OPERABLE_TICKET_STATUSES,
     USER_IGNORE_REASONS,
     Capability,
+    CNASortField,
     CredentialKind,
     CurrentPhase,
     CVEExternalIdentifierSource,
@@ -329,6 +330,19 @@ class TestPackageSortFieldEnum:
     def test_exact_members(self) -> None:
         assert {member.value for member in PackageSortField} == {
             "package_name",
+            "created_at",
+        }
+
+
+@pytest.mark.unit
+class TestCNASortFieldEnum:
+    """CNASortField must have exactly the three `sort_by` values of cna.md
+    (List CNAs, Query parameters)."""
+
+    def test_exact_members(self) -> None:
+        assert {member.value for member in CNASortField} == {
+            "name",
+            "short_name",
             "created_at",
         }
 

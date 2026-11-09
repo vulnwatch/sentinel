@@ -105,6 +105,7 @@ _CVE_DETAIL_FIELDS = {
     "cve_state",
     "date_rejected",
     "severity",
+    "cna",
     "external_identifiers",
     "kev",
     "epss",
@@ -318,6 +319,7 @@ class TestGetTicketEndpoint:
                 "cve_state": "published",
                 "date_rejected": None,
                 "severity": "high",
+                "cna": None,
                 "external_identifiers": [
                     {
                         "source": "ghsa",

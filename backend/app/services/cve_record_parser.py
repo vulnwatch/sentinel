@@ -35,8 +35,11 @@ from app.core.enums import (
     SSVCTechnicalImpact,
 )
 from app.core.external_strings import contains_inadmissible_character
+from app.core.identifiers import parse_cna_org_id
 from app.services.cve_ingest import (
+    CNA_SHORT_NAME_MAX_LENGTH,
     AffectedVersionEntry,
+    CNAEntry,
     CVSSAssessmentEntry,
     CWEEntry,
     KEVEntry,
@@ -525,4 +528,41 @@ def extract_dates(
         _parse_datetime(json_metadata.get("datePublished")),
         _parse_datetime(json_metadata.get("dateUpdated")),
         _parse_datetime(json_metadata.get("dateRejected")),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Owner of the record
+# ---------------------------------------------------------------------------
+
+
+def parse_cna_owner(cna: object) -> CNAEntry | None:
+    """The owner of the CVE Record, its CNA, from the raw `containers.cna`
+    (§ `parse_cna_owner`).
+
+    `None` when `cna` or its `providerMetadata` is not an object or `orgId`
+    is not a hyphenated UUID (either case). Otherwise the entry carries the
+    `orgId`, the trimmed `shortName` when it is a string of 1 to 32
+    characters without an inadmissible character, and, only with that short
+    name, the `dateUpdated` parsed like every other date-time (`None` when
+    absent or unparseable). An unusable short name never fails the entry.
+    `cveMetadata.assignerOrgId` names the assigner and is not read.
+    """
+    metadata = cna.get("providerMetadata") if isinstance(cna, dict) else None
+    if not isinstance(metadata, dict):
+        return None
+    org_id = parse_cna_org_id(metadata.get("orgId"))
+    if org_id is None:
+        return None
+    short_name = metadata.get("shortName")
+    if (
+        not isinstance(short_name, str)
+        or contains_inadmissible_character(short_name)
+        or not 1 <= len(short_name.strip()) <= CNA_SHORT_NAME_MAX_LENGTH
+    ):
+        return CNAEntry(org_id=org_id)
+    return CNAEntry(
+        org_id=org_id,
+        short_name=short_name.strip(),
+        short_name_observed_at=_parse_datetime(metadata.get("dateUpdated")),
     )

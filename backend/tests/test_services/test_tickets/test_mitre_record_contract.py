@@ -1,12 +1,13 @@
 """Contract tests for the MITRE `cvelistV5` source facts.
 
 Contract under test: docs/features/tickets/cve-sync-mitre.md (Algorithm
-step 1 file filtering, Global CVE fields, CNA container fields and the CNA
-defensive guard, ADP container fields and the ADP defensive guard,
-CISA-ADP specific fields, SSVC and KEV extraction, `fetch_single()`
-Behavior: single candidate) and docs/features/tickets/cve-service.md
-(RESERVED CVEs), verified against the sanitized live capture documented in
-`tests/support/mitre.py`.
+step 1 file filtering, Global CVE fields, CNA container fields with the
+owner of the record and the CNA defensive and owner guards, ADP container
+fields and the ADP defensive guard, CISA-ADP specific fields, SSVC and KEV
+extraction, `fetch_single()` Behavior: single candidate),
+docs/features/tickets/cna.md (The Owner of the Record, Payload, Short Name),
+and docs/features/tickets/cve-service.md (RESERVED CVEs), verified against
+the sanitized live captures documented in `tests/support/mitre.py`.
 
 Only source-specific facts are asserted here. The CVE Record 5.x field
 shapes (types, nullability, bounds, inadmissible characters) are owned by
@@ -92,6 +93,15 @@ _MITRE_TAGS = frozenset(
 _WITHOUT_SHORT_NAME = "cna_short_name_missing"
 _SUSE_CNA = "cna_suse_reserved_provider"
 _CNA_SSVC = "cna_ssvc_not_consumed"
+_LINUX_CNA = "cna_linux_kernel"
+_TRANSFERRED = "cna_transferred"
+_BEFORE_CHANGE = "cna_short_name_before_change"
+_AFTER_CHANGE = "cna_short_name_after_change"
+_LINUX_ORG_ID = "416baaa9-dc9f-4396-8d5f-8c081fb06d67"
+"""The organization with which cvelistV5 publishes the Linux kernel CNA's
+records (test-local copy of the `cve-sync-kernel.md` constant)."""
+_VULNS_ORG_ID = "f4215fc3-5b6b-47ff-a258-f7189bd81038"
+"""The `orgId` that `vulns.git` carries instead (`tests/support/kernel.py`)."""
 _SSVC_POINTS = frozenset({"Exploitation", "Automatable", "Technical Impact"})
 _DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _REMOVED_MEMBERS = frozenset(
@@ -103,6 +113,8 @@ _KEPT_HOSTS = frozenset(
     {
         "bugzilla.suse.com",
         "cert-portal.siemens.com",
+        "documentation.commvault.com",
+        "git.kernel.org",
         "npmjs.com",
         "security.gentoo.org",
         "www.cisa.gov",
@@ -276,6 +288,50 @@ class TestCnaProvider:
         assert short_name
         assert short_name == short_name.strip()
         assert not short_name.startswith("adp:")
+
+
+class TestCnaOwner:
+    """The owner of the record, the CNA of the CVE (cve-sync-mitre.md, CNA
+    container fields: `cna`; docs/features/tickets/cna.md, The Owner of the
+    Record, Short Name)."""
+
+    @pytest.mark.parametrize("name", ALL_RECORDS)
+    def test_owner_org_id_is_a_lowercase_hyphenated_uuid(self, name: str) -> None:
+        assert _UUID.fullmatch(_cna(name)["providerMetadata"]["orgId"])
+
+    def test_linux_kernel_cna_publishes_with_its_organization_and_short_name(
+        self,
+    ) -> None:
+        metadata = _cna(_LINUX_CNA)["providerMetadata"]
+
+        assert metadata["orgId"] == _LINUX_ORG_ID
+        assert metadata["shortName"] == "Linux"
+        assert metadata["orgId"] != _VULNS_ORG_ID
+
+    def test_transferred_record_names_an_owner_other_than_its_assigner(
+        self,
+    ) -> None:
+        record = load_record(_TRANSFERRED)
+        metadata = record["containers"]["cna"]["providerMetadata"]
+
+        assert record["cveMetadata"]["assignerOrgId"] != metadata["orgId"]
+        assert record["cveMetadata"]["assignerShortName"] == "mitre"
+        assert metadata["shortName"] == "Commvault"
+
+    @pytest.mark.parametrize("name", [_BEFORE_CHANGE, _AFTER_CHANGE])
+    def test_rejected_record_names_its_owner(self, name: str) -> None:
+        record = load_record(name)
+
+        assert record["cveMetadata"]["state"] == "REJECTED"
+        assert _UUID.fullmatch(_cna(name)["providerMetadata"]["orgId"])
+
+    def test_one_organization_publishes_under_a_changed_short_name(self) -> None:
+        before = _cna(_BEFORE_CHANGE)["providerMetadata"]
+        after = _cna(_AFTER_CHANGE)["providerMetadata"]
+
+        assert before["orgId"] == after["orgId"]
+        assert (before["shortName"], after["shortName"]) == ("@huntrdev", "@huntr_ai")
+        assert before["dateUpdated"] < after["dateUpdated"]
 
 
 class TestAdp:

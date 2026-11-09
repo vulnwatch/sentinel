@@ -276,6 +276,7 @@ class TestSummaryProjection:
                     cve_id="CVE-2099-40001",
                     title="Fictional title",
                     description="Fictional description",
+                    cna=None,
                 ),
                 duplicate_of_ticket_id=_sntl(target),
                 is_confidential=True,

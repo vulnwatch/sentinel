@@ -39,7 +39,7 @@ from datetime import datetime
 from typing import Annotated, Final
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
-from pydantic import TypeAdapter
+from pydantic import AfterValidator, TypeAdapter
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.dependencies import (
@@ -52,6 +52,7 @@ from app.api.dependencies import (
     ticket_not_mutable_error,
 )
 from app.api.openapi import enum_filter_schema
+from app.api.v1.cnas import serialize_cna_summary
 from app.core.dates import (
     normalize_date_bound,
     parse_date_range_bound,
@@ -61,6 +62,12 @@ from app.core.enums import Capability, CVESortField, CVESourceSortField, SortOrd
 from app.core.errors import AppError, ErrorCode
 from app.core.exceptions import CVENotFoundError, TicketNotMutableError
 from app.database import DatabaseSession, async_session_factory
+from app.schemas.cna import (
+    CNA_ORG_ID_FILTER_DESCRIPTION,
+    CNA_ORG_ID_FILTER_SCHEMA,
+    cna_org_id_filter,
+    validate_cna_org_id_filter,
+)
 from app.schemas.common import PaginationMeta
 from app.schemas.cve import (
     CVEAffectedVersionEntry,
@@ -274,6 +281,7 @@ def serialize_cve_detail(cve: CVEDetailProjection) -> CVEDetail:
             "cve_state": cve.cve_state.lower(),
             "date_rejected": cve.date_rejected,
             "severity": _lower(cve.severity),
+            "cna": serialize_cna_summary(cve.cna),
             "external_identifiers": [
                 CVEExternalIdentifierResponse(
                     source=item.source.lower(),
@@ -329,6 +337,7 @@ def serialize_cve_list_item(item: CVEListItemProjection) -> CVEListItem:
             "severity": _lower(item.severity),
             "cve_state": item.cve_state.lower(),
             "published_date": item.published_date,
+            "cna": serialize_cna_summary(item.cna),
             "ticket": _ticket(item.ticket),
             "created_at": item.created_at,
             "updated_at": item.updated_at,
@@ -452,6 +461,19 @@ def _cve_list_query(
             )
         ),
     ] = None,
+    cna: Annotated[
+        list[str],
+        Query(
+            default_factory=list,
+            description=(
+                "Filter by the CNA that owns the CVE Record. "
+                f"{CNA_ORG_ID_FILTER_DESCRIPTION} A CVE without a CNA matches "
+                "no value."
+            ),
+            json_schema_extra=CNA_ORG_ID_FILTER_SCHEMA,
+        ),
+        AfterValidator(validate_cna_org_id_filter),
+    ],
     from_date: Annotated[
         str | None,
         Query(
@@ -500,6 +522,7 @@ def _cve_list_query(
         cve_state=cve_state,
         severity=severity or None,
         has_ticket=has_ticket,
+        cna=cna,
         from_date=parsed_from,
         to_date=parsed_to,
         page=page,
@@ -604,9 +627,10 @@ def _cve_source_list_query(
     summary="List CVEs",
     description=(
         "Returns a paginated list of the CVEs accessible to the caller, with "
-        "free-text search, state, repeatable severity, Ticket-presence, and "
-        "publication-date filters, and sorting. A CVE without a Ticket is "
-        "always listed; a CVE with a Ticket is listed only when that Ticket "
+        "free-text search, state, repeatable severity, Ticket-presence, "
+        "repeatable CNA, and publication-date filters, and sorting. A CVE "
+        "without a Ticket is always listed; a CVE with a Ticket is listed only "
+        "when that Ticket "
         "is visible to the caller. Requires authentication (JWT session or "
         "API key); the caller's scope, grants, and package maintainership "
         "determine access to CVEs associated with confidential Tickets."
@@ -629,6 +653,7 @@ async def list_cves(
         cve_state=query.cve_state,
         severity=query.severity,
         has_ticket=query.has_ticket,
+        cna=cna_org_id_filter(query.cna),
         from_date=query.from_date,
         to_date=query.to_date,
         page=query.page,

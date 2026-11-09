@@ -77,6 +77,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import config
 from app.core.enums import CVESourceFetchStatus, CVESourceType
+from app.models.cna import CNA
 from app.models.cve import CVE
 from app.models.fetcher_config import FetcherConfig
 from app.models.fetcher_run import FetcherRun
@@ -805,6 +806,7 @@ class GitRunHarness:
     status: RecordingSessions
     published: Publications
     cve_baseline: int
+    cna_baseline: int
     names: list[str] = field(default_factory=list)
     clock: datetime = field(
         default_factory=lambda: datetime.now(UTC) - timedelta(hours=1)
@@ -905,6 +907,15 @@ class GitRunHarness:
             )
         return cve
 
+    async def cna_of(self, cve: CVE) -> CNA:
+        """The committed CNA that owns the record of `cve`, which must have
+        one (deleted at teardown once no CVE references it)."""
+        assert cve.cna_id is not None
+        async with self.factory() as session:
+            cna = await session.get(CNA, cve.cna_id)
+        assert cna is not None
+        return cna
+
     async def cleanup(self) -> None:
         try:
             await self.world.cleanup()
@@ -923,12 +934,18 @@ class GitRunHarness:
                     )
                     await session.commit()
         assert await _cve_count(self.factory) == self.cve_baseline, "a CVE leaked"
+        assert await _cna_count(self.factory) == self.cna_baseline, "a CNA leaked"
         assert await _fetcher_rows(self.factory, self.names) == 0
 
 
 async def _cve_count(factory: async_sessionmaker[AsyncSession]) -> int:
     async with factory() as session:
         return int(await session.scalar(select(func.count()).select_from(CVE)) or 0)
+
+
+async def _cna_count(factory: async_sessionmaker[AsyncSession]) -> int:
+    async with factory() as session:
+        return int(await session.scalar(select(func.count()).select_from(CNA)) or 0)
 
 
 async def _fetcher_rows(
@@ -986,6 +1003,7 @@ async def open_git_run_harness(
         status=RecordingSessions(factory, events, label="status:"),
         published=Publications(events),
         cve_baseline=await _cve_count(factory),
+        cna_baseline=await _cna_count(factory),
     )
     monkeypatch.setattr(base_fetcher, "async_session_factory", harness.sessions)
     harness.status.hooks.append(_bound_lock_wait)

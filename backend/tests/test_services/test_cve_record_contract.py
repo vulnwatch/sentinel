@@ -68,6 +68,15 @@ Live verification on 2026-10-08, full scans of both repositories:
 - No string in either repository contains U+0000, and no consumed string
   exceeds its payload bound (`versionType` reaches exactly 128).
 
+The owner of the record, read by `parse_cna_owner` (`providerMetadata`
+`orgId`, `shortName`, `dateUpdated` of the CNA container), was verified
+again on 2026-11-09 by full scans of both repositories
+(`tests/support/mitre.py`, `tests/support/kernel.py`): `orgId` is always a
+lowercase hyphenated UUID; the cvelistV5 `shortName` is absent in 12
+records and otherwise a trimmed string of 2 to 30 characters; its
+`dateUpdated` is absent in 2 records and without offset or fraction in 2;
+`vulns.git` carries only `orgId`.
+
 Every consumed field was observed live in at least one repository; none is
 documentation-only.
 
@@ -80,8 +89,10 @@ version; both `lessThan` and `lessThanOrEqual` on one version; an empty
 CVE-ID that mismatches its file name; an invalid `cweId`; an invalid SSVC
 enum value; an incomplete SSVC or one without `timestamp`; more than one
 SSVC or KEV entry in a CISA-ADP container; a KEV `dateAdded` date-time; a
-vector rejected by the External Base Reduction; and an unrecognized state
-such as RESERVED.
+vector rejected by the External Base Reduction; an `orgId` that is
+uppercase or not a UUID, a `shortName` that is empty after trimming or
+longer than 32 characters, and an unparseable `dateUpdated`; and an
+unrecognized state such as RESERVED.
 """
 
 from __future__ import annotations
@@ -105,6 +116,7 @@ from app.core.external_strings import contains_inadmissible_character
 from app.services.cve_ingest import (
     PROGRAM_FILE_MAX_LENGTH,
     AffectedVersionEntry,
+    CNAEntry,
     CVEIngestPayload,
     CWEEntry,
     KEVEntry,
@@ -133,6 +145,9 @@ _CWE_PATTERN = re.compile(r"^CWE-[1-9][0-9]*$")
 _MILLISECOND_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 _MICROSECOND_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$")
 _OFFSET_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00$")
+_LOWERCASE_UUID = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _CVSS_KEYS: dict[str, CVSSVersion] = {
     "cvssV4_0": CVSSVersion.V4_0,
@@ -298,7 +313,9 @@ class _Description(_Consumed):
 
 
 class _ProviderMetadata(_Consumed):
+    org_id: str = Field(alias="orgId")
     short_name: str | None = Field(None, alias="shortName")
+    date_updated: str | None = Field(None, alias="dateUpdated")
 
 
 class _Version(_Consumed):
@@ -497,6 +514,13 @@ def _max_length(model: type[BaseModel], field: str) -> int | None:
     return None
 
 
+def _owner_short_name_bound() -> int:
+    """The `CNAEntry.short_name` bound (`parse_cna_owner` step 3)."""
+    bound = _max_length(CNAEntry, "short_name")
+    assert bound is not None
+    return bound
+
+
 def _consumed_strings(record: _Record) -> list[tuple[str, str, int | None]]:
     """(label, value, payload bound or None) of every consumed string."""
     found: list[tuple[str, str, int | None]] = []
@@ -522,7 +546,14 @@ def _consumed_strings(record: _Record) -> list[tuple[str, str, int | None]]:
     add("title", cna.title, _max_length(CVEIngestPayload, "title"))
     for d in cna.descriptions or []:
         add("descriptions[].value", d.value, None)
+    add(
+        "cna providerMetadata.shortName",
+        cna.provider_metadata.short_name,
+        _max_length(CNAEntry, "short_name"),
+    )
+    add("cna providerMetadata.dateUpdated", cna.provider_metadata.date_updated, None)
     for c in _containers(record):
+        add("providerMetadata.orgId", c.provider_metadata.org_id, None)
         add("providerMetadata.shortName", c.provider_metadata.short_name, None)
         for e in c.affected or []:
             add("vendor", e.vendor, entry("vendor"))
@@ -608,6 +639,9 @@ class TestTypedRecord:
             (("cveMetadata", "state"), "RESERVED"),
             (("cveMetadata", "datePublished"), None),
             (("containers", "cna", "providerMetadata", "shortName"), None),
+            (("containers", "cna", "providerMetadata", "orgId"), None),
+            (("containers", "cna", "providerMetadata", "orgId"), 416),
+            (("containers", "cna", "providerMetadata", "dateUpdated"), None),
             (("containers", "cna", "title"), None),
             (("containers", "cna", "descriptions"), "Fictional"),
             (("containers", "cna", "descriptions", 0, "value"), None),
@@ -812,6 +846,59 @@ class TestProviderMetadata:
 
         assert short_names == {"CVE", "CISA-ADP", "redhat-SADP"}
         assert short_names <= _ADP_SHORT_NAMES
+
+
+class TestCnaOwner:
+    """`parse_cna_owner`: the owner of the record is the `providerMetadata`
+    of the CNA container (cve-record-parser.md, `parse_cna_owner`;
+    docs/features/tickets/cna.md, CNA of a CVE)."""
+
+    @pytest.mark.parametrize("name", ALL_FIXTURES)
+    def test_org_id_is_a_lowercase_hyphenated_uuid(self, name: str) -> None:
+        for container in _containers(_record(name)):
+            org_id = container.provider_metadata.org_id
+
+            assert _LOWERCASE_UUID.fullmatch(org_id), org_id
+
+    @pytest.mark.parametrize("name", CVELISTV5_FIXTURES)
+    def test_cvelistv5_short_name_is_trimmed_and_fits_the_owner_bound(
+        self, name: str
+    ) -> None:
+        short_name = _record(name).containers.cna.provider_metadata.short_name
+
+        assert short_name is not None
+        assert short_name == short_name.strip()
+        assert 1 <= len(short_name) <= _owner_short_name_bound()
+
+    @pytest.mark.parametrize(
+        "name", [n for n in CVELISTV5_FIXTURES if n != _NAIVE_FIXTURE]
+    )
+    def test_cvelistv5_provider_date_is_a_millisecond_utc_date_time(
+        self, name: str
+    ) -> None:
+        date_updated = _record(name).containers.cna.provider_metadata.date_updated
+
+        assert date_updated is not None
+        assert _MILLISECOND_UTC.fullmatch(date_updated)
+
+    def test_provider_date_without_offset_or_fraction_is_captured(self) -> None:
+        metadata = _record(_NAIVE_FIXTURE).containers.cna.provider_metadata
+
+        assert metadata.date_updated == "2022-09-05T11:06:09"
+
+    @pytest.mark.parametrize("name", list(_REJECTED_FIXTURES))
+    def test_rejected_record_names_its_owner(self, name: str) -> None:
+        metadata = _record(name).containers.cna.provider_metadata
+
+        assert metadata.short_name
+        assert metadata.date_updated
+
+    @pytest.mark.parametrize("name", VULNS_FIXTURES)
+    def test_kernel_owner_has_neither_short_name_nor_date(self, name: str) -> None:
+        metadata = _record(name).containers.cna.provider_metadata
+
+        assert metadata.short_name is None
+        assert metadata.date_updated is None
 
 
 class TestAffected:
@@ -1230,6 +1317,7 @@ class TestExternalStringAdmissibility:
             "cweId",
             "ssvc version",
             "kev reference",
+            "cna providerMetadata.shortName",
         }
 
 

@@ -19,6 +19,7 @@ minimal fictional objects. No database, Git, or log is involved.
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any, Final
 
 import pytest
@@ -30,11 +31,15 @@ from app.services.cve_ingest import (
     AffectedVersionEntry,
     AffectedVersionOperation,
     AffectedVersionScopeOperation,
+    CNAEntry,
     CVEIngestPayload,
     CVSSAssessmentEntry,
 )
 from app.services.reference_service import AutomaticReferenceInput
 from app.services.tickets.kernel_cve_record import (
+    CNA_ORG_ID,
+    CNA_OWNER,
+    CNA_SHORT_NAME,
     RECORD_PATH_PATTERN,
     RESOLVED_PACKAGE,
     SOURCE_CONTAINER,
@@ -86,6 +91,7 @@ SECRET: Final = "Example-Secret-Input-Value"
 _KERNEL_FIELDS: Final = frozenset(
     {
         "cve_state",
+        "cna",
         "title",
         "description",
         "cvss_assessments",
@@ -520,7 +526,11 @@ class TestGlobalFields:
 
         result = _map(record)
 
-        assert result.payload.model_fields_set == {"cve_state", "resolved_packages"}
+        assert result.payload.model_fields_set == {
+            "cve_state",
+            "cna",
+            "resolved_packages",
+        }
         assert result.upstream_references == ()
 
     def test_absent_containers_is_an_empty_container(self) -> None:
@@ -529,12 +539,54 @@ class TestGlobalFields:
 
         payload = _payload(record)
 
-        assert payload.model_fields_set == {"cve_state", "resolved_packages"}
+        assert payload.model_fields_set == {"cve_state", "cna", "resolved_packages"}
 
     @pytest.mark.parametrize("path", [PUBLISHED_PATH, REJECTED_PATH])
     def test_resolved_packages_is_kernel_source(self, path: str) -> None:
         assert _payload(_record(), path).resolved_packages == [RESOLVED_PACKAGE]
         assert RESOLVED_PACKAGE == "kernel-source"
+
+
+class TestCnaOwner:
+    """The owner of every kernel record is the Linux kernel CNA, from
+    constants (cve-sync-kernel.md, CVE JSON Field Mapping: `cna`;
+    docs/features/tickets/cna.md, Payload)."""
+
+    def test_constants_are_the_cvelistv5_organization_and_short_name(self) -> None:
+        assert uuid.UUID("416baaa9-dc9f-4396-8d5f-8c081fb06d67") == CNA_ORG_ID
+        assert CNA_SHORT_NAME == "Linux"
+        assert CNAEntry(org_id=CNA_ORG_ID, short_name="Linux") == CNA_OWNER
+        assert CNA_OWNER.short_name_observed_at is None
+
+    @pytest.mark.parametrize("name", ALL_RECORDS)
+    def test_live_record_maps_the_constants_over_its_own_org_id(
+        self, name: str
+    ) -> None:
+        record = load_record(name)
+
+        payload = map_record(record_path(name), load_raw_record(name)).payload
+
+        assert record["containers"]["cna"]["providerMetadata"]["orgId"] != str(
+            CNA_ORG_ID
+        )
+        assert payload.cna == CNA_OWNER
+
+    @pytest.mark.parametrize("path", [PUBLISHED_PATH, REJECTED_PATH])
+    @pytest.mark.parametrize(
+        "provider_metadata",
+        [
+            {"orgId": "11111111-2222-4333-8444-555555555555", "shortName": "Other"},
+            {"orgId": "not-a-uuid"},
+            None,
+        ],
+    )
+    def test_record_owner_fields_are_never_read(
+        self, path: str, provider_metadata: Any
+    ) -> None:
+        record = _record()
+        record["containers"]["cna"]["providerMetadata"] = provider_metadata
+
+        assert _payload(record, path).cna == CNA_OWNER
 
 
 # ---------------------------------------------------------------------------

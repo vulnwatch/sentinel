@@ -77,6 +77,7 @@ _LIST_DEFAULTS: Final[dict[str, Any]] = {
     "cve_state": None,
     "severity": None,
     "has_ticket": None,
+    "cna": None,
     "from_date": None,
     "to_date": None,
     "page": 1,
@@ -774,6 +775,7 @@ class TestListRowIdentityAndBoundedRead:
             severity=Severity.NONE,
             cve_state=CveState.REJECTED,
             published_date=MAR,
+            cna=None,
             ticket=CVEAssociatedTicketProjection(
                 ticket_id=_sntl(ticket), is_confidential=False
             ),
@@ -791,6 +793,7 @@ class TestListRowIdentityAndBoundedRead:
             severity=None,
             cve_state=CveState.PUBLISHED,
             published_date=None,
+            cna=None,
             ticket=None,
             created_at=stamps[ticketless.id][0],
             updated_at=stamps[ticketless.id][1],
@@ -951,6 +954,7 @@ class TestDetailProjection:
                 cve_state=CveState.REJECTED,
                 date_rejected=MAY,
                 severity=Severity.NONE,
+                cna=None,
                 external_identifiers=(
                     CVEExternalIdentifierProjection(
                         "GHSA", "GHSA-Zzzz-fict-ional", None
@@ -1002,6 +1006,7 @@ class TestDetailProjection:
                 cve_state=CveState.PUBLISHED,
                 date_rejected=None,
                 severity=None,
+                cna=None,
                 external_identifiers=(),
                 kev=None,
                 epss=None,

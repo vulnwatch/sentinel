@@ -53,6 +53,7 @@ from app.services.cve_ingest import (
     AffectedVersionEntry,
     AffectedVersionOperation,
     AffectedVersionScopeOperation,
+    CNAEntry,
     CPEMatchEntry,
     CVEIngestPayload,
     CVSSAssessmentEntry,
@@ -101,6 +102,7 @@ _BASES: dict[type[BaseModel], dict[str, Any]] = {
     CPEMatchEntry: {"criteria": _CPE, "vulnerable": True},
     ExternalIdentifierEntry: {"source": "GHSA", "identifier": "GHSA-0000-0000-0000"},
     CVSSAssessmentEntry: {"provider_name": "nvd", "vector_string": "AV:N"},
+    CNAEntry: {"org_id": "00000000-0000-4000-8000-0000000000a1"},
 }
 
 
@@ -335,6 +337,7 @@ _STRING_BOUNDS: list[tuple[type[BaseModel], str, int]] = [
     (CPEMatchEntry, "criteria", 2048),
     (ExternalIdentifierEntry, "identifier", 100),
     (ExternalIdentifierEntry, "url", 2048),
+    (CNAEntry, "short_name", 32),
 ]
 
 _UNBOUNDED: list[tuple[type[BaseModel], str]] = [
@@ -554,6 +557,7 @@ class TestInadmissibleCharacterRejection:
             ("CPEMatchEntry", "criteria"),
             ("ExternalIdentifierEntry", "identifier"),
             ("ExternalIdentifierEntry", "url"),
+            ("CNAEntry", "short_name"),
         }
 
     @pytest.mark.parametrize("character", INADMISSIBLE_CHARACTERS)
@@ -1126,6 +1130,68 @@ class TestNormalizeExternalIdentifiers:
         self, entries: list[ExternalIdentifierEntry] | None
     ) -> None:
         assert normalize_external_identifiers(entries) == ()
+
+
+_CNA_ORG_ID = uuid.UUID("00000000-0000-4000-8000-0000000000a1")
+
+
+@pytest.mark.unit
+class TestCNAEntry:
+    """`CVEIngestPayload.cna` and `CNAEntry` (cve-service.md, CVEIngestPayload
+    Schema design notes; docs/features/tickets/cna.md, Payload)."""
+
+    def test_omitted_cna_is_none(self) -> None:
+        payload = CVEIngestPayload()
+
+        assert payload.cna is None
+        assert "cna" not in payload.model_fields_set
+
+    def test_complete_entry_is_accepted_and_dated_in_utc(self) -> None:
+        observed = datetime(2099, 1, 2, 5, 0, tzinfo=timezone(timedelta(hours=2)))
+
+        entry = CNAEntry(
+            org_id=_CNA_ORG_ID, short_name="example", short_name_observed_at=observed
+        )
+
+        assert entry.short_name_observed_at == datetime(2099, 1, 2, 3, 0, tzinfo=UTC)
+        assert entry.short_name_observed_at.tzinfo is UTC
+        assert CVEIngestPayload(cna=entry).cna == entry
+
+    def test_naive_observation_date_is_utc(self) -> None:
+        entry = CNAEntry(
+            org_id=_CNA_ORG_ID,
+            short_name="example",
+            short_name_observed_at=datetime(2099, 1, 2, 3, 0),  # noqa: DTZ001 — naive input under test
+        )
+
+        assert entry.short_name_observed_at == datetime(2099, 1, 2, 3, 0, tzinfo=UTC)
+
+    def test_org_id_only_is_accepted(self) -> None:
+        entry = CNAEntry(org_id=_CNA_ORG_ID)
+
+        assert (entry.short_name, entry.short_name_observed_at) == (None, None)
+
+    def test_date_without_short_name_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="requires a short_name"):
+            CNAEntry(
+                org_id=_CNA_ORG_ID,
+                short_name_observed_at=datetime(2099, 1, 2, tzinfo=UTC),
+            )
+
+    def test_empty_short_name_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="string_too_short"):
+            CNAEntry(org_id=_CNA_ORG_ID, short_name="")
+
+    @pytest.mark.parametrize("org_id", [None, "not-a-uuid", 7])
+    def test_invalid_org_id_is_rejected(self, org_id: Any) -> None:
+        with pytest.raises(ValidationError):
+            CNAEntry.model_validate({"org_id": org_id})
+
+    def test_payload_with_an_invalid_entry_fails_construction(self) -> None:
+        with pytest.raises(ValidationError):
+            CVEIngestPayload.model_validate(
+                {"cna": {"org_id": str(_CNA_ORG_ID), "short_name": "x" * 33}}
+            )
 
 
 @pytest.mark.unit

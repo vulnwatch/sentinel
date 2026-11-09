@@ -24,6 +24,7 @@ minimal fictional objects. No database, network, or log is involved.
 from __future__ import annotations
 
 import tracemalloc
+import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Final
 
@@ -40,6 +41,7 @@ from app.services.cve_ingest import (
     AffectedVersionEntry,
     AffectedVersionOperation,
     AffectedVersionScopeOperation,
+    CNAEntry,
     CVEIngestPayload,
     CVSSAssessmentEntry,
     CWEEntry,
@@ -53,6 +55,7 @@ from app.services.cve_record_parser import (
     extract_cve_state,
     extract_dates,
     parse_affected_versions,
+    parse_cna_owner,
     parse_cvss_assessments,
     parse_cwe_classifications,
     parse_description,
@@ -286,6 +289,7 @@ def _caller_payload(name: str) -> CVEIngestPayload:
             kev = parse_kev_data(container.get("metrics", []))
     return CVEIngestPayload(
         **kwargs,
+        cna=parse_cna_owner(cna),
         affected_version_operations=operations,
         cvss_assessments=cvss,
         cwe_classifications=cwe,
@@ -2608,6 +2612,178 @@ class TestDates:
     @pytest.mark.parametrize("name", VULNS_FIXTURES)
     def test_kernel_fixture_without_dates_yields_none(self, name: str) -> None:
         assert extract_dates(load_fixture(name)["cveMetadata"]) == (None, None, None)
+
+
+# ---------------------------------------------------------------------------
+# Owner of the record
+# ---------------------------------------------------------------------------
+
+_ORG_ID: Final = "00000000-0000-4000-8000-0000000000a1"
+_OWNER_DATE: Final = "2024-01-02T03:04:05.678Z"
+
+
+def _cna(**metadata: Any) -> dict[str, Any]:
+    values: dict[str, Any] = {
+        "orgId": _ORG_ID,
+        "shortName": "example",
+        "dateUpdated": _OWNER_DATE,
+        **metadata,
+    }
+    return {"providerMetadata": values}
+
+
+class TestCnaOwner:
+    """`parse_cna_owner` (cve-record-parser.md; cna.md, Payload)."""
+
+    def test_valid_container_yields_the_complete_owner(self) -> None:
+        assert parse_cna_owner(_cna()) == CNAEntry(
+            org_id=uuid.UUID(_ORG_ID),
+            short_name="example",
+            short_name_observed_at=datetime(2024, 1, 2, 3, 4, 5, 678000, tzinfo=UTC),
+        )
+
+    @pytest.mark.parametrize(
+        "cna",
+        [
+            None,
+            [],
+            "cna",
+            {},
+            {"providerMetadata": None},
+            {"providerMetadata": []},
+            {"providerMetadata": "x"},
+            _cna(orgId=None),
+            _cna(orgId=416),
+            _cna(orgId=""),
+            _cna(orgId="not-a-uuid"),
+            _cna(orgId=_ORG_ID.replace("-", "")),
+            _cna(orgId=f"{{{_ORG_ID}}}"),
+            _cna(orgId=f"urn:uuid:{_ORG_ID}"),
+            _cna(orgId=f" {_ORG_ID}"),
+            _cna(orgId=f"{_ORG_ID}\n"),
+            _cna(orgId=f"{_ORG_ID}0"),
+            _cna(orgId="0000000g-0000-4000-8000-0000000000a1"),
+        ],
+        ids=[
+            "none",
+            "list",
+            "string",
+            "empty",
+            "pm-null",
+            "pm-list",
+            "pm-string",
+            "org-null",
+            "org-number",
+            "org-empty",
+            "org-text",
+            "org-unhyphenated",
+            "org-braced",
+            "org-urn",
+            "org-leading-space",
+            "org-trailing-newline",
+            "org-too-long",
+            "org-non-hex",
+        ],
+    )
+    def test_container_without_a_valid_owner_yields_none(self, cna: Any) -> None:
+        assert parse_cna_owner(cna) is None
+
+    def test_absent_org_id_yields_none(self) -> None:
+        cna = _cna()
+        del cna["providerMetadata"]["orgId"]
+
+        assert parse_cna_owner(cna) is None
+
+    def test_uppercase_hexadecimal_is_normalized_to_lowercase(self) -> None:
+        owner = parse_cna_owner(_cna(orgId="ABCDEF01-2345-4678-9ABC-DEF012345678"))
+
+        assert owner is not None
+        assert str(owner.org_id) == "abcdef01-2345-4678-9abc-def012345678"
+
+    def test_version_and_variant_digits_are_not_checked(self) -> None:
+        owner = parse_cna_owner(_cna(orgId="00000000-0000-0000-0000-000000000000"))
+
+        assert owner is not None
+        assert owner.org_id == uuid.UUID(int=0)
+
+    @pytest.mark.parametrize(
+        ("short_name", "expected"),
+        [("  example\t", "example"), ("x", "x"), ("x" * 32, "x" * 32)],
+        ids=["trimmed", "one", "thirty-two"],
+    )
+    def test_short_name_is_trimmed_within_the_bound(
+        self, short_name: str, expected: str
+    ) -> None:
+        owner = parse_cna_owner(_cna(shortName=short_name))
+
+        assert owner is not None
+        assert owner.short_name == expected
+
+    @pytest.mark.parametrize(
+        "short_name",
+        [
+            None,
+            "",
+            " \t\n",
+            "x" * 33,
+            f"{'x' * 31}{NUL}",
+            7,
+            ["example"],
+            f"exa{NUL}mple",
+            f"example{SURROGATE}",
+        ],
+        ids=[
+            "null",
+            "empty",
+            "whitespace",
+            "over-32",
+            "over-32-with-nul",
+            "number",
+            "list",
+            "nul",
+            "surrogate",
+        ],
+    )
+    def test_unusable_short_name_leaves_only_the_org_id(self, short_name: Any) -> None:
+        assert parse_cna_owner(_cna(shortName=short_name)) == CNAEntry(
+            org_id=uuid.UUID(_ORG_ID)
+        )
+
+    def test_absent_short_name_leaves_only_the_org_id(self) -> None:
+        cna = _cna()
+        del cna["providerMetadata"]["shortName"]
+
+        assert parse_cna_owner(cna) == CNAEntry(org_id=uuid.UUID(_ORG_ID))
+
+    @pytest.mark.parametrize(
+        "date_updated",
+        [None, "", "2024-01-02", "garbage", 20240102, f"{_OWNER_DATE}{NUL}"],
+    )
+    def test_unparseable_date_leaves_the_short_name_undated(
+        self, date_updated: Any
+    ) -> None:
+        assert parse_cna_owner(_cna(dateUpdated=date_updated)) == CNAEntry(
+            org_id=uuid.UUID(_ORG_ID), short_name="example"
+        )
+
+    def test_date_without_offset_is_utc(self) -> None:
+        owner = parse_cna_owner(_cna(dateUpdated="2022-09-05T11:06:09"))
+
+        assert owner is not None
+        assert owner.short_name_observed_at == datetime(
+            2022, 9, 5, 11, 6, 9, tzinfo=UTC
+        )
+
+    @pytest.mark.parametrize("name", ALL_FIXTURES)
+    def test_fixture_owner_is_the_provider_metadata(self, name: str) -> None:
+        metadata = load_fixture(name)["containers"]["cna"]["providerMetadata"]
+
+        owner = parse_cna_owner(load_fixture(name)["containers"]["cna"])
+
+        assert owner is not None
+        assert str(owner.org_id) == metadata["orgId"]
+        assert owner.short_name == metadata.get("shortName")
+        assert (owner.short_name_observed_at is None) is ("dateUpdated" not in metadata)
 
 
 # ---------------------------------------------------------------------------

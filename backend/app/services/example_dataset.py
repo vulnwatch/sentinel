@@ -88,6 +88,7 @@ from app.services.cve_ingest import (
     AffectedVersionEntry,
     AffectedVersionOperation,
     AffectedVersionScopeOperation,
+    CNAEntry,
     CVEIngestPayload,
     CVSSAssessmentEntry,
     CWEEntry,
@@ -424,6 +425,31 @@ _NVD_AFTER_MANUAL: Final = (
     "CVE-2099-0025",
 )
 _MITRE_FURTHER: Final = ("CVE-2099-0009", "CVE-2099-0010", "CVE-2099-0013")
+
+
+@dataclass(frozen=True, slots=True)
+class _CNA:
+    org_id: uuid.UUID
+    short_name: str | None
+    cve_ids: tuple[str, ...]
+    """The CVEs whose MITRE ingestions supply this CNA as their owner."""
+
+
+_CNAS: Final = (
+    _CNA(
+        uuid.UUID("00000000-0000-4000-8000-0000000000a1"),
+        "example",
+        ("CVE-2099-0008", "CVE-2099-0009", "CVE-2099-0010"),
+    ),
+    _CNA(
+        uuid.UUID("00000000-0000-4000-8000-0000000000a2"),
+        "fictional-plugins",
+        ("CVE-2099-0006",),
+    ),
+    _CNA(uuid.UUID("00000000-0000-4000-8000-0000000000a3"), None, ("CVE-2099-0013",)),
+)
+"""The fictional CNAs (CNAs); the third has no short name."""
+_CNA_OF: Final = {cve_id: cna for cna in _CNAS for cve_id in cna.cve_ids}
 _KEV_ADDED: Final = {"CVE-2099-0001": -2}
 """KEV date added, in days from `D`."""
 _EPSS: Final = {
@@ -786,12 +812,21 @@ def _nvd_payload(cve: _CVE, now: datetime) -> CVEIngestPayload:
 
 
 def _mitre_payload(cve: _CVE, now: datetime) -> CVEIngestPayload:
-    """A MITRE ingestion with the further data of the table."""
+    """A MITRE ingestion with the CNA that owns the record and the further
+    data of the table."""
+    owner = _CNA_OF[cve.cve_id]
     fields: dict[str, object] = {
         "title": f"Fictional flaw {cve.cve_id}",
         "description": _description(cve.cve_id),
         "published_date": _published(cve.cve_id, now),
         "cve_state": CveState.REJECTED if cve.rejected else CveState.PUBLISHED,
+        "cna": CNAEntry(
+            org_id=owner.org_id,
+            short_name=owner.short_name,
+            short_name_observed_at=(
+                now - timedelta(days=1) if owner.short_name is not None else None
+            ),
+        ),
     }
     if cve.cve_id == "CVE-2099-0009":
         fields["affected_version_operations"] = [

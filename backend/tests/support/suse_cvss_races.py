@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, exists, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 from app.core.enums import (
@@ -31,6 +31,7 @@ from app.core.enums import (
     TicketIgnoreReason,
     TicketStatus,
 )
+from app.models.cna import CNA
 from app.models.cve import CVE
 from app.models.cve_cvss_assessment import CVECVSSAssessment
 from app.models.product import Product
@@ -261,6 +262,11 @@ class CommittedWorld:
             delete(Ticket).where(Ticket.id.in_(self.ticket_ids)),
             delete(CVECVSSAssessment).where(CVECVSSAssessment.cve_id.in_(self.cve_ids)),
             delete(CVE).where(CVE.id.in_(self.cve_ids)),
+            # Ingestion under test creates CNA rows and never deletes one,
+            # also after a transfer (docs/features/tickets/cna.md, The CNA
+            # Entity). Every committed test cleans up its CVEs, so a CNA row
+            # that no CVE references is a leftover of this world.
+            delete(CNA).where(~exists(select(CVE.id).where(CVE.cna_id == CNA.id))),
             delete(Product).where(Product.id.in_(self.product_ids)),
             delete(UserRole).where(UserRole.user_id.in_(self.user_ids)),
             delete(User).where(User.id.in_(self.user_ids)),

@@ -8,6 +8,10 @@ same `CVEDetail`: the Ticket detail (`TicketDetail.cve`, owned by
 `ticket_service`) and the CVE detail (`CVEResourceDetail`, owned by
 `cve_service`; `docs/features/tickets/cve-service.md`, CVE Detail).
 
+The CNA of a CVE (`CNASummary`, `docs/features/tickets/cna.md`, Response
+Schemas, Display Name) is part of every CVE representation, the compact
+ones included, so its projection and display-name rule live here too.
+
 This leaf module imports only Models and Core, so both services use one
 projection without `cve_service` importing `ticket_service`. It owns no
 query: each caller builds its own single statement, selects
@@ -23,6 +27,7 @@ assembling a row is pure.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -41,6 +46,7 @@ from sqlalchemy.dialects.postgresql import JSON, aggregate_order_by
 from sqlalchemy.engine import Row
 
 from app.core.enums import CveState, Severity
+from app.models.cna import CNA
 from app.models.cve import CVE
 from app.models.cve_cwe import CVECWE
 from app.models.cve_epss_score import CVEEPSSScore
@@ -54,6 +60,27 @@ Unicode code-point order for UTF-8 text independent of the database
 default collation."""
 
 _EMPTY_JSON_ARRAY: Final[ColumnElement[Any]] = literal_column("'[]'::json")
+
+
+@dataclass(frozen=True, slots=True)
+class CNASummaryProjection:
+    """The compact reference to the CNA that owns a CVE Record
+    (`CNASummary`): its CVE Services `org_id` and its display name, `None`
+    while the CNA has no name. The internal `CNA.id` is never part of it."""
+
+    org_id: uuid.UUID
+    name: str | None
+
+
+def cna_display_name(
+    organization_name: str | None, short_name: str | None
+) -> str | None:
+    """The display name of a CNA: `organization_name` when set, otherwise
+    `short_name`, otherwise `None`; never an identifier (cna.md, Display
+    Name). Pure."""
+    if organization_name is not None:
+        return organization_name
+    return short_name
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,7 +138,8 @@ class CVEDetailProjection:
     """The expanded CVE projection represented by `CVEDetail`.
 
     `severity` is the CVE-owned unified severity (`None` is SQL `NULL`,
-    unresolved; `Severity.NONE` is the resolved `None` label).
+    unresolved; `Severity.NONE` is the resolved `None` label). `cna` is the
+    CNA that owns the record, `None` while none is recorded.
     `external_identifiers` are ordered by source, identifier, then
     `CVEExternalIdentifier.id`; `cwes` by `cwe_id`, all in ascending
     Unicode code-point order. The internal CVE UUID, Ticket content, a
@@ -126,6 +154,7 @@ class CVEDetailProjection:
     cve_state: CveState
     date_rejected: datetime | None
     severity: Severity | None
+    cna: CNASummaryProjection | None
     external_identifiers: tuple[CVEExternalIdentifierProjection, ...]
     kev: CVEKEVProjection | None
     epss: CVEEPSSProjection | None
@@ -217,6 +246,7 @@ def cve_detail_columns() -> tuple[ColumnElement[Any], ...]:
         CVE.cve_state.label("cve_state"),
         CVE.date_rejected.label("cve_date_rejected"),
         CVE.severity.label("cve_severity"),
+        *cna_summary_columns(),
         CVEKEVEntry.id.label("kev_pk"),
         CVEKEVEntry.date_added.label("kev_date_added"),
         CVEKEVEntry.reference_url.label("kev_reference_url"),
@@ -232,6 +262,21 @@ def cve_detail_columns() -> tuple[ColumnElement[Any], ...]:
         CVESSVCAssessment.assessed_at.label("ssvc_assessed_at"),
         _cwe_assignments_column().label("cve_cwe_assignments"),
         _external_identifiers_column().label("cve_external_identifiers"),
+    )
+
+
+def cna_summary_columns() -> tuple[ColumnElement[Any], ...]:
+    """The labeled `CNA` columns `cna_summary_from_row()` reads.
+
+    For a statement that selects a compact CVE representation without
+    `cve_detail_columns()`, which already includes them; it requires the
+    outer join of `join_cve_evidence()` or an equivalent outer join of `CNA`
+    on `CVE.cna_id`. Each value is `NULL` without a CNA.
+    """
+    return (
+        CNA.org_id.label("cna_org_id"),
+        CNA.organization_name.label("cna_organization_name"),
+        CNA.short_name.label("cna_short_name"),
     )
 
 
@@ -252,15 +297,18 @@ def cve_priority_evidence_columns() -> tuple[ColumnElement[Any], ...]:
 
 
 def join_cve_evidence[*Ts](statement: Select[*Ts]) -> Select[*Ts]:
-    """Outer-join the one-to-one KEV, EPSS, and SSVC rows of `CVE`.
+    """Outer-join the one-to-one KEV, EPSS, and SSVC rows of `CVE` and its
+    CNA.
 
-    Each relation is unique by `cve_id`, so the joins add at most one row
-    per CVE and never multiply the statement.
+    Each evidence relation is unique by `cve_id` and the CNA is joined by
+    its primary key, so the joins add at most one row per CVE and never
+    multiply the statement.
     """
     return (
         statement.outerjoin(CVEKEVEntry, CVEKEVEntry.cve_id == CVE.id)
         .outerjoin(CVEEPSSScore, CVEEPSSScore.cve_id == CVE.id)
         .outerjoin(CVESSVCAssessment, CVESSVCAssessment.cve_id == CVE.id)
+        .outerjoin(CNA, CNA.id == CVE.cna_id)
     )
 
 
@@ -292,6 +340,17 @@ def _external_identifiers(
     )
 
 
+def cna_summary_from_row(row: Row[*tuple[Any, ...]]) -> CNASummaryProjection | None:
+    """Assemble the CNA reference from a row selecting
+    `cna_summary_columns()`; `None` when the CVE has no CNA. Pure."""
+    if row.cna_org_id is None:
+        return None
+    return CNASummaryProjection(
+        org_id=row.cna_org_id,
+        name=cna_display_name(row.cna_organization_name, row.cna_short_name),
+    )
+
+
 def cve_detail_from_row(row: Row[*tuple[Any, ...]]) -> CVEDetailProjection | None:
     """Assemble the projection from a row selecting `cve_detail_columns()`.
 
@@ -309,6 +368,7 @@ def cve_detail_from_row(row: Row[*tuple[Any, ...]]) -> CVEDetailProjection | Non
         cve_state=CveState(row.cve_state),
         date_rejected=row.cve_date_rejected,
         severity=Severity(row.cve_severity) if row.cve_severity is not None else None,
+        cna=cna_summary_from_row(row),
         external_identifiers=_external_identifiers(row.cve_external_identifiers),
         kev=(
             CVEKEVProjection(

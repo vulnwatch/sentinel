@@ -45,6 +45,16 @@ that commit (17,327 published, 317 rejected):
 - `cpeApplicability` occurs in 17,477 records and `x_generator` in all.
 - No string contains U+0000.
 
+A second anonymous scan on 2026-11-09 (`master`
+`47a51be7d7ad01c834715700b5969a22982d83d2`, 18,221 published and 338
+rejected records) for the owner of the record
+(docs/features/tickets/cna.md, Payload) found the same `providerMetadata`
+in every record: only `orgId`, always `f4215fc3-…`, equal to
+`cveMetadata.assignerOrgId`. cvelistV5 publishes the same records with the
+organization `416baaa9-dc9f-4396-8d5f-8c081fb06d67` and the short name
+`Linux` (`tests/support/mitre.py`, `cna_linux_kernel`), which are the
+constants of `cve-sync-kernel.md` (CVE JSON Field Mapping).
+
 Repository layout under `cve/`: `published/` and `rejected/` hold, per
 CVE, an empty `CVE-YEAR-ID`, `.json`, `.sha1`, `.mbox`, and optional `.dyad`,
 `.vulnerable`, `.reference`, `.cvss`, `.message` (published, 7 files), and

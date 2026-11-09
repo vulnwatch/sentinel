@@ -71,6 +71,7 @@ from app.core.enums import (
     TicketAuditEventType,
     TicketStatus,
 )
+from app.models.cna import CNA
 from app.models.cve import CVE
 from app.services import reference_service
 from app.services.base_cve_fetcher import CVE_FETCH_ITEM_FAILED_EVENT
@@ -431,6 +432,17 @@ class TestPublishedRecord:
         assert cve.published_date == datetime(2024, 9, 7, 16, 11, 22, 220000, UTC)
         assert cve.modified_date == datetime(2024, 9, 9, 14, 15, 21, 746000, UTC)
         assert cve.date_rejected is None
+        # The owner of the record (cve-sync-mitre.md, CNA container fields).
+        owner = await harness.cna_of(cve)
+        metadata = fixture["providerMetadata"]
+        assert (str(owner.org_id), owner.short_name) == (
+            metadata["orgId"],
+            metadata["shortName"],
+        )
+        assert owner.short_name_observed_at == datetime(
+            2024, 9, 7, 16, 11, 22, 220000, UTC
+        )
+        assert (owner.auto_ignore, owner.types) == (False, [])
         state = await source_state(harness.factory, cve.id, MITRE)
         assert state is not None
         assert state.status == CVESourceFetchStatus.SUCCESS
@@ -704,6 +716,76 @@ class TestPublishedRecord:
         assert [call["ticket_id"] for call in harness.published.published(RESOLVE)] == [
             str(ticket.id)
         ]
+
+    async def test_transfer_replaces_the_cna_and_a_short_name_change_is_no_update(
+        self,
+        workspace: GitWorkspace,
+        harness: GitRunHarness,
+        mitre: GitFetcherProbe,
+    ) -> None:
+        """cna.md (Merge of `CVE.cna_id`; Short Name): a new owner is an
+        effective change of the CVE, counted as updated; a new short name of
+        the same owner changes only the CNA row and is not. The CNA container
+        carries no vector and no CWE, whose provider and source would follow
+        the short name."""
+        fixture = "cisa_kev_cwe_tags"
+        cve_id = harness.world.new_cve_id()
+        path = record_path(cve_id)
+
+        def bare(record: dict[str, Any]) -> None:
+            del cna(record)["metrics"]
+            del cna(record)["problemTypes"]
+
+        await _first_run(workspace, harness, mitre)
+        commit(
+            workspace.upstream, {path: derived_record(fixture, cve_id, bare)}, date=D_1
+        )
+        assert (await harness.run(mitre)).row.metrics == (1, 1, 0, 0)
+        first = await harness.cna_of(await _cve(harness, cve_id))
+
+        def transfer(record: dict[str, Any]) -> None:
+            bare(record)
+            cna(record)["providerMetadata"] = {
+                "orgId": "00000000-0000-4000-8000-0000000000b1",
+                "shortName": "example-owner",
+                "dateUpdated": "2026-01-01T00:00:00.000Z",
+            }
+
+        commit(
+            workspace.upstream,
+            {path: derived_record(fixture, cve_id, transfer)},
+            date=D_2,
+        )
+        _reset(harness)
+        transferred = await harness.run(mitre)
+
+        assert transferred.row.metrics == (1, 0, 1, 0)
+        second = await harness.cna_of(await _cve(harness, cve_id))
+        assert (str(second.org_id), second.short_name) == (
+            "00000000-0000-4000-8000-0000000000b1",
+            "example-owner",
+        )
+        # The previous CNA is retained without the CVE.
+        async with harness.factory() as session:
+            assert await session.get(CNA, first.id) is not None
+
+        def rename(record: dict[str, Any]) -> None:
+            transfer(record)
+            cna(record)["providerMetadata"].update(
+                shortName="example-renamed", dateUpdated="2026-02-01T00:00:00.000Z"
+            )
+
+        commit(
+            workspace.upstream,
+            {path: derived_record(fixture, cve_id, rename)},
+            date=D_3,
+        )
+        _reset(harness)
+        renamed = await harness.run(mitre)
+
+        assert renamed.row.metrics == (1, 0, 0, 0)
+        third = await harness.cna_of(await _cve(harness, cve_id))
+        assert (third.id, third.short_name) == (second.id, "example-renamed")
 
 
 # ---------------------------------------------------------------------------

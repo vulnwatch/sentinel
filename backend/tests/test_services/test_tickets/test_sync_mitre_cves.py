@@ -173,6 +173,7 @@ TICKET_ID: Final = uuid.UUID("00000000-0000-4000-8000-0000000000aa")
 SKIP_EVENTS: Final = (
     "mitre_adp_entry_skipped",
     "mitre_cna_provider_skipped",
+    "mitre_cna_owner_skipped",
     "mitre_ssvc_assessment_skipped",
 )
 
@@ -633,6 +634,9 @@ class TestCallerWarnings:
         ]
 
     async def test_cna_guard_omits_a_non_uuid_org_id(self, ingest: FakeIngest) -> None:
+        """A record that fails both CNA guards logs both events, the owner
+        guard without an `org_id` (cve-sync-mitre.md, Caller WARNING
+        fields)."""
         _, logs = await _process(
             ingest, _content("cna_short_name_missing", _non_uuid_cna_org_id)
         )
@@ -644,8 +648,52 @@ class TestCallerWarnings:
                 "cve_id": CVE_ID,
                 "fetcher_name": NAME,
                 "reason": "cna_short_name_missing",
+            },
+            {
+                "event": "mitre_cna_owner_skipped",
+                "log_level": "warning",
+                "cve_id": CVE_ID,
+                "fetcher_name": NAME,
+            },
+        ]
+        assert NON_UUID_ORG_ID not in repr([dict(entry) for entry in logs])
+
+    async def test_cna_owner_guard_is_one_event_and_omits_the_cna(
+        self, ingest: FakeIngest
+    ) -> None:
+        """CNA owner guard: a record without a valid owner is ingested
+        without `cna`, which preserves the recorded CNA; nothing else of
+        the record is affected."""
+        _, logs = await _process(
+            ingest, _content("cisa_kev_cwe_tags", _non_uuid_cna_org_id)
+        )
+
+        assert _skip_events(logs) == [
+            {
+                "event": "mitre_cna_owner_skipped",
+                "log_level": "warning",
+                "cve_id": CVE_ID,
+                "fetcher_name": NAME,
             }
         ]
+        [(_, _, payload)] = ingest.upserts
+        assert "cna" not in payload.model_fields_set
+        assert payload.cvss_assessments
+        assert payload.kev_data is not None
+        assert NON_UUID_ORG_ID not in repr([dict(entry) for entry in logs])
+
+    async def test_owner_of_the_record_reaches_the_upsert(
+        self, ingest: FakeIngest
+    ) -> None:
+        name = "cna_transferred"
+        metadata = load_record(name)["containers"]["cna"]["providerMetadata"]
+
+        await _process(ingest, _content(name))
+
+        [(_, _, payload)] = ingest.upserts
+        assert payload.cna is not None
+        assert str(payload.cna.org_id) == metadata["orgId"]
+        assert payload.cna.short_name == metadata["shortName"]
 
     @pytest.mark.parametrize(
         ("edit", "reason", "missing_fields"),
@@ -772,7 +820,8 @@ class TestCallerWarnings:
 
         _, logs = await _process(ingest, content)
 
-        assert len(_skip_events(logs)) == 5
+        # Three ADP entries, both CNA guards, and the SSVC skip.
+        assert len(_skip_events(logs)) == 6
         rendered = repr([dict(entry) for entry in logs])
         for raw in (
             NON_UUID_ORG_ID,
