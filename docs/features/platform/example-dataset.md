@@ -519,27 +519,32 @@ with no source reference.
 ### CNAs
 
 Every MITRE ingestion supplies, as the owner of its record, one of these
-fictional CNAs, with its `org_id` and short name and the observation date
-`T − 1d` (`docs/features/tickets/cna.md`, Ingestion Writers). The first MITRE
-ingestion of a CVE of a CNA creates the CNA:
+fictional CNAs: its `org_id` and, when the table gives one, its short name with
+the observation date `T − 1d` (`docs/features/tickets/cna.md`, Ingestion
+Writers). The first MITRE ingestion of a CVE of a CNA creates the CNA:
 
 | `org_id` | Short name | Organization name | Types | Scope | Auto-ignore | CVEs |
 |---|---|---|---|---|---|---|
-| `00000000-0000-4000-8000-0000000000a1` | `example` | Example Corporation | `Vendor` | `Example Corporation products only.` | No | `CVE-2099-0008`, `CVE-2099-0009`, `CVE-2099-0010`, `CVE-2099-0013` |
+| `00000000-0000-4000-8000-0000000000a1` | `example` | Example Corporation | `Vendor` | `Example Corporation products only.` | No, after being enabled and disabled by `jdoe` | `CVE-2099-0008`, `CVE-2099-0009`, `CVE-2099-0010` |
 | `00000000-0000-4000-8000-0000000000a2` | `fictional-plugins` | Fictional Plugin Foundation | `Open Source`, `Researcher` | The two lines `Plugins of the fictional plugin directory.` and `Plugin list: https://plugins.example.com` | Yes, set by `jdoe` | `CVE-2099-0006`, `CVE-2099-0026` |
+| `00000000-0000-4000-8000-0000000000a3` | — | — | — | — | No | `CVE-2099-0013` |
+
+The third CNA has no short name, so it has no metadata and its display name is
+`null`, which shows how a client receives an unnamed CNA.
 
 Step 8 of `CVEs and tickets` runs one system operation of
-`update_cna_metadata()` for each CNA, in the order of the table, with its
-organization name, types, and scope, standing for `sync_mitre_cnas`. It then
-runs `set_cna_auto_ignore()` with `true` by `jdoe` for `fictional-plugins`,
-which creates one `auto_ignore_enabled` event. The CNA of `CVE-2099-0009`,
-`CVE-2099-0010`, and `CVE-2099-0013` is recorded by their further MITRE
-ingestion, after their Tickets exist; `example` is not under the policy, so
-the Tickets keep their status. `SNTL-6`, the Ticket of `CVE-2099-0006`, stays
-`New`: enabling the policy changes no existing Ticket. The first ingestion of
-`CVE-2099-0026` in step 9 then creates `SNTL-28` and ignores it with the
-reason `cna_policy` (`docs/features/tickets/cna.md`, When the Policy
-Applies).
+`update_cna_metadata()` for `example` and for `fictional-plugins`, in this
+order, with the organization name, types, and scope of the table, standing for
+`sync_mitre_cnas`. It then runs `set_cna_auto_ignore()` by `jdoe` three times:
+`true` and then `false` for `example`, and `true` for `fictional-plugins`,
+which create one `auto_ignore_enabled`, one `auto_ignore_disabled`, and one
+`auto_ignore_enabled` event. The CNA of `CVE-2099-0009`, `CVE-2099-0010`, and
+`CVE-2099-0013` is recorded by their further MITRE ingestion in step 7, after
+their Tickets exist and while no CNA is under the policy, so the Tickets keep
+their status. `SNTL-6`, the Ticket of `CVE-2099-0006`, stays `New`: enabling
+the policy changes no existing Ticket. The first ingestion of `CVE-2099-0026`
+in step 9 then creates `SNTL-28` and ignores it with the reason `cna_policy`
+(`docs/features/tickets/cna.md`, When the Policy Applies).
 
 The SUSE assessments are part of the Ticket work:
 
@@ -979,7 +984,7 @@ holds events after the load:
 | Identity | `user_created`, `role_added`, and `user_deactivated` |
 | Setting | Two `setting_changed` events by `jdoe` |
 | Fetcher | One `disabled` event by `jdoe` for every fetcher |
-| CNA | One `auto_ignore_enabled` event by `jdoe` for `fictional-plugins` |
+| CNA | `auto_ignore_enabled` and `auto_ignore_disabled` for `example`, then `auto_ignore_enabled` for `fictional-plugins`, all by `jdoe` |
 | Ticket | The events of every Ticket creation and Ticket work operation, for example `ticket_created`, `assignment`, `status_change`, `cve_associated`, `cvss_assessment_changed`, `product_eligibility_changed`, `package_added`, `package_maintainer_added`, `track_status_changed`, `product_released`, `priority_changed`, `reference_added`, `coordinated_release_changed`, `confidentiality_changed`, `access_grant_added`, and `duplicate_set` |
 
 ## Operating a Dataset Backend

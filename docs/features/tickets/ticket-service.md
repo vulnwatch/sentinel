@@ -378,7 +378,7 @@ The result contains a collection of Ticket summary projections plus `total`,
    Ticket without a reason, in every status other than `Ignored`, matches no
    value. `cna` matches a Ticket whose current CVE has a `cna_id` whose
    `CNA.org_id` is one of the values; a Ticket without a CVE or whose CVE has
-   no CNA matches no value, and an unknown value yields an empty page.
+   no CNA matches no value, and an unknown value matches nothing.
    `is_confidential` compares `Ticket.is_confidential`.
    `coordinated_release_passed = True` matches a confidential Ticket whose
    `coordinated_release_at` is not `NULL` and is at or before the evaluation
@@ -622,7 +622,9 @@ same steps remain authoritative: initial status still comes only from step 4,
 and the function does not call `ignore_new_for_rejected_cve()` or create the
 automatic `CVE rejected` status event. The authorized user may invoke the
 ordinary manual ignore operation separately, for example with the reason
-`cve_rejected`.
+`cve_rejected`. Likewise, whatever the CNA of the CVE, the function never calls
+`ignore_new_for_cna_policy()` (`docs/features/tickets/cna.md`, When the Policy
+Applies).
 
 **Concurrency — CVE uniqueness**: concurrent creations for the same CVE
 serialize on the CVE `FOR NO KEY UPDATE` lock of step 2. The association state
@@ -739,7 +741,8 @@ association, the function still performs only the ordinary association,
 severity-source handover, Product, and gate sequence above. It does not invoke
 `ignore_new_for_rejected_cve()` or create an automatic `CVE rejected` event; the
 authorized user may ignore the Ticket through the ordinary manual operation,
-for example with the reason `cve_rejected`.
+for example with the reason `cve_rejected`. Likewise, whatever the CNA of the
+CVE, the function never calls `ignore_new_for_cna_policy()`.
 
 **Locking**: `FOR SHARE` on acting User, `FOR NO KEY UPDATE` on CVE, then
 `FOR UPDATE` on Ticket. CVE Resolution

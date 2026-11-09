@@ -2750,10 +2750,13 @@ When the CNA of a CVE, its writers, the CNA metadata fetcher
 (`sync_mitre_cnas`), the auto-ignore policy, its administrative operation, or
 the CNA reads and filters are implemented or changed, tests MUST cover the
 complete matrix in `docs/features/tickets/cna.md` (Testing Requirements),
-together with the `status_change` assertions of
-`docs/features/tickets/ticket-audit-log.md`, Audit Trail Testing above for the
-CNA audit trail, and the External Integration Contract Verification of the CNA
-list (`docs/conventions.md`).
+together with:
+
+- the `status_change` assertions of
+  `docs/features/tickets/ticket-audit-log.md`;
+- Audit Trail Testing in this document, for the CNA audit trail; and
+- External Integration Contract Verification (`docs/conventions.md`), for the
+  CNA list.
 
 ### NVD CPE Applicability Selection
 
@@ -5008,8 +5011,9 @@ and the dedicated database starts its Ticket identifiers at `SNTL-1`.
   fetcher runs with their times, statuses, counters, and errors; the
   Products with their lifecycle phases and thresholds; the CVEs with their
   source data and CVE source records, and the failure drill-down of the last
-  NVD run; the CNAs with their short names, metadata, auto-ignore flag, and
-  `auto_ignore_enabled` event, and the CNA of every CVE; the Tickets with their
+  NVD run; the CNAs with their short names, metadata, display names,
+  auto-ignore flags, and CNA audit events, and the CNA of every CVE; the
+  Tickets with their
   identifiers, status, ignore reason,
   assignee, confidentiality, access grant, coordinated release date, and
   severity; the

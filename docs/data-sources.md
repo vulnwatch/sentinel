@@ -116,18 +116,15 @@ partner organization.
   the file `src/assets/data/CNAsList.json` of the `main` branch of the public
   `CVEProject/cve-website` GitHub repository. No authentication. GitHub
   applies limits to unauthenticated requests, downloads from this host
-  included, without publishing their values; Sentinel makes one request a day,
-  and a refused request fails that run. On
-  2026-11-09 the file held 564 entries in 757,202 bytes and was served as
-  `text/plain` with a five-minute CDN cache
+  included, without publishing their values; Sentinel makes one request a
+  day. On 2026-11-09 the file held 564 entries in 757,202 bytes and was served
+  as `text/plain` with a five-minute CDN cache
 - **Contract and license**: the file is a data file of a website, not a
   versioned API: its location and format can change without notice, and the
   repository declares no license. Sentinel stores only the organization name,
   types, and plain-text scope of the CNAs that own ingested CVEs, and shows
-  them to its users
-- **Failure behavior**: a failed or invalid download changes nothing; the
-  stored CNA metadata remain as last synchronized and the next daily run
-  retries
+  them to its users. The failure behavior is owned by the fetcher
+  specification below
 - **Integration status**: **Active**
 - **Documentation**: https://www.cve.org/PartnerInformation/ListofPartners,
   https://github.com/CVEProject/cve-website

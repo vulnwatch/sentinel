@@ -118,16 +118,17 @@ Out of scope:
 ## CNA of a CVE
 
 `CVE.cna_id` references the `CNA` row whose `org_id` is the CVE Services UUID
-of the owner of the CVE's record. A CVE has at most one CNA. A CVE that no
-writer has ingested has none: a placeholder (`cve-service.md`, Placeholder
-Records), a CVE known so far only from NVD or GHSA, or a CVE ingested before
-the CNA was recorded.
+of the owner of the CVE's record. A CVE has at most one CNA. A CVE has none
+until a writer ingests a record of it that names a valid owner: for example a
+placeholder (`cve-service.md`, Placeholder Records), or a CVE known so far only
+from NVD or GHSA.
 
 ### The CNA Entity
 
-One `CNA` row exists for every CVE Services organization that owns at least one
-CVE ingested by a writer since the CNA was recorded. Only ingestion creates a
-row, and no operation deletes one. `docs/data-model.md` (CNA) owns the schema.
+One `CNA` row exists for every CVE Services organization that owns, or has
+owned, the record of at least one CVE that a writer ingested. Only ingestion
+creates a row, and no operation deletes one, also when a transfer leaves a CNA
+without a CVE. `docs/data-model.md` (CNA) owns the schema.
 
 | Column | Meaning | Written by |
 |---|---|---|
@@ -143,10 +144,10 @@ row, and no operation deletes one. `docs/data-model.md` (CNA) owns the schema.
 
 Every CNA representation carries `name`: `organization_name` when set,
 otherwise `short_name`, otherwise `null`. No response substitutes `org_id` or
-another identifier for it. `name` is `null` only for a CNA whose ingested
-records carry no usable short name and that the CNA list does not describe. In
-the CNA list of November 2026, `organizationName` was unique across its 564
-entries.
+another identifier for it. `name` is `null` exactly while the CNA has no short
+name: only a row with a short name can match the CNA list
+(`sync_mitre_cnas`), and a short name is never cleared. `organizationName` was
+unique across the entries of the CNA list of November 2026.
 
 ## Ingestion Writers
 
@@ -160,15 +161,14 @@ rejects it from any other source:
 | Writer | `org_id` | `short_name` | `short_name_observed_at` |
 |---|---|---|---|
 | `sync_mitre_cves` | `containers.cna.providerMetadata.orgId` | Trimmed `providerMetadata.shortName`, when valid | `providerMetadata.dateUpdated` |
-| `sync_kernel_cves` | The constant `416baaa9-dc9f-4396-8d5f-8c081fb06d67` | The constant `Linux` | None |
+| `sync_kernel_cves` | The constant organization of the Linux kernel CNA | The constant `Linux` | None |
 
 `parse_cna_owner()` (`docs/features/platform/cve-record-parser.md`) defines the
 MITRE values and their validation. The kernel fetcher uses constants because
-the records of `vulns.git` carry, as `providerMetadata.orgId`, an identifier of
-the kernel CNA's own tooling (observed: `f4215fc3-5b6b-47ff-a258-f7189bd81038`)
-that is not its CVE Services organization, and no short name. The constants
-are the organization and short name with which cvelistV5 publishes the same
-records (observed in November 2026 for every kernel record checked).
+the records of `vulns.git` carry, as `providerMetadata.orgId`, an identifier
+that is not the CNA's CVE Services organization, and no short name; the
+constants are those with which cvelistV5 publishes the same records
+(`cve-sync-kernel.md`, CVE JSON Field Mapping, which owns their values).
 
 ### Merge of `CVE.cna_id`
 
@@ -224,7 +224,8 @@ invocation:
 
 1. the post-merge `cve_state` is `PUBLISHED`;
 2. the post-merge CNA of the CVE has `auto_ignore = true`, as the invocation
-   reads it when it resolves the CNA;
+   reads it: from the resolution of a supplied `cna`, or, when the payload
+   omits `cna`, from the CNA already recorded for the CVE;
 3. the invocation created the Ticket, or changed `CVE.cna_id`; and
 4. no earlier lifecycle decision of the same step applies.
 
@@ -238,7 +239,9 @@ with `comment = "CNA auto-ignore policy"` and
 Consequences:
 
 - A Ticket that ingestion creates for a published CVE of a CNA under the policy
-  is created `New` and ignored in the same transaction. Its history is
+  is created `New` and ignored in the same transaction, whichever source
+  creates it, as long as the CNA is supplied or already recorded. This
+  includes re-ticketing an orphan CVE. Its history is
   `ticket_created`, `cve_associated`, every other event of the ingestion in
   the order of `ticket-audit-log.md` (Cross-Event Ordering), then the
   `status_change` of the policy, which is last.
@@ -247,11 +250,11 @@ Consequences:
 - An unchanged CNA applies nothing: re-ingesting a record does not ignore a
   Ticket that the policy did not ignore before.
 - Manual creation and CVE association never apply the policy themselves
-  ([tickets.md](tickets.md#cve-resolution-behavior)). A Ticket that a user
-  creates in `New`, because the user cannot be its assignee, as a bot account
-  cannot, is ignored when a later ingestion records a CNA under the policy for
-  its CVE; this includes the freshness fetch of its creation. The rejection of a
-  CVE affects such a Ticket in the same way
+  ([tickets.md](tickets.md#cve-resolution-behavior)). A Ticket created in
+  `New` by a user who cannot be its assignee, such as a bot account, is
+  ignored when a later ingestion records a CNA under the policy for its CVE;
+  this includes the freshness fetch of its creation. The rejection of a CVE
+  affects such a Ticket in the same way
   ([cve-tracking.md](cve-tracking.md#rejection-handling)). This is accepted:
   Sentinel does not record how a Ticket was created, and doing so only for this
   case is disproportionate.
@@ -298,10 +301,12 @@ revert of a rejection reopens only a Ticket ignored with `cve_rejected`
 
 ### Concurrency
 
-- An ingestion reads `auto_ignore` from the CNA row when it resolves the CNA,
-  after acquiring the CVE root lock and before locking the Ticket
-  (`cve-service.md`, Complete `upsert_cve()` Composition). An administrative
-  change committed after that read applies to later ingestions only.
+- An ingestion reads `auto_ignore` from the CNA row when it resolves a
+  supplied CNA, or with a plain read of the recorded CNA when the payload
+  omits it, after acquiring the CVE root lock and before locking the Ticket
+  (`cve-service.md`, Complete `upsert_cve()` Composition, step 4). An
+  administrative change committed after that read applies to later ingestions
+  only.
 - Set CNA Auto-Ignore locks only the CNA row, with `FOR NO KEY UPDATE`. The
   foreign-key check of a CVE that references the row takes `FOR KEY SHARE`,
   which that mode does not block.
@@ -531,9 +536,10 @@ PostgreSQL observation.
 
 ### Response Schemas
 
-**CNASummary** — compact reference to the CNA of a CVE, used in `CVESummary`
-and `CVEDetail` ([tickets.md](tickets.md#shared-sub-schemas)) and in
-`CVEListItem` ([cve-tracking.md](cve-tracking.md#list-cves)):
+**CNASummary** — compact reference to a CNA, used in `CVESummary` and
+`CVEDetail` ([tickets.md](tickets.md#shared-sub-schemas)), in `CVEListItem`
+([cve-tracking.md](cve-tracking.md#list-cves)), and in the CNA audit events
+([List CNA Audit Events](#list-cna-audit-events)):
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -783,9 +789,9 @@ The fetcher requests exactly
 the CNA list that the CVE Program website publishes from the `main` branch of
 its repository. The file is a data file of a public repository, not a
 versioned API: its format can change without notice, and the repository
-declares no license (`docs/data-sources.md`, CVE Program CNA List). On
-2026-11-09 it held 564 entries in 757,202 bytes, served with
-`Content-Type: text/plain` and a five-minute CDN cache.
+declares no license. `docs/data-sources.md` (CVE Program CNA List) records the
+source and its observed size; the file is served with
+`Content-Type: text/plain`.
 
 #### Algorithm
 
@@ -806,8 +812,8 @@ declares no license (`docs/data-sources.md`, CVE Program CNA List). On
 6. **Fields**: for each pair, validate each field of the entry independently
    under Field Mapping.
 7. **Write**: for each matched row, in ascending `CNA.id` order, call
-   `cna_service.update_cna_metadata()` with the valid fields; an absent or
-   invalid field is not passed and keeps its stored value.
+   `cna_service.update_cna_metadata()` with the valid fields; a field that is
+   not valid is not passed and keeps its stored value.
 8. **Commit** once.
 9. **Metrics and logs**: record the outcomes of Work Unit and Metrics and emit
    the warnings of Error Handling.
@@ -846,9 +852,11 @@ the name and scope of one organization to another.
 | `types` | `.CNA.type` | `.CNA` is an object and `.type` an array of at most 16 strings, each not empty after trimming, at most 128 characters, with no inadmissible character | The trimmed items without duplicates, in ascending Unicode code-point order; an empty array stores `[]` |
 | `scope` | `.scope` | A string whose Scope Plain Text conversion succeeds | The converted text; an empty result stores `NULL` |
 
-An absent or `null` field, and an absent or `null` `.CNA`, keep the stored
-value without a log. A field present with any other value keeps the stored
-value and logs `cna_metadata_field_invalid`.
+Any other value of a field, including an absent or `null` field and an absent
+or `null` `.CNA`, keeps the stored value and logs `cna_metadata_field_invalid`.
+Every entry of the live list carries all three fields, so a missing one means
+that the format of the list has changed, and the warning makes it visible
+while the run itself succeeds.
 
 The fetcher reads no other member of an entry: not `contact`,
 `disclosurePolicy`, `securityAdvisories`, `resources`, `country`, `cnaID`, or
@@ -873,7 +881,10 @@ values, and its tokens are converted in order:
 | End tag `a` | Closes the link and appends its text, followed by ` (<href>)` when the `href` is an absolute URL with the scheme `http` or `https` (case-insensitive), contains no whitespace, and differs from the trimmed link text. Without an open link, the scope is invalid |
 | Any other tag, a comment, a declaration, or a processing instruction | The scope is invalid |
 
-A link still open at the end makes the scope invalid. The result is trimmed of
+While a link is open, its text and the line feeds of its `br` tags go to the
+link text, not to the result, until its end tag; the link text is compared
+with the `href` after trimming. A link still open at the end makes the scope
+invalid. The result is trimmed of
 leading and trailing whitespace; an empty result is `NULL`, and a result longer
 than 4096 characters or containing an inadmissible character is invalid. For
 example, `Projects listed on its <a href='https://github.com/example'
@@ -983,18 +994,24 @@ least:
    change of the row is not `updated`; every row of the Short Name table; and
    concurrent first ingestions of two CVEs of a new CNA create one row and
    commit both CVEs.
-4. **Policy**: every row of Order of Arrival of the Sources and of Precedence
-   and Exclusions; the exact event of the transition and its position as the
-   last event of the ingestion; no reopen by KEV, a transfer, a policy change,
-   or a rejection revert; a policy change committed concurrently with an
-   ingestion, in both commit orders; no call and no event when an ingestion
-   leaves an unchanged CNA under the policy and the Ticket is `New`, and for a
-   manual creation or association of a CVE whose CNA is under the policy; a
-   user's assignment or ignore concurrent with the policy ignore of the same
-   Ticket, in both commit orders (the boundary is a no-op after the user, and
-   the user receives `TICKET_NOT_MUTABLE` after the policy); and one ingestion
-   that reverts a rejection and changes the CNA to one under the policy, which
-   reopens a `cve_rejected` Ticket and does not ignore it.
+4. **Policy**:
+   - every row of Order of Arrival of the Sources and of Precedence and
+     Exclusions;
+   - the exact event of the transition and its position as the last event of
+     the ingestion;
+   - no reopen by KEV, a transfer, a policy change, or a rejection revert;
+   - a policy change committed concurrently with an ingestion, in both commit
+     orders;
+   - no call and no event when an ingestion leaves an unchanged CNA under the
+     policy and the Ticket is `New`, and for a manual creation or association
+     of a CVE whose CNA is under the policy;
+   - an orphan CVE whose recorded CNA is under the policy, re-ticketed by a
+     source that omits `cna`, whose new Ticket is ignored;
+   - a user's assignment or ignore concurrent with the policy ignore of the
+     same Ticket, in both commit orders: the boundary is a no-op after the
+     user, and the user receives `TICKET_NOT_MUTABLE` after the policy; and
+   - one ingestion that reverts a rejection and changes the CNA to one under
+     the policy, which reopens a `cve_rejected` Ticket and does not ignore it.
 5. **Administrative operation**: the capability check, malformed and unknown
    `org_id`, the idempotent no-op, one event per effective change with its
    `detail`, rollback of the change when the event fails, two concurrent equal
@@ -1017,7 +1034,8 @@ least:
 
 - `docs/features/tickets/cve-service.md` — `upsert_cve()`, `CVEIngestPayload`
 - `docs/features/tickets/cve-sync-mitre.md` — MITRE owner mapping
-- `docs/features/tickets/cve-sync-kernel.md` — kernel CNA constants
+- `docs/features/tickets/cve-sync-kernel.md` — kernel CNA constants, which it
+  owns
 - `docs/features/platform/cve-record-parser.md` — `parse_cna_owner()`
 - `docs/features/tickets/tickets.md` — Ignore Reason, transitions, List
   Tickets

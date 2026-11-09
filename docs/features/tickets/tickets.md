@@ -1809,7 +1809,7 @@ Query parameters:
   (`docs/features/tickets/cna.md`, CNA of a CVE). Matches the Tickets whose
   CVE's CNA has one of the values; multiple values use OR semantics. A Ticket
   without a CVE, or whose CVE has no CNA, matches no value, and an unknown
-  value returns an empty result, not 404. Each value must be a UUID in the
+  value matches nothing and never returns 404. Each value must be a UUID in the
   hyphenated form; another value produces the global `422 VALIDATION_ERROR`
   (`docs/api-spec.md`, CNA Identifier Resolution). Combined with
   `ignore_reason=cna_policy`, it lists the Tickets that the policy ignored
