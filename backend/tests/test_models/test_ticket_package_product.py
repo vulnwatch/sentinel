@@ -23,10 +23,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.product import Product
 from app.models.ticket_package_product import TicketPackageProduct
 from app.models.ticket_package_track import TicketPackageTrack
+from app.models.user import User
+from tests.support.product_eligibility import ELIGIBILITY_OVERRIDE_SET_AT
 
 ProductFactory = Callable[..., Awaitable[Product]]
 TicketPackageTrackFactory = Callable[..., Awaitable[TicketPackageTrack]]
 TicketPackageProductFactory = Callable[..., Awaitable[TicketPackageProduct]]
+UserFactory = Callable[..., Awaitable[User]]
 
 _DOCUMENTED_COLUMNS = {
     "id",
@@ -34,6 +37,8 @@ _DOCUMENTED_COLUMNS = {
     "product_id",
     "eligible",
     "is_eligible_override",
+    "eligibility_override_by_id",
+    "eligibility_override_at",
     "released_at",
     "deleted_at",
     "created_at",
@@ -43,6 +48,9 @@ _DOCUMENTED_COLUMNS = {
 _UNIQUE = "uq_ticket_package_product_ticket_package_track_id_product_id"
 _TRACK_FK = "ticket_package_product_ticket_package_track_id_fkey"
 _PRODUCT_FK = "ticket_package_product_product_id_fkey"
+_SETTER_FK = "ticket_package_product_eligibility_override_by_id_fkey"
+_PROVENANCE_CHECK = "chk_ticket_package_product_eligibility_override_provenance"
+_OVERRIDE_SET_AT = datetime(2026, 3, 10, 15, 30, tzinfo=UTC)
 
 
 @pytest.mark.integration
@@ -57,6 +65,8 @@ class TestTicketPackageProductCreation:
         assert occurrence.product_id is not None
         assert occurrence.eligible is True
         assert occurrence.is_eligible_override is False
+        assert occurrence.eligibility_override_by_id is None
+        assert occurrence.eligibility_override_at is None
         assert occurrence.released_at is None
         assert occurrence.deleted_at is None
         assert occurrence.created_at is not None
@@ -68,9 +78,11 @@ class TestTicketPackageProductCreation:
         product_factory: ProductFactory,
         ticket_package_track_factory: TicketPackageTrackFactory,
         ticket_package_product_factory: TicketPackageProductFactory,
+        user_factory: UserFactory,
     ) -> None:
         track = await ticket_package_track_factory()
         product = await product_factory()
+        setter = await user_factory()
         released_at = datetime(2026, 9, 1, 8, 30, tzinfo=UTC)
         excluded_at = datetime(2026, 9, 2, 1, 0, tzinfo=UTC)
         occurrence = await ticket_package_product_factory(
@@ -78,6 +90,8 @@ class TestTicketPackageProductCreation:
             product_id=product.id,
             eligible=False,
             is_eligible_override=True,
+            eligibility_override_by_id=setter.id,
+            eligibility_override_at=_OVERRIDE_SET_AT,
             released_at=released_at,
             deleted_at=excluded_at,
         )
@@ -90,6 +104,8 @@ class TestTicketPackageProductCreation:
         assert reloaded.product_id == product.id
         assert reloaded.eligible is False
         assert reloaded.is_eligible_override is True
+        assert reloaded.eligibility_override_by_id == setter.id
+        assert reloaded.eligibility_override_at == _OVERRIDE_SET_AT
         assert reloaded.released_at == released_at
         assert reloaded.deleted_at == excluded_at
 
@@ -101,7 +117,7 @@ class TestTicketPackageProductCreation:
     ) -> None:
         """A raw SQL INSERT bypasses every Python-side default, so the
         database must supply `id`, `eligible` (`true`), `is_eligible_override`
-        (`false`), and the timestamps."""
+        (`false`) without provenance, and the timestamps."""
         track = await ticket_package_track_factory()
         product = await product_factory()
         result = await db_session.execute(
@@ -109,8 +125,9 @@ class TestTicketPackageProductCreation:
                 "INSERT INTO ticket_package_product "
                 "(ticket_package_track_id, product_id) "
                 "VALUES (:track_id, :product_id) "
-                "RETURNING id, eligible, is_eligible_override, released_at, "
-                "deleted_at, created_at, updated_at"
+                "RETURNING id, eligible, is_eligible_override, "
+                "eligibility_override_by_id, eligibility_override_at, "
+                "released_at, deleted_at, created_at, updated_at"
             ),
             {"track_id": track.id, "product_id": product.id},
         )
@@ -119,6 +136,8 @@ class TestTicketPackageProductCreation:
         assert row.id.version == 7
         assert row.eligible is True
         assert row.is_eligible_override is False
+        assert row.eligibility_override_by_id is None
+        assert row.eligibility_override_at is None
         assert row.released_at is None
         assert row.deleted_at is None
         assert row.created_at.tzinfo is not None
@@ -129,8 +148,8 @@ class TestTicketPackageProductCreation:
 class TestTicketPackageProductSchemaShape:
     """Exactly the documented columns, constraints, and index (#633
     decision A2): no persisted actionability, lifecycle-phase, or
-    `non_actionable_reason` column, no CHECK constraint, and only
-    `ix_ticket_package_product_product_id`."""
+    `non_actionable_reason` column, only the override provenance CHECK
+    constraint, and only `ix_ticket_package_product_product_id`."""
 
     def test_columns_match_documented_set(self) -> None:
         assert set(TicketPackageProduct.__table__.columns.keys()) == _DOCUMENTED_COLUMNS
@@ -144,9 +163,12 @@ class TestTicketPackageProductSchemaShape:
         }
         assert uniques == {(_UNIQUE, ("ticket_package_track_id", "product_id"))}
 
-    def test_no_check_constraint(self) -> None:
+    def test_only_the_provenance_check_constraint(self) -> None:
+        """Its behavior is the matrix of `TestEligibilityOverrideProvenance`
+        (docs/data-model.md, TicketPackageProduct, CHECK constraints)."""
         table = TicketPackageProduct.metadata.tables["ticket_package_product"]
-        assert not [c for c in table.constraints if isinstance(c, CheckConstraint)]
+        (check,) = [c for c in table.constraints if isinstance(c, CheckConstraint)]
+        assert check.name == _PROVENANCE_CHECK
 
     def test_exact_index_set(self) -> None:
         """`ix_ticket_package_product_product_id`: non-unique, non-partial
@@ -187,6 +209,13 @@ class TestTicketPackageProductSchemaShape:
         (fk,) = TicketPackageProduct.__table__.c[column].foreign_keys
         assert fk.target_fullname == target
         assert fk.ondelete is None
+
+    def test_override_setter_foreign_key_restricts_deletion(self) -> None:
+        (fk,) = TicketPackageProduct.__table__.c[
+            "eligibility_override_by_id"
+        ].foreign_keys
+        assert fk.target_fullname == "user.id"
+        assert fk.ondelete == "RESTRICT"
 
 
 @pytest.mark.integration
@@ -314,6 +343,102 @@ class TestTicketPackageProductForeignKeys:
         db_session.add(TicketPackageProduct(**values))
         with pytest.raises(IntegrityError, match=constraint):
             await db_session.flush()
+
+    async def test_nonexistent_override_setter_rejected(
+        self,
+        db_session: AsyncSession,
+        product_factory: ProductFactory,
+        ticket_package_track_factory: TicketPackageTrackFactory,
+    ) -> None:
+        track = await ticket_package_track_factory()
+        product = await product_factory()
+        db_session.add(
+            TicketPackageProduct(
+                ticket_package_track_id=track.id,
+                product_id=product.id,
+                is_eligible_override=True,
+                eligibility_override_by_id=uuid.uuid7(),
+                eligibility_override_at=_OVERRIDE_SET_AT,
+            )
+        )
+        with pytest.raises(IntegrityError, match=_SETTER_FK):
+            await db_session.flush()
+
+    async def test_deleting_override_setter_raises(
+        self,
+        db_session: AsyncSession,
+        ticket_package_product_factory: TicketPackageProductFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        """`ON DELETE RESTRICT`: Users are never deleted, so the
+        provenance of an override never loses its setter."""
+        setter = await user_factory()
+        await ticket_package_product_factory(
+            is_eligible_override=True, eligibility_override_by_id=setter.id
+        )
+
+        await db_session.delete(setter)
+        with pytest.raises(IntegrityError, match=_SETTER_FK):
+            await db_session.flush()
+
+
+@pytest.mark.integration
+class TestEligibilityOverrideProvenance:
+    """`chk_ticket_package_product_eligibility_override_provenance`: the
+    override marker is `true` with both provenance columns set, or `false`
+    with both `NULL` (docs/data-model.md, TicketPackageProduct, CHECK
+    constraints; package-service.md, Architectural Test Requirement,
+    Override provenance)."""
+
+    @pytest.mark.parametrize(
+        ("override", "with_setter", "with_time"),
+        [
+            pytest.param(True, False, False, id="override-without-provenance"),
+            pytest.param(True, True, False, id="override-without-time"),
+            pytest.param(True, False, True, id="override-without-setter"),
+            pytest.param(False, True, True, id="provenance-without-override"),
+            pytest.param(False, True, False, id="setter-without-override"),
+            pytest.param(False, False, True, id="time-without-override"),
+        ],
+    )
+    async def test_incoherent_row_violates_the_check(
+        self,
+        db_session: AsyncSession,
+        product_factory: ProductFactory,
+        ticket_package_track_factory: TicketPackageTrackFactory,
+        user_factory: UserFactory,
+        override: bool,
+        with_setter: bool,
+        with_time: bool,
+    ) -> None:
+        track = await ticket_package_track_factory()
+        product = await product_factory()
+        setter = await user_factory()
+        db_session.add(
+            TicketPackageProduct(
+                ticket_package_track_id=track.id,
+                product_id=product.id,
+                is_eligible_override=override,
+                eligibility_override_by_id=setter.id if with_setter else None,
+                eligibility_override_at=_OVERRIDE_SET_AT if with_time else None,
+            )
+        )
+        with pytest.raises(IntegrityError, match=_PROVENANCE_CHECK):
+            await db_session.flush()
+
+    async def test_factory_defaults_the_provenance_of_an_override(
+        self,
+        db_session: AsyncSession,
+        ticket_package_product_factory: TicketPackageProductFactory,
+    ) -> None:
+        occurrence = await ticket_package_product_factory(is_eligible_override=True)
+
+        assert occurrence.eligibility_override_at == ELIGIBILITY_OVERRIDE_SET_AT
+        assert occurrence.eligibility_override_by_id is not None
+        assert (
+            await db_session.get(User, occurrence.eligibility_override_by_id)
+            is not None
+        )
 
 
 @pytest.mark.integration
@@ -474,7 +599,7 @@ class TestTicketPackageProductTimestamps:
         occurrence.created_at = backdated
         await db_session.flush()
 
-        occurrence.is_eligible_override = True
+        occurrence.eligible = False
         await db_session.flush()
         await db_session.refresh(occurrence)
 

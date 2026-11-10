@@ -105,6 +105,7 @@ flowchart TB
     TicketPackage --> TicketPackageMaintainer
     TicketPackageMaintainer --> User
     TicketPackageTrack --> TicketPackageProduct
+    TicketPackageProduct -->|"eligibility_override_by_id"| User
     TicketPackageTrack --> TrackReleaseCheckpoint
     Product --> TicketPackageProduct
     Product --> ProductRepository
@@ -295,6 +296,8 @@ erDiagram
         UUID product_id FK "NOT NULL"
         BOOLEAN eligible "NOT NULL, DEFAULT true"
         BOOLEAN is_eligible_override "NOT NULL, DEFAULT false"
+        UUID eligibility_override_by_id FK "nullable"
+        TIMESTAMPTZ eligibility_override_at "nullable"
         TIMESTAMPTZ released_at "nullable"
         TIMESTAMPTZ deleted_at "nullable"
     }
@@ -326,6 +329,7 @@ erDiagram
     TicketPackage ||--o{ TicketPackageMaintainer : "has maintainers"
     TicketPackageMaintainer }o--|| User : "references"
     TicketPackageTrack ||--o{ TicketPackageProduct : "has products"
+    TicketPackageProduct }o--o| User : "eligibility override set by"
     TicketPackageTrack ||--o| TrackReleaseCheckpoint : "has release checkpoint"
     Product ||--o{ TicketPackageProduct : "referenced by"
     Product ||--o{ ProductRepository : "has repositories"
@@ -1467,12 +1471,18 @@ override model.
 | product_id               | UUID      | FK(product.id), NOT NULL                    | Related product                    |
 | eligible                 | BOOLEAN   | NOT NULL, DEFAULT true                      | Whether the product will receive the fix |
 | is_eligible_override     | BOOLEAN   | NOT NULL, DEFAULT false                     | True if an authorized acting user manually set eligibility |
+| eligibility_override_by_id | UUID    | FK(user.id) ON DELETE RESTRICT, nullable    | User who set the current value of the eligibility override, part of the override provenance. `NULL` exactly when `is_eligible_override` is false (see CHECK below). Written only by `package_service.set_product_eligibility()`; never derived from audit history, and unchanged by automatic processing and by user lifecycle and profile mutations. Not indexed: Users are never deleted and no documented query selects occurrences by it. See `docs/features/packages/package-model.md` (Override Model) |
+| eligibility_override_at  | TIMESTAMPTZ | nullable                                  | When the current value of the eligibility override was set: the `now()` of the transaction of that change, equal to the `created_at` of its `product_eligibility_changed` event. `NULL` exactly when `is_eligible_override` is false (see CHECK below). Written only by `package_service.set_product_eligibility()` |
 | released_at              | TIMESTAMPTZ | nullable                                    | Authoritative stable security advisory-issued time in UTC; NULL until Product release detection confirms an exact match. A CVE-less `FIXED` track can be resolution-complete while this remains NULL; Sentinel never fabricates publication evidence. Observation time remains available through `updated_at` and the audit event's `created_at` |
 | deleted_at               | TIMESTAMPTZ | nullable                                    | Direct manual-exclusion timestamp. NULL = not directly excluded. Current actionability also depends on ancestor markers and the catalog Product lifecycle phase |
 | created_at               | TIMESTAMPTZ | NOT NULL, DEFAULT                           | Record creation timestamp          |
 | updated_at               | TIMESTAMPTZ | NOT NULL, DEFAULT                           | Record update timestamp            |
 
 **Unique constraint**: (ticket_package_track_id, product_id)
+
+**CHECK constraints**:
+
+- `chk_ticket_package_product_eligibility_override_provenance`: `(is_eligible_override = false AND eligibility_override_by_id IS NULL AND eligibility_override_at IS NULL) OR (is_eligible_override = true AND eligibility_override_by_id IS NOT NULL AND eligibility_override_at IS NOT NULL)` — an override always has its provenance, and no provenance exists without an override (`docs/features/packages/package-model.md`, Override Model)
 
 **Indexes**:
 
@@ -1487,8 +1497,9 @@ override model.
   (`docs/features/packages/product-catalog.md`).
 
 When `is_eligible_override = true`, automatic workflows do not modify
-`eligible`. See `docs/features/packages/package-model.md` (Override Model) for
-the full set, clear, recalculation, and narrow CVSS-chain ownership semantics.
+`eligible` or the override provenance. See
+`docs/features/packages/package-model.md` (Override Model) for the full set,
+clear, provenance, recalculation, and narrow CVSS-chain ownership semantics.
 
 > **Exclusion and actionability semantics**: package-tree `deleted_at` fields
 > are modified only by authorized user exclusion/restore operations. They do not block

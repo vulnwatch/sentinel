@@ -79,6 +79,10 @@ from tests.support.ibs_download import (
     updateinfo_document,
     xml_response,
 )
+from tests.support.product_eligibility import (
+    add_override_setter,
+    override_provenance_columns,
+)
 from tests.support.suse_cvss import V31_CRITICAL
 from tests.support.suse_cvss_races import CommittedWorld
 from tests.support.ticket_mutations import (
@@ -350,11 +354,20 @@ class Seed:
             self.session.add(track)
             await self.session.flush()
             self._tracks[(package.id, reference)] = track
+        setter_id = (
+            await add_override_setter(
+                self.session,
+                self._world.user_ids if self._world is not None else None,
+            )
+            if is_eligible_override
+            else None
+        )
         occurrence = TicketPackageProduct(
             ticket_package_track_id=track.id,
             product_id=product.id,
             eligible=eligible,
             is_eligible_override=is_eligible_override,
+            **override_provenance_columns(is_eligible_override, setter_id),
             released_at=released_at,
             deleted_at=excluded_at if excluded == "product" else None,
         )

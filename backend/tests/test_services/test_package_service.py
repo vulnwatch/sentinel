@@ -68,8 +68,8 @@ from app.models.user import User
 from app.models.user_role import UserRole
 from app.services import package_service
 from app.services.package_service import (
-    PackageMaintainerProjection,
     PackageProjection,
+    PackageUserProjection,
     ProductProjection,
     TicketTreeContext,
     TrackProjection,
@@ -113,6 +113,7 @@ from tests.support.module_imports import APP_ROOT, imported_modules
 Factory = Callable[..., Awaitable[Any]]
 
 ALL_SCOPE = TicketCaller.authenticated(uuid.uuid4(), Scope.ALL)
+OVERRIDE_SET_AT = datetime(2026, 2, 1, 9, 15, tzinfo=UTC)
 
 D = MilestoneStatus.DONE
 P = MilestoneStatus.PENDING
@@ -184,9 +185,13 @@ class TestTreeProjection:
         ticket_package_factory: Factory,
         ticket_package_track_factory: Factory,
         ticket_package_product_factory: Factory,
+        user_factory: Factory,
     ) -> None:
         cve = await cve_factory(severity=Severity.HIGH.value)
         ticket: Ticket = await ticket_factory(cve_id=cve.id, created_at=CREATED_AT)
+        setter: User = await user_factory(
+            username="alice.setter", full_name="Alice Setter"
+        )
         supported = await product_factory(
             cpe="cpe:/o:example:alpha:1",
             display_name="Example Alpha 1",
@@ -220,6 +225,8 @@ class TestTreeProjection:
             product_id=eol.id,
             eligible=False,
             is_eligible_override=True,
+            eligibility_override_by_id=setter.id,
+            eligibility_override_at=OVERRIDE_SET_AT,
         )
         gamma = await ticket_package_product_factory(
             ticket_package_track_id=track.id,
@@ -272,6 +279,8 @@ class TestTreeProjection:
                                 product_name="Example Alpha 1",
                                 eligible=True,
                                 is_eligible_override=False,
+                                eligibility_override_by=None,
+                                eligibility_override_at=None,
                                 released_at=RELEASED_AT,
                                 lifecycle_phase=LifecyclePhase.GENERAL_SUPPORT,
                                 deleted_at=None,
@@ -284,6 +293,14 @@ class TestTreeProjection:
                                 product_name="Example Beta 1",
                                 eligible=False,
                                 is_eligible_override=True,
+                                eligibility_override_by=PackageUserProjection(
+                                    id=setter.id,
+                                    username="alice.setter",
+                                    full_name="Alice Setter",
+                                    active=True,
+                                    bot=False,
+                                ),
+                                eligibility_override_at=OVERRIDE_SET_AT,
                                 released_at=None,
                                 lifecycle_phase=LifecyclePhase.EOL,
                                 deleted_at=None,
@@ -296,6 +313,8 @@ class TestTreeProjection:
                                 product_name=unknown.display_name,
                                 eligible=True,
                                 is_eligible_override=False,
+                                eligibility_override_by=None,
+                                eligibility_override_at=None,
                                 released_at=None,
                                 lifecycle_phase=None,
                                 deleted_at=EXCLUDED_AT,
@@ -339,6 +358,8 @@ class TestTreeProjection:
                                 product_name="Example Alpha 1",
                                 eligible=True,
                                 is_eligible_override=False,
+                                eligibility_override_by=None,
+                                eligibility_override_at=None,
                                 released_at=None,
                                 lifecycle_phase=LifecyclePhase.GENERAL_SUPPORT,
                                 deleted_at=None,
@@ -371,6 +392,8 @@ class TestTreeProjection:
             ticket_package_track_id=track.id,
             released_at=RELEASED_AT,
             deleted_at=EXCLUDED_AT,
+            is_eligible_override=True,
+            eligibility_override_at=OVERRIDE_SET_AT,
         )
 
         (projected,) = await _read(db_session, ticket, instant=datetime.now(UTC))
@@ -382,10 +405,12 @@ class TestTreeProjection:
             projected_track.deleted_at,
             projected_product.deleted_at,
             projected_product.released_at,
+            projected_product.eligibility_override_at,
         ):
             assert value is not None
             assert value.utcoffset() == timedelta(0)
         assert projected_product.released_at == RELEASED_AT
+        assert projected_product.eligibility_override_at == OVERRIDE_SET_AT
 
     async def test_ticket_without_packages_returns_an_empty_tree(
         self, db_session: AsyncSession, ticket_factory: Factory
@@ -485,10 +510,10 @@ class TestTreeProjection:
         with _StatementRecorder(db_session) as recorder:
             projected = await _read(db_session, ticket)
 
-        amy_now = PackageMaintainerProjection(
+        amy_now = PackageUserProjection(
             id=amy.id, username="amyb", full_name="Amy Renamed", active=True, bot=False
         )
-        zed_now = PackageMaintainerProjection(
+        zed_now = PackageUserProjection(
             id=zed.id, username="amy-z", full_name=None, active=False, bot=True
         )
         assert [(p.id, p.maintainers) for p in projected] == [
@@ -497,6 +522,74 @@ class TestTreeProjection:
             (bare.id, ()),
         ]
         # One statement for the whole tree: no per-package maintainer query.
+        (statement,) = recorder.statements
+        assert "email" not in statement
+
+    async def test_projects_the_current_profile_of_each_override_setter(
+        self,
+        db_session: AsyncSession,
+        ticket_factory: Factory,
+        user_factory: Factory,
+        ticket_package_track_factory: Factory,
+        ticket_package_factory: Factory,
+        ticket_package_product_factory: Factory,
+        product_factory: Factory,
+    ) -> None:
+        """package-service.md, `get_ticket_packages()` step 6: the
+        provenance of every overridden occurrence with the setter's current
+        profile, a deactivated or renamed setter included, and `None` for
+        an automatic occurrence, in the one statement of the tree."""
+        ticket: Ticket = await ticket_factory()
+        package = await ticket_package_factory(ticket_id=ticket.id)
+        track = await ticket_package_track_factory(ticket_package_id=package.id)
+        carol: User = await user_factory(username="carol", full_name="Carol Set")
+        dave: User = await user_factory(username="dave", full_name=None, bot=True)
+        overrides: list[TicketPackageProduct] = []
+        for index, setter in enumerate((carol, dave, carol)):
+            product = await product_factory(cpe=f"cpe:/o:example:p{index}:1")
+            overrides.append(
+                await ticket_package_product_factory(
+                    ticket_package_track_id=track.id,
+                    product_id=product.id,
+                    is_eligible_override=True,
+                    eligibility_override_by_id=setter.id,
+                    eligibility_override_at=OVERRIDE_SET_AT + timedelta(hours=index),
+                )
+            )
+        automatic = await ticket_package_product_factory(
+            ticket_package_track_id=track.id,
+            product_id=(await product_factory(cpe="cpe:/o:example:p9:1")).id,
+        )
+        await db_session.execute(
+            update(User)
+            .where(User.id == carol.id)
+            .values(full_name="Carol Renamed", active=False)
+        )
+
+        with _StatementRecorder(db_session) as recorder:
+            (projected,) = await _read(db_session, ticket)
+
+        carol_now = PackageUserProjection(
+            id=carol.id,
+            username="carol",
+            full_name="Carol Renamed",
+            active=False,
+            bot=False,
+        )
+        dave_now = PackageUserProjection(
+            id=dave.id, username="dave", full_name=None, active=True, bot=True
+        )
+        (projected_track,) = projected.tracks
+        assert [
+            (p.id, p.eligibility_override_by, p.eligibility_override_at)
+            for p in projected_track.products
+        ] == [
+            (overrides[0].id, carol_now, OVERRIDE_SET_AT),
+            (overrides[1].id, dave_now, OVERRIDE_SET_AT + timedelta(hours=1)),
+            (overrides[2].id, carol_now, OVERRIDE_SET_AT + timedelta(hours=2)),
+            (automatic.id, None, None),
+        ]
+        # One statement for the whole tree: no per-Product setter query.
         (statement,) = recorder.statements
         assert "email" not in statement
 

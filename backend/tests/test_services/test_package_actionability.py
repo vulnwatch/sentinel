@@ -67,6 +67,7 @@ from tests.support.lifecycle_matrix import (
     lifecycle_grid,
 )
 from tests.support.module_imports import APP_ROOT, imported_modules
+from tests.support.product_eligibility import override_provenance_columns
 from tests.support.ticket_mutations import ignore_reason_for
 
 Factory = Callable[..., Awaitable[Any]]
@@ -781,11 +782,13 @@ class TestActionabilityInputs:
         ticket_package_track_factory: Factory,
         ticket_package_product_factory: Factory,
         product_factory: Factory,
+        user_factory: Factory,
         eol: bool,
     ) -> None:
         """Affectedness, eligibility and its override, delivery, Product
         release, and Ticket status never change any level's actionability
         (package-model.md, Three Orthogonal Dimensions; Gate Participation)."""
+        setter = await user_factory()
         ticket = await ticket_factory()
         package = await ticket_package_factory(ticket_id=ticket.id)
         track = await ticket_package_track_factory(ticket_package_id=package.id)
@@ -814,6 +817,11 @@ class TestActionabilityInputs:
             setattr(record, attribute, value)
             if record is ticket:
                 ticket.ignore_reason = ignore_reason_for(value)
+            if attribute == "is_eligible_override":
+                for column, provenance in override_provenance_columns(
+                    True, setter.id
+                ).items():
+                    setattr(occurrence, column, provenance)
             await db_session.flush()
             assert await self._levels(db_session, occurrence) == baseline, (
                 attribute,

@@ -133,6 +133,10 @@ from tests.support.external_cvss import (
     external_value,
     run_batch,
 )
+from tests.support.product_eligibility import (
+    add_override_setter,
+    override_provenance_columns,
+)
 from tests.support.suse_cvss import (
     V31_CRITICAL,
     V31_HIGH,
@@ -738,11 +742,13 @@ async def _product(
     )
     session.add(track)
     await session.flush()
+    setter_id = await add_override_setter(session, world.user_ids) if override else None
     occurrence = TicketPackageProduct(
         ticket_package_track_id=track.id,
         product_id=product.id,
         eligible=eligible,
         is_eligible_override=override,
+        **override_provenance_columns(override, setter_id),
     )
     if occurrence_id is not None:
         occurrence.id = occurrence_id

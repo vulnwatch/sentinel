@@ -37,7 +37,8 @@ adds only what needs independent sessions:
 - a Ticket-first override that writes the Ticket more than once while a
   CVSS mutation holds the CVE root and waits for that Ticket;
 - override/override winner and waiter serialization with truthful old
-  values and true no-op waiters;
+  values, true no-op waiters, and the override provenance each leaves,
+  also for a change in a later transaction;
 - locked-current accessibility races for a `non_confidential` caller;
 - the acting-User `FOR SHARE` lock preceding the Ticket lock.
 
@@ -101,6 +102,13 @@ from tests.support.cvss_chain import (
     ticket_state,
 )
 from tests.support.database import assert_lock_wait
+from tests.support.product_eligibility import (
+    OverrideProvenance,
+    add_override_setter,
+    eligibility_event_times,
+    override_provenance_columns,
+    persisted_provenance,
+)
 from tests.support.suse_cvss import (
     V31_CRITICAL,
     V31_CRITICAL_10,
@@ -237,11 +245,13 @@ async def _occurrence(
     session.add_all([product, track])
     await session.flush()
     world.product_ids.append(product.id)
+    setter_id = await add_override_setter(session, world.user_ids) if override else None
     occurrence = TicketPackageProduct(
         ticket_package_track_id=track.id,
         product_id=product.id,
         eligible=eligible,
         is_eligible_override=override,
+        **override_provenance_columns(override, setter_id),
     )
     session.add(occurrence)
     await session.commit()
@@ -406,6 +416,20 @@ async def _committed(world: CommittedWorld, ticket: Ticket) -> _Committed:
     )
     await probe.rollback()
     return committed
+
+
+async def _committed_provenance(
+    world: CommittedWorld, occurrence: _Occurrence
+) -> tuple[OverrideProvenance, list[datetime]]:
+    """The committed override provenance of the occurrence and the
+    `created_at` of its Ticket's eligibility events in insertion order, read
+    through a fresh independent session (package-model.md, Override
+    Model)."""
+    probe = await world.open_session()
+    provenance = await persisted_provenance(probe, occurrence.id)
+    times = await eligibility_event_times(probe, occurrence.ticket_id)
+    await probe.rollback()
+    return provenance, times
 
 
 async def _hold_user(session: AsyncSession, user: User) -> None:
@@ -887,7 +911,9 @@ class TestOverrideSerialization:
         self, world: _World
     ) -> None:
         """A sets `false` from automatic `true`; B, waiting with a stale
-        `true`, sets `true`: B's event is `changed` with old `false`."""
+        `true`, sets `true`: B's event is `changed` with old `false`, and B
+        becomes the setter at the time of its own event, the `now()` of its
+        transaction."""
         winner_actor, waiter_actor, ticket, occurrence = await self._world(
             world, eligible=True, override=False, status=TicketStatus.ANALYZED
         )
@@ -902,6 +928,13 @@ class TestOverrideSerialization:
             True,
             True,
         )
+        provenance, (_, changed_at) = await _committed_provenance(world, occurrence)
+        assert provenance == (waiter_actor.id, changed_at)
+        assert result.product.eligibility_override_by is not None
+        assert (
+            result.product.eligibility_override_by.id,
+            result.product.eligibility_override_at,
+        ) == provenance
         assert await _committed(world, ticket) == _Committed(
             (ANALYZED, winner_actor.id, None, None, "High"),
             [(True, True)],
@@ -935,7 +968,8 @@ class TestOverrideSerialization:
         `false`. `clear-clear`: A clears an ineligible override (10.0
         fallback: `true`); B's clear finds automatic management. B returns
         `no_op` with no write, assignment, event, reconciliation, or
-        convergence registration."""
+        convergence registration, and keeps A's provenance: A at the time of
+        A's event after `set-set`, none after `clear-clear`."""
         winner_actor, waiter_actor, ticket, occurrence = await self._world(
             world, eligible=eligible, override=override, status=status
         )
@@ -978,6 +1012,48 @@ class TestOverrideSerialization:
             [final],
             [assignment_event(winner_actor), *winner_events],
         )
+        provenance, (winner_at,) = await _committed_provenance(world, occurrence)
+        setter = result.product.eligibility_override_by
+        projected = (
+            setter.id if setter is not None else None,
+            result.product.eligibility_override_at,
+        )
+        if value is False:
+            assert provenance == projected == (winner_actor.id, winner_at)
+        else:
+            assert provenance == projected == (None, None)
+
+    async def test_change_in_a_later_transaction_records_its_actor_and_time(
+        self, world: _World
+    ) -> None:
+        """A sets `false` and commits; B, in a transaction that starts after
+        that commit, changes the override to `true`: the provenance moves
+        from A at the time of A's event to B at the later time of B's
+        event (package-service.md, Architectural Test Requirement, Override
+        provenance)."""
+        first_actor, second_actor, _, occurrence = await self._world(
+            world, eligible=True, override=False, status=TicketStatus.ANALYZED
+        )
+        first = await world.open_session()
+        await _override(first, occurrence, False, first_actor)
+        await first.commit()
+        provenance, (set_at,) = await _committed_provenance(world, occurrence)
+        assert provenance == (first_actor.id, set_at)
+
+        second = await world.open_session()
+        result = await _override(second, occurrence, True, second_actor)
+        await second.commit()
+
+        provenance, (event_at, changed_at) = await _committed_provenance(
+            world, occurrence
+        )
+        assert event_at == set_at < changed_at
+        assert provenance == (second_actor.id, changed_at)
+        assert result.product.eligibility_override_by is not None
+        assert (
+            result.product.eligibility_override_by.id,
+            result.product.eligibility_override_at,
+        ) == provenance
 
     async def test_waiting_clear_uses_the_winner_override_as_old_value(
         self, world: _World

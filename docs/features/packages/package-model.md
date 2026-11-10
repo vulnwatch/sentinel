@@ -356,6 +356,8 @@ eligibility and delivery confirmation.
 | `product_id` | UUID | FK(product.id), NOT NULL | Related product |
 | `eligible` | BOOLEAN | NOT NULL, DEFAULT true | Effective eligibility |
 | `is_eligible_override` | BOOLEAN | NOT NULL, DEFAULT false | True if an authorized acting user manually set the eligibility |
+| `eligibility_override_by_id` | UUID | FK(user.id) ON DELETE RESTRICT, nullable | User who set the current eligibility override; `NULL` exactly when `is_eligible_override` is false. See [Override Model](#override-model) |
+| `eligibility_override_at` | TIMESTAMPTZ | nullable | When the current eligibility override was set; `NULL` exactly when `is_eligible_override` is false |
 | `released_at` | TIMESTAMPTZ | nullable | Authoritative stable security advisory-issued time in UTC; NULL until Product release detection confirms a match |
 | `deleted_at` | TIMESTAMPTZ | nullable | Direct manual-exclusion timestamp. NULL = not directly excluded |
 | `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
@@ -442,7 +444,8 @@ visible and correctable; silent omission of eligible products is not.
 
 1. **Preserve a manual override**: when `is_eligible_override = true`, retain
    the persisted `eligible` value. Automatic workflows skip the occurrence
-   without changing either field or creating an eligibility event.
+   without changing either field or the override provenance
+   ([Override Model](#override-model)) or creating an eligibility event.
 2. **Apply the Reactive Support rule to automatic records**: when the Product
    is currently in the `reactive_support` lifecycle phase, set
    `eligible = false` regardless of CVSS score. A `NULL` lifecycle phase means
@@ -759,7 +762,9 @@ whether any actionable Product under it has `eligible = true`.
 
 1. Product `eligible` is set to the chosen value
 2. `is_eligible_override` is set to `true`
-3. The track status is not affected
+3. The override provenance records the acting user and the time of the change
+   ([Override Model](#override-model))
+4. The track status is not affected
 
 ### Automatic Transitions
 
@@ -1107,11 +1112,43 @@ Product-level eligibility has an override mechanism:
 |--------|------|---------|-------------|
 | `eligible` | bool | calculated | Effective eligibility |
 | `is_eligible_override` | bool | false | An authorized acting user has manually set the eligibility |
+| `eligibility_override_by_id` | UUID | null | User who set the current override |
+| `eligibility_override_at` | timestamptz | null | When the current override was set |
 
 When `is_eligible_override = false`, the system maintains `eligible`
 automatically via CVSS threshold + lifecycle phase calculation. When
 `is_eligible_override = true`, automatic recalculation skips the
 product.
+
+`eligibility_override_by_id` and `eligibility_override_at` are the **override
+provenance**: the user who set the current value of the override and the time
+at which they set it. Only `set_product_eligibility()` writes them, in the same
+write as `is_eligible_override` (`package-service.md`). Setting an override,
+also over an equal automatic value, or changing its value records the acting
+user and the transaction's `now()`, which is the `created_at` of that change's
+`product_eligibility_changed` event; clearing the override clears both. An
+unchanged request, the no-op, keeps them, also when another user sends it.
+Both are `NULL` exactly when `is_eligible_override` is false
+(`chk_ticket_package_product_eligibility_override_provenance`).
+
+The override provenance is the current state of the override, not its
+history: it names the change that set the current value, so that a reader of
+the package tree knows whom to ask about the override and whether it was set
+before the current inputs of the automatic eligibility, which an override masks
+without an event ([Axis 2](#axis-2-eligibility-per-product-only), rule 1).
+Earlier overrides of the occurrence remain only in its
+`product_eligibility_changed` events. The provenance is never derived from
+audit history. No automatic workflow, the atomic CVSS chain included, no
+exclusion, restoration, or release, and no user lifecycle or profile
+mutation, such as deactivation or a rename, changes it; a response shows the
+setter's current profile. Every response that carries `is_eligible_override`
+carries the provenance next to it, as `eligibility_override_by` and
+`eligibility_override_at`, so that a client that updates its copy of a Product
+from any of them never holds an override without its provenance.
+
+No data backfill accompanies these columns. The provenance has no source
+outside audit history, so the migration that adds it fails, and leaves the
+database at its previous revision, when an occurrence holds an override.
 
 Standalone overrides, record creation, Product-threshold/lifecycle
 recalculation, and synchronous manual-zone-exit convergence go through
@@ -1134,11 +1171,12 @@ same pure evaluator defined above, MUST NOT import `package_service`, and MUST
 NOT set or clear an override or perform any other package mutation.
 
 Clearing an existing override always returns the Product occurrence to
-automatic management and recalculates it from current inputs. The clear is an
-effective metadata mutation even when the calculated boolean equals the
-persisted `eligible` value; its audit event then truthfully has equal
-`old_value` and `new_value` and records `override_action = cleared`. Subsequent
-automatic workflows may update the occurrence normally.
+automatic management, recalculates it from current inputs, and clears the
+override provenance. The clear is an effective metadata mutation even when the
+calculated boolean equals the persisted `eligible` value; its audit event then
+truthfully has equal `old_value` and `new_value` and records
+`override_action = cleared`. Subsequent automatic workflows may update the
+occurrence normally.
 
 ---
 
@@ -2345,6 +2383,8 @@ only after accessibility and does not provide a probing oracle.
         "product_name": "SLES 15 SP6",
         "eligible": true,
         "is_eligible_override": false,
+        "eligibility_override_by": null,
+        "eligibility_override_at": null,
         "lifecycle_phase": "general_support",
         "actionable": true,
         "non_actionable_reason": null
@@ -2355,6 +2395,8 @@ only after accessibility and does not provide a probing oracle.
         "product_name": "SLES-LTSS 15-SP4",
         "eligible": false,
         "is_eligible_override": false,
+        "eligibility_override_by": null,
+        "eligibility_override_at": null,
         "lifecycle_phase": "eol",
         "actionable": false,
         "non_actionable_reason": "eol"
@@ -2390,6 +2432,8 @@ response contains exactly these fields:
 | `products[].product_name` | string | Related catalog Product display name |
 | `products[].eligible` | boolean | Effective eligibility |
 | `products[].is_eligible_override` | boolean | Whether eligibility is a manual override |
+| `products[].eligibility_override_by` | UserSummary \| null | Current profile of the user who set the current override, as in [Override Product Eligibility](#override-product-eligibility); `null` when `is_eligible_override` is `false` |
+| `products[].eligibility_override_at` | datetime \| null | When the current override was set (UTC), as in [Override Product Eligibility](#override-product-eligibility); `null` when `is_eligible_override` is `false` |
 | `products[].lifecycle_phase` | string \| null | Lifecycle phase on the evaluation date: `pre_release`, `general_support`, `extended_support`, `reactive_support`, or `eol`; `null` when lifecycle data is unavailable |
 | `products[].actionable` | boolean | Derived Product actionability |
 | `products[].non_actionable_reason` | string \| null | First applicable Product reason from [Derived Actionability](#derived-actionability); `null` when actionable |
@@ -2461,6 +2505,10 @@ value, or is already automatically managed when reset is requested, the
 endpoint returns the current Product with `200 OK` and performs no assignment,
 audit, Ticket reconciliation, or post-commit effect.
 
+Setting or changing the override records the acting user and the time of the
+change as its provenance; resetting it clears both. A true no-op keeps them,
+also when another user sends it ([Override Model](#override-model)).
+
 **Response** (200 OK):
 
 ```json
@@ -2474,6 +2522,14 @@ audit, Ticket reconciliation, or post-commit effect.
     "product_name": "SLES-LTSS 15-SP4",
     "eligible": false,
     "is_eligible_override": true,
+    "eligibility_override_by": {
+      "id": "uuid",
+      "username": "asmith",
+      "full_name": "Alice Smith",
+      "active": true,
+      "bot": false
+    },
+    "eligibility_override_at": "2026-03-15T10:30:00Z",
     "lifecycle_phase": "reactive_support",
     "actionable": true,
     "non_actionable_reason": null
@@ -2498,6 +2554,8 @@ these fields:
 | `product_name` | string | Related catalog Product display name |
 | `eligible` | boolean | Effective eligibility |
 | `is_eligible_override` | boolean | Whether eligibility is a manual override |
+| `eligibility_override_by` | UserSummary \| null | Current profile of the user who set the current override (`docs/api-spec.md`, User References in Responses), including `active = false` when deactivated; `null` when `is_eligible_override` is `false` |
+| `eligibility_override_at` | datetime \| null | When the current override was set (UTC): the time of the change that set its current value, equal to the `created_at` of that change's `product_eligibility_changed` event; `null` when `is_eligible_override` is `false` |
 | `lifecycle_phase` | string \| null | Lifecycle phase on the evaluation date: `pre_release`, `general_support`, `extended_support`, `reactive_support`, or `eol`; `null` when lifecycle data is unavailable |
 | `actionable` | boolean | Derived Product actionability |
 | `non_actionable_reason` | string \| null | First applicable Product reason from [Derived Actionability](#derived-actionability); `null` when actionable |
@@ -2702,6 +2760,9 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
     an accessible Ticket in the same database result/view
   - `GET /api/v1/packages` applies the canonical Ticket visibility predicate in
     the package service to items, totals, pages, and aggregates
+- The package tree names the user who set an eligibility override by the User
+  reference to every caller who can see the Ticket, whatever the caller's
+  capabilities (`docs/features/identity/rbac.md`, Actor Identities)
 - API handlers and dependencies do not construct model-aware visibility
   expressions or perform package business ORM queries
 
@@ -2740,7 +2801,7 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
 ## Cross-references
 
 - `docs/api-spec.md` — global API conventions (envelope format, error
-  codes, pagination, shared 422 responses)
+  codes, pagination, shared 422 responses, user references)
 - `docs/features/packages/package-service.md` — package-centric
   mutations, orchestration, and query operations
 - `docs/features/packages/product-catalog.md` — product catalog, SMELT

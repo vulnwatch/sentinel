@@ -91,6 +91,7 @@ from app.services.package_service import (
     PackageProjection,
     PackageSearchItem,
     PackageTargetsUnresolvedError,
+    PackageUserProjection,
     ProductCatalogNotReadyError,
     ProductEligibilityProjection,
     ProductMarkerProjection,
@@ -117,6 +118,10 @@ def _lower(value: str | None) -> str | None:
     return value.lower() if value is not None else None
 
 
+def _user_reference(user: PackageUserProjection | None) -> UserReference | None:
+    return UserReference.model_validate(user) if user is not None else None
+
+
 def _serialize_product(product: ProductProjection) -> ProductDetail:
     return ProductDetail.model_validate(
         {
@@ -125,6 +130,8 @@ def _serialize_product(product: ProductProjection) -> ProductDetail:
             "product_name": product.product_name,
             "eligible": product.eligible,
             "is_eligible_override": product.is_eligible_override,
+            "eligibility_override_by": _user_reference(product.eligibility_override_by),
+            "eligibility_override_at": product.eligibility_override_at,
             "released_at": product.released_at,
             "lifecycle_phase": _lower(product.lifecycle_phase),
             "deleted_at": product.deleted_at,
@@ -545,6 +552,10 @@ def _serialize_track_status(track: TrackStatusProjection) -> TrackStatusTrack:
                         "product_name": product.product_name,
                         "eligible": product.eligible,
                         "is_eligible_override": product.is_eligible_override,
+                        "eligibility_override_by": _user_reference(
+                            product.eligibility_override_by
+                        ),
+                        "eligibility_override_at": product.eligibility_override_at,
                         "lifecycle_phase": _lower(product.lifecycle_phase),
                         "actionable": product.actionable,
                         "non_actionable_reason": _lower(product.non_actionable_reason),
@@ -657,6 +668,8 @@ def _serialize_product_eligibility(
             "product_name": product.product_name,
             "eligible": product.eligible,
             "is_eligible_override": product.is_eligible_override,
+            "eligibility_override_by": _user_reference(product.eligibility_override_by),
+            "eligibility_override_at": product.eligibility_override_at,
             "lifecycle_phase": _lower(product.lifecycle_phase),
             "actionable": product.actionable,
             "non_actionable_reason": _lower(product.non_actionable_reason),

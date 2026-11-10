@@ -234,8 +234,8 @@ async def _package_state(
 ) -> list[tuple[Any, ...]]:
     """Every package-tree column a remediation action could change: package
     and track markers, affectedness, delivery, and each occurrence's
-    override marker, release, and marker (everything except the automatic
-    `eligible`)."""
+    override marker with its provenance, release, and marker (everything
+    except the automatic `eligible`)."""
 
     async def _read(db: AsyncSession) -> list[tuple[Any, ...]]:
         rows = await db.execute(
@@ -245,6 +245,8 @@ async def _package_state(
                 TicketPackageTrack.delivery_status,
                 TicketPackageTrack.deleted_at,
                 TicketPackageProduct.is_eligible_override,
+                TicketPackageProduct.eligibility_override_by_id,
+                TicketPackageProduct.eligibility_override_at,
                 TicketPackageProduct.released_at,
                 TicketPackageProduct.deleted_at,
             )
@@ -637,8 +639,8 @@ class TestOverrides:
         self, h: RecalculationHarness
     ) -> None:
         """Two overridden occurrences whose automatic value would flip keep
-        both fields and create no event; only the automatic sibling
-        changes."""
+        both fields and their provenance and create no event; only the
+        automatic sibling changes."""
         cve, ticket = await _stale(
             h,
             TicketStatus.ANALYSIS,
@@ -649,12 +651,14 @@ class TestOverrides:
                 Prod(eligible=False, threshold=T9),
             ),
         )
+        package_state = await _package_state(h, ticket)
         task_id = await h.admit()
 
         with capture_events() as logs:
             await h.run(task_id)
 
         assert runner_events(logs) == completed_run(task_id, cve.id, changed=1)
+        assert await _package_state(h, ticket) == package_state
         assert await _eligibility(h, ticket) == [
             (False, True),
             (True, True),

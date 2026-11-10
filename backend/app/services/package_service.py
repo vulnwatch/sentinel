@@ -78,9 +78,11 @@ from sqlalchemy import (
     ColumnElement,
     SQLColumnExpression,
     and_,
+    case,
     false,
     func,
     literal_column,
+    null,
     select,
     true,
     type_coerce,
@@ -196,11 +198,27 @@ _CODE_POINT_COLLATION: Final = "C"
 
 
 @dataclass(frozen=True, slots=True)
+class PackageUserProjection:
+    """The current profile of one User that the package tree references
+    (`PackageDetail.maintainers`, the eligibility override setter of a
+    Product; api-spec.md, User References in Responses): selected from the
+    current `User` row, never a snapshot."""
+
+    id: uuid.UUID
+    username: str
+    full_name: str | None
+    active: bool
+    bot: bool
+
+
+@dataclass(frozen=True, slots=True)
 class ProductProjection:
     """One `TicketPackageProduct` occurrence of the tree (`ProductDetail`).
 
     `id` is the occurrence UUID; `product_cpe` and `product_name` come
     from the related catalog Product (`Product.cpe`, `Product.display_name`).
+    `eligibility_override_by` and `eligibility_override_at` are the
+    override provenance, both `None` without an override.
     `lifecycle_phase` is evaluated for the response's `evaluation_date`.
     """
 
@@ -209,6 +227,8 @@ class ProductProjection:
     product_name: str
     eligible: bool
     is_eligible_override: bool
+    eligibility_override_by: PackageUserProjection | None
+    eligibility_override_at: datetime | None
     released_at: datetime | None
     lifecycle_phase: LifecyclePhase | None
     deleted_at: datetime | None
@@ -241,19 +261,6 @@ class TrackProjection:
 
 
 @dataclass(frozen=True, slots=True)
-class PackageMaintainerProjection:
-    """The current profile of one User associated with a package
-    (`PackageDetail.maintainers`; api-spec.md, User References in
-    Responses): selected from the current `User` row, never a snapshot."""
-
-    id: uuid.UUID
-    username: str
-    full_name: str | None
-    active: bool
-    bot: bool
-
-
-@dataclass(frozen=True, slots=True)
 class PackageProjection:
     """One `TicketPackage` of the tree (`PackageDetail`).
 
@@ -269,7 +276,7 @@ class PackageProjection:
     actionable: bool
     non_actionable_reason: NonActionableReason | None
     tracks: tuple[TrackProjection, ...]
-    maintainers: tuple[PackageMaintainerProjection, ...]
+    maintainers: tuple[PackageUserProjection, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -308,6 +315,36 @@ def _json_array(
     )
 
 
+def _user_json(user: type[User] | AliasedClass[User]) -> ColumnElement[Any]:
+    """The current profile of `user` as a User reference JSON object."""
+    return func.json_build_object(
+        _key("id"),
+        user.id,
+        _key("username"),
+        user.username,
+        _key("full_name"),
+        user.full_name,
+        _key("active"),
+        user.active,
+        _key("bot"),
+        user.bot,
+    )
+
+
+_OVERRIDE_SETTER: Final = aliased(User, name="product_override_setter")
+"""The User who set the eligibility override of an occurrence, outer-joined
+on `TicketPackageProduct.eligibility_override_by_id`."""
+
+
+def _override_setter_json() -> ColumnElement[Any]:
+    """The `_OVERRIDE_SETTER` profile, or JSON `null` without an override
+    (package-model.md, Override Model)."""
+    return case(
+        (_OVERRIDE_SETTER.id.is_(None), null()),
+        else_=_user_json(_OVERRIDE_SETTER),
+    )
+
+
 def _products_json(evaluation_date: date) -> ColumnElement[Any]:
     """Products of the enclosing track, ordered by CPE code point then id."""
     product = func.json_build_object(
@@ -321,6 +358,10 @@ def _products_json(evaluation_date: date) -> ColumnElement[Any]:
         TicketPackageProduct.eligible,
         _key("is_eligible_override"),
         TicketPackageProduct.is_eligible_override,
+        _key("eligibility_override_by"),
+        _override_setter_json(),
+        _key("eligibility_override_at"),
+        TicketPackageProduct.eligibility_override_at,
         _key("released_at"),
         TicketPackageProduct.released_at,
         _key("lifecycle_phase"),
@@ -340,8 +381,12 @@ def _products_json(evaluation_date: date) -> ColumnElement[Any]:
         )
         .select_from(TicketPackageProduct)
         .join(Product, Product.id == TicketPackageProduct.product_id)
+        .outerjoin(
+            _OVERRIDE_SETTER,
+            _OVERRIDE_SETTER.id == TicketPackageProduct.eligibility_override_by_id,
+        )
         .where(TicketPackageProduct.ticket_package_track_id == TicketPackageTrack.id)
-        .correlate_except(TicketPackageProduct, Product)
+        .correlate_except(TicketPackageProduct, Product, _OVERRIDE_SETTER)
         .scalar_subquery()
     )
 
@@ -385,22 +430,10 @@ def _tracks_json(evaluation_date: date) -> ColumnElement[Any]:
 def _maintainers_json() -> ColumnElement[Any]:
     """Maintainers of the enclosing package: the current profile of every
     associated User, ordered by username code point."""
-    maintainer = func.json_build_object(
-        _key("id"),
-        User.id,
-        _key("username"),
-        User.username,
-        _key("full_name"),
-        User.full_name,
-        _key("active"),
-        User.active,
-        _key("bot"),
-        User.bot,
-    )
     return (
         select(
             _json_array(
-                maintainer, User.username.collate(_CODE_POINT_COLLATION), User.id
+                _user_json(User), User.username.collate(_CODE_POINT_COLLATION), User.id
             )
         )
         .select_from(TicketPackageMaintainer)
@@ -430,7 +463,8 @@ def ticket_package_tree_column(
     code-point order (`COLLATE "C"`) with the occurrence UUID as the final
     tie-breaker. Every level carries its direct `deleted_at` and the SQL
     `actionable` value for `evaluation_date`; Products carry their
-    lifecycle phase on that date; tracks carry the correlated `um`
+    lifecycle phase on that date and their eligibility override provenance
+    with the current profile of its setter; tracks carry the correlated `um`
     release-request evidence; packages carry the current profile of each
     associated maintainer, ordered by username code point. No email,
     group, or association metadata is selected.
@@ -507,6 +541,22 @@ def _timestamp(value: str | None) -> datetime | None:
     return None if value is None else datetime.fromisoformat(value).astimezone(UTC)
 
 
+def _user(raw: Mapping[str, Any]) -> PackageUserProjection:
+    """Parse a `_user_json()` value."""
+    return PackageUserProjection(
+        id=uuid.UUID(raw["id"]),
+        username=raw["username"],
+        full_name=raw["full_name"],
+        active=raw["active"],
+        bot=raw["bot"],
+    )
+
+
+def _override_setter(raw: Mapping[str, Any] | None) -> PackageUserProjection | None:
+    """Parse an `_override_setter_json()` value."""
+    return None if raw is None else _user(raw)
+
+
 def _assemble_product(
     raw: Mapping[str, Any], *, package_excluded: bool, track_excluded: bool
 ) -> ProductProjection:
@@ -519,6 +569,8 @@ def _assemble_product(
         product_name=raw["product_name"],
         eligible=raw["eligible"],
         is_eligible_override=raw["is_eligible_override"],
+        eligibility_override_by=_override_setter(raw["eligibility_override_by"]),
+        eligibility_override_at=_timestamp(raw["eligibility_override_at"]),
         released_at=_timestamp(raw["released_at"]),
         lifecycle_phase=lifecycle_phase,
         deleted_at=deleted_at,
@@ -647,14 +699,7 @@ def assemble_ticket_packages(
                 ),
                 tracks=tracks,
                 maintainers=tuple(
-                    PackageMaintainerProjection(
-                        id=uuid.UUID(maintainer["id"]),
-                        username=maintainer["username"],
-                        full_name=maintainer["full_name"],
-                        active=maintainer["active"],
-                        bot=maintainer["bot"],
-                    )
-                    for maintainer in raw["maintainers"]
+                    _user(maintainer) for maintainer in raw["maintainers"]
                 ),
             )
         )
@@ -2425,9 +2470,10 @@ class ProductEligibilityProjection:
 
     `ticket_id` is the canonical `SNTL-{n}` identity; `package_name` and
     `reference` identify the parent package and track; `id` is the
-    `TicketPackageProduct` occurrence UUID. `lifecycle_phase`,
-    `actionable`, and `non_actionable_reason` use the shared
-    `evaluation_date`.
+    `TicketPackageProduct` occurrence UUID. `eligibility_override_by` and
+    `eligibility_override_at` are the override provenance, both `None`
+    without an override. `lifecycle_phase`, `actionable`, and
+    `non_actionable_reason` use the shared `evaluation_date`.
     """
 
     ticket_id: str
@@ -2438,6 +2484,8 @@ class ProductEligibilityProjection:
     product_name: str
     eligible: bool
     is_eligible_override: bool
+    eligibility_override_by: PackageUserProjection | None
+    eligibility_override_at: datetime | None
     lifecycle_phase: LifecyclePhase | None
     actionable: bool
     non_actionable_reason: NonActionableReason | None
@@ -2466,7 +2514,8 @@ async def _project_product(
 ) -> ProductEligibilityProjection:
     """Project one Product occurrence under the held Ticket lock.
 
-    One statement reads the occurrence, its catalog Product, the parent
+    One statement reads the occurrence with its override provenance and
+    the current profile of its setter, its catalog Product, the parent
     track and package with their direct markers, the lifecycle phase, and
     the SQL Product actionability, all for `evaluation_date`; the reason
     is derived by the canonical precedence. Performs no write.
@@ -2481,6 +2530,10 @@ async def _project_product(
                 TicketPackageProduct.id,
                 TicketPackageProduct.eligible,
                 TicketPackageProduct.is_eligible_override,
+                type_coerce(_override_setter_json(), JSON).label(
+                    "eligibility_override_by"
+                ),
+                TicketPackageProduct.eligibility_override_at,
                 TicketPackageProduct.deleted_at.label("product_deleted_at"),
                 Product.cpe,
                 Product.display_name,
@@ -2498,6 +2551,10 @@ async def _project_product(
                 TicketPackage, TicketPackage.id == TicketPackageTrack.ticket_package_id
             )
             .join(Product, Product.id == TicketPackageProduct.product_id)
+            .outerjoin(
+                _OVERRIDE_SETTER,
+                _OVERRIDE_SETTER.id == TicketPackageProduct.eligibility_override_by_id,
+            )
             .where(TicketPackageProduct.id == ticket_package_product_id)
         )
     ).one()
@@ -2512,6 +2569,8 @@ async def _project_product(
         product_name=row.display_name,
         eligible=row.eligible,
         is_eligible_override=row.is_eligible_override,
+        eligibility_override_by=_override_setter(row.eligibility_override_by),
+        eligibility_override_at=row.eligibility_override_at,
         lifecycle_phase=lifecycle_phase,
         actionable=row.actionable,
         non_actionable_reason=product_non_actionable_reason(
@@ -2560,18 +2619,21 @@ async def set_product_eligibility(
     (4) locked path reload. Override (`eligible` is a bool): (5) `no_op`
     when the locked value equals `eligible` and the marker is already
     `true`; (6) `auto_assign_actor()`; (7-8) sets the value and the
-    marker; (9) one acting-user `product_eligibility_changed` with the
-    event-time Product subject, `reason = va_override`, and
-    `override_action = set` (from automatic management, even with an
-    unchanged boolean) or `changed` (an override value change); (10)
+    marker with its provenance, `acting_user_id` and the transaction's
+    `now()`, for `set` and `changed` alike; (9) one acting-user
+    `product_eligibility_changed` with the event-time Product subject,
+    `reason = va_override`, and `override_action = set` (from automatic
+    management, even with an unchanged boolean) or `changed` (an override
+    value change), whose `created_at` is the same `now()`; (10)
     `reconcile_ticket_status()` once; (11) flushes. Reset (`None`): (5)
     `no_op` when the marker is already `false`; (6) `auto_assign_actor()`;
-    (7) clears the marker; (8-9) recalculates `eligible` with the shared
-    pure evaluator from the current `default_cvss_version`, assessment
-    set (the `10.0` fallback without a SUSE default-version assessment,
-    including a CVE-less Ticket), Product threshold, and lifecycle phase;
-    (10) one event with `override_action = cleared` and truthful old/new
-    values, which may be equal; (11) reconciles once; (12) flushes.
+    (7) clears the marker and its provenance; (8-9) recalculates
+    `eligible` with the shared pure evaluator from the current
+    `default_cvss_version`, assessment set (the `10.0` fallback without a
+    SUSE default-version assessment, including a CVE-less Ticket), Product
+    threshold, and lifecycle phase; (10) one event with
+    `override_action = cleared` and truthful old/new values, which may be
+    equal; (11) reconciles once; (12) flushes.
     Excluded and EOL occurrences remain mutable; affectedness, delivery,
     `released_at`, and exclusion markers are never changed. No-op
     outcomes create no assignment, audit event, reconciliation, or
@@ -2580,6 +2642,9 @@ async def set_product_eligibility(
 
     Q4: returns the outcome, the locked-current Product projection, and
     the shared `evaluation_date`.
+
+    Q5: re-invocation with the same request is the step-5 no-op, which
+    keeps the provenance of the earlier change whoever sends it.
 
     Q6: raises `ValueError` before any database operation when the actor
     is null or `caller` is not a consumer caller identifying it. Raises
@@ -2626,7 +2691,11 @@ async def set_product_eligibility(
 
     await auto_assign_actor(ticket, acting_user, db)
     if eligible is None:
+        # The marker and its provenance change together, before the score
+        # query below autoflushes them.
         occurrence.is_eligible_override = False
+        occurrence.eligibility_override_by_id = None
+        occurrence.eligibility_override_at = None
         automatic = evaluate_product_eligibility(
             is_eligible_override=False,
             lifecycle_phase=path.lifecycle_phase,
@@ -2636,7 +2705,14 @@ async def set_product_eligibility(
         assert automatic is not None  # an automatic record always has a value
         new_eligible = automatic
     else:
+        # The transaction's `now()`, which is also the `created_at` of the
+        # event below (package-service.md, `set_product_eligibility()`). Read
+        # before the marker is assigned, so that its autoflush never writes
+        # the override without its provenance.
+        set_at = (await db.execute(select(func.now()))).scalar_one()
         occurrence.is_eligible_override = True
+        occurrence.eligibility_override_by_id = acting_user_id
+        occurrence.eligibility_override_at = set_at
         new_eligible = eligible
     occurrence.eligible = new_eligible
     await TicketAuditLog.log_event(

@@ -61,7 +61,10 @@ from app.models.ticket_package_product import TicketPackageProduct
 from app.models.ticket_package_track import TicketPackageTrack
 from app.models.user import User
 from app.services import package_service, ticket_mutations, ticket_service, user_service
-from tests.support.product_eligibility import persisted_occurrence
+from tests.support.product_eligibility import (
+    persisted_occurrence,
+    persisted_provenance,
+)
 from tests.support.suse_cvss import V31_MEDIUM
 from tests.support.ticket_api import (
     FORBIDDEN,
@@ -105,6 +108,8 @@ PRODUCT_FIELDS = {
     "product_name",
     "eligible",
     "is_eligible_override",
+    "eligibility_override_by",
+    "eligibility_override_at",
     "lifecycle_phase",
     "actionable",
     "non_actionable_reason",
@@ -192,8 +197,36 @@ async def _snapshot(db: AsyncSession, tree: Tree) -> tuple[Any, ...]:
     return (
         await ticket_row(db, tree.ticket.id),
         await persisted_occurrence(db, tree.occurrence),
+        await persisted_provenance(db, tree.occurrence.id),
         await event_count(db, tree.ticket.id),
     )
+
+
+async def _last_eligibility_event_at(db: AsyncSession, ticket_id: uuid.UUID) -> str:
+    """The `created_at` of the Ticket's latest `product_eligibility_changed`,
+    in the UTC `Z` wire form of API timestamps."""
+    created_at = (
+        await db.execute(
+            select(TicketAuditEvent.created_at)
+            .where(
+                TicketAuditEvent.ticket_id == ticket_id,
+                TicketAuditEvent.event_type == "product_eligibility_changed",
+            )
+            .order_by(TicketAuditEvent.id.desc())
+            .limit(1)
+        )
+    ).scalar_one()
+    return created_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _user_reference(user: User) -> dict[str, Any]:
+    return {
+        "id": str(user.id),
+        "username": user.username,
+        "full_name": user.full_name,
+        "active": user.active,
+        "bot": user.bot,
+    }
 
 
 @pytest.fixture
@@ -831,8 +864,16 @@ class TestNotMutable:
 # ---------------------------------------------------------------------------
 
 
-def _expected(tree: Tree, eligible: bool, override: bool) -> dict[str, Any]:
-    """The documented response of the in-support fixture occurrence."""
+def _expected(
+    tree: Tree,
+    eligible: bool,
+    override: bool,
+    *,
+    override_by: User | None = None,
+    override_at: str | None = None,
+) -> dict[str, Any]:
+    """The documented response of the in-support fixture occurrence, with
+    the override provenance `override_by` and `override_at`."""
     return {
         "data": {
             "ticket_id": locator(tree.ticket),
@@ -843,6 +884,10 @@ def _expected(tree: Tree, eligible: bool, override: bool) -> dict[str, Any]:
             "product_name": _DISPLAY_NAME,
             "eligible": eligible,
             "is_eligible_override": override,
+            "eligibility_override_by": (
+                _user_reference(override_by) if override_by is not None else None
+            ),
+            "eligibility_override_at": override_at,
             "lifecycle_phase": "general_support",
             "actionable": True,
             "non_actionable_reason": None,
@@ -870,7 +915,10 @@ class TestResponse:
         and clears again (automatic no-op). Every response has exactly the
         documented fields; each effective request records one event with
         `set`, `changed`, or `cleared` and each no-op none (ticket-audit-log
-        .md, Testing Requirement 21)."""
+        .md, Testing Requirement 21). Every override response names the
+        caller as its setter at the time of the latest event, and every
+        automatic one carries no provenance (package-model.md, Override
+        Model)."""
         user = await grant(Role.VULNERABILITY_ANALYST)
         clock = Clock(datetime(2026, 9, 27, 12, 0, tzinfo=UTC))
         monkeypatch.setattr(route, "_utc_now", clock.now)
@@ -903,7 +951,17 @@ class TestResponse:
             body = response.json()
             assert set(body) == {"data"}
             assert set(body["data"]) == PRODUCT_FIELDS
-            assert body == _expected(tree, eligible, override)
+            assert body == _expected(
+                tree,
+                eligible,
+                override,
+                override_by=user if override else None,
+                override_at=(
+                    await _last_eligibility_event_at(db_session, tree.ticket.id)
+                    if override
+                    else None
+                ),
+            )
             assert str(tree.ticket.id) not in response.text
             assert str(tree.product.id) not in response.text
             assert await persisted_occurrence(db_session, tree.occurrence) == (

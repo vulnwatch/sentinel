@@ -15,6 +15,12 @@ Consumers:
   the service with an explicit declared path instead, so that no
   statement precedes its locks.
 
+The override provenance helpers (`ELIGIBILITY_OVERRIDE_SET_AT`,
+`add_override_setter()`, `override_provenance_columns()`) also serve
+`tests/conftest.py` (`ticket_package_product_factory`) and every support
+module or test that inserts an overridden occurrence directly, so that the
+row satisfies `chk_ticket_package_product_eligibility_override_provenance`.
+
 The track-level helpers (`Spy`, `ticket_state`) are reused from
 `tests/support/track_status.py`. The helpers observe persisted state and
 record calls; nothing here computes an expectation with the module under
@@ -25,7 +31,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable, Callable
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 import pytest
@@ -36,11 +42,13 @@ from app.core.enums import Scope
 from app.models.product import Product
 from app.models.system_setting import SystemSetting
 from app.models.ticket import Ticket
+from app.models.ticket_audit_event import TicketAuditEvent
 from app.models.ticket_package import TicketPackage
 from app.models.ticket_package_product import TicketPackageProduct
 from app.models.ticket_package_track import TicketPackageTrack
 from app.models.user import User
 from app.services.package_service import (
+    PackageUserProjection,
     ProductEligibilityResult,
     set_product_eligibility,
 )
@@ -58,6 +66,96 @@ from tests.support.track_status import Spy, ticket_state
 
 OccurrencePath = tuple[uuid.UUID, uuid.UUID, uuid.UUID]
 """The declared `(ticket_id, package_id, track_id)` of an occurrence."""
+
+ELIGIBILITY_OVERRIDE_SET_AT = datetime(2001, 2, 3, 4, 5, 6, tzinfo=UTC)
+"""Default `eligibility_override_at` of an occurrence created with an
+override by `ticket_package_product_factory` (`tests/conftest.py`) or by
+`override_provenance_columns()`."""
+
+OverrideProvenance = tuple[uuid.UUID | None, datetime | None]
+"""The persisted `(eligibility_override_by_id, eligibility_override_at)`."""
+
+
+async def add_override_setter(
+    session: AsyncSession, user_ids: list[uuid.UUID] | None = None
+) -> uuid.UUID:
+    """Add and flush a fictional User who set an eligibility override;
+    `user_ids` collects its ID for the teardown of a committed world.
+    Returns the User ID."""
+    suffix = uuid.uuid4().hex[:10]
+    user = User(
+        username=f"setter.{suffix}",
+        email=f"setter.{suffix}@example.com",
+        password_hash="$2b$12$" + "s" * 53,
+    )
+    session.add(user)
+    await session.flush()
+    if user_ids is not None:
+        user_ids.append(user.id)
+    return user.id
+
+
+def override_provenance_columns(
+    override: bool, setter_id: uuid.UUID | None
+) -> dict[str, Any]:
+    """The provenance columns of an occurrence inserted directly with
+    `is_eligible_override = override`: `setter_id` and
+    `ELIGIBILITY_OVERRIDE_SET_AT` for an override, nothing otherwise, so
+    that the row satisfies
+    `chk_ticket_package_product_eligibility_override_provenance`."""
+    if not override:
+        return {}
+    assert setter_id is not None, "an override needs the User who set it"
+    return {
+        "eligibility_override_by_id": setter_id,
+        "eligibility_override_at": ELIGIBILITY_OVERRIDE_SET_AT,
+    }
+
+
+def setter_profile(user: User) -> PackageUserProjection:
+    """The projected current profile of `user` as an override setter."""
+    return PackageUserProjection(
+        id=user.id,
+        username=user.username,
+        full_name=user.full_name,
+        active=user.active,
+        bot=user.bot,
+    )
+
+
+async def eligibility_event_times(
+    db: AsyncSession, ticket_id: uuid.UUID
+) -> list[datetime]:
+    """The `created_at` of the Ticket's `product_eligibility_changed` events
+    in insertion (UUIDv7 `id`) order."""
+    return list(
+        (
+            await db.execute(
+                select(TicketAuditEvent.created_at)
+                .where(
+                    TicketAuditEvent.ticket_id == ticket_id,
+                    TicketAuditEvent.event_type == "product_eligibility_changed",
+                )
+                .order_by(TicketAuditEvent.id)
+            )
+        ).scalars()
+    )
+
+
+async def persisted_provenance(
+    db: AsyncSession, occurrence_id: uuid.UUID
+) -> OverrideProvenance:
+    """The persisted override provenance of an occurrence (package-model.md,
+    Override Model)."""
+    row = (
+        await db.execute(
+            select(
+                TicketPackageProduct.eligibility_override_by_id,
+                TicketPackageProduct.eligibility_override_at,
+            ).where(TicketPackageProduct.id == occurrence_id)
+        )
+    ).one()
+    return row.eligibility_override_by_id, row.eligibility_override_at
 
 
 async def occurrence_path(
@@ -224,15 +322,16 @@ async def assert_no_effects(
 ) -> ProductEligibilityResult | None:
     """Run the call and assert the zero-side-effect contract: no write, no
     assignment, no reconciliation, no registered convergence effect, and
-    unchanged Ticket status, assignee, events, and occurrence eligibility
-    and override marker for every given Ticket and occurrence. Returns the
-    result of a non-raising call."""
+    unchanged Ticket status, assignee, events, and occurrence eligibility,
+    override marker, and override provenance for every given Ticket and
+    occurrence. Returns the result of a non-raising call."""
 
     async def snapshot() -> tuple[Any, ...]:
         return (
             [await ticket_state(db, t) for t in tickets],
             [await ticket_events(db, t) for t in tickets],
             [await persisted_occurrence(db, o) for o in occurrences],
+            [await persisted_provenance(db, o.id) for o in occurrences],
         )
 
     before = await snapshot()

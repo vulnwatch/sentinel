@@ -1422,7 +1422,8 @@ override, and manual-zone-exit eligibility mutation. The sole exception lets
 `ticket_mutations` update only automatic Product eligibility inline while it
 owns the `CVE` then `Ticket` locks for the atomic CVSS chain. It reuses the one
 package-model evaluator, does not import `package_service`, and may not mutate
-affectedness, delivery, release, exclusion, hierarchy, or override state.
+affectedness, delivery, release, exclusion, hierarchy, or override state,
+including the override provenance.
 
 Ticket lifecycle operations and cross-domain Ticket compositions live in
 `ticket_service` — see `docs/features/tickets/ticket-service.md`. Some of these

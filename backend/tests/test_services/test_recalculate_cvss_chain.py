@@ -89,6 +89,7 @@ from tests.support.cvss_chain import (
     ticket_state,
     total_ticket_events,
 )
+from tests.support.product_eligibility import override_provenance_columns
 from tests.support.ticket_mutations import (
     AFTER_EVAL,
     BEFORE_EVAL,
@@ -97,6 +98,7 @@ from tests.support.ticket_mutations import (
     StatementRecorder,
     TicketFactory,
     TreeBuilder,
+    UserFactory,
     VAUser,
     status_event,
     ticket_events,
@@ -593,6 +595,7 @@ class TestEligibilityFormula:
         self,
         db_session: AsyncSession,
         ticket_factory: TicketFactory,
+        user_factory: UserFactory,
         cve_with: CVEBuilder,
         tree: TreeBuilder,
     ) -> None:
@@ -615,10 +618,15 @@ class TestEligibilityFormula:
         # Current values changed behind the session's loaded instances: the
         # first occurrence became a false override, and the second
         # Product's threshold rose above the score.
+        setter = await user_factory()
         await db_session.execute(
             update(TicketPackageProduct)
             .where(TicketPackageProduct.id == first.id)
-            .values(eligible=False, is_eligible_override=True)
+            .values(
+                eligible=False,
+                is_eligible_override=True,
+                **override_provenance_columns(True, setter.id),
+            )
             .execution_options(synchronize_session=False)
         )
         await db_session.execute(

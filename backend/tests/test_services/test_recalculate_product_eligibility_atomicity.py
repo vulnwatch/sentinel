@@ -83,6 +83,10 @@ from app.services.ticket_service import ignore_ticket
 from app.services.ticket_visibility import TicketCaller
 from tests.support.cvss_chain import DEFAULT_VERSION, eligibility, ticket_state
 from tests.support.database import assert_lock_wait
+from tests.support.product_eligibility import (
+    add_override_setter,
+    override_provenance_columns,
+)
 from tests.support.suse_cvss import V31_MEDIUM
 from tests.support.suse_cvss_races import CommittedWorld, SessionStatementRecorder
 from tests.support.ticket_mutations import (
@@ -186,7 +190,8 @@ async def _occurrence(
     occurrence_id: uuid.UUID | None = None,
 ) -> _Occurrence:
     """Commit one occurrence of `product` on a fresh `ANALYSIS` track of a
-    fresh package of the Ticket."""
+    fresh package of the Ticket; an override was set by a fresh User of the
+    world."""
     session = world.session
     suffix = uuid.uuid4().hex[:10]
     package = TicketPackage(ticket_id=ticket.id, package_name=f"fictional-{suffix}")
@@ -200,11 +205,13 @@ async def _occurrence(
     )
     session.add(track)
     await session.flush()
+    setter_id = await add_override_setter(session, world.user_ids) if override else None
     occurrence = TicketPackageProduct(
         ticket_package_track_id=track.id,
         product_id=product.id,
         eligible=eligible,
         is_eligible_override=override,
+        **override_provenance_columns(override, setter_id),
     )
     if occurrence_id is not None:
         occurrence.id = occurrence_id

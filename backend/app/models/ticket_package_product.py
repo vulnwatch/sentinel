@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -46,12 +47,16 @@ class TicketPackageProduct(Base):
     occurrence selections. `eligible` is the effective eligibility (new
     records default to `true`); `is_eligible_override` (default `false`)
     marks a manual eligibility that automatic workflows do not modify.
+    `eligibility_override_by_id` and `eligibility_override_at` are the
+    override provenance, set exactly when `is_eligible_override` is
+    (`chk_ticket_package_product_eligibility_override_provenance`).
     `released_at` is the authoritative advisory-issued time, `NULL` until
     Product release detection confirms an exact match. `deleted_at` is the
     direct manual-exclusion marker; current actionability and lifecycle phase
-    are derived at read time and never persisted. Both FKs use the PostgreSQL
-    default `NO ACTION` (#633 decision A3): tracks are soft-deleted and
-    Products are retained.
+    are derived at read time and never persisted. The track and Product FKs
+    use the PostgreSQL default `NO ACTION` (#633 decision A3): tracks are
+    soft-deleted and Products are retained. The User FK of the provenance
+    uses `ON DELETE RESTRICT`: Users are never deleted.
     """
 
     __tablename__ = "ticket_package_product"
@@ -60,6 +65,18 @@ class TicketPackageProduct(Base):
             "ticket_package_track_id",
             "product_id",
             name="uq_ticket_package_product_ticket_package_track_id_product_id",
+        ),
+        # An override always has its provenance, and no provenance exists
+        # without one (docs/features/packages/package-model.md, Override
+        # Model).
+        CheckConstraint(
+            "(is_eligible_override = false "
+            "AND eligibility_override_by_id IS NULL "
+            "AND eligibility_override_at IS NULL) "
+            "OR (is_eligible_override = true "
+            "AND eligibility_override_by_id IS NOT NULL "
+            "AND eligibility_override_at IS NOT NULL)",
+            name="chk_ticket_package_product_eligibility_override_provenance",
         ),
         # Non-unique, non-partial (docs/data-model.md, TicketPackageProduct,
         # Indexes).
@@ -83,6 +100,14 @@ class TicketPackageProduct(Base):
     )
     is_eligible_override: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
+    )
+    # Not indexed: Users are never deleted and no documented query selects
+    # occurrences by it (docs/data-model.md, TicketPackageProduct).
+    eligibility_override_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="RESTRICT"), nullable=True
+    )
+    eligibility_override_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     released_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
