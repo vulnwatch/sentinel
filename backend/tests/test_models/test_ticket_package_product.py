@@ -164,19 +164,11 @@ class TestTicketPackageProductSchemaShape:
         assert uniques == {(_UNIQUE, ("ticket_package_track_id", "product_id"))}
 
     def test_only_the_provenance_check_constraint(self) -> None:
-        """The exact expression is what `alembic check` does not compare
+        """Its behavior is the matrix of `TestEligibilityOverrideProvenance`
         (docs/data-model.md, TicketPackageProduct, CHECK constraints)."""
         table = TicketPackageProduct.metadata.tables["ticket_package_product"]
         (check,) = [c for c in table.constraints if isinstance(c, CheckConstraint)]
         assert check.name == _PROVENANCE_CHECK
-        assert str(check.sqltext) == (
-            "(is_eligible_override = false "
-            "AND eligibility_override_by_id IS NULL "
-            "AND eligibility_override_at IS NULL) "
-            "OR (is_eligible_override = true "
-            "AND eligibility_override_by_id IS NOT NULL "
-            "AND eligibility_override_at IS NOT NULL)"
-        )
 
     def test_exact_index_set(self) -> None:
         """`ix_ticket_package_product_product_id`: non-unique, non-partial
