@@ -44,10 +44,7 @@ from typing import Any, cast
 import pytest
 import redis.asyncio as redis_asyncio
 from celery.exceptions import SoftTimeLimitExceeded, WorkerShutdown, WorkerTerminate
-from kombu.exceptions import (  # type: ignore[import-untyped]
-    EncodeError,
-    SerializerNotInstalled,
-)
+from kombu.exceptions import EncodeError, SerializerNotInstalled
 from kombu.exceptions import OperationalError as BrokerOperationalError
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError

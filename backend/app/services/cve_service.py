@@ -2550,7 +2550,7 @@ class _PendingMarker:
         if self._client is None:
             self._client = _new_redis_client()
         try:
-            await self._client.eval(  # type: ignore[misc]
+            await self._client.eval(
                 script,
                 1,
                 fetch_pending_key(self._cve_id, self._source),

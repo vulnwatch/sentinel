@@ -30,11 +30,7 @@ from typing import Any
 
 import pytest
 from celery.exceptions import SoftTimeLimitExceeded, WorkerShutdown
-from kombu.exceptions import (  # type: ignore[import-untyped]
-    EncodeError,
-    OperationalError,
-    SerializerNotInstalled,
-)
+from kombu.exceptions import EncodeError, OperationalError, SerializerNotInstalled
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs

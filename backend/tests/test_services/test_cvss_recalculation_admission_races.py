@@ -42,9 +42,7 @@ from typing import Any
 
 import pytest
 import redis.asyncio as redis_asyncio
-from kombu.exceptions import (  # type: ignore[import-untyped]
-    OperationalError as BrokerOperationalError,
-)
+from kombu.exceptions import OperationalError as BrokerOperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from app.services import cvss_recalculation_admission as admission

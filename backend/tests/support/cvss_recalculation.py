@@ -800,7 +800,8 @@ class RecalculationHarness:
         return await fence_holders(self.observer)
 
     async def lease(self) -> str | None:
-        value: str | None = await self.redis.get(LEASE_KEY)
+        value = await self.redis.get(LEASE_KEY)
+        assert not isinstance(value, bytes)  # the client decodes responses
         return value
 
 

@@ -448,7 +448,8 @@ class _SyncWorld:
 
     def marker_value(self, cve_id: str) -> str | None:
         async def read(client: redis_asyncio.Redis) -> str | None:
-            value: str | None = await client.get(pending_key(cve_id))
+            value = await client.get(pending_key(cve_id))
+            assert not isinstance(value, bytes)  # the client decodes responses
             return value
 
         return self._redis(read)

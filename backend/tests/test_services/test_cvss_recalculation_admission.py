@@ -45,10 +45,7 @@ from typing import Any
 
 import pytest
 import redis.asyncio as redis_asyncio
-from kombu.exceptions import (  # type: ignore[import-untyped]
-    EncodeError,
-    SerializerNotInstalled,
-)
+from kombu.exceptions import EncodeError, SerializerNotInstalled
 from kombu.exceptions import OperationalError as BrokerOperationalError
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
@@ -851,7 +848,7 @@ class TestReleaseFailureOnRejection:
 # ---------------------------------------------------------------------------
 
 
-class _MimickingOperationalError(BrokerOperationalError):  # type: ignore[misc]
+class _MimickingOperationalError(BrokerOperationalError):
     """A broker operational error whose text names another class."""
 
 

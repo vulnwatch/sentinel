@@ -82,7 +82,7 @@ import httpx
 import pytest
 from celery.exceptions import OperationalError as BrokerOperationalError
 from celery.exceptions import SoftTimeLimitExceeded
-from kombu.exceptions import EncodeError  # type: ignore[import-untyped]
+from kombu.exceptions import EncodeError
 from pydantic import SecretStr
 from sqlalchemy import delete, event, func, select
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker

@@ -34,8 +34,16 @@ dependencies = [
     "alembic>=1.20.0",
     "pydantic>=2.14.0",
     "pydantic-settings>=2.15.0",
-    "celery[redis]>=5.6.3",
-    "redis>=5.2.0",
+    # 5.7.0 is excluded: its prefork worker exits when the Redis broker
+    # restarts while tasks are in flight (celery/celery#11054). Each
+    # exclusion below is removed once a later release is locked (see
+    # docs/deployment.md, Workflow Conventions → Python dependency updates
+    # and vulnerability response).
+    "celery[redis]>=5.6.3,!=5.7.0",
+    # 8.1.0 is excluded: its asyncio pool hands out a connection that the
+    # server closed, so the first command after a Redis restart fails
+    # (redis/redis-py#4252).
+    "redis>=8.0.1,!=8.1.0",
     "httpx>=0.28.0",
     "bcrypt>=4.2.0",
     "PyJWT>=2.14.0",

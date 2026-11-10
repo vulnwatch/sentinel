@@ -413,9 +413,10 @@ class TestDelegation:
 async def _lease_and_fence(redis_url: str, engine: AsyncEngine) -> str | None:
     client = redis_asyncio.Redis.from_url(redis_url, decode_responses=True)
     try:
-        lease: str | None = await client.get(LEASE_KEY)
+        lease = await client.get(LEASE_KEY)
     finally:
         await client.aclose()
+    assert not isinstance(lease, bytes)  # the client decodes responses
     await wait_until_fence_free(engine)
     await engine.dispose()
     return lease

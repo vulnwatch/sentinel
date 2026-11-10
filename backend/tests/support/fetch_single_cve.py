@@ -367,7 +367,8 @@ class FetchSingleHarness:
         return value
 
     async def marker_value(self, cve_id: str, source: str = SOURCE.value) -> str | None:
-        value: str | None = await self.redis.get(pending_key(cve_id, source))
+        value = await self.redis.get(pending_key(cve_id, source))
+        assert not isinstance(value, bytes)  # the client decodes responses
         return value
 
     async def marker_ttl(self, cve_id: str, source: str = SOURCE.value) -> int:

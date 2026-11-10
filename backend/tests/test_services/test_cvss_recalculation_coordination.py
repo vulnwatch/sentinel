@@ -163,25 +163,22 @@ async def lease_client(
 
 
 async def _set_non_string_key(redis_client: redis_asyncio.Redis, kind: str) -> Any:
-    """Store `cvss_recalc_active` as a non-string type; return its content.
-
-    redis-py types these commands as sync-or-async; the client is async
-    (the same `misc` ignore as `client.eval` in the module under test)."""
+    """Store `cvss_recalc_active` as a non-string type; return its content."""
     if kind == "hash":
-        await redis_client.hset(LEASE_KEY, "owner", VALUE)  # type: ignore[misc]
+        await redis_client.hset(LEASE_KEY, "owner", VALUE)
     elif kind == "list":
-        await redis_client.rpush(LEASE_KEY, VALUE)  # type: ignore[misc]
+        await redis_client.rpush(LEASE_KEY, VALUE)
     else:
-        await redis_client.sadd(LEASE_KEY, VALUE)  # type: ignore[misc]
+        await redis_client.sadd(LEASE_KEY, VALUE)
     return await _non_string_content(redis_client, kind)
 
 
 async def _non_string_content(redis_client: redis_asyncio.Redis, kind: str) -> Any:
     if kind == "hash":
-        return await redis_client.hgetall(LEASE_KEY)  # type: ignore[misc]
+        return await redis_client.hgetall(LEASE_KEY)
     if kind == "list":
-        return await redis_client.lrange(LEASE_KEY, 0, -1)  # type: ignore[misc]
-    return await redis_client.smembers(LEASE_KEY)  # type: ignore[misc]
+        return await redis_client.lrange(LEASE_KEY, 0, -1)
+    return await redis_client.smembers(LEASE_KEY)
 
 
 async def _assert_ttl_seconds(redis_client: redis_asyncio.Redis, seconds: int) -> None:

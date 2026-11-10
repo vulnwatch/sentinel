@@ -212,7 +212,8 @@ async def _redis_set_key(url: str, key: str, value: str) -> None:
 async def _redis_get_key(url: str, key: str) -> str | None:
     client = redis_asyncio.Redis.from_url(url, decode_responses=True)
     try:
-        result: str | None = await client.get(key)
+        result = await client.get(key)
+        assert not isinstance(result, bytes)  # the client decodes responses
         return result
     finally:
         await client.aclose()

@@ -1311,7 +1311,9 @@ class TestTokenOwnership:
         seen: list[tuple[str | None, int]] = []
 
         async def observe() -> None:
-            seen.append((await harness.redis.get(key), await harness.redis.pttl(key)))
+            value = await harness.redis.get(key)
+            assert not isinstance(value, bytes)  # the client decodes responses
+            seen.append((value, await harness.redis.pttl(key)))
 
         probe.step = _succeeds(before=observe)
 

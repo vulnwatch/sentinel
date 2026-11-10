@@ -52,7 +52,7 @@ from typing import Any, NamedTuple, cast
 
 import pytest
 from celery.exceptions import OperationalError, SoftTimeLimitExceeded
-from kombu.exceptions import EncodeError  # type: ignore[import-untyped]
+from kombu.exceptions import EncodeError
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from structlog.contextvars import (
