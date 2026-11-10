@@ -5074,9 +5074,9 @@ and the dedicated database starts its Ticket identifiers at `SNTL-1`.
   (`docs/features/platform/example-dataset.md`, Audit Trails). Each
   exception list is checked in both directions: a covered item that an
   exception list names fails the test, as does an exception that names no
-  current table or member. The tables and members come from the code, so a new table or
-  member fails the test until the dataset covers it or the exception list
-  names it with its reason.
+  current table or member. The tables and members come from the code, so a
+  new table or member fails the test until the dataset covers it or the
+  exception list names it with its reason.
 
 The command itself is verified by the CLI Commands scenarios above.
 

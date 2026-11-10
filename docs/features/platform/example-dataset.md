@@ -261,6 +261,11 @@ post-commit effect:
   PostgreSQL, where every fetcher is disabled
   (`docs/features/platform/fetcher-infrastructure.md`, Startup
   Reconciliation).
+- No ingestion builds the post-ingest package-candidate handoff that a
+  fetcher passes to `commit_and_dispatch()`
+  (`docs/features/tickets/cve-service.md`, Post-Commit Package-Candidate
+  Handoff): the package records of the dataset come from Packages, Tracks, and
+  Maintainers, so its affected versions resolve no package.
 - The session-cache purge that follows `deactivate_user()`
   (`docs/features/identity/user-service.md`, `deactivate_user()`) is not
   performed: the deactivated dataset user has never signed in, so the
@@ -497,9 +502,9 @@ The Severity column is the resolved Ticket severity after the load
 (`docs/features/tickets/cvss-scoring.md`, Severity Resolution Cascade).
 
 Every ingestion is one system call of `upsert_cve()` with the source member of
-its column (`CVESourceType.NVD`, `MITRE`, `KEV`, `EPSS`, `GHSA`, or `OSV`), followed
-in the same transaction by `upsert_references()` when the CVE has automatic
-references (References). The `CVEs and tickets` step runs:
+its column (`CVESourceType.NVD`, `MITRE`, `KEV`, `EPSS`, `GHSA`, or `OSV`),
+followed in the same transaction by `upsert_references()` when the CVE has
+automatic references (References). The `CVEs and tickets` step runs:
 
 1. the first ingestion of `CVE-2099-0001` to `CVE-2099-0017`, in order;
 2. the last run of `sync_nvd_cves` and the NVD source record of
@@ -531,15 +536,16 @@ and `adp:CISA-ADP` scopes of a MITRE ingestion,
 `docs/features/tickets/cve-sync-ghsa.md` for `ghsa`, and
 `docs/features/tickets/cve-sync-osv.md` for `osv`. A field that a row does not
 name is absent. The four scopes of `CVE-2099-0009` together give every field of
-an entry a value and hold the statuses `affected`, `unaffected`, and
+`CVEAffectedVersionEntry` (`docs/features/tickets/cve-tracking.md`, Get CVE
+Affected Versions) a value and hold the statuses `affected`, `unaffected`, and
 `unknown`:
 
 | Scope | Entries |
 |---|---|
-| `cna` | Two entries of one element with vendor `Example`, product `fictional-tar`, collection URL `https://packages.example.com`, package name `fictional-tar`, repository `https://git.example.com/fictional-tar`, program files `src/extract.c` and `src/names.c`, CPE `cpe:2.3:a:example:fictional-tar:*:*:*:*:*:*:*:*`, and default status `unaffected`: versions from `1.0` up to but excluding `1.5`, of type `semver`, `affected`; and version `1.5`, of type `semver`, `unaffected` |
-| `adp:CISA-ADP` | Two entries of one element with vendor `example`, product `fictional_tar`, CPE `cpe:2.3:a:example:fictional_tar:*:*:*:*:*:*:*:*`, and default status `unknown`: versions from `1.0` up to and including `1.4.2`, of type `custom`, `affected`; and version `2.0.0-rc1`, of type `custom`, `unknown` |
+| `cna` | Two entries of one `affected[]` element with vendor `Example`, product `fictional-tar`, collection URL `https://packages.example.com`, package name `fictional-tar`, repository `https://git.example.com/fictional-tar`, program files `src/extract.c` and `src/names.c`, CPE `cpe:2.3:a:example:fictional-tar:*:*:*:*:*:*:*:*`, and default status `unaffected`: versions from `1.0` up to but excluding `1.5`, of type `semver`, `affected`; and version `1.5`, of type `semver`, `unaffected` |
+| `adp:CISA-ADP` | Two entries of one `affected[]` element with vendor `example`, product `fictional_tar`, CPE `cpe:2.3:a:example:fictional_tar:*:*:*:*:*:*:*:*`, and default status `unknown`: versions from `1.0` up to and including `1.4.2`, of type `custom`, `affected`; and version `2.0.0-rc1`, of type `custom`, `unknown` |
 | `ghsa` | One entry with product and package name `fictional-tar`, ecosystem `npm`, repository `https://git.example.com/fictional-tar`, and versions from `1.0.0` up to but excluding `1.5.0` |
-| `osv` | A Git commit range of the repository `https://git.example.com/fictional-tar`, of type `git`, from `1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d` up to but excluding `9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c`; and one entry with product and package name `fictional-tar`, ecosystem `npm`, Package URL `pkg:npm/fictional-tar`, and versions from `1.0.0` up to but excluding `1.5.0` |
+| `osv` | Two entries: a Git commit range of the repository `https://git.example.com/fictional-tar`, of type `git`, from `1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d` up to but excluding `9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c`; and an ecosystem range with product and package name `fictional-tar`, ecosystem `npm`, Package URL `pkg:npm/fictional-tar`, and versions from `1.0.0` up to but excluding `1.5.0` |
 
 The `cna` scope of `CVE-2099-0013` is generated: one entry with vendor
 `Example`, product `fictional-httpd`, the version `2.{m}.{p}` of type `semver`,
@@ -715,7 +721,7 @@ named user is a system operation (Attribution).
 | `SNTL-13` | `asmith` adds `fictional-httpd`, sets its track to `AFFECTED`, adds the SUSE assessment, and sets the priority override `P3`. The IBS observations of `SNTL-13` are applied in order (IBS Requests) |
 | `SNTL-14` | `asmith` adds `fictional-libxml`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-14` are applied in order. Track release detection sets the track to `FIXED`. Product release detection confirms the release of `Server 15 SP7` at `T − 2d` with the advisory `SUSE-SU-2099:0001-1` |
 | `SNTL-15` | `bwilson` adds `fictional-sudo`, sets the `fles-16.0` track to `NOT_AFFECTED` and the `SUSE:FLES-15-SP4:Update` track to `WONT_FIX`, and adds the SUSE assessment |
-| `SNTL-16` | `asmith` adds `fictional-kernel`, sets the `SUSE:FLES-15-SP5:Update` track to `AFFECTED`, excludes the `SUSE:FLES-15-SP4:Update` track, and excludes `Server 15 SP7` from the `SUSE:FLES-15-SP5:Update` track. `asmith` adds `fictional-kernel-firmware` and excludes it, then adds `fictional-kernel-compat`. `asmith` excludes and restores `fictional-kernel-compat`, then excludes and restores the `SUSE:FLES-15-SP3:Update` track of `fictional-kernel`, then excludes and restores `Server 15 SP3` from that track. `asmith` adds the SUSE assessment, then sets the eligibility override `eligible = false` on `Server LTSS 15 SP5` of the `SUSE:FLES-15-SP5:Update` track |
+| `SNTL-16` | `asmith` adds `fictional-kernel`, sets the `SUSE:FLES-15-SP5:Update` track to `AFFECTED`, excludes the `SUSE:FLES-15-SP4:Update` track, and excludes `Server 15 SP7` from the `SUSE:FLES-15-SP5:Update` track. `asmith` adds `fictional-kernel-firmware` and excludes it, then adds `fictional-kernel-compat`. `asmith` excludes and restores `fictional-kernel-compat`, then excludes and restores the `SUSE:FLES-15-SP3:Update` track of `fictional-kernel`, then excludes and restores `Server 15 SP3` on that track. `asmith` adds the SUSE assessment, then sets the eligibility override `eligible = false` on `Server LTSS 15 SP5` of the `SUSE:FLES-15-SP5:Update` track |
 | `SNTL-17` | `bwilson` ignores the Ticket with the reason `not_shipped` |
 | `SNTL-18` | `asmith` adds `fictional-openssh` and sets its track to `AFFECTED`. The IBS observations of `SNTL-18` are applied in order. `asmith` grants access to `cwhite`, then grants access to `security-scanner` and revokes it |
 | `SNTL-19` | `bwilson` makes the Ticket confidential |
@@ -764,9 +770,8 @@ The resulting states follow the gates of `docs/features/tickets/tickets.md`:
   assessment, while the Ticket is in `Analysis`, the restorations touch only
   records that are not actionable, and the eligibility override follows the
   assessment with the value that the threshold already gives the Product, so
-  no operation
-  regresses the `Resolved` Ticket (Isolation) and the assessment keeps its
-  automatic `product_eligibility_changed` event.
+  no operation regresses the `Resolved` Ticket (Isolation) and the assessment
+  keeps its automatic `product_eligibility_changed` event.
 - `SNTL-18` and `SNTL-19` stay in `Analysis` without a SUSE assessment.
 - `SNTL-20` stays in `Analysis`, assigned to its creator `cwhite`: it has no
   package, so its Analyzed gate fails.
@@ -906,10 +911,10 @@ Every other Ticket has the exploitation level `unknown`, no deciding evidence,
 and no override; its automatic and effective priority is the `unknown` cell
 of its severity: `P2` for critical (`SNTL-18`), `P3` for high, `P4` for
 medium, low, and none, and no priority for an unresolved severity (`SNTL-6`,
-`SNTL-8`, `SNTL-22`, `SNTL-28`, `SNTL-31`, and `SNTL-32`). The EPSS percentiles of
-`CVE-2099-0002` and `CVE-2099-0018` are below the threshold of the `likely`
-level, and that of `CVE-2099-0001` is not deciding evidence, because the KEV
-entry decides its level.
+`SNTL-8`, `SNTL-22`, `SNTL-28`, `SNTL-31`, and `SNTL-32`). The EPSS
+percentiles of `CVE-2099-0002` and `CVE-2099-0018` are below the threshold of
+the `likely` level, and that of `CVE-2099-0001` is not deciding evidence,
+because the KEV entry decides its level.
 
 The override provenance of each override names the user who set it and the
 time of that operation, the `created_at` of its `priority_changed` event
@@ -965,9 +970,10 @@ assessment, with the reason `cvss`, precedes it.
 
 A record marked excluded has `deleted_at` set by the exclusion of `asmith`; no
 other record of the dataset has it, because each restoration of `asmith`
-clears the `deleted_at` of the record that it restores. The package tree of `SNTL-16` therefore
-holds a direct exclusion at each level and every `non_actionable_reason`
-(`docs/features/packages/package-model.md`, Derived Actionability):
+clears the `deleted_at` of the record that it restores. The package tree of
+`SNTL-16` therefore holds a direct exclusion at each level and every
+`non_actionable_reason` (`docs/features/packages/package-model.md`, Derived
+Actionability):
 
 | Record | `actionable` | `non_actionable_reason` |
 |---|---|---|
@@ -1089,8 +1095,9 @@ Identity, IBSRequestAction):
 - `SNTL-12` has two manual references by `asmith`, created in this order:
   - `https://bugzilla.example.com/show_bug.cgi?id=1000012`, titled
     `Fictional bug report`, of type `issue`; and
-  - a reference created as `https://advisories.example.com/fictional-openssl/draft`,
-    titled `Fictional advisory draft`, of type `article`, which one
+  - a reference created as
+    `https://advisories.example.com/fictional-openssl/draft`, titled
+    `Fictional advisory draft`, of type `article`, which one
     `update_reference()` by `asmith` changes to
     `https://advisories.example.com/fictional-openssl/2099-0012`, titled
     `Fictional advisory`, with the description `Fixed in fictional-openssl

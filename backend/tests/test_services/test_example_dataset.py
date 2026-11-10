@@ -96,6 +96,7 @@ from app.models.ticket_package_track import TicketPackageTrack
 from app.models.ticket_reference import TicketReference
 from app.models.user import User
 from app.models.user_role import UserRole
+from app.schemas.cve import CVEAffectedVersionEntry
 from app.services import (
     cve_service,
     example_dataset,
@@ -364,6 +365,26 @@ GHSA_IDENTIFIERS: Final = {
 OSV_INGESTED: Final = frozenset({"CVE-2099-0009"})
 """CVEs: the CVEs with an OSV ingestion."""
 
+ENTRY_FIELDS: Final = (
+    "vendor",
+    "product",
+    "package_url",
+    "collection_url",
+    "package_name",
+    "repo",
+    "program_files",
+    "cpe",
+    "ecosystem",
+    "default_status",
+    "version",
+    "version_type",
+    "version_end",
+    "version_end_inclusive",
+    "status",
+)
+"""The fields of an affected-version entry (cve-tracking.md,
+CVEAffectedVersionEntry), in the order of the tuples below."""
+TAR_PACKAGE: Final = "fictional-tar"
 TAR_REPO: Final = "https://git.example.com/fictional-tar"
 TAR_CNA: Final = (
     "Example",
@@ -389,7 +410,6 @@ TAR_ADP: Final = (
     None,
     "unknown",
 )
-TAR_NPM: Final = ("fictional-tar", "fictional-tar", "npm")
 AFFECTED_VERSIONS_0009: Final = {
     # (scope, (vendor, product, package URL, collection URL, package name,
     # repository, program files, CPE, ecosystem, default status), version,
@@ -400,7 +420,7 @@ AFFECTED_VERSIONS_0009: Final = {
     ("adp:CISA-ADP", TAR_ADP, "2.0.0-rc1", "custom", None, None, "unknown"),
     (
         "ghsa",
-        (None, TAR_NPM[0], None, None, TAR_NPM[1], TAR_REPO, None, None, "npm", None),
+        (None, TAR_PACKAGE, None, None, TAR_PACKAGE, TAR_REPO, None, None, "npm", None),
         "1.0.0",
         None,
         "1.5.0",
@@ -420,10 +440,10 @@ AFFECTED_VERSIONS_0009: Final = {
         "osv",
         (
             None,
-            TAR_NPM[0],
+            TAR_PACKAGE,
             "pkg:npm/fictional-tar",
             None,
-            TAR_NPM[1],
+            TAR_PACKAGE,
             None,
             None,
             None,
@@ -2006,35 +2026,35 @@ class TestCVEs:
         with the fields of its source mapping, and the generated scope of
         `CVE-2099-0013`; no other CVE has an entry."""
 
-        async def reader(db: AsyncSession) -> list[tuple[Any, ...]]:
+        async def reader(
+            db: AsyncSession,
+        ) -> dict[str, list[dict[str, Any]]]:
             rows = await db.execute(
-                select(
-                    CVE.cve_id,
-                    CVEAffectedVersion.source_container,
-                    CVEAffectedVersion.vendor,
-                    CVEAffectedVersion.product,
-                    CVEAffectedVersion.package_url,
-                    CVEAffectedVersion.collection_url,
-                    CVEAffectedVersion.package_name,
-                    CVEAffectedVersion.repo,
-                    CVEAffectedVersion.program_files,
-                    CVEAffectedVersion.cpe,
-                    CVEAffectedVersion.ecosystem,
-                    CVEAffectedVersion.default_status,
-                    CVEAffectedVersion.version,
-                    CVEAffectedVersion.version_type,
-                    CVEAffectedVersion.version_end,
-                    CVEAffectedVersion.version_end_inclusive,
-                    CVEAffectedVersion.status,
-                ).join(CVE, CVE.id == CVEAffectedVersion.cve_id)
+                select(CVE.cve_id, CVEAffectedVersion).join(
+                    CVE, CVE.id == CVEAffectedVersion.cve_id
+                )
             )
-            return [tuple(row) for row in rows]
+            by_cve: dict[str, list[dict[str, Any]]] = {}
+            for cve_id, entry in rows:
+                by_cve.setdefault(cve_id, []).append(
+                    {
+                        name: getattr(entry, name)
+                        for name in ("source_container", *ENTRY_FIELDS)
+                    }
+                )
+            return by_cve
 
-        rows = read(loaded.url, reader)
-        by_cve: dict[str, list[tuple[Any, ...]]] = {}
-        for cve_id, *entry in rows:
-            entry[7] = _files(entry[7])
-            by_cve.setdefault(cve_id, []).append(tuple(entry))
+        entries = read(loaded.url, reader)
+        by_cve = {
+            cve_id: [
+                tuple(
+                    _files(entry[name]) if name == "program_files" else entry[name]
+                    for name in ("source_container", *ENTRY_FIELDS)
+                )
+                for entry in cve_entries
+            ]
+            for cve_id, cve_entries in entries.items()
+        }
 
         assert set(by_cve) == {"CVE-2099-0009", "CVE-2099-0013"}
         expected_tar = {
@@ -2044,6 +2064,13 @@ class TestCVEs:
         assert sorted(by_cve["CVE-2099-0009"], key=repr) == sorted(
             expected_tar, key=repr
         )
+        # Every field of an entry has a value in a scope of CVE-2099-0009,
+        # including a field that a later Sentinel version adds.
+        assert {
+            name
+            for name in CVEAffectedVersionEntry.model_fields
+            if all(entry[name] is None for entry in entries["CVE-2099-0009"])
+        } == set()
         expected_large = {
             (
                 "cna",
