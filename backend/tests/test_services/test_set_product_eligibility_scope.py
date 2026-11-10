@@ -83,10 +83,12 @@ from app.services.ticket_convergence_registry import (
 from tests.support.cvss_chain import DEFAULT_VERSION
 from tests.support.database import rollback_test_scope
 from tests.support.product_eligibility import (
+    ELIGIBILITY_OVERRIDE_SET_AT,
     assert_no_effects,
     eligibility_event,
     only_occurrence,
     persisted_occurrence,
+    persisted_provenance,
     set_eligibility,
 )
 from tests.support.suse_cvss import assignment_event
@@ -1035,6 +1037,7 @@ class TestRollback:
             await ticket_state(db_session, ticket),
             await ticket_events(db_session, ticket),
             await persisted_occurrence(db_session, occurrence),
+            await persisted_provenance(db_session, occurrence.id),
             pending_ticket_convergence_effects(db_session),
         )
         assert before == (
@@ -1045,6 +1048,7 @@ class TestRollback:
             ),
             [],
             (False, True),
+            (occurrence.eligibility_override_by_id, ELIGIBILITY_OVERRIDE_SET_AT),
             (),
         )
         original_reconcile = ticket_mutations.reconcile_ticket_status
@@ -1104,6 +1108,7 @@ class TestRollback:
             await ticket_state(db_session, ticket),
             await ticket_events(db_session, ticket),
             await persisted_occurrence(db_session, occurrence),
+            await persisted_provenance(db_session, occurrence.id),
             pending_ticket_convergence_effects(db_session),
         ) == before
 

@@ -7,8 +7,9 @@ Owning specifications:
   Consumer caller context and Ticket accessibility; Auto-Assignment Rule;
   `set_product_eligibility()`; Record Creation Logic; Service Exceptions;
   Architectural Test Requirement: Forward transitions, Auto-assignment,
-  Override metadata transitions, Public Product identity, Human-readable
-  Product audit subjects, Dimension independence (eligibility part)).
+  Override metadata transitions, Override provenance, Public Product
+  identity, Human-readable Product audit subjects, Dimension independence
+  (eligibility part)).
 - docs/features/packages/package-model.md (Axis 2: Eligibility, rules
   1-5; Authorized-User Overrides Product Eligibility; Derived
   Actionability; Gate Participation; Override Model; Override Product
@@ -87,13 +88,17 @@ from app.services.ticket_convergence_registry import (
 from app.services.ticket_visibility import TicketCaller
 from tests.support.cvss_chain import DEFAULT_VERSION, Assessment, CVEBuilder
 from tests.support.product_eligibility import (
+    ELIGIBILITY_OVERRIDE_SET_AT,
     assert_no_effects,
     eligibility_event,
+    eligibility_event_times,
     only_occurrence,
     persisted_occurrence,
+    persisted_provenance,
     product_subject,
     set_default_version,
     set_eligibility,
+    setter_profile,
     track_occurrences,
 )
 from tests.support.suse_cvss import V31_MEDIUM, assignment_event, upsert
@@ -277,6 +282,21 @@ class TestOverrideMetadataTransitions:
             TicketStatus.ANALYSIS,
             actor.id,
         )
+        # package-model.md, Override Model: `set` (also over an equal
+        # automatic value) and `changed` record the acting user and the
+        # `created_at` of their event, `cleared` clears both.
+        (event_at,) = await eligibility_event_times(db_session, ticket.id)
+        if action == "cleared":
+            provenance: tuple[Any, Any] = (None, None)
+            projected: tuple[Any, Any] = (None, None)
+        else:
+            provenance = (actor.id, event_at)
+            projected = (setter_profile(actor), event_at)
+        assert await persisted_provenance(db_session, occurrence.id) == provenance
+        assert (
+            result.product.eligibility_override_by,
+            result.product.eligibility_override_at,
+        ) == projected
 
     async def test_set_change_clear_sequence_classifies_each_action(
         self,
@@ -286,21 +306,27 @@ class TestOverrideMetadataTransitions:
         tree: TreeBuilder,
     ) -> None:
         """Each call classifies from the state it reloads: an automatic
-        `true` set to `false`, changed back to `true`, then cleared to the
-        automatic `true` (equal old/new)."""
+        `true` set to `false`, changed back to `true` by another user, then
+        cleared to the automatic `true` (equal old/new). The change records
+        its own actor as the setter."""
         actor = await va_user()
+        other = await va_user()
         ticket = await cveless(ticket_factory, assignee_id=actor.id)
         track = await tree(ticket, status=PackageStatus.ANALYSIS)
         occurrence = await only_occurrence(db_session, track)
 
-        for request_value in (False, True, None):
-            await set_eligibility(db_session, occurrence, request_value, actor)
+        await set_eligibility(db_session, occurrence, False, actor)
+        assert (await persisted_provenance(db_session, occurrence.id))[0] == actor.id
+        await set_eligibility(db_session, occurrence, True, other)
+        assert (await persisted_provenance(db_session, occurrence.id))[0] == other.id
+        await set_eligibility(db_session, occurrence, None, actor)
 
         assert await persisted_occurrence(db_session, occurrence) == (True, False)
+        assert await persisted_provenance(db_session, occurrence.id) == (None, None)
         assert await ticket_events(db_session, ticket) == [
             await eligibility_event(db_session, occurrence, actor, True, False, "set"),
             await eligibility_event(
-                db_session, occurrence, actor, False, True, "changed"
+                db_session, occurrence, other, False, True, "changed"
             ),
             await eligibility_event(
                 db_session, occurrence, actor, True, True, "cleared"
@@ -406,7 +432,9 @@ class TestNoOp:
         (and, for `New`, the promotion) visible; the stale `Analyzed` status
         of a Ticket whose only track is in `ANALYSIS` would be corrected by
         any reconciliation. `reset-automatic-false` keeps a persisted
-        `false` although a recalculation would give `true`."""
+        `false` although a recalculation would give `true`. A seeded
+        override was set by another user, whose provenance the no-op keeps
+        (package-model.md, Override Model)."""
         actor = await va_user()
         status = TicketStatus.NEW if new_ticket else TicketStatus.ANALYZED
         ticket = await cveless(ticket_factory, status=status)
@@ -416,6 +444,9 @@ class TestNoOp:
             products=(Prod(eligible=seed, override=override),),
         )
         occurrence = await only_occurrence(db_session, track)
+        setter_id = occurrence.eligibility_override_by_id
+        assert (setter_id is not None) is override
+        assert setter_id != actor.id
 
         result = await assert_no_effects(
             db_session,
@@ -434,6 +465,11 @@ class TestNoOp:
             seed,
             override,
         )
+        setter = result.product.eligibility_override_by
+        assert (
+            setter.id if setter is not None else None,
+            result.product.eligibility_override_at,
+        ) == ((setter_id, ELIGIBILITY_OVERRIDE_SET_AT) if override else (None, None))
         assert await persisted_occurrence(db_session, occurrence) == (seed, override)
         assert await ticket_state(db_session, ticket) == (status, None)
         assert await ticket_events(db_session, ticket) == []
@@ -1251,6 +1287,8 @@ def _response(product: ProductEligibilityProjection) -> dict[str, Any]:
         "product_name": product.product_name,
         "eligible": product.eligible,
         "is_eligible_override": product.is_eligible_override,
+        "eligibility_override_by": product.eligibility_override_by,
+        "eligibility_override_at": product.eligibility_override_at,
         "lifecycle_phase": product.lifecycle_phase,
         "actionable": product.actionable,
         "non_actionable_reason": product.non_actionable_reason,
@@ -1377,6 +1415,7 @@ class TestResultProjection:
         ticket_package_factory: Factory,
         ticket_package_track_factory: Factory,
         ticket_package_product_factory: Factory,
+        user_factory: Factory,
         eligible: bool,
         override: bool,
         request_value: bool | None,
@@ -1385,6 +1424,9 @@ class TestResultProjection:
         phase: LifecyclePhase | None,
     ) -> None:
         actor = await va_user()
+        earlier = await user_factory(
+            username="grace.setter", full_name="Grace Setter", active=False
+        )
         ticket = await cveless(ticket_factory, assignee_id=actor.id)
         await db_session.refresh(ticket, ["sequence_id"])
         package = await ticket_package_factory(
@@ -1406,11 +1448,20 @@ class TestResultProjection:
             product_id=product.id,
             eligible=eligible,
             is_eligible_override=override,
+            **({"eligibility_override_by_id": earlier.id} if override else {}),
         )
         persisted = (False, True) if request_value is False else (True, False)
 
         result = await set_eligibility(db_session, occurrence, request_value, actor)
 
+        # The new override names the caller at its event's time; the no-op
+        # keeps the deactivated earlier setter; the clear removes both.
+        provenance: tuple[Any, Any] = (None, None)
+        if outcome is MutationOutcome.NO_OP:
+            provenance = (setter_profile(earlier), ELIGIBILITY_OVERRIDE_SET_AT)
+        elif persisted[1]:
+            (event_at,) = await eligibility_event_times(db_session, ticket.id)
+            provenance = (setter_profile(actor), event_at)
         assert (result.outcome, result.evaluation_date) == (outcome, EVAL)
         assert result.product.id != product.id
         assert _response(result.product) == {
@@ -1422,6 +1473,8 @@ class TestResultProjection:
             "product_name": "Example Projection Server 7",
             "eligible": persisted[0],
             "is_eligible_override": persisted[1],
+            "eligibility_override_by": provenance[0],
+            "eligibility_override_at": provenance[1],
             "lifecycle_phase": phase,
             "actionable": True,
             "non_actionable_reason": None,

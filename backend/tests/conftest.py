@@ -127,6 +127,7 @@ from tests.support.parallel import (
     worker_database_url,
     worker_id,
 )
+from tests.support.product_eligibility import ELIGIBILITY_OVERRIDE_SET_AT
 from tests.support.ticket_mutations import (
     DEFAULT_IGNORE_REASON,
     PRIORITY_OVERRIDE_SET_AT,
@@ -2024,6 +2025,7 @@ def ticket_package_product_factory(
     db_session: AsyncSession,
     ticket_package_track_factory: Callable[..., Awaitable[TicketPackageTrack]],
     product_factory: Callable[..., Awaitable[Product]],
+    user_factory: Callable[..., Awaitable[User]],
 ) -> Callable[..., Awaitable[TicketPackageProduct]]:
     """Factory fixture for `TicketPackageProduct` model instances.
 
@@ -2040,11 +2042,21 @@ def ticket_package_product_factory(
     - `product_id`: a freshly created Product, when not overridden; each
       call therefore uses a distinct Product and never collides on the
       `(ticket_package_track_id, product_id)` UNIQUE constraint.
-    - `eligible` (`true`), `is_eligible_override` (`false`), `released_at`
-      (`NULL`), and `deleted_at` (`NULL`): the model defaults.
+    - `eligible` (`true`), `is_eligible_override` (`false`) with its
+      provenance (`NULL`), `released_at` (`NULL`), and `deleted_at`
+      (`NULL`): the model defaults.
+    - `chk_ticket_package_product_eligibility_override_provenance`:
+      overriding `is_eligible_override` with `true` defaults
+      `eligibility_override_by_id` to a freshly created User and
+      `eligibility_override_at` to `ELIGIBILITY_OVERRIDE_SET_AT`, each
+      unless overridden.
     """
 
     async def _create(**overrides: Any) -> TicketPackageProduct:
+        if overrides.get("is_eligible_override"):
+            if "eligibility_override_by_id" not in overrides:
+                overrides["eligibility_override_by_id"] = (await user_factory()).id
+            overrides.setdefault("eligibility_override_at", ELIGIBILITY_OVERRIDE_SET_AT)
         if "ticket_package_track_id" not in overrides:
             overrides["ticket_package_track_id"] = (
                 await ticket_package_track_factory()

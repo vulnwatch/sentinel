@@ -92,6 +92,8 @@ PRODUCT_FIELDS = {
     "product_name",
     "eligible",
     "is_eligible_override",
+    "eligibility_override_by",
+    "eligibility_override_at",
     "lifecycle_phase",
     "actionable",
     "non_actionable_reason",
@@ -803,8 +805,13 @@ class TestResponse:
         build: Callable[..., Awaitable[Tree]],
         product_factory: Factory,
         ticket_package_product_factory: Factory,
+        user_factory: Factory,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        """The Products carry their override provenance: another user's
+        override with that user's current profile, a deactivated setter
+        included, and none on an automatic Product (package-model.md,
+        Override Model)."""
         user = await grant(Role.VULNERABILITY_ANALYST)
         clock = Clock(datetime(2026, 9, 27, 12, 0, tzinfo=UTC))
         monkeypatch.setattr(route, "_utc_now", clock.now)
@@ -823,8 +830,16 @@ class TestResponse:
             display_name="Example Alpha 15",
             general_support_end_date=date(2030, 1, 1),
         )
+        setter = await user_factory(
+            username="frank.setter", full_name="Frank Setter", active=False
+        )
         eol_occurrence = await ticket_package_product_factory(
-            ticket_package_track_id=tree.track.id, product_id=eol.id, eligible=False
+            ticket_package_track_id=tree.track.id,
+            product_id=eol.id,
+            eligible=False,
+            is_eligible_override=True,
+            eligibility_override_by_id=setter.id,
+            eligibility_override_at=datetime(2026, 9, 20, 8, 0, tzinfo=UTC),
         )
         occurrence = await ticket_package_product_factory(
             ticket_package_track_id=tree.track.id, product_id=supported.id
@@ -856,6 +871,8 @@ class TestResponse:
                         "product_name": "Example Alpha 15",
                         "eligible": True,
                         "is_eligible_override": False,
+                        "eligibility_override_by": None,
+                        "eligibility_override_at": None,
                         "lifecycle_phase": "general_support",
                         "actionable": True,
                         "non_actionable_reason": None,
@@ -865,7 +882,15 @@ class TestResponse:
                         "product_cpe": "cpe:/o:example:beta:15",
                         "product_name": "Example Beta 15",
                         "eligible": False,
-                        "is_eligible_override": False,
+                        "is_eligible_override": True,
+                        "eligibility_override_by": {
+                            "id": str(setter.id),
+                            "username": "frank.setter",
+                            "full_name": "Frank Setter",
+                            "active": False,
+                            "bot": False,
+                        },
+                        "eligibility_override_at": "2026-09-20T08:00:00Z",
                         "lifecycle_phase": "eol",
                         "actionable": False,
                         "non_actionable_reason": "eol",

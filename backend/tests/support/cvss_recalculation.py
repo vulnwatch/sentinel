@@ -82,6 +82,7 @@ from app.services.cvss_recalculation_coordination import (
 )
 from app.services.ticket_convergence_publication import RUN_TICKET_CONVERGENCE_TASK
 from tests.support.cvss_chain import Assessment
+from tests.support.product_eligibility import override_provenance_columns
 from tests.support.suse_cvss_races import CommittedWorld
 from tests.support.ticket_mutations import (
     AFTER_EVAL,
@@ -559,7 +560,11 @@ class RecalculationWorld(CommittedWorld):
     ) -> None:
         """One package with one track and its Product occurrences; an
         in-support Product's General Support ends after `EVAL`, an EOL
-        Product's before it."""
+        Product's before it. An overridden occurrence was set by one
+        committed analyst of the world."""
+        setter = (
+            await self.analyst() if any(spec.override for spec in products) else None
+        )
         now = datetime.now(UTC)
         suffix = uuid.uuid4().hex[:10]
         package = TicketPackage(
@@ -598,6 +603,9 @@ class RecalculationWorld(CommittedWorld):
                     product_id=product.id,
                     eligible=spec.eligible,
                     is_eligible_override=spec.override,
+                    **override_provenance_columns(
+                        spec.override, setter.id if setter is not None else None
+                    ),
                     released_at=RELEASED_AT if spec.released else None,
                     deleted_at=now if spec.excluded else None,
                 )

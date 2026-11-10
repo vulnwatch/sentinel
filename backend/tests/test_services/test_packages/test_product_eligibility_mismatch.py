@@ -52,7 +52,11 @@ from app.services.packages.product_eligibility_mismatch import (
 from app.services.product_eligibility import evaluate_product_eligibility
 from app.services.settings import RequiredSystemSettingMissingError
 from tests.support.lifecycle_matrix import LIFECYCLE_CASES, LifecycleCase
-from tests.support.product_eligibility import set_default_version
+from tests.support.product_eligibility import (
+    add_override_setter,
+    override_provenance_columns,
+    set_default_version,
+)
 from tests.support.ticket_mutations import (
     AFTER_EVAL,
     BEFORE_EVAL,
@@ -157,6 +161,9 @@ class World:
             product_id=product.id,
             eligible=eligible,
             is_eligible_override=override,
+            **override_provenance_columns(
+                override, await add_override_setter(self.db) if override else None
+            ),
             deleted_at=now if excluded else None,
         )
         self.db.add(occurrence)

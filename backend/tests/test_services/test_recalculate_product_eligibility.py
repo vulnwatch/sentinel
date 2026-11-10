@@ -84,7 +84,9 @@ from tests.support.cvss_chain import (
 )
 from tests.support.database import rollback_test_scope
 from tests.support.product_eligibility import (
+    ELIGIBILITY_OVERRIDE_SET_AT,
     persisted_occurrence,
+    persisted_provenance,
     product_subject,
     set_default_version,
 )
@@ -853,19 +855,22 @@ class TestAutomaticRecalculation:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """CVE-less 10.0 against the implicit 0.0: both occurrences would
-        become `true`. The override keeps its value and marker without an
-        event yet counts as examined; the automatic one changes and the
-        Ticket reconciles once."""
+        become `true`. The override keeps its value, marker, and provenance
+        without an event yet counts as examined; the automatic one changes
+        and the Ticket reconciles once."""
         ticket = await cveless(ticket_factory)
         product = await catalog()
         overridden = await occurrence(ticket, product, eligible=False, override=True)
         automatic = await occurrence(ticket, product, eligible=False)
+        provenance = await persisted_provenance(db_session, overridden.id)
         reconcile = Spy(monkeypatch, "reconcile_ticket_status")
 
         result = await _recalculate(db_session, ticket, product)
 
         assert result == _result(2, 1, 1)
         assert await persisted_occurrence(db_session, overridden) == (False, True)
+        assert await persisted_provenance(db_session, overridden.id) == provenance
+        assert provenance[1] == ELIGIBILITY_OVERRIDE_SET_AT
         assert await persisted_occurrence(db_session, automatic) == (True, False)
         assert await ticket_events(db_session, ticket) == [
             await _event(db_session, automatic, False, True)

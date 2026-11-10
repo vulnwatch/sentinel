@@ -74,6 +74,7 @@ from tests.support.cvss_recalculation import (
     runner_events,
 )
 from tests.support.database import assert_lock_wait
+from tests.support.product_eligibility import override_provenance_columns
 from tests.support.ticket_mutations import (
     REACTIVE_END,
     REACTIVE_EXTENDED_END,
@@ -519,12 +520,16 @@ class TestOverrideChange:
             ),
         )
         pinned, _ = await _occurrence_ids(h, ticket)
+        setter = await h.world.analyst()
         holder = await h.world.open_session()
         await _lock_ticket(holder, ticket.id)
         await holder.execute(
             update(TicketPackageProduct)
             .where(TicketPackageProduct.id == pinned)
-            .values(is_eligible_override=True)
+            .values(
+                is_eligible_override=True,
+                **override_provenance_columns(True, setter.id),
+            )
         )
         task_id = await h.admit()
 

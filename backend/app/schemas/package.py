@@ -75,6 +75,20 @@ _DELIVERY_RELEVANT_DESCRIPTION = (
     "make decisions based on it."
 )
 
+# The override provenance on every Product schema exposing
+# `is_eligible_override` (package-model.md, Override Model).
+_ELIGIBILITY_OVERRIDE_BY_DESCRIPTION = (
+    "Current profile of the user who set the current eligibility override, "
+    "including `active = false` when deactivated; `null` when "
+    "`is_eligible_override` is `false`."
+)
+_ELIGIBILITY_OVERRIDE_AT_DESCRIPTION = (
+    "When the current eligibility override was set (UTC): the time of the "
+    "change that set its current value, equal to the `created_at` of that "
+    "change's `product_eligibility_changed` audit event; `null` when "
+    "`is_eligible_override` is `false`."
+)
+
 
 class ProductDetail(BaseModel):
     """One Product occurrence within a track."""
@@ -89,6 +103,12 @@ class ProductDetail(BaseModel):
     )
     is_eligible_override: bool = Field(
         description="`true` if an authorized acting user manually set eligibility."
+    )
+    eligibility_override_by: UserReference | None = Field(
+        description=_ELIGIBILITY_OVERRIDE_BY_DESCRIPTION
+    )
+    eligibility_override_at: datetime | None = Field(
+        description=_ELIGIBILITY_OVERRIDE_AT_DESCRIPTION
     )
     released_at: datetime | None = Field(
         description=(
@@ -332,6 +352,12 @@ class TrackStatusProduct(BaseModel):
     is_eligible_override: bool = Field(
         description="`true` if an authorized acting user manually set eligibility."
     )
+    eligibility_override_by: UserReference | None = Field(
+        description=_ELIGIBILITY_OVERRIDE_BY_DESCRIPTION
+    )
+    eligibility_override_at: datetime | None = Field(
+        description=_ELIGIBILITY_OVERRIDE_AT_DESCRIPTION
+    )
     lifecycle_phase: LifecyclePhaseValue | None = Field(
         description=(
             "Product lifecycle phase for the mutation's UTC evaluation date; "
@@ -441,6 +467,12 @@ class ProductEligibilityProduct(BaseModel):
             "`true` if an authorized acting user manually set eligibility; "
             "`false` when eligibility is calculated automatically."
         )
+    )
+    eligibility_override_by: UserReference | None = Field(
+        description=_ELIGIBILITY_OVERRIDE_BY_DESCRIPTION
+    )
+    eligibility_override_at: datetime | None = Field(
+        description=_ELIGIBILITY_OVERRIDE_AT_DESCRIPTION
     )
     lifecycle_phase: LifecyclePhaseValue | None = Field(
         description=(

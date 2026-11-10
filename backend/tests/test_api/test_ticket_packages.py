@@ -58,6 +58,7 @@ _PATH = "/api/v1/tickets/{ticket_id}/packages"
 _CREATED_AT = datetime(2026, 3, 10, 14, 37, 21, tzinfo=UTC)
 _NOW = datetime(2026, 3, 11, 12, 0, tzinfo=UTC)
 _EXCLUDED_AT = datetime(2026, 3, 10, 18, 0, tzinfo=UTC)
+_OVERRIDE_SET_AT = datetime(2026, 3, 10, 16, 5, tzinfo=UTC)
 
 
 def _url(ticket: Ticket | str) -> str:
@@ -200,11 +201,19 @@ class TestListTicketPackagesEndpoint:
         occurrence = await ticket_package_product_factory(
             ticket_package_track_id=track.id, product_id=supported.id
         )
+        # The role-less caller sees who set the override, a deactivated
+        # setter included (package-model.md, Security; rbac.md, Actor
+        # Identities).
+        setter = await user_factory(
+            username="eve.setter", full_name="Eve Setter", active=False
+        )
         eol_occurrence = await ticket_package_product_factory(
             ticket_package_track_id=track.id,
             product_id=eol_product.id,
             eligible=False,
             is_eligible_override=True,
+            eligibility_override_by_id=setter.id,
+            eligibility_override_at=_OVERRIDE_SET_AT,
         )
 
         response = await authenticated_client.get(_url(ticket))
@@ -249,6 +258,8 @@ class TestListTicketPackagesEndpoint:
                                 "product_name": "Example Alpha 1",
                                 "eligible": True,
                                 "is_eligible_override": False,
+                                "eligibility_override_by": None,
+                                "eligibility_override_at": None,
                                 "released_at": None,
                                 "lifecycle_phase": "general_support",
                                 "deleted_at": None,
@@ -261,6 +272,14 @@ class TestListTicketPackagesEndpoint:
                                 "product_name": "Example Beta 1",
                                 "eligible": False,
                                 "is_eligible_override": True,
+                                "eligibility_override_by": {
+                                    "id": str(setter.id),
+                                    "username": "eve.setter",
+                                    "full_name": "Eve Setter",
+                                    "active": False,
+                                    "bot": False,
+                                },
+                                "eligibility_override_at": "2026-03-10T16:05:00Z",
                                 "released_at": None,
                                 "lifecycle_phase": "eol",
                                 "deleted_at": None,
@@ -746,6 +765,36 @@ class TestOpenApiContract:
         }
         assert not {"maintainer_count", "maintainer_emails", "groups"} & set(
             package["properties"]
+        )
+
+    @pytest.mark.parametrize(
+        "schema",
+        ["ProductDetail", "TrackStatusProduct", "ProductEligibilityProduct"],
+    )
+    def test_override_provenance_is_published_as_nullable_fields(
+        self, schema: str
+    ) -> None:
+        """package-model.md, Override Model: every response that carries
+        `is_eligible_override` carries who set the current override, as a
+        user reference, and when, both `null` without one."""
+        component = app.openapi()["components"]["schemas"][schema]
+        properties = component["properties"]
+
+        assert {"eligibility_override_by", "eligibility_override_at"} <= set(
+            component["required"]
+        )
+        assert properties["eligibility_override_by"]["anyOf"] == [
+            {"$ref": "#/components/schemas/UserReference"},
+            {"type": "null"},
+        ]
+        assert properties["eligibility_override_at"]["anyOf"] == [
+            {"type": "string", "format": "date-time"},
+            {"type": "null"},
+        ]
+        assert "deactivated" in properties["eligibility_override_by"]["description"]
+        assert (
+            "`product_eligibility_changed`"
+            in (properties["eligibility_override_at"]["description"])
         )
 
     def test_required_consumer_guidance_is_documented(self) -> None:
