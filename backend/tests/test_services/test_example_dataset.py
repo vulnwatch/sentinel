@@ -50,6 +50,7 @@ from app.core.enums import (
     LifecyclePhase,
     MilestonePhase,
     MilestoneStatus,
+    NonActionableReason,
     PackageStatus,
     Role,
     Severity,
@@ -333,7 +334,7 @@ CWES: Final = {
     "CVE-2099-0018": "CWE-287",
 }
 
-CVE_IDS: Final = tuple(f"CVE-2099-{n:04d}" for n in range(1, 27))
+CVE_IDS: Final = tuple(f"CVE-2099-{n:04d}" for n in range(1, 28))
 AGED_PUBLISHED_DAYS: Final = {
     "CVE-2099-0012": 21,
     "CVE-2099-0013": 26,
@@ -350,10 +351,13 @@ MITRE_INGESTED: Final = frozenset(
         "CVE-2099-0010",
         "CVE-2099-0013",
         "CVE-2099-0026",
+        "CVE-2099-0027",
     }
 )
 """CVEs with a MITRE ingestion (first or further), which supplies the title."""
-REJECTED_CVE: Final = "CVE-2099-0008"
+REJECTED_CVES: Final = frozenset({"CVE-2099-0008", "CVE-2099-0027"})
+"""CVEs: the CVEs whose MITRE ingestion supplies the state `REJECTED`,
+rejected at `T - 2d`."""
 
 CNAS: Final = {
     "00000000-0000-4000-8000-0000000000a1": "example",
@@ -384,6 +388,7 @@ CNA_OF: Final = {
     "CVE-2099-0010": "00000000-0000-4000-8000-0000000000a1",
     "CVE-2099-0013": "00000000-0000-4000-8000-0000000000a3",
     "CVE-2099-0026": "00000000-0000-4000-8000-0000000000a2",
+    "CVE-2099-0027": "00000000-0000-4000-8000-0000000000a1",
 }
 """CNAs: the CNA that each MITRE ingestion supplies as the owner of its
 record; every other CVE has none."""
@@ -493,6 +498,13 @@ TICKETS: Final[
     27: ("CVE-2099-0025", ANALYZED, "asmith", True, HIGH),
     # Ignored by the auto-ignore policy of its CNA (CNAs).
     28: ("CVE-2099-0026", IGNORED, None, False, None),
+    # Made non-confidential after its embargo, keeping its coordinated
+    # release date (Embargoes).
+    29: (None, ANALYSIS, "asmith", False, MEDIUM),
+    # Without a CVE, with an AFFECTED track and an eligible Product.
+    30: (None, ANALYZED, "asmith", False, HIGH),
+    # Its CVE is rejected after the Ticket left `New`.
+    31: ("CVE-2099-0027", ANALYSIS, "bwilson", False, None),
 }
 """Tickets: `SNTL-n` -> (CVE, status, assignee, confidential, resolved
 severity; `None` is unresolved)."""
@@ -554,7 +566,7 @@ OVERDUE: Final = {"triage": {7}, "submission": {12}, "um": {13}, "qa": {26, 27}}
 """Aged Tickets: the Tickets that each `overdue` value lists after the load,
 each also the Ticket's current phase, past due."""
 
-COORDINATED_RELEASE_DAYS: Final = {18: 14, 27: -2}
+COORDINATED_RELEASE_DAYS: Final = {18: 14, 27: -2, 29: 21}
 """Tickets and Aged Tickets: `SNTL-n` -> coordinated release date in days
 from `T`."""
 
@@ -661,9 +673,27 @@ TRACKS: Final[
         IBS,
         AFFECTED,
         P_PENDING,
-        {LTSS_15_SP5: (False, "")},
+        {LTSS_15_SP5: (False, ""), SERVER_15_SP7: (True, "")},
     ),
     (16, "fictional-kernel", SP3_UPDATE): (
+        IBS,
+        PackageStatus.ANALYSIS,
+        P_PENDING,
+        {SERVER_15_SP3: (True, "")},
+    ),
+    (16, "fictional-kernel", SP4_UPDATE): (
+        IBS,
+        PackageStatus.ANALYSIS,
+        P_PENDING,
+        {LTSS_15_SP4: (False, "")},
+    ),
+    (16, "fictional-kernel-firmware", SP7_UPDATE): (
+        IBS,
+        PackageStatus.ANALYSIS,
+        P_PENDING,
+        {SERVER_15_SP7: (True, "")},
+    ),
+    (16, "fictional-kernel-compat", SP3_UPDATE): (
         IBS,
         PackageStatus.ANALYSIS,
         P_PENDING,
@@ -675,11 +705,23 @@ TRACKS: Final[
         P_IN_PROGRESS,
         {SERVER_15_SP7: (True, "")},
     ),
+    (22, "fictional-lz4", GIT_16): (
+        GIT,
+        PackageStatus.ANALYSIS,
+        P_PENDING,
+        {SERVER_16: (True, "")},
+    ),
     (26, "fictional-glibc", SP7_UPDATE): (
         IBS,
         AFFECTED,
         P_IN_PROGRESS,
         {SERVER_15_SP7: (True, "")},
+    ),
+    (26, "fictional-libidn", GIT_16): (
+        GIT,
+        FIXED,
+        P_PENDING,
+        {SERVER_16: (True, "")},
     ),
     (27, "fictional-bind", SP7_UPDATE): (
         IBS,
@@ -687,9 +729,56 @@ TRACKS: Final[
         P_IN_PROGRESS,
         {SERVER_15_SP7: (True, "")},
     ),
+    (30, "fictional-libarchive", SP7_UPDATE): (
+        IBS,
+        AFFECTED,
+        P_PENDING,
+        {SERVER_15_SP7: (True, "")},
+    ),
 }
 """Packages, Tracks, and Maintainers: track -> (workflow, status, delivery,
 Products as CPE -> (eligible, `RELEASED` or "" for unreleased))."""
+
+EXCLUDED_PACKAGES: Final = frozenset({(16, "fictional-kernel-firmware")})
+EXCLUDED_TRACKS: Final = frozenset({(16, "fictional-kernel", SP4_UPDATE)})
+EXCLUDED_PRODUCTS: Final = frozenset(
+    {((16, "fictional-kernel", SP5_UPDATE), SERVER_15_SP7)}
+)
+"""Packages, Tracks, and Maintainers: the records with `deleted_at` set, by
+the exclusions of `asmith`; no other record has it."""
+OVERRIDDEN_PRODUCTS: Final = frozenset(
+    {((16, "fictional-kernel", SP5_UPDATE), LTSS_15_SP5)}
+)
+"""Packages, Tracks, and Maintainers: the occurrences whose eligibility
+`asmith` set by hand."""
+
+Reasons = dict[str, str | None]
+SNTL_16_TREE: Final[
+    dict[str, tuple[str | None, dict[str, tuple[str | None, Reasons]]]]
+] = {
+    "fictional-kernel": (
+        None,
+        {
+            SP5_UPDATE: (
+                None,
+                {LTSS_15_SP5: None, SERVER_15_SP7: "product_excluded"},
+            ),
+            SP3_UPDATE: ("no_actionable_products", {SERVER_15_SP3: "eol"}),
+            SP4_UPDATE: ("track_excluded", {LTSS_15_SP4: "track_excluded"}),
+        },
+    ),
+    "fictional-kernel-firmware": (
+        "package_excluded",
+        {SP7_UPDATE: ("package_excluded", {SERVER_15_SP7: "package_excluded"})},
+    ),
+    "fictional-kernel-compat": (
+        "no_actionable_tracks",
+        {SP3_UPDATE: ("no_actionable_products", {SERVER_15_SP3: "eol"})},
+    ),
+}
+"""Packages, Tracks, and Maintainers: the `non_actionable_reason` of every
+level of the package tree of `SNTL-16`, package -> (reason, track -> (reason,
+Product -> reason)); `None` is an actionable record."""
 
 MAINTAINERS: Final = frozenset(
     {
@@ -921,6 +1010,9 @@ TICKET_EVENT_TYPES: Final = frozenset(
         "product_eligibility_changed",
         "package_added",
         "package_maintainer_added",
+        "package_excluded",
+        "track_excluded",
+        "product_excluded",
         "track_status_changed",
         "product_released",
         "priority_changed",
@@ -971,7 +1063,12 @@ ATTRIBUTED_TICKET_EVENTS: Final = frozenset(
         (15, "cvss_assessment_changed", "bwilson"),
         (16, "package_added", "asmith"),
         (16, "track_status_changed", "asmith"),
+        (16, "track_excluded", "asmith"),
+        (16, "product_excluded", "asmith"),
+        (16, "package_excluded", "asmith"),
         (16, "cvss_assessment_changed", "asmith"),
+        (16, "product_eligibility_changed", None),  # the CVSS chain
+        (16, "product_eligibility_changed", "asmith"),  # the override
         (17, "status_change", "bwilson"),
         (25, "assignment", "asmith"),  # auto-assignment of the ignore
         (25, "status_change", "asmith"),
@@ -979,16 +1076,25 @@ ATTRIBUTED_TICKET_EVENTS: Final = frozenset(
         (18, "track_status_changed", "asmith"),
         (18, "access_grant_added", "asmith"),
         (19, "confidentiality_changed", "bwilson"),
+        (22, "package_added", "bwilson"),
         (22, "duplicate_set", "bwilson"),
         (26, "assignment", "bwilson"),  # auto-assignment of the package addition
         (26, "package_added", "bwilson"),
         (26, "track_status_changed", "bwilson"),
         (26, "cvss_assessment_changed", "bwilson"),
+        (26, "track_status_changed", "jdoe"),  # FIXED with admin_ticket_ops
         (27, "package_added", "asmith"),
         (27, "track_status_changed", "asmith"),
         (27, "cvss_assessment_changed", "asmith"),
         # Aged Tickets: the coordinated release date set after the aging.
         (27, "coordinated_release_changed", "asmith"),
+        (29, "ticket_created", "asmith"),
+        (29, "coordinated_release_changed", "asmith"),
+        (29, "confidentiality_changed", "asmith"),
+        (30, "ticket_created", "asmith"),
+        (30, "package_added", "asmith"),
+        (30, "track_status_changed", "asmith"),
+        (31, "ticket_created", "bwilson"),
         # Maintainership is system-attributed (ticket-audit-log.md).
         *((n, "package_maintainer_added", None) for n in (11, 12, 13, 14, 18, 26)),
     }
@@ -1019,6 +1125,7 @@ ENUM_EXCEPTIONS: Final[dict[str, frozenset[str]]] = {
     "LifecyclePhase": frozenset(),
     "ExploitationLevel": frozenset(),
     "ExploitationEvidenceKind": frozenset(),
+    "NonActionableReason": frozenset(),
 }
 
 
@@ -1720,7 +1827,7 @@ class TestCVEs:
             assert cve.title == (
                 f"Fictional flaw {cve_id}" if cve_id in MITRE_INGESTED else None
             ), cve_id
-            if cve_id == REJECTED_CVE:
+            if cve_id in REJECTED_CVES:
                 assert (cve.cve_state, cve.date_rejected) == ("REJECTED", loaded.ago(2))
             else:
                 assert (cve.cve_state, cve.date_rejected) == ("PUBLISHED", None), cve_id
@@ -1862,7 +1969,7 @@ class TestTickets:
             for n, (cve_id, status, assignee, confidential, severity) in TICKETS.items()
         }
         assert (
-            sum(not confidential for _, _, _, confidential, _ in tickets.values()) == 25
+            sum(not confidential for _, _, _, confidential, _ in tickets.values()) == 28
         )
 
     def test_ignore_reasons_and_their_events(self, loaded: Loaded) -> None:
@@ -1950,6 +2057,8 @@ class TestTickets:
             expected[n] = (None, loaded.now + timedelta(days=days), None)
         expected[21] = ("High", None, None)
         expected[22] = (None, None, 21)
+        expected[29] = ("Medium", loaded.now + timedelta(days=21), None)
+        expected[30] = ("High", None, None)
         assert attributes == expected
         # The access grant of `cwhite` on SNTL-18; none on SNTL-19.
         assert grants == {(18, "cwhite", "asmith")}
@@ -2235,8 +2344,9 @@ class TestEmbargoes:
     def test_due_dates_divide_the_coordinated_release_window(
         self, loaded: Loaded
     ) -> None:
-        """Embargoes: the due dates of `SNTL-18` and `SNTL-27` divide the
-        window from `created_at` to the coordinated release date
+        """Embargoes: the due dates of `SNTL-18`, `SNTL-27`, and `SNTL-29`,
+        which keeps its coordinated release date after its embargo, divide
+        the window from `created_at` to the coordinated release date
         (ticket-deadlines.md, Coordinated Release Window), not the SLA
         window, and their current phases."""
 
@@ -2280,6 +2390,15 @@ class TestEmbargoes:
             release=loaded.ago(2),
         )
         assert phase_27 == TicketCurrentPhase(CurrentPhase.QA, MilestoneStatus.OVERDUE)
+        # Not confidential after its embargo, it keeps its coordinated
+        # release date, which still decides its due dates.
+        created_29, due_29, phase_29 = details[29]
+        assert due_29 == window_dates(created_29, loaded.now + timedelta(days=21))
+        assert due_29 is not None
+        assert due_29.triage - created_29 < timedelta(days=9)  # medium SLA
+        assert phase_29 == TicketCurrentPhase(
+            CurrentPhase.TRIAGE, MilestoneStatus.PENDING
+        )
 
     @pytest.mark.parametrize(
         ("caller", "confidential"),
@@ -2325,9 +2444,9 @@ class TestPackages:
         async def reader(
             db: AsyncSession,
         ) -> tuple[
-            set[tuple[int, str, datetime | None]],
-            dict[TrackKey, tuple[str, str, str, datetime | None]],
-            set[tuple[TrackKey, str, bool, bool, datetime | None, datetime | None]],
+            set[tuple[int, str, bool]],
+            dict[TrackKey, tuple[str, str, str, bool]],
+            set[tuple[TrackKey, str, bool, bool, datetime | None, bool]],
         ]:
             packages = await db.execute(
                 select(
@@ -2377,16 +2496,21 @@ class TestPackages:
                 .join(Ticket, Ticket.id == TicketPackage.ticket_id)
             )
             return (
-                {(n, package, deleted) for n, package, deleted in packages},
-                {(n, p, r): (w, s, d, x) for n, p, r, w, s, d, x in tracks},
-                {((n, p, r), c, e, o, ra, x) for n, p, r, c, e, o, ra, x in products},
+                {(n, package, deleted is not None) for n, package, deleted in packages},
+                {(n, p, r): (w, s, d, x is not None) for n, p, r, w, s, d, x in tracks},
+                {
+                    ((n, p, r), c, e, o, ra, x is not None)
+                    for n, p, r, c, e, o, ra, x in products
+                },
             )
 
         packages, tracks, products = read(loaded.url, reader)
 
-        assert packages == {(n, package, None) for n, package, _ in TRACKS}
+        assert packages == {
+            (n, package, (n, package) in EXCLUDED_PACKAGES) for n, package, _ in TRACKS
+        }
         assert tracks == {
-            key: (workflow.value, status.value, delivery.value, None)
+            key: (workflow.value, status.value, delivery.value, key in EXCLUDED_TRACKS)
             for key, (workflow, status, delivery, _) in TRACKS.items()
         }
         assert products == {
@@ -2394,13 +2518,223 @@ class TestPackages:
                 key,
                 cpe,
                 eligible,
-                False,
+                (key, cpe) in OVERRIDDEN_PRODUCTS,
                 loaded.ago(2) if released == RELEASED else None,
-                None,
+                (key, cpe) in EXCLUDED_PRODUCTS,
             )
             for key, (_, _, _, occurrences) in TRACKS.items()
             for cpe, (eligible, released) in occurrences.items()
         }
+
+    def test_sntl_16_package_tree_actionability(self, loaded: Loaded) -> None:
+        """Packages, Tracks, and Maintainers: the package tree of `SNTL-16`
+        holds a direct exclusion at each level and every
+        `non_actionable_reason` (package-model.md, Derived Actionability)."""
+
+        async def reader(db: AsyncSession) -> dict[str, Any]:
+            packages = await package_service.get_ticket_packages(
+                db,
+                ticket_id="SNTL-16",
+                caller=await _caller(db, "asmith"),
+                evaluation_date=loaded.today,
+                evaluation_instant=loaded.now,
+            )
+            return {
+                package.package_name: (
+                    package.actionable,
+                    package.non_actionable_reason,
+                    {
+                        track.reference: (
+                            track.actionable,
+                            track.non_actionable_reason,
+                            {
+                                product.product_cpe: (
+                                    product.actionable,
+                                    product.non_actionable_reason,
+                                )
+                                for product in track.products
+                            },
+                        )
+                        for track in package.tracks
+                    },
+                )
+                for package in packages
+            }
+
+        def level(reason: str | None) -> tuple[bool, NonActionableReason | None]:
+            return reason is None, None if reason is None else NonActionableReason(
+                reason
+            )
+
+        assert read(loaded.url, reader) == {
+            package: (
+                *level(reason),
+                {
+                    reference: (
+                        *level(track_reason),
+                        {cpe: level(r) for cpe, r in products.items()},
+                    )
+                    for reference, (track_reason, products) in tracks.items()
+                },
+            )
+            for package, (reason, tracks) in SNTL_16_TREE.items()
+        }
+
+    def test_eligibility_override_and_its_provenance(self, loaded: Loaded) -> None:
+        """Packages, Tracks, and Maintainers: `asmith` sets the override of
+        `Server LTSS 15 SP5` after the SUSE assessment; its provenance names
+        `asmith` and the `created_at` of its `product_eligibility_changed`
+        event (package-model.md, Override Model), which follows the
+        automatic `cvss` event of the assessment."""
+
+        async def reader(
+            db: AsyncSession,
+        ) -> tuple[
+            list[tuple[str, bool, str | None, datetime | None]],
+            list[tuple[str | None, Any, Any, Any, datetime]],
+        ]:
+            packages = await package_service.get_ticket_packages(
+                db,
+                ticket_id="SNTL-16",
+                caller=await _caller(db, "jdoe"),
+                evaluation_date=loaded.today,
+                evaluation_instant=loaded.now,
+            )
+            overrides = [
+                (
+                    product.product_cpe,
+                    product.eligible,
+                    None
+                    if product.eligibility_override_by is None
+                    else product.eligibility_override_by.username,
+                    product.eligibility_override_at,
+                )
+                for package in packages
+                for track in package.tracks
+                for product in track.products
+                if product.is_eligible_override
+            ]
+            actor = aliased(User)
+            events = await db.execute(
+                select(
+                    actor.username,
+                    TicketAuditEvent.old_value,
+                    TicketAuditEvent.new_value,
+                    TicketAuditEvent.detail,
+                    TicketAuditEvent.created_at,
+                )
+                .join(Ticket, Ticket.id == TicketAuditEvent.ticket_id)
+                .outerjoin(actor, actor.id == TicketAuditEvent.user_id)
+                .where(
+                    Ticket.sequence_id == 16,
+                    TicketAuditEvent.event_type == "product_eligibility_changed",
+                )
+                .order_by(TicketAuditEvent.created_at)
+            )
+            return overrides, [tuple(row) for row in events]
+
+        overrides, events = read(loaded.url, reader)
+
+        detail = {
+            "track": SP5_UPDATE,
+            "package": "fictional-kernel",
+            "product_name": "Fictional Linux Enterprise Server LTSS 15 SP5",
+            "product_cpe": LTSS_15_SP5,
+        }
+        [(_, *automatic), (_, *manual)] = events
+        assert [(name, *rest[:3]) for name, *rest in events] == [
+            (None, "true", "false", {**detail, "reason": "cvss"}),
+            (
+                "asmith",
+                "false",
+                "false",
+                {**detail, "reason": "va_override", "override_action": "set"},
+            ),
+        ]
+        assert overrides == [(LTSS_15_SP5, False, "asmith", manual[3])]
+        assert automatic[3] < manual[3]
+
+    def test_track_states_of_the_ticket_screen(self, loaded: Loaded) -> None:
+        """Packages, Tracks, and Maintainers: the track of the `Duplicated`
+        `SNTL-22` has every
+        milestone `null`; the `FIXED` Git track of `SNTL-26` has its later
+        milestones `null`; `SNTL-30`, `Analyzed` without a CVE, has due
+        dates and a `null` current phase (ticket-deadlines.md, Track
+        Milestones; Ticket Current Phase)."""
+
+        async def reader(db: AsyncSession) -> dict[str, Any]:
+            caller = await _caller(db, "jdoe")
+
+            async def milestones(ticket_id: str, name: str) -> tuple[Any, ...]:
+                packages = await package_service.get_ticket_packages(
+                    db,
+                    ticket_id=ticket_id,
+                    caller=caller,
+                    evaluation_date=loaded.today,
+                    evaluation_instant=loaded.now,
+                )
+                [track] = next(p for p in packages if p.package_name == name).tracks
+                m = track.milestones
+                return (m.triage, m.submission, m.um, m.qa, m.current_phase)
+
+            detail = await ticket_service.get_ticket_detail(
+                db, ticket_id="SNTL-30", caller=caller
+            )
+            return {
+                "SNTL-22": await milestones("SNTL-22", "fictional-lz4"),
+                "SNTL-26": await milestones("SNTL-26", "fictional-libidn"),
+                "SNTL-30": await milestones("SNTL-30", "fictional-libarchive"),
+                "SNTL-30 detail": (
+                    detail.due_dates is not None,
+                    detail.current_phase,
+                ),
+            }
+
+        done = MilestoneStatus.DONE
+        assert read(loaded.url, reader) == {
+            "SNTL-22": (None, None, None, None, None),
+            "SNTL-26": (done, None, None, None, None),
+            "SNTL-30": (done, None, None, None, None),
+            "SNTL-30 detail": (True, TicketCurrentPhase(None, None)),
+        }
+
+    def test_sntl_26_never_moves_back_from_analyzed(self, loaded: Loaded) -> None:
+        """Tickets: the `FIXED` Git track of `SNTL-26` is set before its SUSE
+        assessment, so the Ticket reaches `Analyzed` once and stays there."""
+
+        async def reader(db: AsyncSession) -> list[tuple[str | None, ...]]:
+            rows = await db.execute(
+                select(TicketAuditEvent.old_value, TicketAuditEvent.new_value)
+                .join(Ticket, Ticket.id == TicketAuditEvent.ticket_id)
+                .where(
+                    Ticket.sequence_id == 26,
+                    TicketAuditEvent.event_type == "status_change",
+                )
+                .order_by(TicketAuditEvent.created_at, TicketAuditEvent.id)
+            )
+            return [tuple(row) for row in rows]
+
+        assert read(loaded.url, reader) == [
+            ("New", "Analysis"),
+            ("Analysis", "Analyzed"),
+        ]
+
+    def test_package_names_leave_out_the_excluded_package(self, loaded: Loaded) -> None:
+        """Packages, Tracks, and Maintainers: `package_names` of `SNTL-16`
+        lists its packages that are not excluded (tickets.md,
+        TicketSummary)."""
+
+        async def reader(db: AsyncSession) -> tuple[str, ...]:
+            page = await ticket_service.list_tickets(
+                db, caller=await _caller(db, "jdoe"), per_page=100
+            )
+            [item] = [item for item in page.items if item.ticket_id == "SNTL-16"]
+            return item.package_names
+
+        assert read(loaded.url, reader) == (
+            "fictional-kernel",
+            "fictional-kernel-compat",
+        )
 
     def test_maintainers(self, loaded: Loaded) -> None:
         async def reader(db: AsyncSession) -> set[tuple[int, str, str]]:
@@ -2718,6 +3052,9 @@ class Covered:
     evidence_kinds: set[str]
     """The exploitation levels and evidence kinds of the automatic priority
     bases of the Tickets."""
+    non_actionable_reasons: set[str]
+    """The `non_actionable_reason` values of every level of the package
+    trees of the Tickets."""
 
 
 def test_dataset_covers_every_table_and_enumeration(loaded: Loaded) -> None:
@@ -2734,14 +3071,33 @@ def test_dataset_covers_every_table_and_enumeration(loaded: Loaded) -> None:
         bot_accounts = await db.scalar(
             select(func.count()).select_from(User).where(User.bot.is_(True))
         )
-        bases = [
-            item.priority_basis
-            for item in (
-                await ticket_service.list_tickets(
-                    db, caller=await _caller(db, "jdoe"), per_page=100
-                )
-            ).items
-        ]
+        caller = await _caller(db, "jdoe")
+        items = (
+            await ticket_service.list_tickets(db, caller=caller, per_page=100)
+        ).items
+        bases = [item.priority_basis for item in items]
+        reasons: set[str] = set()
+        for item in items:
+            for package in await package_service.get_ticket_packages(
+                db,
+                ticket_id=item.ticket_id,
+                caller=caller,
+                evaluation_date=loaded.today,
+                evaluation_instant=loaded.now,
+            ):
+                reasons |= {
+                    reason.value
+                    for reason in (
+                        package.non_actionable_reason,
+                        *(track.non_actionable_reason for track in package.tracks),
+                        *(
+                            product.non_actionable_reason
+                            for track in package.tracks
+                            for product in track.products
+                        ),
+                    )
+                    if reason is not None
+                }
         return Covered(
             tables=await table_counts(db),
             roles=await values(UserRole.role),
@@ -2767,6 +3123,7 @@ def test_dataset_covers_every_table_and_enumeration(loaded: Loaded) -> None:
             evidence_kinds={
                 evidence.kind.value for basis in bases for evidence in basis.evidence
             },
+            non_actionable_reasons=reasons,
         )
 
     covered = read(loaded.url, reader)
@@ -2825,6 +3182,11 @@ def test_dataset_covers_every_table_and_enumeration(loaded: Loaded) -> None:
             members(ExploitationEvidenceKind),
             covered.evidence_kinds,
             ENUM_EXCEPTIONS["ExploitationEvidenceKind"],
+        ),
+        "NonActionableReason": coverage_violations(
+            members(NonActionableReason),
+            covered.non_actionable_reasons,
+            ENUM_EXCEPTIONS["NonActionableReason"],
         ),
     }
     assert violations == {name: [] for name in violations}
