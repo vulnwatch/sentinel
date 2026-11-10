@@ -5032,7 +5032,10 @@ and the dedicated database starts its Ticket identifiers at `SNTL-1`.
   phases, and the Tickets that each `overdue` value lists; the due dates and
   current phases of the Tickets with a coordinated release date and the
   Tickets that the Embargo filters list; the packages, tracks, Products,
-  eligibility, release, and maintainers; the IBS requests, actions,
+  direct exclusion markers, eligibility with the eligibility override and its
+  provenance, release, and maintainers; the `actionable` and
+  `non_actionable_reason` of every level of the package tree of the Ticket
+  that holds the excluded records; the IBS requests, actions,
   correlations, and delivery statuses; the references; the maintainer
   workbenches of `dbrown` and `ghill`; at least one `confidentiality_changed`
   event; and at least one event in every audit trail of the Audit Trail Index.
@@ -5061,7 +5064,9 @@ and the dedicated database starts its Ticket identifiers at `SNTL-1`.
   an unavailable lifecycle phase. Every member of `ExploitationLevel` and
   `ExploitationEvidenceKind` occurs in the automatic priority basis of a
   Ticket (`docs/features/tickets/ticket-priority.md`, Automatic Priority
-  Basis). Both requirements exclude the members of the test's
+  Basis), and every member of `NonActionableReason` in the package tree of a
+  Ticket (`docs/features/packages/package-model.md`, Derived
+  Actionability). These requirements exclude the members of the test's
   per-enumeration exception lists, which are empty. Each exception list is
   checked in both directions: a covered item that an exception list names
   fails the test, as does an exception that names no current table or

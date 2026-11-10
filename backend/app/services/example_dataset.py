@@ -416,6 +416,7 @@ _CVES: Final = (
     _CVE("CVE-2099-0024", _NVD, "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N"),
     _CVE("CVE-2099-0025", None, "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"),
     _CVE("CVE-2099-0026", _MITRE),
+    _CVE("CVE-2099-0027", None, rejected=True),
 )
 _CVE_DATA: Final = {cve.cve_id: cve for cve in _CVES}
 
@@ -432,6 +433,9 @@ _UNDER_POLICY: Final = "CVE-2099-0026"
 """The CVE whose first ingestion, after the policy of its CNA is set,
 creates `SNTL-28` and ignores it with the reason `cna_policy` (CVEs, step
 9)."""
+_REJECTED_LATER: Final = "CVE-2099-0027"
+"""The CVE of the manual `SNTL-31`, which its MITRE ingestion rejects while
+the Ticket is in `Analysis` (CVEs, step 11)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -457,7 +461,7 @@ _CNAS: Final = (
     _CNA(
         uuid.UUID("00000000-0000-4000-8000-0000000000a1"),
         "example",
-        ("CVE-2099-0008", "CVE-2099-0009", "CVE-2099-0010"),
+        ("CVE-2099-0008", "CVE-2099-0009", "CVE-2099-0010", "CVE-2099-0027"),
         _CNAMetadata(
             "Example Corporation", ("Vendor",), "Example Corporation products only."
         ),
@@ -574,6 +578,19 @@ _LAST_MANUAL_TICKET: Final = _ManualTicket(
 """The manual creation after the first ingestions (CVEs, step 6). Its
 coordinated release date precedes the creation instant, so the Ticket work
 sets it after the aging (Aged Tickets)."""
+_TRAILING_MANUAL_TICKETS: Final = (
+    _ManualTicket(
+        29,
+        "asmith",
+        severity=Severity.MEDIUM,
+        confidential=True,
+        coordinated_release_days=21,
+    ),
+    _ManualTicket(30, "asmith", severity=Severity.HIGH),
+    _ManualTicket(31, "bwilson", _REJECTED_LATER),
+)
+"""The manual creations after the last ingestion that creates a Ticket
+(CVEs, step 10)."""
 
 
 def _ticket_number(cve_id: str) -> int:
@@ -684,9 +701,24 @@ _PACKAGES: Final = {
             "fictional-kernel",
             "asmith",
             (
-                _Track(_SP5_UPDATE, _IBS, (_LTSS_15_SP5,)),
+                _Track(_SP5_UPDATE, _IBS, (_LTSS_15_SP5, _SERVER_15_SP7)),
                 _Track(_SP3_UPDATE, _IBS, (_SERVER_15_SP3,)),
+                _Track(_SP4_UPDATE, _IBS, (_LTSS_15_SP4,)),
             ),
+            (),
+        ),
+        _Package(
+            16,
+            "fictional-kernel-firmware",
+            "asmith",
+            (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
+            (),
+        ),
+        _Package(
+            16,
+            "fictional-kernel-compat",
+            "asmith",
+            (_Track(_SP3_UPDATE, _IBS, (_SERVER_15_SP3,)),),
             (),
         ),
         _Package(
@@ -697,6 +729,9 @@ _PACKAGES: Final = {
             ("dbrown",),
         ),
         _Package(
+            22, "fictional-lz4", "bwilson", (_Track(_GIT_16, _GIT, (_SERVER_16,)),), ()
+        ),
+        _Package(
             26,
             "fictional-glibc",
             "bwilson",
@@ -704,8 +739,22 @@ _PACKAGES: Final = {
             ("ghill",),
         ),
         _Package(
+            26,
+            "fictional-libidn",
+            "bwilson",
+            (_Track(_GIT_16, _GIT, (_SERVER_16,)),),
+            (),
+        ),
+        _Package(
             27,
             "fictional-bind",
+            "asmith",
+            (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
+            (),
+        ),
+        _Package(
+            30,
+            "fictional-libarchive",
             "asmith",
             (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
             (),
@@ -1395,6 +1444,13 @@ class _Load:
         for org_id, auto_ignore in _AUTO_IGNORE_CHANGES:
             await self.cna_auto_ignore(org_id, auto_ignore)
         await self.first_ingestion(_UNDER_POLICY)
+        for ticket in _TRAILING_MANUAL_TICKETS:
+            await self.manual_ticket(ticket)
+        await self.ingest(
+            _REJECTED_LATER,
+            _MITRE,
+            _mitre_payload(_CVE_DATA[_REJECTED_LATER], self.now),
+        )
 
     async def cna_auto_ignore(self, org_id: uuid.UUID, auto_ignore: bool) -> None:
         """Step 8: one `set_cna_auto_ignore()` by `jdoe` (CNAs)."""
@@ -1455,10 +1511,17 @@ class _Load:
         await self.run(add)
 
     async def track_status(
-        self, name: str, reference: str, status: PackageStatus, actor: str | None
+        self,
+        name: str,
+        reference: str,
+        status: PackageStatus,
+        actor: str | None,
+        *,
+        force: bool = False,
     ) -> None:
         """`set_track_status()` by `actor`; `None` stands for track release
-        detection, a system operation."""
+        detection, a system operation. `force` is the verified
+        `admin_ticket_ops` of the caller."""
         package = _PACKAGES[name]
         ticket_id = self.ticket_ids[package.ticket]
 
@@ -1474,9 +1537,96 @@ class _Load:
                 caller=package_service.SYSTEM_INVOCATION
                 if actor is None
                 else await self.caller(db, actor),
+                force=force,
             )
 
         await self.run(set_status)
+
+    async def exclude_package(self, name: str) -> None:
+        """`soft_delete_ticket_package()` of `name` by the user who added
+        it."""
+        package = _PACKAGES[name]
+        ticket_id = self.ticket_ids[package.ticket]
+
+        async def exclude(db: AsyncSession) -> None:
+            package_id = await db.scalar(
+                select(TicketPackage.id).where(
+                    TicketPackage.ticket_id == ticket_id,
+                    TicketPackage.package_name == name,
+                )
+            )
+            assert package_id is not None
+            await package_service.soft_delete_ticket_package(
+                db,
+                ticket_id=ticket_id,
+                package_id=package_id,
+                acting_user_id=self.user_ids[package.actor],
+                caller=await self.caller(db, package.actor),
+            )
+
+        await self.run(exclude)
+
+    async def exclude_track(self, name: str, reference: str) -> None:
+        """`soft_delete_ticket_package_track()` of the track `reference` of
+        `name` by the user who added the package."""
+        package = _PACKAGES[name]
+        ticket_id = self.ticket_ids[package.ticket]
+
+        async def exclude(db: AsyncSession) -> None:
+            package_id, track_id = await _track(db, ticket_id, name, reference)
+            await package_service.soft_delete_ticket_package_track(
+                db,
+                ticket_id=ticket_id,
+                package_id=package_id,
+                track_id=track_id,
+                acting_user_id=self.user_ids[package.actor],
+                caller=await self.caller(db, package.actor),
+            )
+
+        await self.run(exclude)
+
+    async def exclude_product(self, name: str, reference: str, cpe: str) -> None:
+        """`soft_delete_ticket_package_product()` of `cpe` under the track
+        `reference` of `name` by the user who added the package."""
+        package = _PACKAGES[name]
+        ticket_id = self.ticket_ids[package.ticket]
+
+        async def exclude(db: AsyncSession) -> None:
+            package_id, track_id = await _track(db, ticket_id, name, reference)
+            await package_service.soft_delete_ticket_package_product(
+                db,
+                ticket_id=ticket_id,
+                package_id=package_id,
+                track_id=track_id,
+                ticket_package_product_id=await _occurrence(db, track_id, cpe),
+                acting_user_id=self.user_ids[package.actor],
+                caller=await self.caller(db, package.actor),
+            )
+
+        await self.run(exclude)
+
+    async def eligibility_override(
+        self, name: str, reference: str, cpe: str, eligible: bool
+    ) -> None:
+        """`set_product_eligibility()` of `cpe` under the track `reference`
+        of `name`, set to `eligible` by the user who added the package."""
+        package = _PACKAGES[name]
+        ticket_id = self.ticket_ids[package.ticket]
+
+        async def override(db: AsyncSession) -> None:
+            package_id, track_id = await _track(db, ticket_id, name, reference)
+            await package_service.set_product_eligibility(
+                db,
+                ticket_id=ticket_id,
+                package_id=package_id,
+                track_id=track_id,
+                ticket_package_product_id=await _occurrence(db, track_id, cpe),
+                eligible=eligible,
+                acting_user_id=self.user_ids[package.actor],
+                caller=await self.caller(db, package.actor),
+            )
+
+        await self.run(override)
 
     async def suse_assessment(self, cve_id: str) -> None:
         vector, actor = _SUSE_ASSESSMENTS[cve_id]
@@ -1517,20 +1667,12 @@ class _Load:
 
         async def release(db: AsyncSession) -> None:
             package_id, track_id = await _track(db, ticket_id, name, _SP7_UPDATE)
-            [product_id] = await _product_ids(db, (cpe,))
-            occurrence_id = await db.scalar(
-                select(TicketPackageProduct.id).where(
-                    TicketPackageProduct.ticket_package_track_id == track_id,
-                    TicketPackageProduct.product_id == product_id,
-                )
-            )
-            assert occurrence_id is not None
             await package_service.set_product_released_at(
                 db,
                 ticket_id=ticket_id,
                 package_id=package_id,
                 track_id=track_id,
-                ticket_package_product_id=occurrence_id,
+                ticket_package_product_id=await _occurrence(db, track_id, cpe),
                 released_at=self.now - timedelta(days=_RELEASED_DAYS_AGO),
                 advisory_id=_RELEASE_ADVISORY,
             )
@@ -1556,6 +1698,23 @@ class _Load:
             )
 
         await self.run(create)
+
+    async def confidentiality(
+        self, number: int, is_confidential: bool, actor: str
+    ) -> None:
+        """`set_confidentiality()` of `SNTL-{number}` by `actor`."""
+        ticket_id = self.ticket_ids[number]
+
+        async def change(db: AsyncSession) -> None:
+            await ticket_service.set_confidentiality(
+                db,
+                ticket_id=ticket_id,
+                is_confidential=is_confidential,
+                acting_user_id=self.user_ids[actor],
+                caller=await self.caller(db, actor),
+            )
+
+        await self.run(change)
 
     async def priority_override(
         self, number: int, priority: TicketPriority, actor: str
@@ -1677,10 +1836,21 @@ class _Load:
             "fictional-sudo", _SP4_UPDATE, PackageStatus.WONT_FIX, "bwilson"
         )
         await self.suse_assessment("CVE-2099-0015")
-        # SNTL-16
+        # SNTL-16: the exclusions precede the SUSE assessment, while the
+        # Ticket is in Analysis; the override follows it with the value that
+        # the threshold gives, so that no operation regresses the Resolved
+        # Ticket (Isolation).
         await self.add_package("fictional-kernel")
         await self.track_status("fictional-kernel", _SP5_UPDATE, affected, "asmith")
+        await self.exclude_track("fictional-kernel", _SP4_UPDATE)
+        await self.exclude_product("fictional-kernel", _SP5_UPDATE, _SERVER_15_SP7)
+        await self.add_package("fictional-kernel-firmware")
+        await self.exclude_package("fictional-kernel-firmware")
+        await self.add_package("fictional-kernel-compat")
         await self.suse_assessment("CVE-2099-0016")
+        await self.eligibility_override(
+            "fictional-kernel", _SP5_UPDATE, _LTSS_15_SP5, eligible=False
+        )
         # SNTL-17
         await self.ignore(17, TicketIgnoreReason.NOT_SHIPPED, "bwilson")
         # SNTL-18
@@ -1700,19 +1870,9 @@ class _Load:
 
         await self.run(grant)
         # SNTL-19
-        sntl_19 = self.ticket_ids[19]
-
-        async def confidential(db: AsyncSession) -> None:
-            await ticket_service.set_confidentiality(
-                db,
-                ticket_id=sntl_19,
-                is_confidential=True,
-                acting_user_id=self.user_ids["bwilson"],
-                caller=await self.caller(db, "bwilson"),
-            )
-
-        await self.run(confidential)
+        await self.confidentiality(19, True, "bwilson")
         # SNTL-22
+        await self.add_package("fictional-lz4")
         sntl_21, sntl_22 = self.ticket_ids[21], self.ticket_ids[22]
 
         async def duplicate(db: AsyncSession) -> None:
@@ -1730,6 +1890,10 @@ class _Load:
         # SNTL-26
         await self.add_package("fictional-glibc")
         await self.track_status("fictional-glibc", _SP7_UPDATE, affected, "bwilson")
+        # Before the SUSE assessment, while the Ticket is in Analysis, so that
+        # its ANALYSIS track does not move the Ticket back from Analyzed.
+        await self.add_package("fictional-libidn")
+        await self.track_status("fictional-libidn", _GIT_16, fixed, _ADMIN, force=True)
         await self.suse_assessment("CVE-2099-0024")
         await self.ibs_observations("fictional-glibc")
         # SNTL-27
@@ -1737,6 +1901,11 @@ class _Load:
         await self.track_status("fictional-bind", _SP7_UPDATE, affected, "asmith")
         await self.suse_assessment("CVE-2099-0025")
         await self.ibs_observations("fictional-bind")
+        # SNTL-29: the embargo ends before its coordinated release date.
+        await self.confidentiality(29, False, "asmith")
+        # SNTL-30
+        await self.add_package("fictional-libarchive")
+        await self.track_status("fictional-libarchive", _SP7_UPDATE, affected, "asmith")
         # Aged Tickets, after the Ticket work.
         for number, days in _AGED_TICKETS:
             await self.age(number, days)
@@ -1808,6 +1977,19 @@ async def _product_ids(db: AsyncSession, cpes: Sequence[str]) -> tuple[uuid.UUID
     )
     ids = {row.cpe: row.id for row in rows}
     return tuple(ids[cpe] for cpe in cpes)
+
+
+async def _occurrence(db: AsyncSession, track_id: uuid.UUID, cpe: str) -> uuid.UUID:
+    """The ID of the occurrence of the Product `cpe` under `track_id`."""
+    [product_id] = await _product_ids(db, (cpe,))
+    occurrence_id = await db.scalar(
+        select(TicketPackageProduct.id).where(
+            TicketPackageProduct.ticket_package_track_id == track_id,
+            TicketPackageProduct.product_id == product_id,
+        )
+    )
+    assert occurrence_id is not None
+    return occurrence_id
 
 
 async def _track(

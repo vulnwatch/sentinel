@@ -294,11 +294,12 @@ history is never rewritten
 history of an aged Ticket begins after its creation time. Remediation
 deadlines, which derive from the Ticket creation time, advance with the age of
 the dataset (`docs/features/tickets/ticket-deadlines.md`); the deadlines of
-`SNTL-18`, which is not aged, and of the aged `SNTL-27` also derive from their
-coordinated release dates `T + 14d` and `T − 2d` (Embargoes). After a load the
-due date of the current phase of each aged Ticket is already past, and further
-due dates pass as the dataset ages. The lifecycle dates of Product Catalog keep
-every listed lifecycle phase during the first 180 days from `D`.
+`SNTL-18` and `SNTL-29`, which are not aged, and of the aged `SNTL-27` also
+derive from their coordinated release dates `T + 14d`, `T + 21d`, and `T − 2d`
+(Embargoes). After a load the due date of the current phase of each aged
+Ticket is already past, and further due dates pass as the dataset ages. The
+lifecycle dates of Product Catalog keep every listed lifecycle phase during
+the first 180 days from `D`.
 
 ## Service
 
@@ -449,7 +450,7 @@ The rest of this document names each Product by its display name without the
 
 Every CVE is first ingested from the source in the "First" column, which
 creates its Ticket (`docs/features/tickets/tickets.md`, Automatic: CVE
-Ingestion), except the four CVEs created by a manual Ticket creation
+Ingestion), except the five CVEs created by a manual Ticket creation
 (Tickets). An NVD ingestion supplies the description `Fictional vulnerability
 {CVE ID} of the Sentinel example dataset.`, the state `PUBLISHED`, the
 published date `T − n` days, where `n` is the number that ends the CVE ID
@@ -489,6 +490,7 @@ data of the table.
 | `CVE-2099-0024` | NVD | `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N` | high | — | — |
 | `CVE-2099-0025` | Manual Ticket creation | `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H` | high | — | NVD after the Ticket creation |
 | `CVE-2099-0026` | MITRE | — | unresolved | — | — (its CNA is under the auto-ignore policy when it is first ingested) |
+| `CVE-2099-0027` | Manual Ticket creation | — | unresolved | — | MITRE after the Ticket creation, with the state `REJECTED`, rejected at `T − 2d` |
 
 The Severity column is the resolved Ticket severity after the load
 (`docs/features/tickets/cvss-scoring.md`, Severity Resolution Cascade).
@@ -507,10 +509,14 @@ references (References). The `CVEs and tickets` step runs:
 5. the first ingestion of `CVE-2099-0021` to `CVE-2099-0024`, in order;
 6. the manual Ticket creation of `SNTL-27`;
 7. the further ingestions: NVD for `CVE-2099-0018` to `CVE-2099-0020` and
-   `CVE-2099-0025`, then MITRE, KEV, EPSS, and GHSA, each in ascending CVE
-   order;
-8. the metadata and the policy of the CNAs (CNAs); and
-9. the first ingestion of `CVE-2099-0026`.
+   `CVE-2099-0025`, then MITRE, except that of `CVE-2099-0027` (step 11), KEV,
+   EPSS, and GHSA, each in ascending CVE order;
+8. the metadata and the policy of the CNAs (CNAs);
+9. the first ingestion of `CVE-2099-0026`;
+10. the manual Ticket creations of `SNTL-29` to `SNTL-31`, in order; and
+11. the MITRE ingestion of `CVE-2099-0027`, which rejects the CVE of the
+    `Analysis` Ticket `SNTL-31` and keeps its status
+    (`docs/features/tickets/cve-tracking.md`, Rejection handling).
 
 The affected-version entry of `CVE-2099-0009` has the version type `semver`
 and the status `affected`. The automatic references of References are applied
@@ -525,7 +531,7 @@ Writers). The first MITRE ingestion of a CVE of a CNA creates the CNA:
 
 | `org_id` | Short name | Organization name | Types | Scope | Auto-ignore | CVEs |
 |---|---|---|---|---|---|---|
-| `00000000-0000-4000-8000-0000000000a1` | `example` | Example Corporation | `Vendor` | `Example Corporation products only.` | No, after being enabled and disabled by `jdoe` | `CVE-2099-0008`, `CVE-2099-0009`, `CVE-2099-0010` |
+| `00000000-0000-4000-8000-0000000000a1` | `example` | Example Corporation | `Vendor` | `Example Corporation products only.` | No, after being enabled and disabled by `jdoe` | `CVE-2099-0008`, `CVE-2099-0009`, `CVE-2099-0010`, `CVE-2099-0027` |
 | `00000000-0000-4000-8000-0000000000a2` | `fictional-plugins` | Fictional Plugin Foundation | `Open Source`, `Researcher` | The two lines `Plugins of the fictional plugin directory.` and `Plugin list: https://plugins.example.com` | Yes, set by `jdoe` | `CVE-2099-0006`, `CVE-2099-0026` |
 | `00000000-0000-4000-8000-0000000000a3` | — | — | — | — | No | `CVE-2099-0013` |
 
@@ -544,7 +550,9 @@ their Tickets exist and while no CNA is under the policy, so the Tickets keep
 their status. `SNTL-6`, the Ticket of `CVE-2099-0006`, stays `New`: enabling
 the policy changes no existing Ticket. The first ingestion of `CVE-2099-0026`
 in step 9 then creates `SNTL-28` and ignores it with the reason `cna_policy`
-(`docs/features/tickets/cna.md`, When the Policy Applies).
+(`docs/features/tickets/cna.md`, When the Policy Applies). The MITRE ingestion
+of `CVE-2099-0027` in step 11 records `example`, which is no longer under the
+policy, for a Ticket in `Analysis`.
 
 The SUSE assessments are part of the Ticket work:
 
@@ -616,13 +624,13 @@ record.
 ### Tickets
 
 On a newly created database the Tickets receive the identifiers `SNTL-1` to
-`SNTL-28` in this order. Every Ticket with a CVE is created by the first
-ingestion of its CVE, except `SNTL-18` to `SNTL-20` and `SNTL-27`; every
-Ticket without a CVE is created manually. The table states the final state
-after the load.
+`SNTL-31` in this order. Every Ticket with a CVE is created by the first
+ingestion of its CVE, except `SNTL-18` to `SNTL-20`, `SNTL-27`, and `SNTL-31`;
+every Ticket without a CVE is created manually. The table states the final
+state after the load.
 
 The dataset holds more than one page of Tickets at the default page size of
-20 (`docs/api-spec.md`) for every caller: 25 Tickets are not confidential and
+20 (`docs/api-spec.md`) for every caller: 28 Tickets are not confidential and
 are visible to every authenticated user.
 
 | Ticket | CVE | Created by | Status | Assignee | Confidential | Severity |
@@ -648,17 +656,21 @@ are visible to every authenticated user.
 | `SNTL-26` | `CVE-2099-0024` | Ingestion | `Analyzed` | `bwilson` | No | high |
 | `SNTL-27` | `CVE-2099-0025` | `asmith` | `Analyzed` | `asmith` | Yes, with a coordinated release date `T − 2d`, without access grant | high |
 | `SNTL-28` | `CVE-2099-0026` | Ingestion | `Ignored` with the reason `cna_policy`, because its CNA `fictional-plugins` is under the auto-ignore policy (CNAs) | — | No | unresolved |
+| `SNTL-29` | — | `asmith`, with the manual severity medium | `Analysis` | `asmith` | No, after its embargo: made non-confidential with a coordinated release date `T + 21d`, which it keeps | medium |
+| `SNTL-30` | — | `asmith`, with the manual severity high | `Analyzed` | `asmith` | No | high |
+| `SNTL-31` | `CVE-2099-0027`, rejected | `bwilson` | `Analysis` | `bwilson` | No | unresolved |
 
 The manual Ticket creations are `create_ticket()` calls with the `manual`
 source by the creator of the table, with the CVE and the manual severity of
-the table. `SNTL-18` and `SNTL-27` are created confidential, `SNTL-18` with
-its coordinated release date and `SNTL-27` without one: a creation rejects a
-coordinated release date before the creation instant
-(`docs/features/tickets/tickets.md`, Coordinated Release Date), so the Ticket
-work sets that of `SNTL-27` after its aging (Aged Tickets). `SNTL-19` is
-created non-confidential and made confidential by the Ticket work. Every
-creator is eligible to be the assignee of the Ticket that they create, so each
-is assigned and each Ticket starts in `Analysis`
+the table. `SNTL-18`, `SNTL-27`, and `SNTL-29` are created confidential,
+`SNTL-18` and `SNTL-29` with their coordinated release dates and `SNTL-27`
+without one: a creation rejects a coordinated release date before the creation
+instant (`docs/features/tickets/tickets.md`, Coordinated Release Date), so the
+Ticket work sets that of `SNTL-27` after its aging (Aged Tickets). `SNTL-19` is
+created non-confidential and made confidential by the Ticket work, and
+`SNTL-29` is made non-confidential by it. Every creator is eligible to be the
+assignee of the Ticket that they create, so each is assigned and each Ticket
+starts in `Analysis`
 (`docs/features/tickets/tickets.md`, Manual Creation). This includes `cwhite`,
 a restricted analyst who is not a bot account, for the non-confidential
 `SNTL-20` (`docs/features/identity/rbac.md`, Business Rule 10). The access
@@ -678,21 +690,28 @@ named user is a system operation (Attribution).
 | `SNTL-13` | `asmith` adds `fictional-httpd`, sets its track to `AFFECTED`, adds the SUSE assessment, and sets the priority override `P3`. The IBS observations of `SNTL-13` are applied in order (IBS Requests) |
 | `SNTL-14` | `asmith` adds `fictional-libxml`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-14` are applied in order. Track release detection sets the track to `FIXED`. Product release detection confirms the release of `Server 15 SP7` at `T − 2d` with the advisory `SUSE-SU-2099:0001-1` |
 | `SNTL-15` | `bwilson` adds `fictional-sudo`, sets the `fles-16.0` track to `NOT_AFFECTED` and the `SUSE:FLES-15-SP4:Update` track to `WONT_FIX`, and adds the SUSE assessment |
-| `SNTL-16` | `asmith` adds `fictional-kernel`, sets the `SUSE:FLES-15-SP5:Update` track to `AFFECTED`, and adds the SUSE assessment |
+| `SNTL-16` | `asmith` adds `fictional-kernel`, sets the `SUSE:FLES-15-SP5:Update` track to `AFFECTED`, excludes the `SUSE:FLES-15-SP4:Update` track, and excludes `Server 15 SP7` from the `SUSE:FLES-15-SP5:Update` track. `asmith` adds `fictional-kernel-firmware` and excludes it, then adds `fictional-kernel-compat`. `asmith` adds the SUSE assessment, then sets the eligibility override `eligible = false` on `Server LTSS 15 SP5` of the `SUSE:FLES-15-SP5:Update` track |
 | `SNTL-17` | `bwilson` ignores the Ticket with the reason `not_shipped` |
 | `SNTL-18` | `asmith` adds `fictional-openssh` and sets its track to `AFFECTED`. The IBS observations of `SNTL-18` are applied in order. `asmith` grants access to `cwhite` |
 | `SNTL-19` | `bwilson` makes the Ticket confidential |
-| `SNTL-22` | `bwilson` marks the Ticket as a duplicate of `SNTL-21` |
+| `SNTL-22` | `bwilson` adds `fictional-lz4`, then marks the Ticket as a duplicate of `SNTL-21` |
 | `SNTL-25` | `asmith` ignores the Ticket with the reason `other` |
-| `SNTL-26` | `bwilson` adds `fictional-glibc`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-26` are applied in order |
+| `SNTL-26` | `bwilson` adds `fictional-glibc` and sets its track to `AFFECTED`. `bwilson` adds `fictional-libidn`, and `jdoe` sets its track to `FIXED` (`admin_ticket_ops`). `bwilson` adds the SUSE assessment. The IBS observations of `SNTL-26` are applied in order |
 | `SNTL-27` | `asmith` adds `fictional-bind`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-27` are applied in order |
+| `SNTL-29` | `asmith` makes the Ticket non-confidential |
+| `SNTL-30` | `asmith` adds `fictional-libarchive` and sets its track to `AFFECTED` |
 
 The operations use `assign_ticket()`, `deactivate_user()`,
 `add_package_records()`, `set_track_status()`, `upsert_cvss_assessment()`,
 `set_priority_override()`, `create_reference()`, `ignore_ticket()`,
 `grant_access()`, `set_confidentiality()`, `mark_as_duplicate()`,
-`set_product_released_at()`, and `apply_ibs_request_observation()`. Track
-release detection is `set_track_status()` with `FIXED` and no acting user.
+`set_product_released_at()`, `soft_delete_ticket_package()`,
+`soft_delete_ticket_package_track()`, `soft_delete_ticket_package_product()`,
+`set_product_eligibility()`, and `apply_ibs_request_observation()`. Track
+release detection is `set_track_status()` with `FIXED` and no acting user; the
+`FIXED` of `jdoe` is `set_track_status()` with the verified `admin_ticket_ops`
+of its caller (`docs/features/packages/package-model.md`, Manual
+Transitions).
 After these operations, the step ages the Tickets of Aged Tickets and then
 sets the coordinated release date of `SNTL-27` through
 `set_coordinated_release_date()` (Aged Tickets).
@@ -711,12 +730,28 @@ The resulting states follow the gates of `docs/features/tickets/tickets.md`:
   is released.
 - `SNTL-15` is `Resolved` through `NOT_AFFECTED` and `WONT_FIX` tracks.
 - `SNTL-16` is `Resolved` through an `AFFECTED` track without an eligible
-  Product: its SUSE score `5.5` is below the threshold `7.0` of
-  `Server LTSS 15 SP5`. Its `SUSE:FLES-15-SP3:Update` track stays in
-  `ANALYSIS` and is not actionable, because its only Product is EOL.
+  actionable Product: its SUSE score `5.5` is below the threshold `7.0` of
+  `Server LTSS 15 SP5`, and `Server 15 SP7` is excluded from the track. Its
+  other tracks in `ANALYSIS` are not actionable: excluded, or holding only the
+  EOL `Server 15 SP3`. The exclusions precede the SUSE assessment, while the
+  Ticket is in `Analysis`, and the eligibility override follows it with the
+  value that the threshold already gives the Product, so no operation
+  regresses the `Resolved` Ticket (Isolation) and the assessment keeps its
+  automatic `product_eligibility_changed` event.
 - `SNTL-18` and `SNTL-19` stay in `Analysis` without a SUSE assessment.
 - `SNTL-20` stays in `Analysis`, assigned to its creator `cwhite`: it has no
   package, so its Analyzed gate fails.
+- `SNTL-22` has no resolved severity, so it is in `Analysis` when `bwilson`
+  marks it as a duplicate.
+- `SNTL-26` is `Analyzed` and not `Resolved`: its `FIXED` Git track has the
+  eligible Product `Server 16.0` without a release, which a Ticket with a CVE
+  waits for. That track is `FIXED` before the SUSE assessment, while the
+  Ticket is in `Analysis`, so its `ANALYSIS` state never moves an `Analyzed`
+  Ticket back.
+- `SNTL-29` and `SNTL-31` stay in `Analysis` without a package. The rejection
+  of `CVE-2099-0027` does not ignore `SNTL-31`, which is no longer `New`.
+- `SNTL-30` is `Analyzed`: a Ticket without a CVE needs no SUSE assessment, and
+  its `AFFECTED` track has the eligible, unreleased Product `Server 15 SP7`.
 
 `SNTL-8`, `SNTL-17`, `SNTL-25`, and `SNTL-28` are the `Ignored` Tickets, one
 for each ignore reason (`docs/features/tickets/tickets.md`, Ignore Reason): the
@@ -765,33 +800,43 @@ after a load the aged Tickets are the only Tickets that match an `overdue`
 value of `GET /api/v1/tickets`, each the value of its current phase:
 `overdue=qa` lists `SNTL-26` and `SNTL-27`, and each other value one Ticket.
 Every other Ticket was created at the load, and no due date of a phase that is
-still open has passed, also on `SNTL-18`, whose due dates derive from its
-coordinated release date. The submission milestone of `SNTL-13`, `SNTL-26`,
-and `SNTL-27` is done through their delivery, and the `um` milestone of
-`SNTL-26` and `SNTL-27` through their release requests (IBS Requests).
+still open has passed, also on `SNTL-18` and `SNTL-29`, whose due dates derive
+from their coordinated release dates. The submission milestone of `SNTL-13`,
+`SNTL-26`, and `SNTL-27` is done through their delivery, and the `um`
+milestone of `SNTL-26` and `SNTL-27` through their release requests (IBS
+Requests).
 
 ### Embargoes
 
 Two confidential Tickets have a coordinated release date, so that a client can
-show an embargo that is still running and one that has expired
+show an embargo that is still running and one that has expired, and a third
+Ticket keeps its coordinated release date after it became non-confidential
 (`docs/features/tickets/tickets.md`, Coordinated Release Date). With a
 coordinated release date, the due dates of a Ticket divide the window from its
 `created_at` to that date instead of the SLA window
 (`docs/features/tickets/ticket-deadlines.md`, Coordinated Release Window), so
-both Tickets have due dates that differ from those of their SLA tier:
+the three Tickets have due dates that differ from those of their SLA tier:
 
 | Ticket | Coordinated release date | `triage_due_at` | `submission_due_at` | `um_due_at` | `qa_due_at` and `release_due_at` |
 |---|---|---|---|---|---|
 | `SNTL-18`, critical | `T + 14d`, still running | About 1 day 9 h 36 min after `created_at` (SLA: 3 days) | About 8 days 9 h 36 min after (SLA: 18 days) | About 9 days 19 h 12 min after (SLA: 21 days) | `T + 14d` (SLA: 30 days after `created_at`) |
 | `SNTL-27`, high | `T − 2d`, expired | `T − 11d` (SLA: `T − 9d`) | `T − 6d` (SLA: `T + 6d`) | `T − 5d` (SLA: `T + 9d`) | `T − 2d` (SLA: `T + 18d`) |
+| `SNTL-29`, medium, not confidential | `T + 21d`, kept after the embargo | About 2 days 2 h 24 min after `created_at` (SLA: 9 days) | About 12 days 14 h 24 min after (SLA: 54 days) | About 14 days 16 h 48 min after (SLA: 63 days) | `T + 21d` (SLA: 90 days after `created_at`) |
 
-The window of `SNTL-18` begins at its creation time, the database time of its
-creation shortly after `T`, so it is slightly shorter than 14 days and each of
-its due dates is that share of it after `created_at`, rounded down to a whole
-microsecond. The window of `SNTL-27` is exactly 10 days. Right after a load
-the current phase of `SNTL-18` is `triage`, which is `pending` until its due
-date passes as the dataset ages, and that of `SNTL-27` is `qa`, `overdue` (Aged
+The windows of `SNTL-18` and `SNTL-29` begin at their creation times, the
+database times of their creations shortly after `T`, so each is slightly
+shorter than 14 or 21 days and each of their due dates is that share of it
+after `created_at`, rounded down to a whole microsecond. The window of
+`SNTL-27` is exactly 10 days. Right after a load the current phase of
+`SNTL-18` and of `SNTL-29` is `triage`, which is `pending` until its due date
+passes as the dataset ages, and that of `SNTL-27` is `qa`, `overdue` (Aged
 Tickets).
+
+`SNTL-29` shows an embargo that ended before its coordinated release date:
+`asmith` creates it confidential with that date and then makes it
+non-confidential, which leaves the date in place, still deciding the due dates
+and still editable (`docs/features/tickets/ticket-service.md`,
+set_confidentiality). It is visible to every authenticated user.
 
 Right after a load, for a caller whose effective scope is `all`, the Embargo
 filters of `GET /api/v1/tickets` (`docs/features/tickets/tickets.md`, List
@@ -803,7 +848,8 @@ Tickets) list:
 | `coordinated_release_passed=true` | `SNTL-27` |
 
 `SNTL-19` has no coordinated release date, and that of `SNTL-18` has not
-passed. `SNTL-27` has no access grant and its package no maintainer, so only
+passed. The Embargo filters match confidential Tickets only, so neither lists
+`SNTL-29`. `SNTL-27` has no access grant and its package no maintainer, so only
 the users whose effective scope is `all` see it, and it changes no maintainer
 workbench (`docs/features/identity/rbac.md`).
 
@@ -830,10 +876,10 @@ Every other Ticket has the exploitation level `unknown`, no deciding evidence,
 and no override; its automatic and effective priority is the `unknown` cell
 of its severity: `P2` for critical (`SNTL-18`), `P3` for high, `P4` for
 medium, low, and none, and no priority for an unresolved severity (`SNTL-6`,
-`SNTL-8`, `SNTL-22`, and `SNTL-28`). The EPSS percentiles of `CVE-2099-0002` and
-`CVE-2099-0018` are below the threshold of the `likely` level, and that of
-`CVE-2099-0001` is not deciding evidence, because the KEV entry decides its
-level.
+`SNTL-8`, `SNTL-22`, `SNTL-28`, and `SNTL-31`). The EPSS percentiles of
+`CVE-2099-0002` and `CVE-2099-0018` are below the threshold of the `likely`
+level, and that of `CVE-2099-0001` is not deciding evidence, because the KEV
+entry decides its level.
 
 The override provenance of each override names the user who set it and the
 time of that operation, the `created_at` of its `priority_changed` event
@@ -863,16 +909,58 @@ status is `PENDING` unless IBS Requests changes it.
 | `SNTL-14` | `fictional-libxml` | `ibs` | `SUSE:FLES-15-SP7:Update` | `Server 15 SP7`, released | `FIXED` | `RELEASED` | `dbrown` |
 | `SNTL-15` | `fictional-sudo` | `git` | `fles-16.0` | `Server 16.0`, `Micro 6.2` | `NOT_AFFECTED` | `PENDING` | — |
 | | | `ibs` | `SUSE:FLES-15-SP4:Update` | `Server LTSS 15 SP4`, not eligible | `WONT_FIX` | `PENDING` | |
-| `SNTL-16` | `fictional-kernel` | `ibs` | `SUSE:FLES-15-SP5:Update` | `Server LTSS 15 SP5`, not eligible | `AFFECTED` | `PENDING` | — |
+| `SNTL-16` | `fictional-kernel` | `ibs` | `SUSE:FLES-15-SP5:Update` | `Server LTSS 15 SP5`, not eligible, set by hand; `Server 15 SP7`, excluded | `AFFECTED` | `PENDING` | — |
 | | | `ibs` | `SUSE:FLES-15-SP3:Update` | `Server 15 SP3`, EOL | `ANALYSIS` | `PENDING` | |
+| | | `ibs` | `SUSE:FLES-15-SP4:Update`, excluded | `Server LTSS 15 SP4`, not eligible | `ANALYSIS` | `PENDING` | |
+| | `fictional-kernel-firmware`, excluded | `ibs` | `SUSE:FLES-15-SP7:Update` | `Server 15 SP7` | `ANALYSIS` | `PENDING` | — |
+| | `fictional-kernel-compat` | `ibs` | `SUSE:FLES-15-SP3:Update` | `Server 15 SP3`, EOL | `ANALYSIS` | `PENDING` | — |
 | `SNTL-18` | `fictional-openssh` | `ibs` | `SUSE:FLES-15-SP7:Update` | `Server 15 SP7` | `AFFECTED` | `IN_PROGRESS` | `dbrown` |
+| `SNTL-22` | `fictional-lz4` | `git` | `fles-16.0` | `Server 16.0` | `ANALYSIS` | `PENDING` | — |
 | `SNTL-26` | `fictional-glibc` | `ibs` | `SUSE:FLES-15-SP7:Update` | `Server 15 SP7` | `AFFECTED` | `IN_PROGRESS` | `ghill` |
+| | `fictional-libidn` | `git` | `fles-16.0` | `Server 16.0` | `FIXED` | `PENDING` | — |
 | `SNTL-27` | `fictional-bind` | `ibs` | `SUSE:FLES-15-SP7:Update` | `Server 15 SP7` | `AFFECTED` | `IN_PROGRESS` | — |
+| `SNTL-30` | `fictional-libarchive` | `ibs` | `SUSE:FLES-15-SP7:Update` | `Server 15 SP7` | `AFFECTED` | `PENDING` | — |
 
 A Product is eligible unless the table states otherwise
 (`docs/features/packages/package-model.md`, Axis 2: Eligibility): `Server LTSS
 15 SP4` is in Reactive Support, and the SUSE score of `CVE-2099-0016` is below
-the threshold of `Server LTSS 15 SP5`.
+the threshold of `Server LTSS 15 SP5`. The eligibility of `Server LTSS 15 SP5`
+is also set by hand: `asmith` sets the override `eligible = false` after the
+SUSE assessment, so `is_eligible_override` is `true`,
+`eligibility_override_by` names `asmith`, and `eligibility_override_at` is the
+time of that operation, the `created_at` of its `product_eligibility_changed`
+event with `override_action = set` (`docs/features/packages/package-model.md`,
+Override Model). The automatic `product_eligibility_changed` event of the
+assessment, with the reason `cvss`, precedes it.
+
+A record marked excluded has `deleted_at` set by the exclusion of `asmith`; no
+other record of the dataset has it. The package tree of `SNTL-16` therefore
+holds a direct exclusion at each level and every `non_actionable_reason`
+(`docs/features/packages/package-model.md`, Derived Actionability):
+
+| Record | `actionable` | `non_actionable_reason` |
+|---|---|---|
+| `fictional-kernel` | Yes | — |
+| `SUSE:FLES-15-SP5:Update`; its `Server LTSS 15 SP5` | Yes | — |
+| `Server 15 SP7` under `SUSE:FLES-15-SP5:Update` | No | `product_excluded` |
+| `SUSE:FLES-15-SP3:Update` of `fictional-kernel` and of `fictional-kernel-compat` | No | `no_actionable_products` |
+| `Server 15 SP3` under each `SUSE:FLES-15-SP3:Update` | No | `eol` |
+| `SUSE:FLES-15-SP4:Update`; its `Server LTSS 15 SP4` | No | `track_excluded` |
+| `fictional-kernel-firmware`; its track and Product | No | `package_excluded` |
+| `fictional-kernel-compat` | No | `no_actionable_tracks` |
+
+`package_names` of `SNTL-16` lists `fictional-kernel` and
+`fictional-kernel-compat`, its packages that are not excluded
+(`docs/features/tickets/tickets.md`, TicketSummary).
+
+The packages of `SNTL-22`, `SNTL-26`, and `SNTL-30` show further track
+states. The track of `SNTL-22` has every milestone `null`, because a
+`Duplicated` Ticket has no due dates
+(`docs/features/tickets/ticket-deadlines.md`, Track Milestones). The `FIXED`
+Git track of `SNTL-26` keeps its Ticket open while its eligible Product is not
+released, and the track of `SNTL-30`, on a Ticket without a CVE, has its later
+milestones `null`, so the current phase of
+`SNTL-30` is `null` with due dates (Ticket Current Phase there).
 
 `SNTL-11` has 12 packages, more than ten besides its first, so that a client
 can show a Ticket with a long list of package names; `fictional-curl` comes
@@ -985,7 +1073,7 @@ holds events after the load:
 | Setting | Two `setting_changed` events by `jdoe` |
 | Fetcher | One `disabled` event by `jdoe` for every fetcher |
 | CNA | `auto_ignore_enabled` and `auto_ignore_disabled` for `example`, then `auto_ignore_enabled` for `fictional-plugins`, all by `jdoe` |
-| Ticket | The events of every Ticket creation and Ticket work operation, for example `ticket_created`, `assignment`, `status_change`, `cve_associated`, `cvss_assessment_changed`, `product_eligibility_changed`, `package_added`, `package_maintainer_added`, `track_status_changed`, `product_released`, `priority_changed`, `reference_added`, `coordinated_release_changed`, `confidentiality_changed`, `access_grant_added`, and `duplicate_set` |
+| Ticket | The events of every Ticket creation and Ticket work operation, for example `ticket_created`, `assignment`, `status_change`, `cve_associated`, `cvss_assessment_changed`, `product_eligibility_changed`, `package_added`, `package_maintainer_added`, `package_excluded`, `track_excluded`, `product_excluded`, `track_status_changed`, `product_released`, `priority_changed`, `reference_added`, `coordinated_release_changed`, `confidentiality_changed`, `access_grant_added`, and `duplicate_set` |
 
 ## Operating a Dataset Backend
 
