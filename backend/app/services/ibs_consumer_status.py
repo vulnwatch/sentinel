@@ -566,11 +566,12 @@ async def get_ibs_consumer_status() -> IBSConsumerStatusView:
         return IBSConsumerStatusView(IBSConsumerStatus.DISABLED)
     client = _new_redis_client()
     try:
-        raw: bytes | None = await client.get(STATUS_KEY)
+        raw = await client.get(STATUS_KEY)
     except RedisError:
         return IBSConsumerStatusView(IBSConsumerStatus.UNREACHABLE)
     finally:
         await _close_quietly(client)
+    assert not isinstance(raw, str)  # the client does not decode responses
     heartbeat = evaluate_heartbeat(raw, now=utc_now())
     if heartbeat is None:
         return IBSConsumerStatusView(IBSConsumerStatus.UNREACHABLE)

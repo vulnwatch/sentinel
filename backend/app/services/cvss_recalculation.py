@@ -52,10 +52,7 @@ from typing import Any, Final
 import redis.asyncio as redis_asyncio
 import structlog
 from celery.exceptions import SoftTimeLimitExceeded, WorkerShutdown, WorkerTerminate
-from kombu.exceptions import (  # type: ignore[import-untyped]
-    EncodeError,
-    SerializerNotInstalled,
-)
+from kombu.exceptions import EncodeError, SerializerNotInstalled
 from redis.exceptions import RedisError
 from sqlalchemy import select
 from sqlalchemy.exc import (

@@ -1113,7 +1113,8 @@ def _recalculation_lease(redis_url: str) -> str | None:
     async def _read() -> str | None:
         client = redis_asyncio.Redis.from_url(redis_url, decode_responses=True)
         try:
-            value: str | None = await client.get(LEASE_KEY)
+            value = await client.get(LEASE_KEY)
+            assert not isinstance(value, bytes)  # the client decodes responses
             return value
         finally:
             await client.aclose()

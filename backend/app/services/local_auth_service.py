@@ -171,7 +171,7 @@ async def guard_and_increment(normalized_username: str) -> LockoutDecision:
     client = _new_redis_client()
     try:
         try:
-            admitted, count, ttl_ms = await client.eval(  # type: ignore[misc]
+            admitted, count, ttl_ms = await client.eval(
                 _GUARD_AND_INCREMENT_SCRIPT,
                 1,
                 key,

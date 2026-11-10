@@ -56,7 +56,7 @@ import pytest
 import pytest_asyncio
 import redis.asyncio as redis_asyncio
 from httpx import ASGITransport, AsyncClient, Response
-from kombu.exceptions import EncodeError  # type: ignore[import-untyped]
+from kombu.exceptions import EncodeError
 from kombu.exceptions import OperationalError as BrokerOperationalError
 from redis.exceptions import ConnectionError as RedisConnectionError
 from sqlalchemy import BigInteger, func, literal, select
