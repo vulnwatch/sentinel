@@ -354,7 +354,8 @@ class _Pipeline:
 
         async def read(client: redis_asyncio.Redis) -> tuple[str | None, int]:
             key = pending_key(cve_id)
-            value: str | None = await client.get(key)
+            value = await client.get(key)
+            assert not isinstance(value, bytes)  # the client decodes responses
             ttl: int = await client.ttl(key)
             return value, ttl
 

@@ -231,8 +231,8 @@ class _RedisSpy:
         if self.error is not None:
             raise self.error
         if self.delegate is not None:
-            values: list[str | None] = await self.delegate.mget(list(keys))
-            return values
+            # The delegate decodes responses.
+            return cast("list[str | None]", await self.delegate.mget(list(keys)))
         return [self.values.get(key) for key in keys]
 
     async def aclose(self) -> None:

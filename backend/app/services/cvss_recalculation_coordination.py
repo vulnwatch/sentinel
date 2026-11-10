@@ -274,7 +274,7 @@ async def compare_and_renew_lease(
     propagates unchanged and never confirms ownership.
     """
     value = encode_lease_value(task_id, target_version)
-    result = await client.eval(  # type: ignore[misc]
+    result = await client.eval(
         _COMPARE_AND_RENEW_SCRIPT, 1, LEASE_KEY, value, str(LEASE_TTL_SECONDS)
     )
     return _RENEW_OUTCOMES[int(result)]
@@ -293,9 +293,7 @@ async def compare_and_delete_lease(
     the caller records a cleanup failure and the key expires by its TTL.
     """
     value = encode_lease_value(task_id, target_version)
-    result = await client.eval(  # type: ignore[misc]
-        _COMPARE_AND_DELETE_SCRIPT, 1, LEASE_KEY, value
-    )
+    result = await client.eval(_COMPARE_AND_DELETE_SCRIPT, 1, LEASE_KEY, value)
     return _DELETE_OUTCOMES[int(result)]
 
 

@@ -650,7 +650,13 @@ in its next run, and each rebase runs CI again.
 this manager: an update inside the declared range refreshes only
 `backend/uv.lock` — the file that CI and the image install from with
 `uv sync --locked` — and the floor in `pyproject.toml` changes only when a
-new version falls outside it. Minor and patch updates are grouped into one
+new version falls outside it. A requirement may also exclude a single
+release that is broken for Sentinel (`!=<version>`), with a comment
+beside it naming the upstream defect: no resolution locks the excluded
+version, so neither a Renovate update nor lock file maintenance brings it
+in, and Renovate does not propose it, while a later release inside the
+range is proposed as usual. Once a later release is locked, a later PR
+removes the exclusion. Minor and patch updates are grouped into one
 PR; each major update gets its own PR. Lock file maintenance regenerates
 `backend/uv.lock` in a separate PR, which keeps transitive dependencies
 current because the manager extracts only direct dependencies. It runs

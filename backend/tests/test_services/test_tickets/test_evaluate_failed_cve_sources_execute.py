@@ -56,7 +56,7 @@ from collections.abc import (
 )
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Final
+from typing import Any, Final, cast
 
 import pytest
 import redis.asyncio as redis_asyncio
@@ -303,8 +303,8 @@ class _Env:
     events: list[str]
 
     async def keys(self) -> list[str]:
-        keys: list[str] = sorted(await self.redis.keys("*"))
-        return keys
+        # The fixture client decodes responses.
+        return sorted(cast("list[str]", await self.redis.keys("*")))
 
 
 @pytest.fixture
