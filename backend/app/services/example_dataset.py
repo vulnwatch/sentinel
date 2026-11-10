@@ -120,6 +120,7 @@ from app.services.packages.sync_smelt_products import (
 from app.services.reference_service import (
     AutomaticReferenceInput,
     ManualReferenceCreateInput,
+    ManualReferenceUpdateInput,
 )
 from app.services.ticket_convergence_registry import (
     pending_ticket_convergence_effects,
@@ -499,7 +500,98 @@ _EPSS: Final = {
     "CVE-2099-0018": ("0.31", "0.92"),
 }
 """EPSS score and percentile, assessed `D - 1`."""
-_GHSA: Final = {"CVE-2099-0010": "GHSA-2c4f-7h9j-mqrv"}
+_GHSA: Final = {
+    "CVE-2099-0009": "GHSA-8m3w-4xq7-pf2c",
+    "CVE-2099-0010": "GHSA-2c4f-7h9j-mqrv",
+}
+_OSV: Final = ("CVE-2099-0009",)
+
+# Affected versions of CVE-2099-0009 (CVEs): each scope carries the fields
+# that the mapping of its source produces (cve-record-parser.md;
+# cve-sync-ghsa.md; cve-sync-osv.md).
+_TAR_REPO: Final = "https://git.example.com/fictional-tar"
+_TAR_CNA_ELEMENT: Final[dict[str, object]] = {
+    "vendor": "Example",
+    "product": "fictional-tar",
+    "collection_url": "https://packages.example.com",
+    "package_name": "fictional-tar",
+    "repo": _TAR_REPO,
+    "program_files": ["src/extract.c", "src/names.c"],
+    "cpe": "cpe:2.3:a:example:fictional-tar:*:*:*:*:*:*:*:*",
+    "default_status": "unaffected",
+}
+_TAR_CNA_ENTRIES: Final = (
+    AffectedVersionEntry.model_validate(
+        _TAR_CNA_ELEMENT
+        | {
+            "version": "1.0",
+            "version_type": "semver",
+            "version_end": "1.5",
+            "version_end_inclusive": False,
+            "status": "affected",
+        }
+    ),
+    AffectedVersionEntry.model_validate(
+        _TAR_CNA_ELEMENT
+        | {"version": "1.5", "version_type": "semver", "status": "unaffected"}
+    ),
+)
+_TAR_ADP_ELEMENT: Final[dict[str, object]] = {
+    "vendor": "example",
+    "product": "fictional_tar",
+    "cpe": "cpe:2.3:a:example:fictional_tar:*:*:*:*:*:*:*:*",
+    "default_status": "unknown",
+}
+_TAR_ADP_ENTRIES: Final = (
+    AffectedVersionEntry.model_validate(
+        _TAR_ADP_ELEMENT
+        | {
+            "version": "1.0",
+            "version_type": "custom",
+            "version_end": "1.4.2",
+            "version_end_inclusive": True,
+            "status": "affected",
+        }
+    ),
+    AffectedVersionEntry.model_validate(
+        _TAR_ADP_ELEMENT
+        | {"version": "2.0.0-rc1", "version_type": "custom", "status": "unknown"}
+    ),
+)
+_TAR_GHSA_ENTRIES: Final = (
+    AffectedVersionEntry(
+        product="fictional-tar",
+        package_name="fictional-tar",
+        ecosystem="npm",
+        repo=_TAR_REPO,
+        version="1.0.0",
+        version_end="1.5.0",
+        version_end_inclusive=False,
+    ),
+)
+_TAR_INTRODUCED: Final = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d"
+_TAR_FIXED: Final = "9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c"
+_TAR_OSV_ENTRIES: Final = (
+    AffectedVersionEntry(
+        repo=_TAR_REPO,
+        version=_TAR_INTRODUCED,
+        version_type="git",
+        version_end=_TAR_FIXED,
+        version_end_inclusive=False,
+    ),
+    AffectedVersionEntry(
+        product="fictional-tar",
+        package_name="fictional-tar",
+        ecosystem="npm",
+        package_url="pkg:npm/fictional-tar",
+        version="1.0.0",
+        version_end="1.5.0",
+        version_end_inclusive=False,
+    ),
+)
+_LARGE_SCOPE_CVE: Final = "CVE-2099-0013"
+_LARGE_SCOPE_SIZE: Final = 500
+"""The entries of the generated `cna` scope of `_LARGE_SCOPE_CVE`."""
 
 _NVD_FETCHER: Final = "sync_nvd_cves"
 """The fetcher of the source that the automatic references represent, and
@@ -588,6 +680,7 @@ _TRAILING_MANUAL_TICKETS: Final = (
     ),
     _ManualTicket(30, "asmith", severity=Severity.HIGH),
     _ManualTicket(31, "bwilson", _REJECTED_LATER),
+    _ManualTicket(32, "bwilson"),
 )
 """The manual creations after the last ingestion that creates a Ticket
 (CVEs, step 10)."""
@@ -799,6 +892,22 @@ _SCANNER_REFERENCE: Final = ManualReferenceCreateInput(
     title="Fictional scanner finding",
     type=ReferenceType.ISSUE,
 )
+_EDITED_REFERENCE: Final = ManualReferenceCreateInput(
+    url="https://advisories.example.com/fictional-openssl/draft",
+    title="Fictional advisory draft",
+    type=ReferenceType.ARTICLE,
+)
+_REFERENCE_EDIT: Final = ManualReferenceUpdateInput(
+    url="https://advisories.example.com/fictional-openssl/2099-0012",
+    title="Fictional advisory",
+    description="Fixed in fictional-openssl 3.0.99.",
+    type=ReferenceType.ADVISORY,
+)
+_DELETED_REFERENCE: Final = ManualReferenceCreateInput(
+    url="https://lists.example.com/fictional-openssl/2099-0012",
+    title="Fictional mailing list post",
+    type=ReferenceType.ARTICLE,
+)
 
 _RELEASE_ADVISORY: Final = "SUSE-SU-2099:0001-1"
 _RELEASED_DAYS_AGO: Final = 2
@@ -914,23 +1023,14 @@ def _mitre_payload(cve: _CVE, now: datetime) -> CVEIngestPayload:
     }
     if cve.cve_id == "CVE-2099-0009":
         fields["affected_version_operations"] = [
-            AffectedVersionScopeOperation(
-                source_container="cna",
-                operation=AffectedVersionOperation.REPLACE,
-                entries=[
-                    AffectedVersionEntry(
-                        vendor="Example",
-                        product="fictional-tar",
-                        version="1.0",
-                        version_type="semver",
-                        version_end="1.5",
-                        version_end_inclusive=False,
-                        status="affected",
-                    )
-                ],
-            )
+            _replace("cna", _TAR_CNA_ENTRIES),
+            _replace("adp:CISA-ADP", _TAR_ADP_ENTRIES),
         ]
-    elif cve.cve_id == "CVE-2099-0010":
+    elif cve.cve_id == _LARGE_SCOPE_CVE:
+        fields["affected_version_operations"] = [
+            _replace("cna", _large_scope_entries())
+        ]
+    if cve.cve_id == "CVE-2099-0010":
         fields["ssvc_assessment"] = SSVCEntry(
             exploitation=SSVCExploitation.POC,
             automatable=SSVCAutomatable.NO,
@@ -948,6 +1048,49 @@ def _mitre_payload(cve: _CVE, now: datetime) -> CVEIngestPayload:
         )
     if cve.rejected:
         fields["date_rejected"] = now - timedelta(days=2)
+    return CVEIngestPayload.model_validate(fields)
+
+
+def _replace(
+    source_container: str, entries: Sequence[AffectedVersionEntry]
+) -> AffectedVersionScopeOperation:
+    """The complete observed snapshot of one affected-version scope."""
+    return AffectedVersionScopeOperation(
+        source_container=source_container,
+        operation=AffectedVersionOperation.REPLACE,
+        entries=list(entries),
+    )
+
+
+def _large_scope_entries() -> list[AffectedVersionEntry]:
+    """The generated `cna` scope of `_LARGE_SCOPE_CVE` (CVEs): one
+    `affected` entry of version type `semver` for each version `2.{m}.{p}`,
+    `m` from 0 to 4 and `p` from 0 to 99."""
+    return [
+        AffectedVersionEntry(
+            vendor="Example",
+            product="fictional-httpd",
+            version=f"2.{minor}.{patch}",
+            version_type="semver",
+            status="affected",
+        )
+        for minor in range(_LARGE_SCOPE_SIZE // 100)
+        for patch in range(100)
+    ]
+
+
+def _ghsa_payload(cve_id: str) -> CVEIngestPayload:
+    """A GHSA ingestion: the external identifier and, for `CVE-2099-0009`,
+    the `ghsa` scope."""
+    fields: dict[str, object] = {
+        "external_identifiers": [
+            ExternalIdentifierEntry(
+                source=CVEExternalIdentifierSource.GHSA, identifier=_GHSA[cve_id]
+            )
+        ]
+    }
+    if cve_id == "CVE-2099-0009":
+        fields["affected_version_operations"] = [_replace("ghsa", _TAR_GHSA_ENTRIES)]
     return CVEIngestPayload.model_validate(fields)
 
 
@@ -1425,17 +1568,14 @@ class _Load:
                     )
                 ),
             )
-        for cve_id, identifier in _GHSA.items():
+        for cve_id in _GHSA:
+            await self.ingest(cve_id, CVESourceType.GHSA, _ghsa_payload(cve_id))
+        for cve_id in _OSV:
             await self.ingest(
                 cve_id,
-                CVESourceType.GHSA,
+                CVESourceType.OSV,
                 CVEIngestPayload(
-                    external_identifiers=[
-                        ExternalIdentifierEntry(
-                            source=CVEExternalIdentifierSource.GHSA,
-                            identifier=identifier,
-                        )
-                    ]
+                    affected_version_operations=[_replace("osv", _TAR_OSV_ENTRIES)]
                 ),
             )
         for cna in _CNAS:
@@ -1679,25 +1819,168 @@ class _Load:
 
         await self.run(release)
 
+    async def restore_package(self, name: str) -> None:
+        """`restore_ticket_package()` of `name` by the user who added it."""
+        package = _PACKAGES[name]
+        ticket_id = self.ticket_ids[package.ticket]
+
+        async def restore(db: AsyncSession) -> None:
+            package_id = await db.scalar(
+                select(TicketPackage.id).where(
+                    TicketPackage.ticket_id == ticket_id,
+                    TicketPackage.package_name == name,
+                )
+            )
+            assert package_id is not None
+            await package_service.restore_ticket_package(
+                db,
+                ticket_id=ticket_id,
+                package_id=package_id,
+                acting_user_id=self.user_ids[package.actor],
+                caller=await self.caller(db, package.actor),
+            )
+
+        await self.run(restore)
+
+    async def restore_track(self, name: str, reference: str) -> None:
+        """`restore_ticket_package_track()` of the track `reference` of
+        `name` by the user who added the package."""
+        package = _PACKAGES[name]
+        ticket_id = self.ticket_ids[package.ticket]
+
+        async def restore(db: AsyncSession) -> None:
+            package_id, track_id = await _track(db, ticket_id, name, reference)
+            await package_service.restore_ticket_package_track(
+                db,
+                ticket_id=ticket_id,
+                package_id=package_id,
+                track_id=track_id,
+                acting_user_id=self.user_ids[package.actor],
+                caller=await self.caller(db, package.actor),
+            )
+
+        await self.run(restore)
+
+    async def restore_product(self, name: str, reference: str, cpe: str) -> None:
+        """`restore_ticket_package_product()` of `cpe` under the track
+        `reference` of `name` by the user who added the package."""
+        package = _PACKAGES[name]
+        ticket_id = self.ticket_ids[package.ticket]
+
+        async def restore(db: AsyncSession) -> None:
+            package_id, track_id = await _track(db, ticket_id, name, reference)
+            await package_service.restore_ticket_package_product(
+                db,
+                ticket_id=ticket_id,
+                package_id=package_id,
+                track_id=track_id,
+                ticket_package_product_id=await _occurrence(db, track_id, cpe),
+                acting_user_id=self.user_ids[package.actor],
+                caller=await self.caller(db, package.actor),
+            )
+
+        await self.run(restore)
+
     async def manual_reference(
         self, number: int, reference: ManualReferenceCreateInput, actor: str
-    ) -> None:
-        """`create_reference()` of `reference` on `SNTL-{number}` by `actor`."""
+    ) -> uuid.UUID:
+        """`create_reference()` of `reference` on `SNTL-{number}` by
+        `actor`; returns the reference identifier."""
         ticket_id = self.ticket_ids[number]
 
-        async def create(db: AsyncSession) -> None:
-            sequence_id = await db.scalar(
-                select(Ticket.sequence_id).where(Ticket.id == ticket_id)
-            )
-            assert sequence_id is not None
-            await reference_service.create_reference(
+        async def create(db: AsyncSession) -> uuid.UUID:
+            created = await reference_service.create_reference(
                 db,
-                format_ticket_id(sequence_id),
+                await _locator(db, ticket_id),
                 await self.caller(db, actor),
                 reference,
             )
+            return created.id
 
-        await self.run(create)
+        return await self.run(create)
+
+    async def edit_reference(
+        self,
+        number: int,
+        reference_id: uuid.UUID,
+        edit: ManualReferenceUpdateInput,
+        actor: str,
+    ) -> None:
+        """`update_reference()` of a manual reference of `SNTL-{number}` by
+        `actor`."""
+        ticket_id = self.ticket_ids[number]
+
+        async def update(db: AsyncSession) -> None:
+            await reference_service.update_reference(
+                db,
+                await _locator(db, ticket_id),
+                reference_id,
+                await self.caller(db, actor),
+                edit,
+            )
+
+        await self.run(update)
+
+    async def delete_reference(
+        self, number: int, reference_id: uuid.UUID, actor: str
+    ) -> None:
+        """`delete_reference()` of a manual reference of `SNTL-{number}` by
+        `actor`."""
+        ticket_id = self.ticket_ids[number]
+
+        async def delete(db: AsyncSession) -> None:
+            await reference_service.delete_reference(
+                db,
+                await _locator(db, ticket_id),
+                reference_id,
+                await self.caller(db, actor),
+            )
+
+        await self.run(delete)
+
+    async def access(
+        self, number: int, target: str, actor: str, *, granted: bool
+    ) -> None:
+        """`grant_access()` or `revoke_access()` of `target` on
+        `SNTL-{number}` by `actor`."""
+        ticket_id = self.ticket_ids[number]
+
+        async def change(db: AsyncSession) -> None:
+            caller = await self.caller(db, actor)
+            if granted:
+                await ticket_service.grant_access(
+                    db,
+                    ticket_id=ticket_id,
+                    target_user=target,
+                    acting_user_id=self.user_ids[actor],
+                    caller=caller,
+                )
+            else:
+                await ticket_service.revoke_access(
+                    db,
+                    ticket_id=ticket_id,
+                    target_user=target,
+                    acting_user_id=self.user_ids[actor],
+                    caller=caller,
+                )
+
+        await self.run(change)
+
+    async def duplicate(self, number: int, of: int, actor: str) -> None:
+        """`mark_as_duplicate()` of `SNTL-{number}` as a duplicate of
+        `SNTL-{of}` by `actor`."""
+        ticket_id, target_id = self.ticket_ids[number], self.ticket_ids[of]
+
+        async def mark(db: AsyncSession) -> None:
+            await ticket_service.mark_as_duplicate(
+                db,
+                ticket_id=ticket_id,
+                duplicate_of_id=target_id,
+                acting_user_id=self.user_ids[actor],
+                caller=await self.caller(db, actor),
+            )
+
+        await self.run(mark)
 
     async def confidentiality(
         self, number: int, is_confidential: bool, actor: str
@@ -1809,6 +2092,10 @@ class _Load:
         await self.run(assign)
         await self.priority_override(12, TicketPriority.P1, "bwilson")
         await self.manual_reference(12, _MANUAL_REFERENCE, "asmith")
+        edited = await self.manual_reference(12, _EDITED_REFERENCE, "asmith")
+        await self.edit_reference(12, edited, _REFERENCE_EDIT, "asmith")
+        deleted = await self.manual_reference(12, _DELETED_REFERENCE, "asmith")
+        await self.delete_reference(12, deleted, "asmith")
         await self.add_package("fictional-openssl")
         await self.track_status("fictional-openssl", _SP7_UPDATE, affected, "asmith")
         await self.add_package("fictional-zlib")
@@ -1836,10 +2123,11 @@ class _Load:
             "fictional-sudo", _SP4_UPDATE, PackageStatus.WONT_FIX, "bwilson"
         )
         await self.suse_assessment("CVE-2099-0015")
-        # SNTL-16: the exclusions precede the SUSE assessment, while the
-        # Ticket is in Analysis; the override follows it with the value that
-        # the threshold gives, so that no operation regresses the Resolved
-        # Ticket (Isolation).
+        # SNTL-16: the exclusions and restorations precede the SUSE
+        # assessment, while the Ticket is in Analysis, and the restorations
+        # touch only records that are not actionable; the override follows
+        # the assessment with the value that the threshold gives, so that no
+        # operation regresses the Resolved Ticket (Isolation).
         await self.add_package("fictional-kernel")
         await self.track_status("fictional-kernel", _SP5_UPDATE, affected, "asmith")
         await self.exclude_track("fictional-kernel", _SP4_UPDATE)
@@ -1847,6 +2135,12 @@ class _Load:
         await self.add_package("fictional-kernel-firmware")
         await self.exclude_package("fictional-kernel-firmware")
         await self.add_package("fictional-kernel-compat")
+        await self.exclude_package("fictional-kernel-compat")
+        await self.restore_package("fictional-kernel-compat")
+        await self.exclude_track("fictional-kernel", _SP3_UPDATE)
+        await self.restore_track("fictional-kernel", _SP3_UPDATE)
+        await self.exclude_product("fictional-kernel", _SP3_UPDATE, _SERVER_15_SP3)
+        await self.restore_product("fictional-kernel", _SP3_UPDATE, _SERVER_15_SP3)
         await self.suse_assessment("CVE-2099-0016")
         await self.eligibility_override(
             "fictional-kernel", _SP5_UPDATE, _LTSS_15_SP5, eligible=False
@@ -1857,34 +2151,15 @@ class _Load:
         await self.add_package("fictional-openssh")
         await self.track_status("fictional-openssh", _SP7_UPDATE, affected, "asmith")
         await self.ibs_observations("fictional-openssh")
-        sntl_18 = self.ticket_ids[18]
-
-        async def grant(db: AsyncSession) -> None:
-            await ticket_service.grant_access(
-                db,
-                ticket_id=sntl_18,
-                target_user="cwhite",
-                acting_user_id=self.user_ids["asmith"],
-                caller=await self.caller(db, "asmith"),
-            )
-
-        await self.run(grant)
+        await self.access(18, "cwhite", "asmith", granted=True)
+        await self.access(18, _BOT, "asmith", granted=True)
+        await self.access(18, _BOT, "asmith", granted=False)
         # SNTL-19
         await self.confidentiality(19, True, "bwilson")
-        # SNTL-22
+        # SNTL-22: marking it as a duplicate repoints its duplicate SNTL-32.
         await self.add_package("fictional-lz4")
-        sntl_21, sntl_22 = self.ticket_ids[21], self.ticket_ids[22]
-
-        async def duplicate(db: AsyncSession) -> None:
-            await ticket_service.mark_as_duplicate(
-                db,
-                ticket_id=sntl_22,
-                duplicate_of_id=sntl_21,
-                acting_user_id=self.user_ids["bwilson"],
-                caller=await self.caller(db, "bwilson"),
-            )
-
-        await self.run(duplicate)
+        await self.duplicate(32, 22, "bwilson")
+        await self.duplicate(22, 21, "bwilson")
         # SNTL-25
         await self.ignore(25, TicketIgnoreReason.OTHER, "asmith")
         # SNTL-26
@@ -1977,6 +2252,15 @@ async def _product_ids(db: AsyncSession, cpes: Sequence[str]) -> tuple[uuid.UUID
     )
     ids = {row.cpe: row.id for row in rows}
     return tuple(ids[cpe] for cpe in cpes)
+
+
+async def _locator(db: AsyncSession, ticket_id: uuid.UUID) -> str:
+    """The public `SNTL-{n}` locator of `ticket_id`."""
+    sequence_id = await db.scalar(
+        select(Ticket.sequence_id).where(Ticket.id == ticket_id)
+    )
+    assert sequence_id is not None
+    return format_ticket_id(sequence_id)
 
 
 async def _occurrence(db: AsyncSession, track_id: uuid.UUID, cpe: str) -> uuid.UUID:

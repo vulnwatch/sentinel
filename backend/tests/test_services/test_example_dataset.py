@@ -55,6 +55,7 @@ from app.core.enums import (
     Role,
     Severity,
     SortOrder,
+    TicketAuditEventType,
     TicketIgnoreReason,
     TicketStatus,
     WorkflowType,
@@ -355,6 +356,95 @@ MITRE_INGESTED: Final = frozenset(
     }
 )
 """CVEs with a MITRE ingestion (first or further), which supplies the title."""
+GHSA_IDENTIFIERS: Final = {
+    "CVE-2099-0009": "GHSA-8m3w-4xq7-pf2c",
+    "CVE-2099-0010": "GHSA-2c4f-7h9j-mqrv",
+}
+"""CVEs: the external identifier of every GHSA ingestion."""
+OSV_INGESTED: Final = frozenset({"CVE-2099-0009"})
+"""CVEs: the CVEs with an OSV ingestion."""
+
+TAR_REPO: Final = "https://git.example.com/fictional-tar"
+TAR_CNA: Final = (
+    "Example",
+    "fictional-tar",
+    None,
+    "https://packages.example.com",
+    "fictional-tar",
+    TAR_REPO,
+    ("src/extract.c", "src/names.c"),
+    "cpe:2.3:a:example:fictional-tar:*:*:*:*:*:*:*:*",
+    None,
+    "unaffected",
+)
+TAR_ADP: Final = (
+    "example",
+    "fictional_tar",
+    None,
+    None,
+    None,
+    None,
+    None,
+    "cpe:2.3:a:example:fictional_tar:*:*:*:*:*:*:*:*",
+    None,
+    "unknown",
+)
+TAR_NPM: Final = ("fictional-tar", "fictional-tar", "npm")
+AFFECTED_VERSIONS_0009: Final = {
+    # (scope, (vendor, product, package URL, collection URL, package name,
+    # repository, program files, CPE, ecosystem, default status), version,
+    # version type, version end, end inclusive, status)
+    ("cna", TAR_CNA, "1.0", "semver", "1.5", False, "affected"),
+    ("cna", TAR_CNA, "1.5", "semver", None, None, "unaffected"),
+    ("adp:CISA-ADP", TAR_ADP, "1.0", "custom", "1.4.2", True, "affected"),
+    ("adp:CISA-ADP", TAR_ADP, "2.0.0-rc1", "custom", None, None, "unknown"),
+    (
+        "ghsa",
+        (None, TAR_NPM[0], None, None, TAR_NPM[1], TAR_REPO, None, None, "npm", None),
+        "1.0.0",
+        None,
+        "1.5.0",
+        False,
+        None,
+    ),
+    (
+        "osv",
+        (None, None, None, None, None, TAR_REPO, None, None, None, None),
+        "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+        "git",
+        "9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c",
+        False,
+        None,
+    ),
+    (
+        "osv",
+        (
+            None,
+            TAR_NPM[0],
+            "pkg:npm/fictional-tar",
+            None,
+            TAR_NPM[1],
+            None,
+            None,
+            None,
+            "npm",
+            None,
+        ),
+        "1.0.0",
+        None,
+        "1.5.0",
+        False,
+        None,
+    ),
+}
+"""CVEs, Affected Versions: the entries of the four scopes of
+`CVE-2099-0009`."""
+LARGE_SCOPE: Final = {
+    f"2.{minor}.{patch}" for minor in range(5) for patch in range(100)
+}
+"""CVEs, Affected Versions: the versions of the generated `cna` scope of
+`CVE-2099-0013`."""
+
 REJECTED_CVES: Final = frozenset({"CVE-2099-0008", "CVE-2099-0027"})
 """CVEs: the CVEs whose MITRE ingestion supplies the state `REJECTED`,
 rejected at `T - 2d`."""
@@ -505,6 +595,8 @@ TICKETS: Final[
     30: (None, ANALYZED, "asmith", False, HIGH),
     # Its CVE is rejected after the Ticket left `New`.
     31: ("CVE-2099-0027", ANALYSIS, "bwilson", False, None),
+    # Repointed to SNTL-21 when its target SNTL-22 is marked as a duplicate.
+    32: (None, DUPLICATED, "bwilson", False, None),
 }
 """Tickets: `SNTL-n` -> (CVE, status, assignee, confidential, resolved
 severity; `None` is unresolved)."""
@@ -996,34 +1088,16 @@ REFERENCES: Final = {
         "issue",
         "manual",
     ),
+    (
+        12,
+        "https://advisories.example.com/fictional-openssl/2099-0012",
+        "Fictional advisory",
+        "advisory",
+        "manual",
+    ),
 }
 """References: (SNTL number, URL, title, type, source). The automatic types
 follow the upstream tags (ticket-references.md, CVE Source Tag Mapping)."""
-
-TICKET_EVENT_TYPES: Final = frozenset(
-    {
-        "ticket_created",
-        "assignment",
-        "status_change",
-        "cve_associated",
-        "cvss_assessment_changed",
-        "product_eligibility_changed",
-        "package_added",
-        "package_maintainer_added",
-        "package_excluded",
-        "track_excluded",
-        "product_excluded",
-        "track_status_changed",
-        "product_released",
-        "priority_changed",
-        "reference_added",
-        "coordinated_release_changed",
-        "confidentiality_changed",
-        "access_grant_added",
-        "duplicate_set",
-    }
-)
-"""Audit Trails: the Ticket events that the dataset names."""
 
 ATTRIBUTED_TICKET_EVENTS: Final = frozenset(
     {
@@ -1046,6 +1120,11 @@ ATTRIBUTED_TICKET_EVENTS: Final = frozenset(
         (12, "assignment", "bwilson"),
         (12, "priority_changed", "bwilson"),
         (12, "reference_added", "asmith"),
+        (12, "reference_url_changed", "asmith"),
+        (12, "reference_type_changed", "asmith"),
+        (12, "reference_title_changed", "asmith"),
+        (12, "reference_description_changed", "asmith"),
+        (12, "reference_deleted", "asmith"),
         (12, "package_added", "asmith"),
         (12, "track_status_changed", "asmith"),
         (12, "cvss_assessment_changed", "asmith"),
@@ -1066,6 +1145,9 @@ ATTRIBUTED_TICKET_EVENTS: Final = frozenset(
         (16, "track_excluded", "asmith"),
         (16, "product_excluded", "asmith"),
         (16, "package_excluded", "asmith"),
+        (16, "package_restored", "asmith"),
+        (16, "track_restored", "asmith"),
+        (16, "product_restored", "asmith"),
         (16, "cvss_assessment_changed", "asmith"),
         (16, "product_eligibility_changed", None),  # the CVSS chain
         (16, "product_eligibility_changed", "asmith"),  # the override
@@ -1075,6 +1157,7 @@ ATTRIBUTED_TICKET_EVENTS: Final = frozenset(
         (18, "package_added", "asmith"),
         (18, "track_status_changed", "asmith"),
         (18, "access_grant_added", "asmith"),
+        (18, "access_grant_removed", "asmith"),
         (19, "confidentiality_changed", "bwilson"),
         (22, "package_added", "bwilson"),
         (22, "duplicate_set", "bwilson"),
@@ -1095,6 +1178,9 @@ ATTRIBUTED_TICKET_EVENTS: Final = frozenset(
         (30, "package_added", "asmith"),
         (30, "track_status_changed", "asmith"),
         (31, "ticket_created", "bwilson"),
+        (32, "ticket_created", "bwilson"),
+        (32, "duplicate_set", "bwilson"),
+        (32, "duplicate_target_changed", None),  # the repoint of SNTL-22's mark
         # Maintainership is system-attributed (ticket-audit-log.md).
         *((n, "package_maintainer_added", None) for n in (11, 12, 13, 14, 18, 26)),
     }
@@ -1126,6 +1212,10 @@ ENUM_EXCEPTIONS: Final[dict[str, frozenset[str]]] = {
     "ExploitationLevel": frozenset(),
     "ExploitationEvidenceKind": frozenset(),
     "NonActionableReason": frozenset(),
+    # Only `revert_duplicate()` creates it, and it always registers a Ticket
+    # convergence effect, which Isolation excludes (example-dataset.md,
+    # Audit Trails).
+    "TicketAuditEventType": frozenset({"duplicate_removed"}),
 }
 
 
@@ -1625,7 +1715,8 @@ class TestFetcherRuns:
             *((cve_id, "mitre") for cve_id in MITRE_INGESTED),
             ("CVE-2099-0001", "kev"),
             *((cve_id, "epss") for cve_id in EPSS),
-            ("CVE-2099-0010", "ghsa"),
+            *((cve_id, "ghsa") for cve_id in GHSA_IDENTIFIERS),
+            *((cve_id, "osv") for cve_id in OSV_INGESTED),
         }
         assert records == {
             **dict.fromkeys(success, ("success", False)),
@@ -1884,17 +1975,6 @@ class TestCVEs:
                     CVESSVCAssessment.assessed_at,
                     model=CVESSVCAssessment,
                 ),
-                "affected": await rows(
-                    CVEAffectedVersion.source_container,
-                    CVEAffectedVersion.vendor,
-                    CVEAffectedVersion.product,
-                    CVEAffectedVersion.version,
-                    CVEAffectedVersion.version_type,
-                    CVEAffectedVersion.version_end,
-                    CVEAffectedVersion.version_end_inclusive,
-                    CVEAffectedVersion.status,
-                    model=CVEAffectedVersion,
-                ),
                 "external": await rows(
                     CVEExternalIdentifier.source,
                     CVEExternalIdentifier.identifier,
@@ -1916,20 +1996,76 @@ class TestCVEs:
             ("CVE-2099-0010", "poc", "no", "partial", "2.0.3", loaded.ago(3)),
             ("CVE-2099-0013", "active", "yes", "partial", "2.0.3", loaded.ago(4)),
         ]
-        assert data["affected"] == [
+        assert data["external"] == sorted(
+            (cve_id, "GHSA", identifier)
+            for cve_id, identifier in GHSA_IDENTIFIERS.items()
+        )
+
+    def test_affected_versions(self, loaded: Loaded) -> None:
+        """CVEs, Affected Versions: the four scopes of `CVE-2099-0009`, each
+        with the fields of its source mapping, and the generated scope of
+        `CVE-2099-0013`; no other CVE has an entry."""
+
+        async def reader(db: AsyncSession) -> list[tuple[Any, ...]]:
+            rows = await db.execute(
+                select(
+                    CVE.cve_id,
+                    CVEAffectedVersion.source_container,
+                    CVEAffectedVersion.vendor,
+                    CVEAffectedVersion.product,
+                    CVEAffectedVersion.package_url,
+                    CVEAffectedVersion.collection_url,
+                    CVEAffectedVersion.package_name,
+                    CVEAffectedVersion.repo,
+                    CVEAffectedVersion.program_files,
+                    CVEAffectedVersion.cpe,
+                    CVEAffectedVersion.ecosystem,
+                    CVEAffectedVersion.default_status,
+                    CVEAffectedVersion.version,
+                    CVEAffectedVersion.version_type,
+                    CVEAffectedVersion.version_end,
+                    CVEAffectedVersion.version_end_inclusive,
+                    CVEAffectedVersion.status,
+                ).join(CVE, CVE.id == CVEAffectedVersion.cve_id)
+            )
+            return [tuple(row) for row in rows]
+
+        rows = read(loaded.url, reader)
+        by_cve: dict[str, list[tuple[Any, ...]]] = {}
+        for cve_id, *entry in rows:
+            entry[7] = _files(entry[7])
+            by_cve.setdefault(cve_id, []).append(tuple(entry))
+
+        assert set(by_cve) == {"CVE-2099-0009", "CVE-2099-0013"}
+        expected_tar = {
+            (scope, *element, *versions)
+            for scope, element, *versions in AFFECTED_VERSIONS_0009
+        }
+        assert sorted(by_cve["CVE-2099-0009"], key=repr) == sorted(
+            expected_tar, key=repr
+        )
+        expected_large = {
             (
-                "CVE-2099-0009",
                 "cna",
                 "Example",
-                "fictional-tar",
-                "1.0",
+                "fictional-httpd",
+                *((None,) * 8),
+                version,
                 "semver",
-                "1.5",
-                False,
+                None,
+                None,
                 "affected",
             )
-        ]
-        assert data["external"] == [("CVE-2099-0010", "GHSA", "GHSA-2c4f-7h9j-mqrv")]
+            for version in LARGE_SCOPE
+        }
+        assert sorted(by_cve["CVE-2099-0013"], key=repr) == sorted(
+            expected_large, key=repr
+        )
+
+
+def _files(program_files: list[str] | None) -> tuple[str, ...] | None:
+    """`program_files` in a hashable form."""
+    return None if program_files is None else tuple(program_files)
 
 
 async def _ticket_rows(
@@ -1969,7 +2105,7 @@ class TestTickets:
             for n, (cve_id, status, assignee, confidential, severity) in TICKETS.items()
         }
         assert (
-            sum(not confidential for _, _, _, confidential, _ in tickets.values()) == 28
+            sum(not confidential for _, _, _, confidential, _ in tickets.values()) == 29
         )
 
     def test_ignore_reasons_and_their_events(self, loaded: Loaded) -> None:
@@ -2057,10 +2193,12 @@ class TestTickets:
             expected[n] = (None, loaded.now + timedelta(days=days), None)
         expected[21] = ("High", None, None)
         expected[22] = (None, None, 21)
+        expected[32] = (None, None, 21)  # repointed from SNTL-22
         expected[29] = ("Medium", loaded.now + timedelta(days=21), None)
         expected[30] = ("High", None, None)
         assert attributes == expected
-        # The access grant of `cwhite` on SNTL-18; none on SNTL-19.
+        # The access grant of `cwhite` on SNTL-18, the revoked grant of
+        # `security-scanner` gone; none on SNTL-19.
         assert grants == {(18, "cwhite", "asmith")}
 
     def test_priorities_and_their_basis(self, loaded: Loaded) -> None:
@@ -2192,7 +2330,6 @@ class TestTickets:
         events = read(loaded.url, reader)
         attributed = {(n, kind, name) for n, kind, name, _ in events}
 
-        assert {kind for _, kind, _ in attributed} >= TICKET_EVENT_TYPES
         assert attributed >= ATTRIBUTED_TICKET_EVENTS
         [released] = [
             detail for _, kind, _, detail in events if kind == "product_released"
@@ -2200,6 +2337,189 @@ class TestTickets:
         assert released is not None
         assert released["advisory_id"] == "SUSE-SU-2099:0001-1"
         assert released["product_cpe"] == SERVER_15_SP7
+
+    def test_restorations_follow_their_exclusions(self, loaded: Loaded) -> None:
+        """Ticket work of `SNTL-16`: `asmith` excludes and restores one
+        record at each level, before the SUSE assessment."""
+        events = read(
+            loaded.url,
+            lambda db: _ticket_events(
+                db,
+                16,
+                "package_excluded",
+                "package_restored",
+                "track_excluded",
+                "track_restored",
+                "product_excluded",
+                "product_restored",
+                "cvss_assessment_changed",
+            ),
+        )
+
+        def track(reference: str, package: str = "fictional-kernel") -> Any:
+            return {"track": reference, "package": package}
+
+        def product(reference: str, cpe: str) -> Any:
+            return track(reference) | {
+                "product_name": PRODUCTS[cpe][2],
+                "product_cpe": cpe,
+            }
+
+        sp7, sp3 = PRODUCTS[SERVER_15_SP7][2], PRODUCTS[SERVER_15_SP3][2]
+        # The NVD assessment of the first ingestion is a system event.
+        assert [event for event in events if event[1] == "asmith"] == [
+            ("track_excluded", "asmith", SP4_UPDATE, None, track(SP4_UPDATE)),
+            (
+                "product_excluded",
+                "asmith",
+                sp7,
+                None,
+                product(SP5_UPDATE, SERVER_15_SP7),
+            ),
+            ("package_excluded", "asmith", "fictional-kernel-firmware", None, None),
+            ("package_excluded", "asmith", "fictional-kernel-compat", None, None),
+            ("package_restored", "asmith", None, "fictional-kernel-compat", None),
+            ("track_excluded", "asmith", SP3_UPDATE, None, track(SP3_UPDATE)),
+            ("track_restored", "asmith", None, SP3_UPDATE, track(SP3_UPDATE)),
+            (
+                "product_excluded",
+                "asmith",
+                sp3,
+                None,
+                product(SP3_UPDATE, SERVER_15_SP3),
+            ),
+            (
+                "product_restored",
+                "asmith",
+                None,
+                sp3,
+                product(SP3_UPDATE, SERVER_15_SP3),
+            ),
+            (
+                "cvss_assessment_changed",
+                "asmith",
+                None,
+                f"SUSE v3.1 {SUSE_VECTORS['CVE-2099-0016']} (5.5)",
+                None,
+            ),
+        ]
+
+    def test_access_grant_revocation(self, loaded: Loaded) -> None:
+        """Ticket work of `SNTL-18`: the grant to `cwhite`, then the grant
+        to `security-scanner` and its revocation."""
+        events = read(
+            loaded.url,
+            lambda db: _ticket_events(
+                db, 18, "access_grant_added", "access_grant_removed"
+            ),
+        )
+
+        assert events == [
+            ("access_grant_added", "asmith", None, "cwhite", None),
+            ("access_grant_added", "asmith", None, "security-scanner", None),
+            ("access_grant_removed", "asmith", "security-scanner", None, None),
+        ]
+
+    def test_reference_edit_and_deletion(self, loaded: Loaded) -> None:
+        """References: the edit of the second manual reference of `SNTL-12`
+        in one update, and the creation and deletion of the third."""
+        draft = "https://advisories.example.com/fictional-openssl/draft"
+        edited = "https://advisories.example.com/fictional-openssl/2099-0012"
+        deleted = "https://lists.example.com/fictional-openssl/2099-0012"
+
+        async def reader(
+            db: AsyncSession,
+        ) -> tuple[list[tuple[Any, ...]], str | None]:
+            events = await _ticket_events(
+                db,
+                12,
+                *(
+                    kind.value
+                    for kind in TicketAuditEventType
+                    if kind.value.startswith("reference_")
+                ),
+            )
+            description = await db.scalar(
+                select(TicketReference.description).where(TicketReference.url == edited)
+            )
+            return events, description
+
+        events, description = read(loaded.url, reader)
+
+        url = {"url": edited}
+        assert events == [
+            (
+                "reference_added",
+                "asmith",
+                None,
+                "https://bugzilla.example.com/show_bug.cgi?id=1000012",
+                None,
+            ),
+            ("reference_added", "asmith", None, draft, None),
+            ("reference_url_changed", "asmith", draft, edited, None),
+            ("reference_type_changed", "asmith", "article", "advisory", url),
+            (
+                "reference_title_changed",
+                "asmith",
+                "Fictional advisory draft",
+                "Fictional advisory",
+                url,
+            ),
+            (
+                "reference_description_changed",
+                "asmith",
+                None,
+                "Fixed in fictional-openssl 3.0.99.",
+                url,
+            ),
+            ("reference_added", "asmith", None, deleted, None),
+            ("reference_deleted", "asmith", deleted, None, None),
+        ]
+        assert description == "Fixed in fictional-openssl 3.0.99."
+
+    def test_sntl_32_is_repointed_to_sntl_21(self, loaded: Loaded) -> None:
+        """Ticket work of `SNTL-22`: marking `SNTL-22` as a duplicate of
+        `SNTL-21` repoints its duplicate `SNTL-32` with a system event
+        (ticket-service.md, mark_as_duplicate)."""
+        events = read(
+            loaded.url,
+            lambda db: _ticket_events(
+                db, 32, "duplicate_set", "duplicate_target_changed"
+            ),
+        )
+
+        assert events == [
+            ("duplicate_set", "bwilson", None, "SNTL-22", None),
+            (
+                "duplicate_target_changed",
+                None,
+                "SNTL-22",
+                "SNTL-21",
+                {"triggered_by_ticket": "SNTL-22"},
+            ),
+        ]
+
+
+async def _ticket_events(
+    db: AsyncSession, number: int, *kinds: str
+) -> list[tuple[Any, ...]]:
+    """The events of `kinds` on `SNTL-{number}`, in the order of their
+    creation: (event type, actor, old value, new value, detail)."""
+    actor = aliased(User)
+    rows = await db.execute(
+        select(
+            TicketAuditEvent.event_type,
+            actor.username,
+            TicketAuditEvent.old_value,
+            TicketAuditEvent.new_value,
+            TicketAuditEvent.detail,
+        )
+        .join(Ticket, Ticket.id == TicketAuditEvent.ticket_id)
+        .outerjoin(actor, actor.id == TicketAuditEvent.user_id)
+        .where(Ticket.sequence_id == number, TicketAuditEvent.event_type.in_(kinds))
+        .order_by(TicketAuditEvent.created_at, TicketAuditEvent.id)
+    )
+    return [tuple(row) for row in rows]
 
 
 class TestAgedTickets:
@@ -3055,6 +3375,7 @@ class Covered:
     non_actionable_reasons: set[str]
     """The `non_actionable_reason` values of every level of the package
     trees of the Tickets."""
+    ticket_event_types: set[str]
 
 
 def test_dataset_covers_every_table_and_enumeration(loaded: Loaded) -> None:
@@ -3124,6 +3445,7 @@ def test_dataset_covers_every_table_and_enumeration(loaded: Loaded) -> None:
                 evidence.kind.value for basis in bases for evidence in basis.evidence
             },
             non_actionable_reasons=reasons,
+            ticket_event_types=await values(TicketAuditEvent.event_type),
         )
 
     covered = read(loaded.url, reader)
@@ -3187,6 +3509,11 @@ def test_dataset_covers_every_table_and_enumeration(loaded: Loaded) -> None:
             members(NonActionableReason),
             covered.non_actionable_reasons,
             ENUM_EXCEPTIONS["NonActionableReason"],
+        ),
+        "TicketAuditEventType": coverage_violations(
+            members(TicketAuditEventType),
+            covered.ticket_event_types,
+            ENUM_EXCEPTIONS["TicketAuditEventType"],
         ),
     }
     assert violations == {name: [] for name in violations}

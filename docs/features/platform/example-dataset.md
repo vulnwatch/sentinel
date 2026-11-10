@@ -43,11 +43,12 @@ Out of scope:
 | `docs/features/platform/system-settings.md` | `update_default_cvss_version()` |
 | `docs/features/platform/fetcher-infrastructure.md` (FetcherConfig; Data Model, FetcherRun) and `docs/features/platform/fetcher-operations.md` (`update_fetcher_config`) | Fetcher configuration bootstrap and disabling; the run records of Fetcher Runs |
 | `docs/features/packages/product-catalog.md` (Catalog Publication Boundaries) | Product, lifecycle, and threshold publication |
-| `docs/features/tickets/cve-service.md` and `docs/features/tickets/ticket-references.md` | CVE ingestion, CVE source records (`record_source_status()`), and automatic references |
+| `docs/features/tickets/cve-service.md` and `docs/features/tickets/ticket-references.md` | CVE ingestion, CVE source records (`record_source_status()`), and automatic and manual references |
+| `docs/features/platform/cve-record-parser.md`, `docs/features/tickets/cve-sync-ghsa.md`, and `docs/features/tickets/cve-sync-osv.md` | The fields that each affected-version scope carries (Affected Versions) |
 | `docs/features/tickets/cna.md` | CNA metadata (`update_cna_metadata()`) and the auto-ignore policy (`set_cna_auto_ignore()`) |
 | `docs/features/tickets/ticket-deadlines.md` | The due dates and current phases of the Aged Tickets and the Embargoes |
 | `docs/features/tickets/ticket-service.md`, `docs/features/tickets/ticket-mutations.md`, and `docs/features/tickets/ticket-priority.md` | Ticket creation, assignment, ignore, duplicate, confidentiality, coordinated release date, access grants, SUSE assessments, automatic priority and its basis, and priority override |
-| `docs/features/packages/package-service.md` | Package records, track status, and Product release |
+| `docs/features/packages/package-service.md` | Package records, track status, exclusions and restorations, eligibility override, and Product release |
 | `docs/features/packages/ibs-submission-tracking.md` (Trusted Observation Application) | IBS request evidence and delivery status |
 | `docs/features/platform/testing-strategy.md` (Mandatory Test Scenarios → Example Dataset) | Load and coverage tests that keep the dataset aligned with Sentinel |
 | `docs/deployment.md` (Loading the Example Dataset) | Operator procedure for the published image and a local checkout |
@@ -459,7 +460,7 @@ the CVE of an aged Ticket, the modified date `T − 1d`, the CVSS vector of the
 table with provider `NVD`, and the CWE of the table with source `NVD`. A MITRE ingestion supplies the same description and
 published date, the title `Fictional flaw {CVE ID}`, the state `PUBLISHED`
 unless the table states otherwise, the CNA that owns the record (CNAs), and the
-further data of the table. A KEV, EPSS, or GHSA ingestion supplies only the
+further data of the table. A KEV, EPSS, GHSA, or OSV ingestion supplies only the
 data of the table.
 
 | CVE | First | NVD CVSS vector | Severity | CWE | Further ingestions |
@@ -472,11 +473,11 @@ data of the table.
 | `CVE-2099-0006` | MITRE | — | unresolved | — | — (no source supplies CVSS data) |
 | `CVE-2099-0007` | NVD | `CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N` | critical | — | EPSS: score `0.45`, percentile `0.97`, assessed `D − 1` |
 | `CVE-2099-0008` | MITRE | — | unresolved | — | The first ingestion supplies the state `REJECTED`, rejected at `T − 2d` |
-| `CVE-2099-0009` | NVD | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N` | high | `CWE-22` | MITRE: title, and one `cna` affected-version scope: vendor `Example`, product `fictional-tar`, versions from `1.0` up to but excluding `1.5` affected |
+| `CVE-2099-0009` | NVD | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N` | high | `CWE-22` | MITRE: title, and the `cna` and `adp:CISA-ADP` affected-version scopes (Affected Versions). GHSA: external identifier `GHSA-8m3w-4xq7-pf2c`, and the `ghsa` scope. OSV: the `osv` scope |
 | `CVE-2099-0010` | NVD | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N` | medium | — | MITRE: title, and SSVC exploitation `poc`, automatable `no`, technical impact `partial`, version `2.0.3`, assessed `T − 3d`. GHSA: external identifier `GHSA-2c4f-7h9j-mqrv`. EPSS: score `0.38`, percentile `0.96`, assessed `D − 1` |
 | `CVE-2099-0011` | NVD | `CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H` | high | `CWE-416` | — |
 | `CVE-2099-0012` | NVD | `CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H` | high | — | — |
-| `CVE-2099-0013` | NVD | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H` | high | `CWE-400` | MITRE: title, and SSVC exploitation `active`, automatable `yes`, technical impact `partial`, version `2.0.3`, assessed `T − 4d` |
+| `CVE-2099-0013` | NVD | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H` | high | `CWE-400` | MITRE: title, SSVC exploitation `active`, automatable `yes`, technical impact `partial`, version `2.0.3`, assessed `T − 4d`, and the generated `cna` scope of 500 entries (Affected Versions) |
 | `CVE-2099-0014` | NVD | `CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H` | high | `CWE-787` | — |
 | `CVE-2099-0015` | NVD | `CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N` | medium | — | — |
 | `CVE-2099-0016` | NVD | `CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H` | medium, from its SUSE assessment | `CWE-125` | — |
@@ -496,7 +497,7 @@ The Severity column is the resolved Ticket severity after the load
 (`docs/features/tickets/cvss-scoring.md`, Severity Resolution Cascade).
 
 Every ingestion is one system call of `upsert_cve()` with the source member of
-its column (`CVESourceType.NVD`, `MITRE`, `KEV`, `EPSS`, or `GHSA`), followed
+its column (`CVESourceType.NVD`, `MITRE`, `KEV`, `EPSS`, `GHSA`, or `OSV`), followed
 in the same transaction by `upsert_references()` when the CVE has automatic
 references (References). The `CVEs and tickets` step runs:
 
@@ -510,17 +511,40 @@ references (References). The `CVEs and tickets` step runs:
 6. the manual Ticket creation of `SNTL-27`;
 7. the further ingestions: NVD for `CVE-2099-0018` to `CVE-2099-0020` and
    `CVE-2099-0025`, then MITRE, except that of `CVE-2099-0027` (step 11), KEV,
-   EPSS, and GHSA, each in ascending CVE order;
+   EPSS, GHSA, and OSV, each in ascending CVE order;
 8. the metadata and the policy of the CNAs (CNAs);
 9. the first ingestion of `CVE-2099-0026`;
-10. the manual Ticket creations of `SNTL-29` to `SNTL-31`, in order; and
+10. the manual Ticket creations of `SNTL-29` to `SNTL-32`, in order; and
 11. the MITRE ingestion of `CVE-2099-0027`, which rejects the CVE of the
     `Analysis` Ticket `SNTL-31` and keeps its status
     (`docs/features/tickets/cve-tracking.md`, Rejection handling).
 
-The affected-version entry of `CVE-2099-0009` has the version type `semver`
-and the status `affected`. The automatic references of References are applied
-with no source reference.
+The automatic references of References are applied with no source reference.
+
+#### Affected Versions
+
+Every affected-version scope is one `replace` operation of its ingestion
+(`docs/features/tickets/cve-service.md`, Affected-Version Snapshot
+Operations), and each entry carries only the fields that the mapping of its
+source produces: `docs/features/platform/cve-record-parser.md` for the `cna`
+and `adp:CISA-ADP` scopes of a MITRE ingestion,
+`docs/features/tickets/cve-sync-ghsa.md` for `ghsa`, and
+`docs/features/tickets/cve-sync-osv.md` for `osv`. A field that a row does not
+name is absent. The four scopes of `CVE-2099-0009` together give every field of
+an entry a value and hold the statuses `affected`, `unaffected`, and
+`unknown`:
+
+| Scope | Entries |
+|---|---|
+| `cna` | Two entries of one element with vendor `Example`, product `fictional-tar`, collection URL `https://packages.example.com`, package name `fictional-tar`, repository `https://git.example.com/fictional-tar`, program files `src/extract.c` and `src/names.c`, CPE `cpe:2.3:a:example:fictional-tar:*:*:*:*:*:*:*:*`, and default status `unaffected`: versions from `1.0` up to but excluding `1.5`, of type `semver`, `affected`; and version `1.5`, of type `semver`, `unaffected` |
+| `adp:CISA-ADP` | Two entries of one element with vendor `example`, product `fictional_tar`, CPE `cpe:2.3:a:example:fictional_tar:*:*:*:*:*:*:*:*`, and default status `unknown`: versions from `1.0` up to and including `1.4.2`, of type `custom`, `affected`; and version `2.0.0-rc1`, of type `custom`, `unknown` |
+| `ghsa` | One entry with product and package name `fictional-tar`, ecosystem `npm`, repository `https://git.example.com/fictional-tar`, and versions from `1.0.0` up to but excluding `1.5.0` |
+| `osv` | A Git commit range of the repository `https://git.example.com/fictional-tar`, of type `git`, from `1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d` up to but excluding `9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c`; and one entry with product and package name `fictional-tar`, ecosystem `npm`, Package URL `pkg:npm/fictional-tar`, and versions from `1.0.0` up to but excluding `1.5.0` |
+
+The `cna` scope of `CVE-2099-0013` is generated: one entry with vendor
+`Example`, product `fictional-httpd`, the version `2.{m}.{p}` of type `semver`,
+and the status `affected` for each `m` from `0` to `4` and each `p` from `0`
+to `99`, 500 entries, so that a client shows a CVE with many entries.
 
 ### CNAs
 
@@ -624,13 +648,13 @@ record.
 ### Tickets
 
 On a newly created database the Tickets receive the identifiers `SNTL-1` to
-`SNTL-31` in this order. Every Ticket with a CVE is created by the first
+`SNTL-32` in this order. Every Ticket with a CVE is created by the first
 ingestion of its CVE, except `SNTL-18` to `SNTL-20`, `SNTL-27`, and `SNTL-31`;
 every Ticket without a CVE is created manually. The table states the final
 state after the load.
 
 The dataset holds more than one page of Tickets at the default page size of
-20 (`docs/api-spec.md`) for every caller: 28 Tickets are not confidential and
+20 (`docs/api-spec.md`) for every caller: 29 Tickets are not confidential and
 are visible to every authenticated user.
 
 | Ticket | CVE | Created by | Status | Assignee | Confidential | Severity |
@@ -659,6 +683,7 @@ are visible to every authenticated user.
 | `SNTL-29` | — | `asmith`, with the manual severity medium | `Analysis` | `asmith` | No, after its embargo: made non-confidential with a coordinated release date `T + 21d`, which it keeps | medium |
 | `SNTL-30` | — | `asmith`, with the manual severity high | `Analyzed` | `asmith` | No | high |
 | `SNTL-31` | `CVE-2099-0027`, rejected | `bwilson` | `Analysis` | `bwilson` | No | unresolved |
+| `SNTL-32` | — | `bwilson` | `Duplicated`, a duplicate of `SNTL-21` | `bwilson` | No | unresolved |
 
 The manual Ticket creations are `create_ticket()` calls with the `manual`
 source by the creator of the table, with the CVE and the manual severity of
@@ -686,15 +711,15 @@ named user is a system operation (Attribution).
 | `SNTL-9` | `eblack` takes the Ticket: `assign_ticket()` with `eblack` as acting user and assignee. `jdoe` deactivates `eblack` with the reason `example dataset`, which unassigns the Ticket and keeps its status (`docs/features/identity/user-service.md`, `deactivate_user()`) |
 | `SNTL-10` | `security-scanner` adds the manual reference of `SNTL-10` (References) |
 | `SNTL-11` | `bwilson` adds `fictional-curl` (Packages, Tracks, and Maintainers). `bwilson` sets the `fles-16.0` track to `AFFECTED`. `bwilson` adds the eleven further packages of `SNTL-11`, in the order of their table |
-| `SNTL-12` | `bwilson` assigns the Ticket to `asmith`. `bwilson` sets the priority override `P1`. `asmith` adds the manual reference of `SNTL-12` (References). `asmith` adds `fictional-openssl` and `fictional-zlib`, sets the track of each to `AFFECTED`, and adds the SUSE assessment |
+| `SNTL-12` | `bwilson` assigns the Ticket to `asmith`. `bwilson` sets the priority override `P1`. `asmith` adds, edits, and deletes the manual references of `SNTL-12` (References). `asmith` adds `fictional-openssl` and `fictional-zlib`, sets the track of each to `AFFECTED`, and adds the SUSE assessment |
 | `SNTL-13` | `asmith` adds `fictional-httpd`, sets its track to `AFFECTED`, adds the SUSE assessment, and sets the priority override `P3`. The IBS observations of `SNTL-13` are applied in order (IBS Requests) |
 | `SNTL-14` | `asmith` adds `fictional-libxml`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-14` are applied in order. Track release detection sets the track to `FIXED`. Product release detection confirms the release of `Server 15 SP7` at `T − 2d` with the advisory `SUSE-SU-2099:0001-1` |
 | `SNTL-15` | `bwilson` adds `fictional-sudo`, sets the `fles-16.0` track to `NOT_AFFECTED` and the `SUSE:FLES-15-SP4:Update` track to `WONT_FIX`, and adds the SUSE assessment |
-| `SNTL-16` | `asmith` adds `fictional-kernel`, sets the `SUSE:FLES-15-SP5:Update` track to `AFFECTED`, excludes the `SUSE:FLES-15-SP4:Update` track, and excludes `Server 15 SP7` from the `SUSE:FLES-15-SP5:Update` track. `asmith` adds `fictional-kernel-firmware` and excludes it, then adds `fictional-kernel-compat`. `asmith` adds the SUSE assessment, then sets the eligibility override `eligible = false` on `Server LTSS 15 SP5` of the `SUSE:FLES-15-SP5:Update` track |
+| `SNTL-16` | `asmith` adds `fictional-kernel`, sets the `SUSE:FLES-15-SP5:Update` track to `AFFECTED`, excludes the `SUSE:FLES-15-SP4:Update` track, and excludes `Server 15 SP7` from the `SUSE:FLES-15-SP5:Update` track. `asmith` adds `fictional-kernel-firmware` and excludes it, then adds `fictional-kernel-compat`. `asmith` excludes and restores `fictional-kernel-compat`, then excludes and restores the `SUSE:FLES-15-SP3:Update` track of `fictional-kernel`, then excludes and restores `Server 15 SP3` from that track. `asmith` adds the SUSE assessment, then sets the eligibility override `eligible = false` on `Server LTSS 15 SP5` of the `SUSE:FLES-15-SP5:Update` track |
 | `SNTL-17` | `bwilson` ignores the Ticket with the reason `not_shipped` |
-| `SNTL-18` | `asmith` adds `fictional-openssh` and sets its track to `AFFECTED`. The IBS observations of `SNTL-18` are applied in order. `asmith` grants access to `cwhite` |
+| `SNTL-18` | `asmith` adds `fictional-openssh` and sets its track to `AFFECTED`. The IBS observations of `SNTL-18` are applied in order. `asmith` grants access to `cwhite`, then grants access to `security-scanner` and revokes it |
 | `SNTL-19` | `bwilson` makes the Ticket confidential |
-| `SNTL-22` | `bwilson` adds `fictional-lz4`, then marks the Ticket as a duplicate of `SNTL-21` |
+| `SNTL-22` | `bwilson` adds `fictional-lz4`. `bwilson` marks `SNTL-32` as a duplicate of `SNTL-22`, then marks `SNTL-22` as a duplicate of `SNTL-21`, which repoints `SNTL-32` to `SNTL-21` with a system `duplicate_target_changed` event (`docs/features/tickets/ticket-service.md`, mark_as_duplicate) |
 | `SNTL-25` | `asmith` ignores the Ticket with the reason `other` |
 | `SNTL-26` | `bwilson` adds `fictional-glibc` and sets its track to `AFFECTED`. `bwilson` adds `fictional-libidn`, and `jdoe` sets its track to `FIXED` (`admin_ticket_ops`). `bwilson` adds the SUSE assessment. The IBS observations of `SNTL-26` are applied in order |
 | `SNTL-27` | `asmith` adds `fictional-bind`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-27` are applied in order |
@@ -703,10 +728,12 @@ named user is a system operation (Attribution).
 
 The operations use `assign_ticket()`, `deactivate_user()`,
 `add_package_records()`, `set_track_status()`, `upsert_cvss_assessment()`,
-`set_priority_override()`, `create_reference()`, `ignore_ticket()`,
-`grant_access()`, `set_confidentiality()`, `mark_as_duplicate()`,
-`set_product_released_at()`, `soft_delete_ticket_package()`,
-`soft_delete_ticket_package_track()`, `soft_delete_ticket_package_product()`,
+`set_priority_override()`, `create_reference()`, `update_reference()`,
+`delete_reference()`, `ignore_ticket()`, `grant_access()`, `revoke_access()`,
+`set_confidentiality()`, `mark_as_duplicate()`, `set_product_released_at()`,
+`soft_delete_ticket_package()`, `soft_delete_ticket_package_track()`,
+`soft_delete_ticket_package_product()`, `restore_ticket_package()`,
+`restore_ticket_package_track()`, `restore_ticket_package_product()`,
 `set_product_eligibility()`, and `apply_ibs_request_observation()`. Track
 release detection is `set_track_status()` with `FIXED` and no acting user; the
 `FIXED` of `jdoe` is `set_track_status()` with the verified `admin_ticket_ops`
@@ -733,16 +760,19 @@ The resulting states follow the gates of `docs/features/tickets/tickets.md`:
   actionable Product: its SUSE score `5.5` is below the threshold `7.0` of
   `Server LTSS 15 SP5`, and `Server 15 SP7` is excluded from the track. Its
   other tracks in `ANALYSIS` are not actionable: excluded, or holding only the
-  EOL `Server 15 SP3`. The exclusions precede the SUSE assessment, while the
-  Ticket is in `Analysis`, and the eligibility override follows it with the
-  value that the threshold already gives the Product, so no operation
+  EOL `Server 15 SP3`. The exclusions and the restorations precede the SUSE
+  assessment, while the Ticket is in `Analysis`, the restorations touch only
+  records that are not actionable, and the eligibility override follows the
+  assessment with the value that the threshold already gives the Product, so
+  no operation
   regresses the `Resolved` Ticket (Isolation) and the assessment keeps its
   automatic `product_eligibility_changed` event.
 - `SNTL-18` and `SNTL-19` stay in `Analysis` without a SUSE assessment.
 - `SNTL-20` stays in `Analysis`, assigned to its creator `cwhite`: it has no
   package, so its Analyzed gate fails.
-- `SNTL-22` has no resolved severity, so it is in `Analysis` when `bwilson`
-  marks it as a duplicate.
+- `SNTL-22` and `SNTL-32` have no resolved severity, so each is in `Analysis`
+  when `bwilson` marks it as a duplicate. `SNTL-32` keeps its repointed
+  target `SNTL-21`.
 - `SNTL-26` is `Analyzed` and not `Resolved`: its `FIXED` Git track has the
   eligible Product `Server 16.0` without a release, which a Ticket with a CVE
   waits for. That track is `FIXED` before the SUSE assessment, while the
@@ -876,7 +906,7 @@ Every other Ticket has the exploitation level `unknown`, no deciding evidence,
 and no override; its automatic and effective priority is the `unknown` cell
 of its severity: `P2` for critical (`SNTL-18`), `P3` for high, `P4` for
 medium, low, and none, and no priority for an unresolved severity (`SNTL-6`,
-`SNTL-8`, `SNTL-22`, `SNTL-28`, and `SNTL-31`). The EPSS percentiles of
+`SNTL-8`, `SNTL-22`, `SNTL-28`, `SNTL-31`, and `SNTL-32`). The EPSS percentiles of
 `CVE-2099-0002` and `CVE-2099-0018` are below the threshold of the `likely`
 level, and that of `CVE-2099-0001` is not deciding evidence, because the KEV
 entry decides its level.
@@ -934,7 +964,8 @@ Override Model). The automatic `product_eligibility_changed` event of the
 assessment, with the reason `cvss`, precedes it.
 
 A record marked excluded has `deleted_at` set by the exclusion of `asmith`; no
-other record of the dataset has it. The package tree of `SNTL-16` therefore
+other record of the dataset has it, because each restoration of `asmith`
+clears the `deleted_at` of the record that it restores. The package tree of `SNTL-16` therefore
 holds a direct exclusion at each level and every `non_actionable_reason`
 (`docs/features/packages/package-model.md`, Derived Actionability):
 
@@ -1055,9 +1086,19 @@ Identity, IBSRequestAction):
 - `SNTL-10` has one manual reference by `security-scanner`:
   `https://scanner.example.com/findings/CVE-2099-0010`, titled
   `Fictional scanner finding`, of type `issue`.
-- `SNTL-12` has one manual reference by `asmith`:
-  `https://bugzilla.example.com/show_bug.cgi?id=1000012`, titled
-  `Fictional bug report`, of type `issue`.
+- `SNTL-12` has two manual references by `asmith`, created in this order:
+  - `https://bugzilla.example.com/show_bug.cgi?id=1000012`, titled
+    `Fictional bug report`, of type `issue`; and
+  - a reference created as `https://advisories.example.com/fictional-openssl/draft`,
+    titled `Fictional advisory draft`, of type `article`, which one
+    `update_reference()` by `asmith` changes to
+    `https://advisories.example.com/fictional-openssl/2099-0012`, titled
+    `Fictional advisory`, with the description `Fixed in fictional-openssl
+    3.0.99.`, of type `advisory`.
+
+  `asmith` then creates
+  `https://lists.example.com/fictional-openssl/2099-0012`, titled `Fictional
+  mailing list post`, of type `article`, and deletes it.
 
 ### Audit Trails
 
@@ -1073,7 +1114,7 @@ holds events after the load:
 | Setting | Two `setting_changed` events by `jdoe` |
 | Fetcher | One `disabled` event by `jdoe` for every fetcher |
 | CNA | `auto_ignore_enabled` and `auto_ignore_disabled` for `example`, then `auto_ignore_enabled` for `fictional-plugins`, all by `jdoe` |
-| Ticket | The events of every Ticket creation and Ticket work operation, for example `ticket_created`, `assignment`, `status_change`, `cve_associated`, `cvss_assessment_changed`, `product_eligibility_changed`, `package_added`, `package_maintainer_added`, `package_excluded`, `track_excluded`, `product_excluded`, `track_status_changed`, `product_released`, `priority_changed`, `reference_added`, `coordinated_release_changed`, `confidentiality_changed`, `access_grant_added`, and `duplicate_set` |
+| Ticket | The events of every Ticket creation and Ticket work operation, which hold every `TicketAuditEventType` member except `duplicate_removed`: only `revert_duplicate()` creates it, and it always registers a Ticket convergence effect (`docs/features/tickets/ticket-service.md`, `_complete_manual_zone_exit()`), which Isolation excludes |
 
 ## Operating a Dataset Backend
 
