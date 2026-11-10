@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.21.0](https://github.com/vulnwatch/sentinel/compare/v0.20.0...v0.21.0) (2026-11-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* let every viewer of a confidential Ticket list its access grants ([#1267](https://github.com/vulnwatch/sentinel/issues/1267))
+* record why a Ticket is ignored ([#1257](https://github.com/vulnwatch/sentinel/issues/1257))
+
+### Features
+
+* expose who set the eligibility override of a Product and when ([#1269](https://github.com/vulnwatch/sentinel/issues/1269)) ([b35f66c](https://github.com/vulnwatch/sentinel/commit/b35f66c596adeb44c6a1ff3167e187e5a016a9b2))
+* ignore the new Tickets of CNAs under the auto-ignore policy ([#1265](https://github.com/vulnwatch/sentinel/issues/1265)) ([3fc8e63](https://github.com/vulnwatch/sentinel/commit/3fc8e633e68d99a5e36a2adda7f8d723b9a175fb)), closes [#1252](https://github.com/vulnwatch/sentinel/issues/1252)
+* let every viewer of a confidential Ticket list its access grants ([#1267](https://github.com/vulnwatch/sentinel/issues/1267)) ([1ce08c1](https://github.com/vulnwatch/sentinel/commit/1ce08c1cdbd6f36d704358e39c46f20576690065))
+* list the users who acted on a Ticket ([#1266](https://github.com/vulnwatch/sentinel/issues/1266)) ([8946182](https://github.com/vulnwatch/sentinel/commit/8946182aefd35352fdc915a5bf2b77c576bd6464))
+* record the CNA of each CVE and expose it in the API ([#1263](https://github.com/vulnwatch/sentinel/issues/1263)) ([00471c9](https://github.com/vulnwatch/sentinel/commit/00471c9b3c27d14e3aa91d51dfb5d52bfa6b6353)), closes [#1250](https://github.com/vulnwatch/sentinel/issues/1250)
+* record why a Ticket is ignored ([#1257](https://github.com/vulnwatch/sentinel/issues/1257)) ([c48bddd](https://github.com/vulnwatch/sentinel/commit/c48bdddba35bf011ce196cdbf69a6dc3dbaecb51))
+* synchronize CNA names, types, and scopes from the CVE Program ([#1264](https://github.com/vulnwatch/sentinel/issues/1264)) ([f0a4a7a](https://github.com/vulnwatch/sentinel/commit/f0a4a7aeab7217643467fe0ea3813a2b23feca26)), closes [#1251](https://github.com/vulnwatch/sentinel/issues/1251)
+
 ## [0.20.0](https://github.com/vulnwatch/sentinel/compare/v0.19.0...v0.20.0) (2026-11-07)
 
 
