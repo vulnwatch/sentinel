@@ -1141,7 +1141,10 @@ Earlier overrides of the occurrence remain only in its
 audit history. No automatic workflow, the atomic CVSS chain included, no
 exclusion, restoration, or release, and no user lifecycle or profile
 mutation, such as deactivation or a rename, changes it; a response shows the
-setter's current profile.
+setter's current profile. Every response that carries `is_eligible_override`
+carries the provenance next to it, as `eligibility_override_by` and
+`eligibility_override_at`, so that a client that updates its copy of a Product
+from any of them never holds an override without its provenance.
 
 No data backfill accompanies these columns. The provenance has no source
 outside audit history, so the migration that adds it fails, and leaves the
@@ -2380,6 +2383,8 @@ only after accessibility and does not provide a probing oracle.
         "product_name": "SLES 15 SP6",
         "eligible": true,
         "is_eligible_override": false,
+        "eligibility_override_by": null,
+        "eligibility_override_at": null,
         "lifecycle_phase": "general_support",
         "actionable": true,
         "non_actionable_reason": null
@@ -2390,6 +2395,8 @@ only after accessibility and does not provide a probing oracle.
         "product_name": "SLES-LTSS 15-SP4",
         "eligible": false,
         "is_eligible_override": false,
+        "eligibility_override_by": null,
+        "eligibility_override_at": null,
         "lifecycle_phase": "eol",
         "actionable": false,
         "non_actionable_reason": "eol"
@@ -2425,6 +2432,8 @@ response contains exactly these fields:
 | `products[].product_name` | string | Related catalog Product display name |
 | `products[].eligible` | boolean | Effective eligibility |
 | `products[].is_eligible_override` | boolean | Whether eligibility is a manual override |
+| `products[].eligibility_override_by` | UserSummary \| null | Current profile of the user who set the current override, as in [Override Product Eligibility](#override-product-eligibility); `null` when `is_eligible_override` is `false` |
+| `products[].eligibility_override_at` | datetime \| null | When the current override was set (UTC), as in [Override Product Eligibility](#override-product-eligibility); `null` when `is_eligible_override` is `false` |
 | `products[].lifecycle_phase` | string \| null | Lifecycle phase on the evaluation date: `pre_release`, `general_support`, `extended_support`, `reactive_support`, or `eol`; `null` when lifecycle data is unavailable |
 | `products[].actionable` | boolean | Derived Product actionability |
 | `products[].non_actionable_reason` | string \| null | First applicable Product reason from [Derived Actionability](#derived-actionability); `null` when actionable |

@@ -284,9 +284,9 @@ scope.
    `reconcile_ticket_status()` with the one `evaluation_date`.
 11. Flush and return `changed` with the updated track.
 
-The returned track, including its Products' lifecycle phase and actionability,
-is projected from locked-current state with the same `evaluation_date` used by
-reconciliation.
+The returned track, including its Products' lifecycle phase, actionability, and
+eligibility override provenance, is projected from locked-current state with
+the same `evaluation_date` used by reconciliation.
 
 **TicketAuditEvent**: `track_status_changed`
 
@@ -2099,20 +2099,24 @@ transitions. The test must cover:
   and permits later automatic CVSS mutation
 - **Override provenance**: each override case asserts the provenance it
   leaves: the acting user and an `eligibility_override_at` equal to the
-  `created_at` of the `product_eligibility_changed` event for `set` and for
-  `changed` by another user in a later transaction; both `NULL` after
-  `cleared`; and the unchanged provenance of the earlier change after the
-  no-op, also when another user sends it, after every rejection and rollback,
-  and after the automatic recalculation of this module and of the CVSS chain
-  skips the overridden occurrence.
+  `created_at` of the `product_eligibility_changed` event for `set`, including
+  a `set` over an equal automatic value, and for `changed` by another user in
+  a later transaction; both `NULL` after `cleared`; and the unchanged
+  provenance of the earlier change after the no-op, also when another user
+  sends it, after every rejection and rollback, and after the automatic
+  recalculation of this module and of the CVSS chain skips the overridden
+  occurrence. In independent sessions, a waiting override with the winner's
+  value is a no-op that keeps the winner's provenance, and one with another
+  value is a `changed` that records its own actor.
   `chk_ticket_package_product_eligibility_override_provenance` rejects an
   override missing either column and either column set without an override.
   The migration that adds the provenance succeeds on occurrences without an
   override and fails on an occurrence that holds one, leaving the database at
-  the previous revision with its rows unchanged. The package tree and the
-  override response project the setter's current profile, including a
-  deactivated setter with `active = false`, and both `null` without an
-  override, also to a caller without `manage_packages`
+  the previous revision with its rows unchanged. The package tree, the
+  override response, and the track-status response project the setter's
+  current profile, including a deactivated setter with `active = false`, and
+  both `null` without an override, the package tree also to a caller without
+  `manage_packages`
 - **Synchronous manual-zone-exit eligibility**: for both `Ignored` and
   `Duplicated`, every existing automatic Product
   occurrence converges from current PostgreSQL assessment, setting, threshold,
