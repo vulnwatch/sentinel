@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.22.0](https://github.com/vulnwatch/sentinel/compare/v0.21.0...v0.22.0) (2026-11-10)
+
+
+### Features
+
+* add excluded records and embargo states to the example dataset ([#1274](https://github.com/vulnwatch/sentinel/issues/1274)) ([057cc1b](https://github.com/vulnwatch/sentinel/commit/057cc1b1e9cd23341c553ec4126a1b70281f3177)), closes [#1272](https://github.com/vulnwatch/sentinel/issues/1272)
+* add Ticket event types and affected versions to the dataset ([#1276](https://github.com/vulnwatch/sentinel/issues/1276)) ([b5da2f5](https://github.com/vulnwatch/sentinel/commit/b5da2f5b7fe6ac066219d96bf01cd4cae55de860))
+
 ## [0.21.0](https://github.com/vulnwatch/sentinel/compare/v0.20.0...v0.21.0) (2026-11-10)
 
 
