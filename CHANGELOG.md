@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.23.0](https://github.com/vulnwatch/sentinel/compare/v0.22.0...v0.23.0) (2026-11-12)
+
+
+### Features
+
+* show Slack profile pictures as user avatars ([#1286](https://github.com/vulnwatch/sentinel/issues/1286)) ([827ecbd](https://github.com/vulnwatch/sentinel/commit/827ecbd4f3952e9a80ced1953864eeb43aae0a11))
+
+
+### Bug Fixes
+
+* skip unaccepted release requests in the IBS release scan ([#1288](https://github.com/vulnwatch/sentinel/issues/1288)) ([5d0593e](https://github.com/vulnwatch/sentinel/commit/5d0593e2d0a8e6421cbca61185c55c55bc12c2a4))
+
 ## [0.22.0](https://github.com/vulnwatch/sentinel/compare/v0.21.0...v0.22.0) (2026-11-10)
 
 
