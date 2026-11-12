@@ -1,14 +1,17 @@
 """Structural test: only the documented owners write the operational identity
-metadata `User.last_login_at`, `ApiKey.last_used_at`, and `User.synced_at`.
+metadata `User.last_login_at`, `ApiKey.last_used_at`, `User.synced_at`, and
+`User.avatar_url`.
 
 See `docs/features/identity/user-service.md` (Operational metadata
 exclusions: `last_login_at` is written by the authentication
 session-creation workflow, `last_used_at` by
 `api_key_service.update_last_used_at()`, and `synced_at` by the external
 provisioning synchronization workflow, initially through `create_user()`
-and afterwards through `update_user()`) and
-`docs/features/platform/testing-strategy.md` (User Lifecycle and
-Management: "only their documented owners may write them").
+and afterwards through `update_user()`, and `avatar_url` by the
+`sync_slack_avatars` fetcher, with `deactivate_user()` and `update_user()`
+clearing it; docs/features/identity/user-avatars.md, Invariants and
+Writers) and `docs/features/platform/testing-strategy.md` (User Lifecycle
+and Management: "only their documented owners may write them").
 
 Every module in `backend/app/` is enumerated via AST, and each write is
 recorded as `(module, enclosing function, field)`. A write is:
@@ -44,7 +47,7 @@ import pytest
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 APP_ROOT = BACKEND_ROOT / "app"
 
-_FIELDS: Final = frozenset({"last_login_at", "last_used_at", "synced_at"})
+_FIELDS: Final = frozenset({"last_login_at", "last_used_at", "synced_at", "avatar_url"})
 _KEYWORD_CALLEES: Final = frozenset(
     {"User", "ApiKey", "values", "ordered_values", "update_user"}
 )
@@ -55,6 +58,8 @@ ALLOWED_WRITES: Final = {
     ("app/services/api_key_service.py", "update_last_used_at", "last_used_at"),
     ("app/services/user_service.py", "create_user", "synced_at"),
     ("app/services/user_service.py", "update_user", "synced_at"),
+    ("app/services/user_service.py", "update_user", "avatar_url"),
+    ("app/services/user_service.py", "deactivate_user", "avatar_url"),
     # The debounced authentication touch calls `update_last_used_at()`.
     ("app/api/dependencies.py", "LastUsedDebouncer.touch", "last_used_at"),
 }
@@ -164,6 +169,9 @@ class TestMetadataWriteDetector:
             ("stmt.values({ApiKey.last_used_at: t})", "last_used_at"),
             ("stmt.ordered_values(synced_at=t)", "synced_at"),
             ("User(synced_at=t)", "synced_at"),
+            ("user.avatar_url = None", "avatar_url"),
+            ("update(User).values(avatar_url=url)", "avatar_url"),
+            ("User(avatar_url=url)", "avatar_url"),
             ("models.ApiKey(last_used_at=t)", "last_used_at"),
             ("setattr(u, 'synced_at', t)", "synced_at"),
             ("update_user(db, i, acting_user_id=None, synced_at=t)", "synced_at"),
@@ -184,6 +192,8 @@ class TestMetadataWriteDetector:
             "class User(Base):\n"
             "    synced_at: Mapped[datetime | None] = mapped_column()",
             "changed_fields.append('synced_at')",
+            "UserReference(avatar_url=user.avatar_url)",
+            "User.avatar_url.is_distinct_from(url)",
             "LAST_USED_AT = 'last_used_at'",
             "update(User).values(active=False)",
             "user.updated_at = t",
