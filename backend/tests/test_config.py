@@ -1150,6 +1150,43 @@ class TestGithubToken:
         assert "GITHUB_TOKEN" not in env_example.read_text(encoding="utf-8")
 
 
+@pytest.mark.unit
+class TestSlackBotToken:
+    """`SLACK_BOT_TOKEN` (docs/configuration.md, External APIs;
+    docs/features/identity/user-avatars.md, Slack App and Bot Token): a
+    `SecretStr` whose empty default disables the integration. Every test sets
+    or removes the variable explicitly, independent of the developer
+    environment. The header-value rule is tested in
+    `TestHeaderSecretValidation`."""
+
+    def test_default_when_unset_is_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
+        s = Settings(_env_file=None)
+        assert isinstance(s.slack_bot_token, SecretStr)
+        assert s.slack_bot_token.get_secret_value() == ""
+
+    def test_empty_value_is_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("SLACK_BOT_TOKEN", "")
+        s = Settings(_env_file=None)
+        assert s.slack_bot_token.get_secret_value() == ""
+
+    def test_value_is_masked_in_the_representation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("JWT_SECRET_KEY", "a" * 32)
+        monkeypatch.setenv("SLACK_BOT_TOKEN", "Fictional-Slack-Token")
+        s = Settings(_env_file=None)
+        assert s.slack_bot_token.get_secret_value() == "Fictional-Slack-Token"
+        assert "Fictional-Slack-Token" not in repr(s)
+        assert "Fictional-Slack-Token" not in str(s.slack_bot_token)
+
+    def test_not_listed_in_env_example(self) -> None:
+        env_example = Path(__file__).resolve().parents[1] / ".env.example"
+        assert "SLACK_BOT_TOKEN" not in env_example.read_text(encoding="utf-8")
+
+
 def _rendered(error: ValidationError) -> str:
     """Every rendering a process may print or log for `error`: its message,
     its repr, and the traceback an uncaught startup failure prints."""
@@ -1164,15 +1201,20 @@ _HEADER_SECRET_MARKER = "Fictional-Header-Secret"
 
 @pytest.mark.unit
 class TestHeaderSecretValidation:
-    """`NVD_API_KEY` and `GITHUB_TOKEN` are sent verbatim as HTTP header
-    values (`docs/conventions.md`, Secret Field Typing; docs/configuration.md,
-    External APIs): a non-empty value must be printable ASCII without
-    whitespace, otherwise startup fails with an error that names the
-    variable and never renders the value. Empty or unset stays valid."""
+    """`NVD_API_KEY`, `GITHUB_TOKEN`, and `SLACK_BOT_TOKEN` are sent verbatim
+    as HTTP header values (`docs/conventions.md`, Secret Field Typing;
+    docs/configuration.md, External APIs): a non-empty value must be
+    printable ASCII without whitespace, otherwise startup fails with an error
+    that names the variable and never renders the value. Empty or unset stays
+    valid."""
 
     @pytest.fixture(
-        params=[("NVD_API_KEY", "nvd_api_key"), ("GITHUB_TOKEN", "github_token")],
-        ids=["nvd", "github"],
+        params=[
+            ("NVD_API_KEY", "nvd_api_key"),
+            ("GITHUB_TOKEN", "github_token"),
+            ("SLACK_BOT_TOKEN", "slack_bot_token"),
+        ],
+        ids=["nvd", "github", "slack"],
     )
     def setting(self, request: pytest.FixtureRequest) -> tuple[str, str]:
         """`(environment variable, Settings attribute)`."""
@@ -1607,10 +1649,15 @@ class TestSecretValues:
         settings = _secret_settings(github_token=_GITHUB_TOKEN_VALUE)
         assert _GITHUB_TOKEN_VALUE in settings.secret_values()
 
+    def test_slack_bot_token_is_collected(self) -> None:
+        settings = _secret_settings(slack_bot_token="fictional-slack-bot-token")
+        assert "fictional-slack-bot-token" in settings.secret_values()
+
     def test_empty_values_and_urls_without_password_are_skipped(self) -> None:
         settings = _secret_settings(
             nvd_api_key="",
             github_token="",
+            slack_bot_token="",
             ibs_ssh_private_key="",
             database_url="postgresql+asyncpg://svc@db.example.test/db",
             redis_url="redis://cache.example.test:6379/0",

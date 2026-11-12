@@ -88,6 +88,35 @@ class TestUserCreation:
         )
         assert stored is False
 
+    async def test_default_avatar_url_is_null(self, db_session: AsyncSession) -> None:
+        """A user has no picture until a writer sets one
+        (docs/data-model.md, User: `avatar_url` nullable)."""
+        user = User(
+            username="eavatar",
+            email="eavatar@example.com",
+            password_hash=_FICTIONAL_PASSWORD_HASH,
+        )
+        db_session.add(user)
+        await db_session.flush()
+        await db_session.refresh(user)
+        assert user.avatar_url is None
+
+    async def test_avatar_url_holds_2048_characters(
+        self, db_session: AsyncSession
+    ) -> None:
+        url = "https://avatars.slack-edge.com/" + "a" * (2048 - 31)
+        user = User(
+            username="favatar",
+            email="favatar@example.com",
+            password_hash=_FICTIONAL_PASSWORD_HASH,
+            avatar_url=url,
+        )
+        db_session.add(user)
+        await db_session.flush()
+        await db_session.refresh(user)
+        assert user.avatar_url == url
+        assert len(url) == 2048
+
     async def test_timestamps_auto_populated(self, db_session: AsyncSession) -> None:
         user = User(
             username="ctaylor",
