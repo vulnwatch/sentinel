@@ -600,9 +600,10 @@ The endpoint declares no query parameter.
   Ticket whose events are all system events returns an empty array.
 - Each entry is the complete current User reference (`docs/api-spec.md`, User
   References in Responses): `id`, `username`, nullable `full_name`, current
-  `active`, and current `bot`. An inactive User and a bot account are listed
-  like every other actor. A username that an event carries as content, such
-  as the target of an `assignment` or `access_grant_added`, adds no entry.
+  `active`, current `bot`, and current `avatar_url`. An inactive User and a
+  bot account are listed like every other actor. A username that an event
+  carries as content, such as the target of an `assignment` or
+  `access_grant_added`, adds no entry.
 - Entries are ordered by `username` in ascending Unicode code-point order,
   independent of database collation; usernames are unique, so the order is
   total. The order is fixed because the unpaginated list is bounded and has
@@ -712,10 +713,9 @@ Behavior:
    contribute one entry.
 3. Project each actor from the current User row as the complete reference
    (`id`, `username`, nullable `full_name`, current `active`, current `bot`,
-   current `avatar_url`),
-   ordered by `username` in ascending Unicode code-point order, independent of
-   database collation. An accessible Ticket without a user-attributed event
-   yields an empty result.
+   current `avatar_url`), ordered by `username` in ascending Unicode
+   code-point order, independent of database collation. An accessible Ticket
+   without a user-attributed event yields an empty result.
 
 Parent accessibility, the actor set, and the actor projections derive from one
 coherent PostgreSQL observation, with the same concurrency guarantee as

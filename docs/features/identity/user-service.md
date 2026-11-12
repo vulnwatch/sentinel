@@ -621,9 +621,9 @@ Creates a new User record with optional initial roles.
 7. If `password` is provided, hash it with bcrypt (see
    `docs/features/identity/local-authentication.md` for hashing parameters)
 8. Create User record with provided fields, including `bot`,
-   `password_hash` set to the hash (or NULL if no password),
-   `synced_at = now()` if `external_id` is set, and no picture
-   (`avatar_url = NULL`). The initial `bot` value creates no event of its
+   `password_hash` set to the hash (or NULL if no password), and
+   `synced_at = now()` if `external_id` is set. `avatar_url` is not set, so
+   the user has no picture. The initial `bot` value creates no event of its
    own: like the initial email and display name, it is part of the created
    record
 9. For each role in `roles`, create UserRole with specified `group_name`

@@ -1210,8 +1210,9 @@ pictures.
   `invalid_auth`. Rate-limit tier 3 (at least 50 requests per minute for each
   app and workspace); a request over the limit receives HTTP 429 with
   `Retry-After`. Verified live on 2026-11-12, except the `users_not_found`
-  outcome for a member deactivated in Slack and the rate limit, which are
-  documentation-only
+  outcome for a member deactivated in Slack, the rate limit (HTTP 429 and the
+  `ratelimited` code), and the token error codes other than `invalid_auth` and
+  `not_authed`, which are documentation-only
 - **Integration status**: **Active**. See
   [user-avatars.md](features/identity/user-avatars.md) for the fetcher and
   the data-privacy conditions of its use

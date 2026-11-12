@@ -1396,9 +1396,10 @@ account, an account that an automation operates instead of a person, and lets
 a client present its actions differently; it has no effect on authorization,
 and a bot account is never eligible to be a Ticket assignee
 (`docs/features/identity/user-management.md`, Bot Accounts). The `avatar_url`
-field is the URL of the user's picture, which a client may load as an image,
-or `null` when Sentinel has none, as for every inactive user and bot account;
-a client treats a picture that fails to load like `null`
+field is the URL of the user's picture, a URI reference that a client
+resolves against the URL of the response and may load as an image, or `null`
+when Sentinel has none, as for every inactive user and bot account; a client
+treats a picture that fails to load like `null`
 (`docs/features/identity/user-avatars.md`, Avatar URL).
 A user reference that identifies who performed a recorded action is the same
 for every caller that can read the response; it is never masked or

@@ -988,7 +988,7 @@ shape.
 | CLI user resolution and input bounds | `backend/tests/test_architecture/test_cli_user_resolution.py` | Over every module in `app/cli/`: no reference (import, attribute access, or name) to `get_user`, `resolve_user_identifier`, or `user_identifier_condition` — the API's UUID-or-username resolution — so every CLI username lookup uses the username-only read (`docs/conventions.md`, Command Design — Username normalization and resolution). Also asserts that the CLI `--full-name` length bound (`docs/features/identity/user-management.md`) equals the `User.full_name` column length (`docs/data-model.md`, User) and the `max_length` the API request schemas apply to `full_name`, so the CLI, column, and schema bounds cannot drift apart |
 | API key access boundary | `backend/tests/test_architecture/test_api_key_access_boundary.py` | Every reference in `backend/app/` to the `ApiKey` model, resolved through imports including aliased, `*`, and function-level ones, outside a type expression (a parameter, return, or variable annotation), and every `.api_keys` attribute access, occurs only in `app/models/` or `app/services/api_key_service.py`, so API, CLI, authentication, and user lifecycle code performs no direct `ApiKey` model query (`docs/features/identity/api-key-service.md`, Purpose). `api_key_service.get_key_by_hash()` is called by exactly the API key validation function of `app/api/dependencies.py` and nowhere else (`docs/features/identity/authentication.md`, API key validation, step 2). String references, variable attribute names, `**` expansion, relative imports, SQL text, and attribute writes on or deletion of an `ApiKey` instance obtained from the service are out of scope. A self-test proves that each detected form is found and that annotation-only use is not |
 | Identity metadata writers | `backend/tests/test_architecture/test_identity_metadata_writes.py` | Every write in `backend/app/` of `User.last_login_at`, `ApiKey.last_used_at`, `User.synced_at`, or `User.avatar_url` — an attribute assignment, augmented or annotated assignment, or `del`; a keyword of a `User(...)`, `ApiKey(...)`, `.values(...)`, `.ordered_values(...)`, or `update_user(...)` call; a dictionary key naming the field; or a constant-name `setattr()` — and every call of `api_key_service.update_last_used_at()` is enumerated via AST by module and enclosing function and must equal the reviewed owner inventory in the test (`docs/features/identity/user-service.md`, Operational metadata exclusions). Reads, column expressions, and model column definitions are not writes; a variable attribute name, `**` expansion, `.ordered_values()` tuple pairs, a rebound callee, and SQL text are out of scope. A self-test proves that each detected form is found and that reads and response serialization are not |
-| Slack token boundary | `backend/tests/test_architecture/test_slack_token_boundary.py` | Every reference in `backend/app/` to the `slack_bot_token` setting, outside its definition in `app/config.py`, occurs only in `app/services/identity/sync_slack_avatars.py`, and every string literal in `backend/app/` that starts with `https://slack.com/api/` equals `https://slack.com/api/users.lookupByEmail` and occurs only in that module, so the bot token serves only the lookup of user pictures (`docs/features/identity/user-avatars.md`, Slack App and Bot Token). A string reference to the setting, `getattr()` with a variable name, and `**` expansion are out of scope. A self-test proves that each check detects a violation |
+| Slack token boundary | `backend/tests/test_architecture/test_slack_token_boundary.py` | Every reference in `backend/app/` to the `slack_bot_token` setting, outside its definition in `app/config.py`, occurs only in `app/services/identity/sync_slack_avatars.py`, and every string literal in `backend/app/` that contains `slack.com`, compared case-insensitively, equals `https://slack.com/api/users.lookupByEmail` and occurs only in that module, so the bot token serves only the lookup of user pictures (`docs/features/identity/user-avatars.md`, Slack App and Bot Token). A string reference to the setting, `getattr()` with a variable name, and `**` expansion are out of scope. A self-test proves that each check detects a violation |
 | Omitted-value markers | `backend/tests/test_architecture/test_omitted_value_markers.py` | Every module in `backend/app/` and `backend/tests/`, read with `ast`, contains no hand-rolled omitted-value marker (`docs/conventions.md`, Omitted Values): no `object()` assigned at module or class level, no reference to the `sentinel` or `Sentinel` name of `typing_extensions`, no call of a bare `sentinel` or `Sentinel` (the builtin from Python 3.15 on), and no class named `Missing`, `MissingType`, `Unset`, `UnsetType`, `NotSet`, or `Sentinel` (with any leading underscores). In `backend/app/`, `model_fields_set` is referenced only in `app/schemas/`, and no `exclude_unset` keyword or `response_model_exclude_unset` argument is used. A marker built in another way, such as a single-member enum under another name, is out of scope and remains with review. A self-test proves that each detected form is found and that a local `object()` stand-in is not |
 | OpenCode command discovery | `backend/tests/test_opencode_agent_permissions.py` | Every project command definition is a direct child of `.opencode/commands/`. OpenCode recursively registers Markdown files below that directory, so nested reference documents would become unintended slash commands |
 
@@ -3136,8 +3136,9 @@ visibility predicate.
   and exact-username actors, normalized literal search, inclusive date bounds,
   fixed `created_at DESC, id DESC` ordering, equal timestamps, beyond-last
   pages, and coherent filtered totals. Non-null actors are complete current User
-  references including nullable `full_name`, current `active`, and current
-  `bot`; system events use `null`. Tests also prove the parent-scope query can use the required
+  references including nullable `full_name`, current `active`, current `bot`,
+  and current `avatar_url`; system events use `null`. Tests also prove the
+  parent-scope query can use the required
   `TicketAuditEvent.ticket_id` index and never derives current state from audit
   history.
 - Ticket actor API and service tests cover the cases that
@@ -4124,11 +4125,10 @@ or identity audit validation are affected, tests MUST cover:
   exactly the capability checks of its roles, including a bot caller that
   holds `triage_ticket` assigning a Ticket to an eligible user. Apart from
   having no picture (User Avatars), its only business-rule effect is
-  assignment eligibility: a bot account holding
-  `vulnerability_analyst` is neither assigned explicitly (`400
-  TICKET_ASSIGNEE_NOT_ELIGIBLE`) nor auto-assigned, nor assigned at creation
-  or by reopen and revert-duplicate, and a `New` Ticket that it works on
-  stays `New`
+  assignment eligibility: a bot account holding `vulnerability_analyst` is
+  neither assigned explicitly (`400 TICKET_ASSIGNEE_NOT_ELIGIBLE`) nor
+  auto-assigned, nor assigned at creation or by reopen and revert-duplicate,
+  and a `New` Ticket that it works on stays `New`
 - an effective change of the marker to `true` unassigns the account from
   every `New`, `Analysis`, and `Analyzed` Ticket with one system
   `assignment` event each (reason `bot account`), retains `Resolved`,
@@ -5033,9 +5033,9 @@ and the dedicated database starts its Ticket identifiers at `SNTL-1`.
   their roles, activity, bot marker, password, and no picture URL; the
   identity events with their actors (`user_id` NULL for the events of the
   first administrator's creation, the administrator for the others); the
-  setting value and both
-  setting events; every fetcher disabled with its `disabled` event; the
-  fetcher runs with their times, statuses, counters, and errors; the
+  setting value and both setting events; every fetcher disabled with its
+  `disabled` event; the fetcher runs with their times, statuses, counters,
+  and errors; the
   Products with their lifecycle phases and thresholds; the CVEs with their
   source data and CVE source records, and the failure drill-down of the last
   NVD run; the CNAs with their short names, metadata, display names,

@@ -1501,8 +1501,8 @@ grant:
 | `granted_by` | UserSummary | Current profile of the user who created the grant |
 
 Both user references are complete because users are never physically deleted.
-Deactivation changes only the current `active` projection; it does not rewrite
-or remove grant provenance.
+Deactivation changes only the current `active` and `avatar_url` projections;
+it does not rewrite or remove grant provenance.
 
 **PriorityBasis** — what the automatic priority of a Ticket is based on (see
 [ticket-priority.md](ticket-priority.md#automatic-priority-basis)):

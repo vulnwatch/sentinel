@@ -388,8 +388,7 @@ metadata, and `User.avatar_url` is the URL of a picture that Slack holds
 (`docs/features/identity/user-avatars.md`); none of them is an identity
 lifecycle mutation. Their owning boundaries
 (`docs/features/identity/user-service.md`, Operational metadata exclusions)
-may update them without an `IdentityAuditEvent`. An audit event would also
-retain a picture URL that deactivation must delete.
+may update them without an `IdentityAuditEvent`.
 This is a narrow exception: changing any API key lifecycle field (`name`,
 `expires_at`, `revoked_at`, or `revoked_by`) remains an audited mutation and
 must go through `api_key_service`. In particular,
@@ -414,13 +413,13 @@ Session invalidation during deactivation does NOT produce audit events
 produces one audit event per changed lifecycle field, the bot marker
 included (`bot_changed`); `synced_at` and the clearing of `avatar_url` are
 operational metadata exclusions and never produce an event (see Operational
-metadata exclusions above). If
-a single `update_user()` call modifies both `email` and `full_name`, two
-events are created (`email_changed` + `full_name_changed`) in the same
-transaction. An effective change of the bot marker to `true` also creates the
-derived Ticket `assignment` events of its unassignment, before the call's
-field-change events and in the same transaction; an Identity or Ticket audit
-failure rolls back both domains together.
+metadata exclusions above). If a single `update_user()` call modifies both
+`email` and `full_name`, two events are created (`email_changed` +
+`full_name_changed`) in the same transaction. An effective change of the bot
+marker to `true` also creates the derived Ticket `assignment` events of its
+unassignment, before the call's field-change events and in the same
+transaction; an Identity or Ticket audit failure rolls back both domains
+together.
 
 **Manual role mutation events**: `user_service.update_roles()` creates one
 `role_added` event per effective `_manual` `UserRole` insertion and one

@@ -60,7 +60,8 @@ directory entry of List Users and Get User, the complete user profile and its
 `manager` object (`docs/features/identity/user-management.md`), and the
 caller's own profile (`docs/features/identity/authentication.md`, Get Current
 User). Like the other fields of these representations, it comes from the
-current User record.
+current User record and is returned exactly as stored. The OpenAPI document
+publishes it as a required, nullable string without a `format`.
 
 The contract for clients:
 
@@ -116,9 +117,10 @@ integration, for example when the Slack app is withdrawn:
 
 1. remove `SLACK_BOT_TOKEN` from the environment of every process role and
    restart the processes; the fetcher runs in a Celery worker;
-2. trigger the fetcher (`docs/features/platform/fetcher-operations.md`,
-   Trigger Fetcher), or wait for its next scheduled run, and check that the run
-   succeeded: its `items_updated` counts the cleared URLs, and the
+2. enable the fetcher if it is disabled, trigger it
+   (`docs/features/platform/fetcher-operations.md`, Trigger Fetcher) or wait
+   for its next scheduled run, and check that the run succeeded: its
+   `items_updated` counts the cleared URLs, and the
    `slack_avatar_sync_disabled` log event reports them; and
 3. disable the fetcher afterwards, if desired.
 
@@ -278,15 +280,17 @@ CSS pixels wide on a display with two device pixels per CSS pixel.
    user; a run failure ends the run (Error Handling).
 5. **Write**: in a transaction of its own, set `avatar_url` to the value only
    if the user's `active` is still `true`, `bot` is still `false`, `email` is
-   still the selected address, and the stored value differs from the value;
-   then commit. The statement locks only that User row, and no network I/O
-   occurs while its transaction is open. When it changes no row, the value was
-   already stored, or the user changed after the selection; every writer that
-   handles such a change clears the value itself (Invariants and Writers).
-6. **Disabled-mode report**: at the end of a run in disabled mode, log
-   `slack_avatar_sync_disabled` with `fetcher_name` and `cleared`, the number
-   of users whose URL the run cleared: at `WARNING` when `cleared` is greater
-   than zero, otherwise at `INFO`.
+   still the selected address, and the stored value differs from the value
+   (a stored `NULL` differs from every URL); then commit. The statement locks
+   only that User row, and no network I/O occurs while its transaction is
+   open. When it changes no row, the value was already stored, or the user
+   changed after the selection; every writer that handles such a change clears
+   the value itself (Invariants and Writers).
+6. **Disabled-mode report**: when `execute()` of a run in disabled mode
+   returns normally, log `slack_avatar_sync_disabled` with `fetcher_name` and
+   `cleared`, the number of users whose URL the run cleared: at `WARNING` when
+   `cleared` is greater than zero, otherwise at `INFO`. A run that fails
+   reports its committed clears in `items_updated` only.
 
 A user who becomes active, stops being a bot account, or is created after the
 selection is looked up by the next run. A run never creates or deletes a user
@@ -301,16 +305,20 @@ lookup fails the run in these cases:
 
 | Condition | `FetcherError` message |
 |---|---|
-| Connection failure, proxy error, or protocol error | `"Failed to connect to Slack"` |
-| Request timeout | `"Slack request timed out"` |
+| `httpx.NetworkError`, `httpx.ProxyError`, or `httpx.RemoteProtocolError` | `"Failed to connect to Slack"` |
+| `httpx.TimeoutException` | `"Slack request timed out"` |
 | HTTP 429, or the outcome Rate limited | `"Slack rate limit reached"` |
-| Another HTTP status other than 200, including a redirect | `"Slack returned HTTP {status_code}"` |
+| Any other status than 200, including another 2xx status and a redirect | `"Slack returned HTTP {status_code}"` |
 | The outcome Token rejected | `"Slack rejected the bot token ({error})"`, with the token error code of the response |
 
-The `FetcherError` raised for a transport error or an HTTP status is chained
-from the `httpx` exception, whose text holds the method, the fixed URL, and
-the status, and never a body or an email address. The `FetcherError` of
-Token rejected and Rate limited has no cause, so its `error_detail` is `NULL`
+The `FetcherError` raised for a transport error or for a status that
+`httpx` reports as an `httpx.HTTPStatusError` is chained from that exception.
+The text of an `httpx.HTTPStatusError` holds the status with its reason phrase
+and the fixed URL, plus the `Location` header of a redirect; no exception
+text carries a body or an email address, because neither the URL nor a
+header of the request contains one. The
+`FetcherError` of another 2xx status, of Token rejected, and of Rate limited
+has no cause, so its `error_detail` is `NULL`
 (`docs/features/platform/fetcher-infrastructure.md`, Error Message
 Sanitization). The units processed before the failure keep their committed
 values and outcomes; the unit whose lookup failed and every later unit record
@@ -324,9 +332,13 @@ handling convention), with `item` set to the user's UUID:
 
 | Condition | `cause` of the warning |
 |---|---|
-| The outcome Invalid response | The class name of the decoding or validation exception |
-| The outcome Lookup error | The class name of the exception, together with `slack_error`, the `error` value of the response when it is a string of 1 to 64 characters from `[a-z0-9_]`, omitted otherwise |
+| The outcome Invalid response, including an `httpx.DecodingError` of the body | `SlackResponseError` |
+| The outcome Lookup error | `SlackLookupError` |
 | A database error in the write of step 5, which is rolled back | The class name of the database exception |
+
+`SlackResponseError` and `SlackLookupError` are exceptions of the fetcher
+module that it raises and catches for these outcomes; their messages carry no
+value of the response.
 
 A database error in the selection of step 2 fails the run with the generic
 fallback (`docs/features/platform/fetcher-infrastructure.md`, BaseFetcher
@@ -334,8 +346,9 @@ fallback). `asyncio.CancelledError`, `SoftTimeLimitExceeded`, and
 `MemoryError` are never caught per unit.
 
 No log record and no error field of a run contains an email address, the
-token, a picture URL, or a member of a Slack response other than the error
-codes stated above.
+token, a picture URL, or a member of a Slack response, except the token error
+code of the Token rejected message, which comes from the fixed list of
+Response Contract.
 
 ### Work Unit and Metrics
 
@@ -359,10 +372,12 @@ In disabled mode, a successful run reports every cleared URL as an update.
 `users.lookupByEmail` belongs to Slack's rate-limit tier 3, at least 50
 requests per minute for each app and workspace, and Slack recommends designing
 for one request per second. The default delay of 1.2 seconds keeps a run at 50
-lookups per minute. With the `FetcherConfig` bootstrap default `run_timeout`
-of 3600 seconds, a run covers about 2,900 users; a larger number of users
-needs a larger `run_timeout` (`docs/features/platform/fetcher-operations.md`,
-Update Fetcher Config).
+lookups per minute. The limit belongs to the Slack app, so deployments that
+share one bot token share it, and each of them needs a different schedule or
+a larger delay. With the `FetcherConfig` bootstrap default `run_timeout` of
+3600 seconds, whose soft time limit is 3420 seconds, a run covers about 2,800
+users; a larger number of users needs a larger `run_timeout`
+(`docs/features/platform/fetcher-operations.md`, Update Fetcher Config).
 
 The refresh is daily because profile pictures change rarely. A new user, a
 reactivated user, and a user whose email address changed get their picture at
@@ -394,7 +409,10 @@ the next run, or earlier through a manual trigger of the fetcher.
     their profile picture, never to list the member directory or for any other
     purpose (Slack App and Bot Token);
   - nothing from a Slack response is kept or logged except the picture URL,
-    which is kept and not logged (Response Contract; Error Handling);
+    which is kept and not logged (Response Contract; Error Handling). The
+    only other value recorded is the token error code in the message of a
+    failed run, from a fixed list of Slack error codes that identify no
+    one;
   - the stored URL is deleted when a user is removed from Sentinel. Sentinel
     never deletes users (`docs/features/identity/user-service.md`, User
     Deletion), so deactivation deletes it (Invariants and Writers); and
@@ -468,9 +486,12 @@ Tests follow `docs/features/platform/testing-strategy.md` and cover at least:
    response.
 3. **Request**: exactly one `POST` per selected user to the fixed URL, with
    the Bearer header and a form body that holds only `email`; the token in no
-   URL or body; the request delay between lookups; no other Slack method; no
-   request in disabled mode; and the transport-level retry of a connection
-   error and of a 5xx response of the lookup.
+   URL or body; no other Slack method; no request in disabled mode; the
+   transport-level retry of a connection error and of a 5xx response of the
+   lookup; and the request delay: no wait before the first lookup, the
+   `request_delay` of the run's configuration snapshot rather than the class
+   default between later lookups, no wait for a zero delay, and no delay
+   between the transport retries of one lookup.
 4. **Algorithm and metrics**: the selection excludes inactive users and bot
    accounts; a picture stored, changed, and unchanged; No picture clearing a
    stored URL; disabled mode clearing every stored URL with its metrics and
@@ -526,6 +547,9 @@ Tests follow `docs/features/platform/testing-strategy.md` and cover at least:
 - `docs/features/platform/fetcher-infrastructure.md` — BaseFetcher Base
   Class; Error Message Sanitization; Request Delay; Fetcher Documentation
   Requirements
+- `docs/features/platform/fetcher-operations.md` — Trigger Fetcher; Update
+  Fetcher Config
 - `docs/features/platform/networking.md` — Shared HTTP Client
 - `docs/features/platform/logging.md` — Secrets and PII Discipline
+- `docs/features/identity/rbac.md` — Access Levels
 - `docs/features/platform/testing-strategy.md` — User Avatars

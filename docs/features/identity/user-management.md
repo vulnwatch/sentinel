@@ -72,8 +72,8 @@ to `true` also unassigns the account from every Ticket in `New`, `Analysis`,
 or `Analyzed` in the same transaction, with one system `assignment` Ticket
 audit event per cleared Ticket, and clears its picture URL
 (`docs/features/identity/user-service.md`, `update_user()`); a change to
-`false` restores no assignment and no picture. Every user
-representation that the API returns carries it: the user reference object
+`false` restores no assignment and no picture. Every user representation
+that the API returns carries the marker: the user reference object
 (`docs/api-spec.md`, User References in Responses), the directory entry, the
 complete user profile and its `manager` object, and the authenticated
 caller's own profile (`docs/features/identity/authentication.md`, Get Current
@@ -884,16 +884,16 @@ caller capability.
 > which it selects through their assignment eligibility), an access-grant
 > picker (a search by name, username, or email), and Ticket filters, need a
 > user's identity, email, role values, and assignment eligibility, and every
-> place that shows a user can show the picture. The other
-> fields of the profile serve only user administration: the authentication
-> source, the external identity provider's identifier, the manager, the
-> origin of each role (the granting external group, the assigning
-> administrator, and the assignment time), the record timestamps, and the
-> last login. The directory therefore omits them, and it filters, searches,
-> and sorts only on the fields that its entry returns, so a query cannot
-> reveal a value that the response withholds. The omitted fields remain part
-> of the User record. Adding a field to the directory entry later is an
-> additive change; removing one is breaking (`docs/api-spec.md`, Versioning).
+> place that shows a user can show the picture. The other fields of the
+> profile serve only user administration: the authentication source, the
+> external identity provider's identifier, the manager, the origin of each
+> role (the granting external group, the assigning administrator, and the
+> assignment time), the record timestamps, and the last login. The
+> directory therefore omits them, and it filters, searches, and sorts only on
+> the fields that its entry returns, so a query cannot reveal a value that the
+> response withholds. The omitted fields remain part of the User record.
+> Adding a field to the directory entry later is an additive change; removing
+> one is breaking (`docs/api-spec.md`, Versioning).
 
 ### Directory API endpoints
 

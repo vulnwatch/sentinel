@@ -339,7 +339,7 @@ database that holds data, including a partially loaded dataset.
 | `IBS_API_URL` | `https://api.suse.de` | |
 | `IBS_USERNAME` / `IBS_SSH_PRIVATE_KEY` | Dedicated non-personal IBS account and the one-line base64 encoding of its unencrypted Ed25519 private-key file | Supply the key through the environment or secret store; never log it |
 | `IBS_RABBITMQ_URL` | Credential-bearing AMQPS URL | Supply through the environment or secret store; never log it |
-| `SLACK_BOT_TOKEN` | Bot token of SUSE's internal Slack app | Supply to the Celery worker through the environment or secret store; never log it. Empty or unset disables user pictures and clears the stored ones (`docs/features/identity/user-avatars.md`) |
+| `SLACK_BOT_TOKEN` | Bot token of SUSE's internal Slack app | Supply to the Celery worker through the environment or secret store; never log it. Empty or unset disables user pictures; the next run of `sync_slack_avatars` clears the stored ones (`docs/features/identity/user-avatars.md`) |
 
 #### Deployment Steps
 

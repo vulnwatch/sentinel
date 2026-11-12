@@ -403,9 +403,10 @@ The Ticket work deactivates `eblack` after `eblack` takes `SNTL-9` (Tickets).
 (Packages, Tracks, and Maintainers). `security-scanner` is a bot account
 (`docs/features/identity/user-management.md`, Bot Accounts) whose Ticket work
 lets a client show an automated action in a Ticket audit log. No dataset user
-has a picture URL (`avatar_url` is `null`): only `sync_slack_avatars` sets
-one (`docs/features/identity/user-avatars.md`), and the dataset disables it
-like every fetcher.
+has a picture URL (`avatar_url` is `null`,
+`docs/features/identity/user-avatars.md`): a fictional URL on Slack's image
+host would load no picture, which a client treats like `null`, and the load
+is not one of the writers of the field.
 
 ### System Settings
 
