@@ -1,0 +1,435 @@
+<request id="960106">
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="PackageKit-branding-SLE.SUSE_SLE-15-SP4_Update" rev="ebc1b56130545663fb0ffd0b397753c1" />
+    <target project="SUSE:SLE-15-SP4:Update" package="PackageKit-branding-SLE.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="PackageKit-branding-SLE.SUSE_SLE-15-SP6_Update" rev="c3888027269b07d205e806f4820cdd9e" />
+    <target project="SUSE:SLE-15-SP6:Update" package="PackageKit-branding-SLE.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="PackageKit.SUSE_SLE-15-SP4_Update" rev="216454d2f212ccf30b6f8fd0716ecb66" />
+    <target project="SUSE:SLE-15-SP4:Update" package="PackageKit.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="PackageKit.SUSE_SLE-15-SP6_Update" rev="1e4971cc6a104c05a0bf474b95a3c8ca" />
+    <target project="SUSE:SLE-15-SP6:Update" package="PackageKit.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="libsolv.SUSE_SLE-15-SP4_Update" rev="573ec322cbd5506373ef1e70df53e0d1" />
+    <target project="SUSE:SLE-15-SP4:Update" package="libsolv.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="libsolv.SUSE_SLE-15-SP5_Update" rev="bd83a33d77afc9b123b89ce1296d9ff0" />
+    <target project="SUSE:SLE-15-SP5:Update" package="libsolv.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="libsolv.SUSE_SLE-15-SP6_Update" rev="4394a52a4b84317ba2b0b5918c607bd2" />
+    <target project="SUSE:SLE-15-SP6:Update" package="libsolv.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="libyui.SUSE_SLE-15-SP4_Update" rev="4dbb178b09de67e42db8f4ba5d61cf3b" />
+    <target project="SUSE:SLE-15-SP4:Update" package="libyui.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="libyui.SUSE_SLE-15-SP5_Update" rev="45b221b758ed81cb61f54e5acee7e1f2" />
+    <target project="SUSE:SLE-15-SP5:Update" package="libyui.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="libzypp.SUSE_SLE-15-SP4_Update" rev="d440b03ddef4d343682ec28177abfdd5" />
+    <target project="SUSE:SLE-15-SP4:Update" package="libzypp.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="libzypp.SUSE_SLE-15-SP5_Update" rev="ce8064abd59cf6ad963751213fb6fd72" />
+    <target project="SUSE:SLE-15-SP5:Update" package="libzypp.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="libzypp.SUSE_SLE-15-SP6_Update" rev="871347465751ba2d4709b101c1d45b1f" />
+    <target project="SUSE:SLE-15-SP6:Update" package="libzypp.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="yast2-pkg-bindings.SUSE_SLE-15-SP4_Update" rev="c56f3844ec20e6632f0d9ed999a362b7" />
+    <target project="SUSE:SLE-15-SP4:Update" package="yast2-pkg-bindings.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="yast2-pkg-bindings.SUSE_SLE-15-SP5_Update" rev="2ee2553c7b68804eba4e021dbbc4cb42" />
+    <target project="SUSE:SLE-15-SP5:Update" package="yast2-pkg-bindings.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="yast2-pkg-bindings.SUSE_SLE-15-SP6_Update" rev="f02b5c69bef1abc7cd5abbda39e7e1e9" />
+    <target project="SUSE:SLE-15-SP6:Update" package="yast2-pkg-bindings.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="zypp-plugin.SUSE_SLE-15-SP4_Update" rev="ee87e3f70ad17ec56b5b9b3c932ff106" />
+    <target project="SUSE:SLE-15-SP4:Update" package="zypp-plugin.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="zypp-plugin.SUSE_SLE-15-SP5_Update" rev="c9b3a26ff3bfe0a71e987e08e46034d5" />
+    <target project="SUSE:SLE-15-SP5:Update" package="zypp-plugin.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="zypp-plugin.SUSE_SLE-15-SP6_Update" rev="8f98798c835a6289463d8e3bbe28df73" />
+    <target project="SUSE:SLE-15-SP6:Update" package="zypp-plugin.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="zypper.SUSE_SLE-15-SP4_Update" rev="cd293bd571a69e693c51d09d834ca0e9" />
+    <target project="SUSE:SLE-15-SP4:Update" package="zypper.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="zypper.SUSE_SLE-15-SP5_Update" rev="7e9fedb04deee3f2568f317e6253722e" />
+    <target project="SUSE:SLE-15-SP5:Update" package="zypper.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="zypper.SUSE_SLE-15-SP6_Update" rev="fb2cbde29fdc26f3646d181e962cd498" />
+    <target project="SUSE:SLE-15-SP6:Update" package="zypper.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:SLE-15-SP4:Update" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:SLE-15-SP6:Update" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:SLE-15-SP5:Update" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-INSTALLER:15-SP4:aarch64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-INSTALLER:15-SP4:ppc64le" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-INSTALLER:15-SP4:s390x" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-INSTALLER:15-SP4:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SLES:15-SP4-TERADATA:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Micro:5.3:aarch64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Micro:5.3:s390x" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Micro:5.3:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Micro:5.4:aarch64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Micro:5.4:s390x" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Micro:5.4:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-HPC:15-SP4-ESPOS:aarch64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-HPC:15-SP4-ESPOS:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-HPC:15-SP4-LTSS:aarch64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-HPC:15-SP4-LTSS:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SLED:15-SP4-LTSS:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SLES:15-SP4-LTSS:aarch64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SLES:15-SP4-LTSS:ppc64le" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SLES:15-SP4-LTSS:s390x" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SLES:15-SP4-LTSS:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SLES_SAP:15-SP4:ppc64le" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SLES_SAP:15-SP4:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SUSE-Manager-Proxy:4.3:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SUSE-Manager-Retail-Branch-Server:4.3:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SUSE-Manager-Server:4.3:ppc64le" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SUSE-Manager-Server:4.3:s390x" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SUSE-Manager-Server:4.3:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:openSUSE-SLE:15.5" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Desktop-Applications:15-SP5:aarch64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Desktop-Applications:15-SP5:ppc64le" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Desktop-Applications:15-SP5:s390x" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Desktop-Applications:15-SP5:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Development-Tools-OBS:15-SP5:aarch64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Development-Tools-OBS:15-SP5:ppc64le" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Development-Tools-OBS:15-SP5:s390x" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Development-Tools-OBS:15-SP5:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-WE:15-SP5:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Basesystem:15-SP5:aarch64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Basesystem:15-SP5:ppc64le" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Basesystem:15-SP5:s390x" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Basesystem:15-SP5:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Micro:5.5:aarch64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Micro:5.5:s390x" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Micro:5.5:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:openSUSE-Leap-Micro:5.5" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Micro:5.5:ppc64le" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-INSTALLER:15-SP5:aarch64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-INSTALLER:15-SP5:ppc64le" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-INSTALLER:15-SP5:s390x" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-INSTALLER:15-SP5:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Development-Tools:15-SP5:aarch64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Development-Tools:15-SP5:ppc64le" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Development-Tools:15-SP5:s390x" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Development-Tools:15-SP5:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Packagehub-Subpackages:15-SP5:aarch64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Packagehub-Subpackages:15-SP5:ppc64le" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Packagehub-Subpackages:15-SP5:s390x" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Packagehub-Subpackages:15-SP5:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:openSUSE-SLE:15.6" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-INSTALLER:15-SP6:aarch64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-INSTALLER:15-SP6:ppc64le" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-INSTALLER:15-SP6:s390x" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-INSTALLER:15-SP6:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Basesystem:15-SP6:aarch64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Basesystem:15-SP6:ppc64le" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Basesystem:15-SP6:s390x" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Basesystem:15-SP6:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Desktop-Applications:15-SP6:aarch64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Desktop-Applications:15-SP6:ppc64le" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Desktop-Applications:15-SP6:s390x" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Desktop-Applications:15-SP6:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Development-Tools:15-SP6:aarch64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Development-Tools:15-SP6:ppc64le" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Development-Tools:15-SP6:s390x" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Development-Tools:15-SP6:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Development-Tools-OBS:15-SP6:aarch64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Development-Tools-OBS:15-SP6:ppc64le" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Development-Tools-OBS:15-SP6:s390x" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Development-Tools-OBS:15-SP6:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Packagehub-Subpackages:15-SP6:aarch64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Packagehub-Subpackages:15-SP6:ppc64le" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Packagehub-Subpackages:15-SP6:s390x" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Packagehub-Subpackages:15-SP6:x86_64" package="patchinfo.81114" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81114" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-WE:15-SP6:x86_64" package="patchinfo.81114" />
+  </action>
+  <state name="revoked" created="2024-08-05T05:47:12" when="2024-08-12T11:29:37" />
+</request>

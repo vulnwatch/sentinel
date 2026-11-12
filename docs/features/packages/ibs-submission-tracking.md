@@ -518,10 +518,15 @@ release:
    examine its entries from the newest to the oldest:
    - Skip an entry without a request number.
    - Skip an entry whose request has no matching `maintenance_release` action.
-   - A matching action of a request that is not `accepted` is contradictory
-     evidence and makes the observation incomplete.
-   - For a matching action without acceptinfo, stop: neither that release nor
-     an older one can be proven.
+   - Skip an entry whose request is not `accepted`, whatever its state. When
+     an acceptance fails after IBS executed some of its actions, their
+     commits remain in the history while the request is not accepted
+     (`../integrations/ibs-integration.md`, Package Source History). Only an
+     accepted request can prove a release, so the scan takes no evidence
+     from such an entry and requires no diff of it; an open request remains
+     a root of the open release-request search.
+   - For a matching action of an accepted request without acceptinfo, stop:
+     neither that release nor an older one can be proven.
    - Otherwise, obtain the action's release diff (the accepted form of the
      request action diff). Without positive evidence for the Ticket CVE,
      continue with the next older entry. With it, the action is relevant and
@@ -597,9 +602,11 @@ Examples of incomplete evidence include:
   characters.
 
 None is translated into a negative result. An accepted release action without
-acceptinfo and a history entry without a request number are not incomplete
-evidence ([Accepted RR Provenance](#accepted-rr-provenance),
-[Request Discovery and Detail](#request-discovery-and-detail)).
+acceptinfo, a history entry without a request number, and a release-scan entry
+whose request is not accepted are not incomplete evidence
+([Accepted RR Provenance](#accepted-rr-provenance),
+[Request Discovery and Detail](#request-discovery-and-detail),
+[Release Discovery](#release-discovery)).
 
 No upstream source guarantees indefinite retention. The feature converges while
 enough request, diff, source-history, issue, binary, or advisory evidence remains
@@ -881,9 +888,8 @@ It distinguishes at least:
   reference outside the `SUSE:` namespace (`outside_suse_namespace`), an
   unresolved action (`unresolved_action`), a supersession cycle
   (`supersession_cycle`), missing accepted provenance (`missing_provenance`), a
-  failed release proof (`release_proof_failed`), a matching release action of a
-  request that is not accepted in the release scan (`contradictory_evidence`),
-  and a value that exceeds its column (`value_out_of_range`);
+  failed release proof (`release_proof_failed`), and a value that exceeds its
+  column (`value_out_of_range`);
 - local outcomes: a stale request observation (`stale_request_observation`),
   conflicting equal-time request content (`conflicting_observation`),
   conflicting immutable action identity or acceptinfo
@@ -1339,10 +1345,13 @@ Implementation coverage must include:
     which is not discovered and yields a complete no-match;
 - the release scan:
   - a release proven at the newest and at an older entry;
-  - skipped entries without a request number or without a matching action;
-  - a stop at an action without acceptinfo, and an exhausted history;
-  - incomplete outcomes for an unavailable entry, a failed proof, and a
-    matching action of a request that is not accepted;
+  - skipped entries without a request number, without a matching action, or
+    of a request in each state other than `accepted`, without their diffs,
+    including the observed reverted entries of revoked release requests
+    newer than the proven release;
+  - a stop at an accepted action without acceptinfo, and an exhausted
+    history;
+  - incomplete outcomes for an unavailable entry and a failed proof;
 - the release proof:
   - success, and failure of each comparison;
   - missing acceptinfo `rev` or `srcmd5`, and an unavailable lookup;

@@ -1,0 +1,7 @@
+<sourcediff>
+  <issues>
+    <issue state="added" tracker="cve" name="2024-0217" label="CVE-2024-0217" />
+    <issue state="added" tracker="bnc" name="1209138" label="bsc#1209138" />
+    <issue state="added" tracker="bnc" name="1218544" label="bsc#1218544" />
+  </issues>
+</sourcediff>

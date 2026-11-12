@@ -466,6 +466,561 @@
       "path": "/request/960038",
       "query": [],
       "status": 200
+    },
+    "d_diff_current.xml": {
+      "captured_at": "2026-11-12",
+      "method": "POST",
+      "path": "/source/SUSE:SLE-15-SP4:Update/PackageKit",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "expand",
+          "1"
+        ],
+        [
+          "orev",
+          "0"
+        ],
+        [
+          "rev",
+          "2ebc93259d316d6f0f331f045fe585b0"
+        ]
+      ],
+      "status": 200
+    },
+    "d_diff_rr_960103.xml": {
+      "captured_at": "2026-11-12",
+      "method": "POST",
+      "path": "/source/SUSE:SLE-15-SP4:Update/PackageKit.81102",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "withissues",
+          "1"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "rev",
+          "40fd23f26fe00b5c39639f43ca028660"
+        ],
+        [
+          "orev",
+          "9089c0159643cf7a73b05fde05c20436"
+        ],
+        [
+          "oproject",
+          "SUSE:SLE-15-SP4:Update"
+        ],
+        [
+          "opackage",
+          "PackageKit.81101"
+        ]
+      ],
+      "status": 200
+    },
+    "d_diff_rr_960104.xml": {
+      "captured_at": "2026-11-12",
+      "method": "POST",
+      "path": "/source/SUSE:SLE-15-SP4:Update/PackageKit.81109",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "withissues",
+          "1"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "rev",
+          "40fd23f26fe00b5c39639f43ca028660"
+        ],
+        [
+          "orev",
+          "40fd23f26fe00b5c39639f43ca028660"
+        ],
+        [
+          "oproject",
+          "SUSE:SLE-15-SP4:Update"
+        ],
+        [
+          "opackage",
+          "PackageKit.81102"
+        ]
+      ],
+      "status": 200
+    },
+    "d_diff_rr_960105.xml": {
+      "captured_at": "2026-11-12",
+      "method": "POST",
+      "path": "/source/SUSE:SLE-15-SP4:Update/PackageKit.81113",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "withissues",
+          "1"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "rev",
+          "40fd23f26fe00b5c39639f43ca028660"
+        ],
+        [
+          "orev",
+          "40fd23f26fe00b5c39639f43ca028660"
+        ],
+        [
+          "oproject",
+          "SUSE:SLE-15-SP4:Update"
+        ],
+        [
+          "opackage",
+          "PackageKit.81109"
+        ]
+      ],
+      "status": 200
+    },
+    "d_diff_rr_960108.xml": {
+      "captured_at": "2026-11-12",
+      "method": "POST",
+      "path": "/source/SUSE:SLE-15-SP4:Update/PackageKit.81114",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "withissues",
+          "1"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "rev",
+          "40fd23f26fe00b5c39639f43ca028660"
+        ],
+        [
+          "orev",
+          "40fd23f26fe00b5c39639f43ca028660"
+        ],
+        [
+          "oproject",
+          "SUSE:SLE-15-SP4:Update"
+        ],
+        [
+          "opackage",
+          "PackageKit.81113"
+        ]
+      ],
+      "status": 200
+    },
+    "d_diff_rr_960109.xml": {
+      "captured_at": "2026-11-12",
+      "method": "POST",
+      "path": "/source/SUSE:SLE-15-SP4:Update/PackageKit.81115",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "withissues",
+          "1"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "rev",
+          "40fd23f26fe00b5c39639f43ca028660"
+        ],
+        [
+          "orev",
+          "40fd23f26fe00b5c39639f43ca028660"
+        ],
+        [
+          "oproject",
+          "SUSE:SLE-15-SP4:Update"
+        ],
+        [
+          "opackage",
+          "PackageKit.81114"
+        ]
+      ],
+      "status": 200
+    },
+    "d_diff_rr_960110.xml": {
+      "captured_at": "2026-11-12",
+      "method": "POST",
+      "path": "/source/SUSE:SLE-15-SP4:Update/PackageKit.81117",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "withissues",
+          "1"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "rev",
+          "40fd23f26fe00b5c39639f43ca028660"
+        ],
+        [
+          "orev",
+          "40fd23f26fe00b5c39639f43ca028660"
+        ],
+        [
+          "oproject",
+          "SUSE:SLE-15-SP4:Update"
+        ],
+        [
+          "opackage",
+          "PackageKit.81115"
+        ]
+      ],
+      "status": 200
+    },
+    "d_diff_rr_960111.xml": {
+      "captured_at": "2026-11-12",
+      "method": "POST",
+      "path": "/source/SUSE:SLE-15-SP4:Update/PackageKit.81119",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "withissues",
+          "1"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "rev",
+          "40fd23f26fe00b5c39639f43ca028660"
+        ],
+        [
+          "orev",
+          "40fd23f26fe00b5c39639f43ca028660"
+        ],
+        [
+          "oproject",
+          "SUSE:SLE-15-SP4:Update"
+        ],
+        [
+          "opackage",
+          "PackageKit.81117"
+        ]
+      ],
+      "status": 200
+    },
+    "d_diff_rr_960112.xml": {
+      "captured_at": "2026-11-12",
+      "method": "POST",
+      "path": "/source/SUSE:SLE-15-SP4:Update/PackageKit.81120",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "withissues",
+          "1"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "rev",
+          "cfb6b4ffd9df98c243b2b22ea3f2033c"
+        ],
+        [
+          "orev",
+          "40fd23f26fe00b5c39639f43ca028660"
+        ],
+        [
+          "oproject",
+          "SUSE:SLE-15-SP4:Update"
+        ],
+        [
+          "opackage",
+          "PackageKit.81119"
+        ]
+      ],
+      "status": 200
+    },
+    "d_diff_rr_960113.xml": {
+      "captured_at": "2026-11-12",
+      "method": "POST",
+      "path": "/source/SUSE:SLE-15-SP4:Update/PackageKit.81121",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "withissues",
+          "1"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "rev",
+          "dfc5ba61eabc7993645b4d0de5d81d55"
+        ],
+        [
+          "orev",
+          "cfb6b4ffd9df98c243b2b22ea3f2033c"
+        ],
+        [
+          "oproject",
+          "SUSE:SLE-15-SP4:Update"
+        ],
+        [
+          "opackage",
+          "PackageKit.81120"
+        ]
+      ],
+      "status": 200
+    },
+    "d_diff_rr_960114.xml": {
+      "captured_at": "2026-11-12",
+      "method": "POST",
+      "path": "/source/SUSE:SLE-15-SP4:Update/PackageKit.81122",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "withissues",
+          "1"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "rev",
+          "df73144434de1aca7502f21756c05de5"
+        ],
+        [
+          "orev",
+          "dfc5ba61eabc7993645b4d0de5d81d55"
+        ],
+        [
+          "oproject",
+          "SUSE:SLE-15-SP4:Update"
+        ],
+        [
+          "opackage",
+          "PackageKit.81121"
+        ]
+      ],
+      "status": 200
+    },
+    "d_history_codestream.xml": {
+      "captured_at": "2026-11-12",
+      "method": "GET",
+      "path": "/source/SUSE:SLE-15-SP4:Update/PackageKit/_history",
+      "query": [],
+      "status": 200
+    },
+    "d_history_lookup.xml": {
+      "captured_at": "2026-11-12",
+      "method": "GET",
+      "path": "/source/SUSE:SLE-15-SP4:Update/PackageKit.81102/_history",
+      "query": [
+        [
+          "rev",
+          "1"
+        ]
+      ],
+      "status": 200
+    },
+    "d_request_rr_960103.xml": {
+      "captured_at": "2026-11-12",
+      "method": "GET",
+      "path": "/request/960103",
+      "query": [],
+      "status": 200
+    },
+    "d_request_rr_960104.xml": {
+      "captured_at": "2026-11-12",
+      "method": "GET",
+      "path": "/request/960104",
+      "query": [],
+      "status": 200
+    },
+    "d_request_rr_960105.xml": {
+      "captured_at": "2026-11-12",
+      "method": "GET",
+      "path": "/request/960105",
+      "query": [],
+      "status": 200
+    },
+    "d_request_rr_960106.xml": {
+      "captured_at": "2026-11-12",
+      "method": "GET",
+      "path": "/request/960106",
+      "query": [],
+      "status": 200
+    },
+    "d_request_rr_960107.xml": {
+      "captured_at": "2026-11-12",
+      "method": "GET",
+      "path": "/request/960107",
+      "query": [],
+      "status": 200
+    },
+    "d_request_rr_960108.xml": {
+      "captured_at": "2026-11-12",
+      "method": "GET",
+      "path": "/request/960108",
+      "query": [],
+      "status": 200
+    },
+    "d_request_rr_960109.xml": {
+      "captured_at": "2026-11-12",
+      "method": "GET",
+      "path": "/request/960109",
+      "query": [],
+      "status": 200
+    },
+    "d_request_rr_960110.xml": {
+      "captured_at": "2026-11-12",
+      "method": "GET",
+      "path": "/request/960110",
+      "query": [],
+      "status": 200
+    },
+    "d_request_rr_960111.xml": {
+      "captured_at": "2026-11-12",
+      "method": "GET",
+      "path": "/request/960111",
+      "query": [],
+      "status": 200
+    },
+    "d_request_rr_960112.xml": {
+      "captured_at": "2026-11-12",
+      "method": "GET",
+      "path": "/request/960112",
+      "query": [],
+      "status": 200
+    },
+    "d_request_rr_960113.xml": {
+      "captured_at": "2026-11-12",
+      "method": "GET",
+      "path": "/request/960113",
+      "query": [],
+      "status": 200
+    },
+    "d_request_rr_960114.xml": {
+      "captured_at": "2026-11-12",
+      "method": "GET",
+      "path": "/request/960114",
+      "query": [],
+      "status": 200
+    },
+    "d_sourceinfo_current.xml": {
+      "captured_at": "2026-11-12",
+      "method": "GET",
+      "path": "/source/SUSE:SLE-15-SP4:Update",
+      "query": [
+        [
+          "view",
+          "info"
+        ],
+        [
+          "nofilename",
+          "1"
+        ],
+        [
+          "package",
+          "PackageKit"
+        ]
+      ],
+      "status": 200
     }
   }
 }

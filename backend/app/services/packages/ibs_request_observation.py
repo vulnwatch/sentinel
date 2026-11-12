@@ -692,7 +692,11 @@ class _ScopeObservation:
         )
 
     async def _scan(self) -> Observation | None:
-        """The newest-first release scan of the codestream history."""
+        """The newest-first release scan of the codestream history.
+
+        An entry of a request that is not accepted, such as the commit of
+        a failed acceptance, proves nothing and is skipped without its
+        diff."""
         history = await self.cache.history(self.codestream, self.package_name)
         seen: set[int] = set()
         for entry in reversed(history.entries):
@@ -702,12 +706,8 @@ class _ScopeObservation:
             seen.add(number)
             detail = await self.cache.detail(number)
             matching = self._matching(detail, releases_only=True)
-            if not matching:
+            if not matching or detail.state is not IBSRequestState.ACCEPTED:
                 continue
-            if detail.state is not IBSRequestState.ACCEPTED:
-                raise UnusableObservation(
-                    "contradictory_evidence", request_number=number
-                )
             for action in matching:
                 if action.acceptinfo is None:
                     return None

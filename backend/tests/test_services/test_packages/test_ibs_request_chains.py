@@ -38,9 +38,18 @@ from tests.support.ibs_request_provenance import (
     C_RR_NEWER,
     C_SR_FIRST,
     C_SR_SECOND,
+    CHAIN_D_FIXTURES,
+    D_CVE,
+    D_INCIDENT,
+    D_RR,
+    D_RR_REVOKED,
+    D_SCAN,
     SLE15,
+    SP4,
     SP6,
     load_provenance_fixture,
+    provenance_fixture_query,
+    provenance_fixture_record,
 )
 from tests.support.ibs_request_reconciliation import (
     Accept,
@@ -97,6 +106,19 @@ def _fixture_action(name: str, target_package: str) -> Action:
 
 def _served_paths(fake: FakeRequests) -> list[str]:
     return [f"{method} {path}" for method, path, _ in fake.served]
+
+
+def _recorded(*names: str) -> list[tuple[str, str, tuple[tuple[str, str], ...]]]:
+    """The recorded requests of provenance fixtures `names`, in order, in
+    the form `FakeRequests.served` records them."""
+    return [
+        (
+            provenance_fixture_record(name)["method"],
+            provenance_fixture_record(name)["path"],
+            tuple(provenance_fixture_query(name)),
+        )
+        for name in names
+    ]
 
 
 @pytest.fixture(autouse=True)
@@ -218,6 +240,49 @@ class TestReleaseProvenChains:
         assert await delivery_of(probe, scope.track_id) == DeliveryStatus.RELEASED
         [row] = await evidence_of(probe, scope.track_id)
         assert (row.request_number, row.incident_number) == (C_RR, C_INCIDENT)
+
+    async def test_a_release_is_proven_past_reverted_revoked_release_requests(
+        self, world: RequestWorld, fake: FakeRequests
+    ) -> None:
+        """Two newer release requests of one incident failed during
+        acceptance: their codestream revisions were reverted and both are
+        revoked. The scan skips them without reading their diffs, continues
+        past the newer accepted releases without the CVE, and proves the
+        release of the CVE by the oldest scanned request."""
+        seed = RequestSeed(world)
+        scope = await seed.track(
+            await seed.ticket(cve_id=D_CVE), package="PackageKit", codestream=SP4
+        )
+        await seed.commit()
+        world.numbers().update(D_SCAN)
+        for name in CHAIN_D_FIXTURES:
+            serve_provenance(fake, name)
+
+        outcomes = await reconcile(fake, [scope])
+
+        assert kinds(outcomes) == {scope.track_id: "created"}
+        assert fake.unrouted == []
+        scan = [
+            name
+            for number in D_SCAN
+            for name in (f"d_request_rr_{number}", f"d_diff_rr_{number}")
+            if number not in D_RR_REVOKED or name.startswith("d_request_rr_")
+        ]
+        assert fake.served == _recorded(
+            "d_sourceinfo_current",
+            "d_diff_current",
+            "d_history_codestream",
+            *scan,
+            "d_history_lookup",
+        )
+        probe = await world.probe()
+        assert await delivery_of(probe, scope.track_id) == DeliveryStatus.RELEASED
+        [row] = await evidence_of(probe, scope.track_id)
+        assert (row.request_number, row.incident_number, row.accepted_revision) == (
+            D_RR,
+            D_INCIDENT,
+            "1",
+        )
 
 
 class TestKernelIncident:

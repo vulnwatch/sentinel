@@ -7,8 +7,8 @@ Discovery, Accepted RR Provenance) and
 docs/features/integrations/ibs-integration.md (Project Source Info, Source
 Diff with Issue Extraction, Request Point Detail, Request Action Diff,
 Package Source History, Request Contract Verification Status), verified
-against the sanitized live captures of 2026-10-14 described in
-`tests/support/ibs_request_provenance.py` (docs/conventions.md, External
+against the sanitized live captures of 2026-10-14 and 2026-11-12 described
+in `tests/support/ibs_request_provenance.py` (docs/conventions.md, External
 Integration Contract Verification).
 
 Every document is read through the production `IBSClient` over the fake
@@ -48,13 +48,24 @@ from tests.support.ibs_request_provenance import (
     C_RR_NEWER,
     C_SR_FIRST,
     C_SR_SECOND,
+    CHAIN_D_FIXTURE_DATE,
+    CHAIN_D_FIXTURES,
+    D_CVE,
+    D_INCIDENT,
+    D_INCIDENT_REVOKED,
+    D_RR,
+    D_RR_REPLACING,
+    D_RR_REVOKED,
+    D_SCAN,
     PROVENANCE_FIXTURE_DATE,
     PROVENANCE_FIXTURES,
     SLE15,
+    SP4,
     SP6,
     QueryRoutes,
     load_provenance_fixture,
     load_provenance_responses,
+    provenance_fixture_date,
     provenance_fixture_paths,
     provenance_fixture_record,
     serve_provenance_fixture,
@@ -105,6 +116,8 @@ _FLAVORS: Final = (
     "kernel-syms",
     "kernel-zfcpdump",
 )
+_FICTIONAL_OWNERS: Final = {"jdoe", "asmith", "bwilson"}
+"""The fictional owners that replaced the GitHub accounts of `gh` issues."""
 
 
 @pytest.fixture
@@ -151,6 +164,23 @@ def _release(
         if action.action_type is IBSRequestActionType.MAINTENANCE_RELEASE
         and action.target_project == codestream
         and action.target_package == target_package
+    ]
+    return action
+
+
+def _codestream_release(
+    detail: IBSRequestDetail, package: str, codestream: str
+) -> IBSRequestActionDetail:
+    """The release action of `package` from the request's own incident to
+    `codestream`."""
+    [action] = [
+        action
+        for action in detail.actions
+        if action.action_type is IBSRequestActionType.MAINTENANCE_RELEASE
+        and action.target_project == codestream
+        and action.source_project.startswith("SUSE:Maintenance:")
+        and action.target_package
+        == f"{package}.{action.source_project.removeprefix('SUSE:Maintenance:')}"
     ]
     return action
 
@@ -209,6 +239,11 @@ class TestCapture:
         assert set(responses["documents"]) == {f"{name}.xml" for name in stored}
         for name in PROVENANCE_FIXTURES:
             assert provenance_fixture_record(name)["status"] == 200
+            assert provenance_fixture_date(name) == (
+                CHAIN_D_FIXTURE_DATE
+                if name in CHAIN_D_FIXTURES
+                else PROVENANCE_FIXTURE_DATE
+            )
 
     @pytest.mark.parametrize("name", PROVENANCE_FIXTURES)
     def test_only_consumed_elements_and_attributes_were_kept(self, name: str) -> None:
@@ -226,6 +261,15 @@ class TestCapture:
         numbers = [int(e.text or "") for e in root.iter("requestid")]
         numbers += [int(e.get("id", "")) for e in root.iter("request")]
         assert all(960001 <= number < 961000 for number in numbers)
+
+    @pytest.mark.parametrize("name", PROVENANCE_FIXTURES)
+    def test_github_issue_owners_are_fictional(self, name: str) -> None:
+        root = ET.fromstring(load_provenance_fixture(name))
+        for issue in root.iter("issue"):
+            if issue.get("tracker") == "gh":
+                reference = issue.get("name", "")
+                assert reference.split("/")[0] in _FICTIONAL_OWNERS
+                assert issue.get("label") == f"gh#{reference}"
 
 
 class TestCurrentReleaseEvidence:
@@ -418,3 +462,99 @@ class TestKernelIncident:
             )
         assert second.acceptinfo is not None
         assert second.acceptinfo.xsrcmd5 == release.source_revision
+
+
+class TestRevertedReleases:
+    """Chain D: release requests whose acceptance failed after committing
+    their codestream revisions, reverted and revoked, newer than the
+    release that the release scan proves."""
+
+    async def test_current_sources_still_carry_the_cve_of_an_older_release(
+        self, routes: QueryRoutes
+    ) -> None:
+        async with ibs_client() as client:
+            info = await client.get_source_info(SP4, ["PackageKit"])
+            current = info["PackageKit"].source_info
+            assert current is not None
+            issues = await client.get_diff_issues(
+                SP4, "PackageKit", "0", current.srcmd5
+            )
+        assert D_CVE in {
+            issue.label
+            for issue in issues
+            if issue.tracker == "cve" and issue.state == "added"
+        }
+
+    async def test_each_failed_release_commit_is_reverted_and_its_request_revoked(
+        self, routes: QueryRoutes
+    ) -> None:
+        """Each revision of a revoked request is followed by a revision
+        without a request number that restores the previous `srcmd5`; the
+        incident is released later by an accepted request whose revision
+        carries the same link checksum."""
+        async with ibs_client() as client:
+            history = await _history(client, SP4, "PackageKit")
+            revoked = [await _detail(client, number) for number in D_RR_REVOKED]
+            replacing = await _detail(client, D_RR_REPLACING)
+        entries = history.entries
+        index = {
+            entry.request_number: position
+            for position, entry in enumerate(entries)
+            if entry.request_number is not None
+        }
+        for detail in revoked:
+            assert detail.state is IBSRequestState.REVOKED
+            action = _release(detail, f"PackageKit.{D_INCIDENT_REVOKED}", SP4)
+            assert action.acceptinfo is None
+            position = index[detail.request_number]
+            revert = entries[position + 1]
+            assert revert.request_number is None
+            assert revert.srcmd5 == entries[position - 1].srcmd5
+            assert revert.srcmd5 != entries[position].srcmd5
+        assert replacing.state is IBSRequestState.ACCEPTED
+        release = _release(replacing, f"PackageKit.{D_INCIDENT_REVOKED}", SP4)
+        assert release.acceptinfo is not None
+        assert index[D_RR_REPLACING] == index[D_RR_REVOKED[-1]] + 2
+        assert {
+            entries[index[number]].srcmd5 for number in (*D_RR_REVOKED, D_RR_REPLACING)
+        } == {entries[index[D_RR_REPLACING]].srcmd5}
+
+    async def test_the_scan_reads_the_release_requests_newest_first(
+        self, routes: QueryRoutes
+    ) -> None:
+        async with ibs_client() as client:
+            history = await _history(client, SP4, "PackageKit")
+        numbers = [
+            entry.request_number
+            for entry in reversed(history.entries)
+            if entry.request_number is not None
+        ]
+        assert numbers[: len(D_SCAN)] == list(D_SCAN)
+        assert [entry.revision for entry in history.entries] == list(
+            range(1, len(history.entries) + 1)
+        )
+
+    async def test_no_newer_accepted_release_carries_the_cve(
+        self, routes: QueryRoutes
+    ) -> None:
+        async with ibs_client() as client:
+            for number in D_SCAN[:-1]:
+                detail = await _detail(client, number)
+                action = _codestream_release(detail, "PackageKit", SP4)
+                if number in D_RR_REVOKED:
+                    assert detail.state is IBSRequestState.REVOKED
+                    continue
+                assert detail.state is IBSRequestState.ACCEPTED
+                assert action.acceptinfo is not None
+                assert D_CVE not in _cves(await _diff(client, action, "PackageKit"))
+
+    async def test_the_oldest_scanned_release_proves_the_cve(
+        self, routes: QueryRoutes
+    ) -> None:
+        async with ibs_client() as client:
+            rr = await _detail(client, D_RR)
+            assert rr.state is IBSRequestState.ACCEPTED
+            action = _release(rr, f"PackageKit.{D_INCIDENT}", SP4)
+            assert action.source_project == f"SUSE:Maintenance:{D_INCIDENT}"
+            await _assert_proof(client, action, SP4, D_RR)
+            assert D_CVE in _cves(await _diff(client, action, "PackageKit"))

@@ -2,7 +2,8 @@
 
 The documents under `backend/tests/fixtures/ibs/reconciliation/` were
 captured read-only from the IBS API (`https://api.suse.de`) on 2026-10-14
-with `secbox osc -A https://api.suse.de api [-X POST] ...`
+(chains A to C) and on 2026-11-12 (chain D) with
+`secbox osc -A https://api.suse.de api [-X POST] ...`
 (docs/conventions.md, External Integration Contract Verification;
 docs/features/packages/ibs-submission-tracking.md, Required Roots, Effective
 SR, Release Discovery, Accepted RR Provenance). Each call ran in a capture
@@ -30,16 +31,19 @@ and cookies.
 
 Values: the real-to-fictional mapping of the earlier request capture
 (`tests/support/ibs_request_api.py`) no longer exists, so this group has
-its own fictional block. Request numbers start at 960001 (one value per
-real number, also inside `SUSE:Maintenance:REQUEST:{n}` projects and
-history `requestid`), incident numbers at 81001 (also in
-`SUSE:Maintenance:{n}` projects and `.{n}` package suffixes), and every
-checksum is a fictional MD5-shaped value that keeps the equalities of the
-live data. Revision numbers, timestamps, and the public CVE and bug
-identifiers are as served. Every captured project is a `SUSE:` project; no
-personal identifier was present.
+its own fictional block. Request numbers start at 960001, and at 960101
+in chain D (one value per real number, also inside
+`SUSE:Maintenance:REQUEST:{n}` projects and history `requestid`), incident
+numbers at 81001, and at 81101 in chain D (also in `SUSE:Maintenance:{n}`
+projects and `.{n}` package suffixes), and every checksum is a fictional
+MD5-shaped value that keeps the equalities of the live data within its
+chain. Revision numbers, timestamps, and the public CVE and bug
+identifiers are as served. Every captured project is a `SUSE:` project.
+The only personal identifiers present were the owners of the `gh` issue
+references of `d_diff_current`, GitHub accounts, each replaced by a
+fictional username (`jdoe`, `asmith`, `bwilson`).
 
-Three chains:
+Four chains:
 
 - **A — current release evidence of the `openvpn` chain of
   `tests/support/ibs_request_api.py`** in `SUSE:SLE-15-SP6:Update`:
@@ -72,13 +76,32 @@ Three chains:
   `c_history_incident_default_base` (branch, release request: no SR);
   `c_request_sr_first` and `c_request_sr_second` with their accepted
   diffs `c_diff_sr_first` and `c_diff_sr_second`.
+- **D — a release before two reverted release requests** of `PackageKit`
+  in `SUSE:SLE-15-SP4:Update`, whose current sources still carry
+  CVE-2024-0217: `d_sourceinfo_current` and `d_diff_current`;
+  `d_history_codestream` (16 revisions); `d_request_rr_{n}` for every
+  release request that the release scan reads, from the newest, 960114,
+  to the proving one, 960103 (incident 81102), with the release diff
+  `d_diff_rr_{n}` of each accepted one; and `d_history_lookup` (the exact
+  lookup of `PackageKit.81102`). IBS accepted release requests 960106 and
+  960107 of incident 81114 automatically, the acceptance failed after
+  committing their codestream revisions (6 and 8), and each commit was
+  reverted by the next revision, which has no request number and restores
+  the `srcmd5` of revision 5; both requests are now `revoked` and their
+  actions have no acceptinfo. 960108 then released incident 81114. The
+  accepted releases newer than 960103 are rebuilds with an empty release
+  diff (960104, 960105, 960108 to 960111) or carry other CVEs (960112 to
+  960114). The diffs of the revoked requests were not captured: the scan
+  does not read them.
 
 The `orev=0` diff of the kernel codestream package was verified live (HTTP
 200, about 17,000 issues, 2.4 MB, 4 s) and is not stored because of its
 size; its shape is the one of `a_diff_current` and `b_diff_current`.
 
 `responses.json` records the method, decoded path, ordered query, and
-status of each request with the fictional values. `ProvenanceServer`
+status of each request with the fictional values; each document of chain
+D also records its own `captured_at`, which overrides the date of the
+file. `ProvenanceServer`
 serves the documents at their recorded method, path, and query through the
 authenticating `IBSServer`, so the same path can serve an unpaged history
 and an exact lookup.
@@ -97,7 +120,9 @@ from tests.support.ibs_api import FIXTURE_DIR, IBSServer, Responder, xml_respons
 
 PROVENANCE_FIXTURE_DIR: Final = FIXTURE_DIR / "reconciliation"
 PROVENANCE_FIXTURE_DATE: Final = "2026-10-14"
+CHAIN_D_FIXTURE_DATE: Final = "2026-11-12"
 
+SP4: Final = "SUSE:SLE-15-SP4:Update"
 SP6: Final = "SUSE:SLE-15-SP6:Update"
 SLE15: Final = "SUSE:SLE-15:Update"
 
@@ -113,6 +138,25 @@ C_SR_FIRST: Final = 960037
 C_SR_SECOND: Final = 960038
 C_INCIDENT: Final = 81003
 C_INCIDENT_NEWER: Final = 81005
+D_CVE: Final = "CVE-2024-0217"
+D_RR: Final = 960103
+D_INCIDENT: Final = 81102
+D_RR_REVOKED: Final = (960106, 960107)
+"""The reverted release requests of `D_INCIDENT_REVOKED`, oldest first."""
+D_RR_REPLACING: Final = 960108
+"""The accepted release request of `D_INCIDENT_REVOKED`."""
+D_INCIDENT_REVOKED: Final = 81114
+D_SCAN: Final = tuple(range(960114, D_RR - 1, -1))
+"""The release requests that the release scan reads, newest first."""
+
+CHAIN_D_FIXTURES: Final = (
+    "d_sourceinfo_current",
+    "d_diff_current",
+    "d_history_codestream",
+    *(f"d_request_rr_{number}" for number in D_SCAN),
+    *(f"d_diff_rr_{number}" for number in D_SCAN if number not in D_RR_REVOKED),
+    "d_history_lookup",
+)
 
 PROVENANCE_FIXTURES: Final = (
     "a_sourceinfo_current",
@@ -142,6 +186,7 @@ PROVENANCE_FIXTURES: Final = (
     "c_request_sr_second",
     "c_diff_sr_first",
     "c_diff_sr_second",
+    *CHAIN_D_FIXTURES,
 )
 
 
@@ -162,6 +207,16 @@ def provenance_fixture_record(name: str) -> dict[str, Any]:
     """The recorded method, path, query, and status of fixture `name`."""
     record: dict[str, Any] = load_provenance_responses()["documents"][f"{name}.xml"]
     return record
+
+
+def provenance_fixture_date(name: str) -> str:
+    """The capture date of fixture `name`: its own `captured_at`, otherwise
+    the date of `responses.json`."""
+    responses = load_provenance_responses()
+    date: str = responses["documents"][f"{name}.xml"].get(
+        "captured_at", responses["captured_at"]
+    )
+    return date
 
 
 def provenance_fixture_query(name: str) -> list[tuple[str, str]]:
