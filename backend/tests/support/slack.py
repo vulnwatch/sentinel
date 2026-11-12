@@ -156,6 +156,18 @@ def raising(exception: Exception) -> Responder:
     return respond
 
 
+def sequence(*responders: Responder) -> Responder:
+    """A responder that answers with each of `responders` in turn, the last
+    one repeatedly."""
+    remaining = list(responders)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        responder = remaining.pop(0) if len(remaining) > 1 else remaining[0]
+        return responder(request)
+
+    return respond
+
+
 class SlackServer:
     """A fake `users.lookupByEmail` endpoint for `httpx.MockTransport`.
 
@@ -188,9 +200,13 @@ class SlackServer:
         responder = self.responses.get(email, body(error("users_not_found")))
         return responder(request)
 
+    def transport(self) -> httpx.MockTransport:
+        """A transport whose network is this server."""
+        return httpx.MockTransport(self.handler)
+
     def client(self) -> httpx.AsyncClient:
         """A client whose transport is this server (redirects not followed)."""
-        return httpx.AsyncClient(transport=httpx.MockTransport(self.handler))
+        return httpx.AsyncClient(transport=self.transport())
 
 
 def form(request: httpx.Request) -> dict[str, list[str]]:

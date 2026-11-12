@@ -8,7 +8,7 @@ accounts (docs/conventions.md, External Integration Contract Verification).
 Only structural facts were recorded, and the fixtures are fictional
 (`tests/support/slack.py`). Every consumed member is asserted for name,
 nesting, and type through a strict test-local typed model, independent of
-the production parser.
+the production parser, and then through the parser itself.
 
 Live verification on 2026-11-12:
 
@@ -49,7 +49,9 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from app.core.external_strings import contains_inadmissible_character
-from tests.support.slack import FIXTURES, load, load_raw
+from app.services.identity.sync_slack_avatars import Lookup, Outcome, classify_lookup
+from app.services.json_decoding import decode_json
+from tests.support.slack import FIXTURES, UPLOADED_PICTURE, load, load_raw
 
 
 class _Profile(TypedDict):
@@ -233,3 +235,50 @@ class TestErrors:
     @pytest.mark.parametrize("name", ["users_not_found", "invalid_auth", "not_authed"])
     def test_error_has_only_ok_and_error(self, name: str) -> None:
         assert tuple(load(name)) == ("ok", "error")
+
+
+@pytest.mark.unit
+class TestParser:
+    """Every fixture through the production classification, decoded from its
+    bytes as the fetcher decodes a body (Response Contract)."""
+
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            pytest.param(
+                "lookup_uploaded",
+                Lookup(Outcome.PICTURE, picture_url=UPLOADED_PICTURE),
+                id="uploaded",
+            ),
+            pytest.param("lookup_gravatar", Lookup(Outcome.NO_PICTURE), id="gravatar"),
+            pytest.param(
+                "users_not_found", Lookup(Outcome.NO_PICTURE), id="users-not-found"
+            ),
+            pytest.param(
+                "invalid_auth",
+                Lookup(Outcome.TOKEN_REJECTED, token_error="invalid_auth"),
+                id="invalid-auth",
+            ),
+            pytest.param(
+                "not_authed",
+                Lookup(Outcome.TOKEN_REJECTED, token_error="not_authed"),
+                id="not-authed",
+            ),
+            pytest.param(
+                "invalid_arguments",
+                Lookup(Outcome.LOOKUP_ERROR),
+                id="invalid-arguments",
+            ),
+        ],
+    )
+    def test_fixture_classifies_as_its_live_outcome(
+        self, name: str, expected: Lookup
+    ) -> None:
+        assert classify_lookup(decode_json(load_raw(name))) == expected
+
+    def test_uploaded_picture_is_the_192_pixel_image_as_returned(self) -> None:
+        profile = load("lookup_uploaded")["user"]["profile"]
+
+        lookup = classify_lookup(decode_json(load_raw("lookup_uploaded")))
+
+        assert lookup.picture_url == profile["image_192"] == UPLOADED_PICTURE

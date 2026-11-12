@@ -60,6 +60,11 @@ ALLOWED_WRITES: Final = {
     ("app/services/user_service.py", "update_user", "synced_at"),
     ("app/services/user_service.py", "update_user", "avatar_url"),
     ("app/services/user_service.py", "deactivate_user", "avatar_url"),
+    (
+        "app/services/identity/sync_slack_avatars.py",
+        "SyncSlackAvatars._write",
+        "avatar_url",
+    ),
     # The debounced authentication touch calls `update_last_used_at()`.
     ("app/api/dependencies.py", "LastUsedDebouncer.touch", "last_used_at"),
 }
