@@ -116,6 +116,7 @@ Sentinel requires outbound access to:
 | GitHub | `github.com` | 443 | MITRE cvelistV5 repository clone/fetch |
 | GitHub raw content | `raw.githubusercontent.com` | 443 | CVE Program CNA list download (`sync_mitre_cnas`) |
 | git.kernel.org | `git.kernel.org` | 443 | Linux kernel vulnerability repo clone/fetch |
+| Slack Web API | `slack.com` | 443 | User picture lookup (`sync_slack_avatars`) |
 
 ---
 
@@ -338,6 +339,7 @@ database that holds data, including a partially loaded dataset.
 | `IBS_API_URL` | `https://api.suse.de` | |
 | `IBS_USERNAME` / `IBS_SSH_PRIVATE_KEY` | Dedicated non-personal IBS account and the one-line base64 encoding of its unencrypted Ed25519 private-key file | Supply the key through the environment or secret store; never log it |
 | `IBS_RABBITMQ_URL` | Credential-bearing AMQPS URL | Supply through the environment or secret store; never log it |
+| `SLACK_BOT_TOKEN` | Bot token of SUSE's internal Slack app | Supply to the Celery worker through the environment or secret store; never log it. Empty or unset disables user pictures and clears the stored ones (`docs/features/identity/user-avatars.md`) |
 
 #### Deployment Steps
 
@@ -424,6 +426,9 @@ Before the first production deployment:
       `sync_ghsa_advisories` fetcher disabled through `FetcherConfig.enabled`;
       without a token every GHSA run and on-demand fetch fails at its token
       guard (`docs/features/tickets/cve-sync-ghsa.md`)
+- [ ] `SLACK_BOT_TOKEN` supplied to the Celery worker, or deliberately left
+      empty, which disables user pictures
+      (`docs/features/identity/user-avatars.md`, Slack App and Bot Token)
 - [ ] `NVD_API_KEY` supplied (free NVD API key, recommended) and the
       `sync_nvd_cves` `request_delay` lowered to 0.6 through `FetcherConfig`;
       without a key the fetcher works, but bursts of on-demand fetches,

@@ -37,15 +37,17 @@ person: a script, a CI pipeline, an AI agent, or another integration. The
 `bot` field of the User records it (`docs/data-model.md`, User); it defaults
 to `false`.
 
-The marker has exactly one effect on behavior: a bot account is never the
-assignee of a Ticket (`docs/features/identity/rbac.md`, Business Rule 10).
-An automation performs Ticket work but owns none, so its operations neither
-take a Ticket from the unassigned queue nor move it out of `New`. Apart from
-assignment eligibility, the marker changes no authorization, capability,
-scope, role, authentication method, session, API key, audit attribution, or
-other business rule: Sentinel treats a bot account exactly like every other
-account with the same origin, roles, and state. No other operation decides
-anything on the marker, and no list filters or sorts on it directly: the
+The marker has two effects on behavior. A bot account is never the assignee
+of a Ticket (`docs/features/identity/rbac.md`, Business Rule 10): an
+automation performs Ticket work but owns none, so its operations neither take
+a Ticket from the unassigned queue nor move it out of `New`. And a bot account
+has no picture: its `avatar_url` is always `null`, because a picture shows a
+person (`docs/features/identity/user-avatars.md`). Apart from these two
+effects, the marker changes no authorization, capability, scope, role,
+authentication method, session, API key, audit attribution, or other business
+rule: Sentinel treats a bot account exactly like every other account with the
+same origin, roles, and state. No other operation decides anything on the
+marker, and no list filters or sorts on it directly: the
 `assignment_eligibility` filter of List Users and List Users (Admin) selects
 users by the outcome of Business Rule 10, for which every bot account has
 the value `none`. Clients also use the marker to present the
@@ -68,8 +70,9 @@ Every effective change of the marker creates one `bot_changed` identity audit
 event (`docs/features/identity/identity-audit-log.md`). An effective change
 to `true` also unassigns the account from every Ticket in `New`, `Analysis`,
 or `Analyzed` in the same transaction, with one system `assignment` Ticket
-audit event per cleared Ticket (`docs/features/identity/user-service.md`,
-`update_user()`); a change to `false` restores no assignment. Every user
+audit event per cleared Ticket, and clears its picture URL
+(`docs/features/identity/user-service.md`, `update_user()`); a change to
+`false` restores no assignment and no picture. Every user
 representation that the API returns carries it: the user reference object
 (`docs/api-spec.md`, User References in Responses), the directory entry, the
 complete user profile and its `manager` object, and the authenticated
@@ -862,7 +865,7 @@ The API exposes user records to two audiences:
 - **The user directory** (List Users and Get User under Directory API
   endpoints) is accessible to every authenticated user (read-only) and
   returns the directory entry: a user's identity, email, active status, bot
-  marker, role values, and assignment eligibility.
+  marker, picture URL, role values, and assignment eligibility.
 - **The complete user profile** is returned only by the administrator API: its
   list and detail reads (List Users (Admin) and Get User (Admin)) and the
   responses of the administrator mutation operations.
@@ -880,7 +883,8 @@ caller capability.
 > assignee of a Ticket, `docs/features/identity/rbac.md`, Business Rule 10,
 > which it selects through their assignment eligibility), an access-grant
 > picker (a search by name, username, or email), and Ticket filters, need a
-> user's identity, email, role values, and assignment eligibility. The other
+> user's identity, email, role values, and assignment eligibility, and every
+> place that shows a user can show the picture. The other
 > fields of the profile serve only user administration: the authentication
 > source, the external identity provider's identifier, the manager, the
 > origin of each role (the granting external group, the assigning
@@ -975,6 +979,7 @@ The route delegates UUID-or-username resolution and relationship loading to
     "full_name": "string | null",
     "active": true,
     "bot": false,
+    "avatar_url": "string | null",
     "roles": ["admin", "vulnerability_analyst"],
     "assignment_eligibility": "all"
   }
@@ -990,6 +995,9 @@ Field notes:
 - `bot`: `true` for a bot account, `false` otherwise (see Bot Accounts).
   It has no effect on authorization; a bot account is never eligible to be
   the assignee of a Ticket, so its `assignment_eligibility` is `none`
+- `avatar_url`: the URL of the user's picture, or `null` when Sentinel has
+  none; it is always `null` for an inactive user and a bot account
+  (`docs/features/identity/user-avatars.md`, Avatar URL)
 - `roles`: the distinct role values that the user currently holds from any
   origin, manual or external; a role held from several origins appears once,
   and a user without roles has an empty array. Values use the wire format and
@@ -1096,6 +1104,7 @@ The route delegates UUID-or-username resolution and relationship loading to
     "full_name": "string | null",
     "active": true,
     "bot": false,
+    "avatar_url": "string | null",
     "source": "external | local",
     "external_id": "uuid | null",
     "manager": {
@@ -1104,6 +1113,7 @@ The route delegates UUID-or-username resolution and relationship loading to
       "full_name": "string | null",
       "active": true,
       "bot": false,
+      "avatar_url": "string | null",
       "email": "string"
     } | null,
     "roles": [
@@ -1115,7 +1125,8 @@ The route delegates UUID-or-username resolution and relationship loading to
           "username": "string",
           "full_name": "string | null",
           "active": true,
-          "bot": false
+          "bot": false,
+          "avatar_url": "string | null"
         } | null,
         "created_at": "ISO8601"
       }
@@ -1135,6 +1146,9 @@ Field notes:
 - `full_name`: nullable, with the same semantics as in the directory entry
   (Get User above)
 - `bot`: the bot marker, with the same semantics as in the directory entry
+- `avatar_url`: the picture URL, with the same semantics as in the directory
+  entry. A response of an administrator mutation reports the value after the
+  operation, for example `null` after a deactivation
 - `assignment_eligibility`: the assignment eligibility, with the same
   semantics as in the directory entry; it derives from the `active`, `bot`,
   and `roles` of the same profile. A response of an administrator mutation
@@ -1142,8 +1156,8 @@ Field notes:
   an update that sets `bot` to `true`. The example above is `none` because
   its only role is `admin`
 - `manager`: resolved manager object or `null`. `manager.full_name`
-  follows the same nullability as above, and `manager.bot` is the manager's
-  own bot marker
+  follows the same nullability as above, and `manager.bot` and
+  `manager.avatar_url` are the manager's own bot marker and picture URL
 - `roles`: array of all roles from both external group mappings and manual
   assignments. `group_name` is `'_manual'` for manually assigned roles.
   See `rbac.md` (Role Wire Format, Deterministic ordering) for the
@@ -1746,9 +1760,10 @@ handling is required.
    set at creation time. There is no passwordless local user state.
    This invariant is enforced at the database level by a CHECK
    constraint (see `docs/data-model.md`, `chk_user_auth_exclusive`)
-6. **The bot marker affects assignment eligibility only**: a bot account is
-   never the assignee of a Ticket; the marker has no effect on authorization
-   or any other business rule (see Bot Accounts)
+6. **The bot marker affects assignment eligibility and the picture only**: a
+   bot account is never the assignee of a Ticket and has no picture; the
+   marker has no effect on authorization or any other business rule (see Bot
+   Accounts)
 
 ## Security Considerations
 
@@ -1785,8 +1800,12 @@ handling is required.
   filter on it, add no disclosure: the value derives from the active status,
   bot marker, and role values of the same entry and from the published role
   definitions (`docs/features/identity/rbac.md`, Predefined Roles), and it
-  grants nothing. The fields that serve only user administration are never
-  part of the directory (see Access Level Requirements)
+  grants nothing. The picture URL is accepted too: it points to the picture
+  that the person shows every colleague in Slack, only active users who are
+  not bot accounts have one, and deactivation deletes it
+  (`docs/features/identity/user-avatars.md`, Security and Privacy). The
+  fields that serve only user administration are never part of the directory
+  (see Access Level Requirements)
 - **Password policy**: minimum 16 characters, no complexity rules.
   Length is the primary defense (see
   `docs/features/identity/local-authentication.md`)
@@ -1845,6 +1864,8 @@ handling is required.
   update, deactivate, reactivate
 - `docs/features/identity/rbac.md` — role definitions and permission model
 - `docs/features/identity/identity-provisioning.md` — external sync (manages external users)
+- `docs/features/identity/user-avatars.md` — the picture URL of every user
+  representation and its Slack source
 - `docs/features/platform/cli-infrastructure.md` — CLI entry point, session
   management, interactive input helpers
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,

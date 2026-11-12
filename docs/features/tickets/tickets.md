@@ -1487,8 +1487,9 @@ evaluation instant under
 
 **UserSummary** — inline representation of a user reference. Fields:
 `id` (UUID), `username` (string), `full_name` (string | null), `active`
-(boolean), `bot` (boolean). See `docs/api-spec.md`, "User References in
-Responses" for the canonical definition.
+(boolean), `bot` (boolean), `avatar_url` (string | null). See
+`docs/api-spec.md`, "User References in Responses" for the canonical
+definition.
 
 **TicketAccessGrantResponse** — current projection of one explicit manual
 grant:
@@ -2694,7 +2695,8 @@ List all users with explicit access grants for a confidential ticket.
           "username": "jdoe",
           "full_name": "John Doe",
           "active": true,
-          "bot": false
+          "bot": false,
+          "avatar_url": null
         },
         "granted_at": "2025-03-15T10:30:00Z",
         "granted_by": {
@@ -2702,7 +2704,8 @@ List all users with explicit access grants for a confidential ticket.
           "username": "asmith",
           "full_name": "Alice Smith",
           "active": true,
-          "bot": false
+          "bot": false,
+          "avatar_url": null
         }
       }
     ]

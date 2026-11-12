@@ -145,9 +145,11 @@ Design notes:
 - Capabilities and scope derive from roles only. The bot marker of a user
   (`docs/features/identity/user-management.md`, Bot Accounts) is not an
   authorization input: a bot account holds exactly the capabilities and scope
-  of its roles. The marker is an input of assignment eligibility only
-  (Business Rule 10), which decides who can own the work on a Ticket, not
-  what a user can do or see
+  of its roles. The marker is an input of assignment eligibility
+  (Business Rule 10), which decides who can own the work on a Ticket, and of
+  the picture URL, which a bot account never has
+  (`docs/features/identity/user-avatars.md`); neither decides what a user can
+  do or see
 
 > **Design note — VA role granularity**: the VA role intentionally bundles
 > triage, assessment, and package management into a single role. Sentinel

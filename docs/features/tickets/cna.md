@@ -707,7 +707,8 @@ supported, as for the other audit trails.
         "username": "jdoe",
         "full_name": "John Doe",
         "active": true,
-        "bot": false
+        "bot": false,
+        "avatar_url": null
       },
       "created_at": "2026-11-09T10:10:00Z"
     }

@@ -511,6 +511,7 @@ a natural English compound noun: "sync NVD CVEs", "detect IBS releases".
 | `smelt` | SMELT |
 | `aimaas` | AIMAAS |
 | `ibs` | IBS (build.suse.de) |
+| `slack` | Slack Web API of SUSE's workspace |
 
 New sources follow the same rule: use the shortest unambiguous lowercase
 identifier for the external system.
@@ -531,6 +532,7 @@ Use the most general accurate term:
 - `thresholds` — CVSS thresholds
 - `kev` — CISA Known Exploited Vulnerabilities catalog entries
 - `cnas` — CNA metadata of the CVE Program
+- `avatars` — picture URLs of users
 - `track_releases` — codestream-level release detection
 - `product_releases` — product-level release detection
 
@@ -918,6 +920,7 @@ on-demand discovery. The default `catch_up()` inherited from
 | `sync_mitre_cnas` | Syncs the metadata of every CNA from the complete CNA list and writes no Ticket-scoped data (`docs/features/tickets/cna.md`) |
 | `sync_cisa_kev` | Syncs entire KEV catalog (`supports_fetch_single = False` → `participates_in_catch_up` derived as `False`) |
 | `evaluate_failed_cve_sources` | Retries failed `CVESource` records of CVEs with an active Ticket on every run; the participating CVE fetchers' own catch-up already refetches a converged Ticket's CVE (`cve-source-failure-retry.md`) |
+| `sync_slack_avatars` | Looks up every active user who is not a bot account and writes no Ticket-scoped data (`docs/features/identity/user-avatars.md`) |
 
 Note: `sync_cisa_kev` inherits from `BaseCVEFetcher` but is excluded from
 catch-up because its `supports_fetch_single = False` attribute causes

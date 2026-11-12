@@ -2527,7 +2527,8 @@ also when another user sends it ([Override Model](#override-model)).
       "username": "asmith",
       "full_name": "Alice Smith",
       "active": true,
-      "bot": false
+      "bot": false,
+      "avatar_url": null
     },
     "eligibility_override_at": "2026-03-15T10:30:00Z",
     "lifecycle_phase": "reactive_support",

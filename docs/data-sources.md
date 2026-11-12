@@ -31,6 +31,7 @@ relevant feature specifications in `docs/features/`.
 | SUSE Active Directory | Internal | Employee identity, line manager, groups | Not integrated |
 | SUSE OpenLDAP | Internal | Employee identity, POSIX accounts | Not integrated |
 | SUSEID (Authentik) | Internal | Centralized identity provisioning via SCIM push | Planned |
+| Slack | Internal | Profile picture URLs of Sentinel users | Active |
 | SUSE Bugzilla | Internal | Bug tracking, security issues | Reference only |
 | CISA KEV | Public | Known exploited vulnerabilities catalog | Active |
 | EPSS | Public | Exploit probability scores | Active |
@@ -1188,6 +1189,34 @@ hourly full sync and near-real-time event delivery.
 - **Documentation**: Internal — SCIM contract negotiation in progress
   with the infrastructure team
 
+### Slack
+
+SUSE's Slack workspace holds a profile for every employee, with the picture
+that the person uploaded, if any. Sentinel uses it only as the source of user
+pictures.
+
+- **Relevant data**: the URL of the 192-pixel profile picture
+  (`user.profile.image_192`) of a member found by email address. Sentinel
+  stores the URL only when it points to a picture that the person uploaded to
+  Slack (`avatars.slack-edge.com`); Slack returns a Gravatar URL
+  (`secure.gravatar.com`) for a member without one, which Sentinel does not
+  use. No other profile field is read
+- **Access**: Web API method `users.lookupByEmail` at
+  `https://slack.com/api/users.lookupByEmail`, called with `POST` and a form
+  body. Authenticated with the bot token of an internal Slack app installed in
+  SUSE's workspace (not Enterprise Grid), with the bot scopes `users:read` and
+  `users:read.email` and token rotation disabled. Errors are HTTP 200 with
+  `"ok": false` and an `error` code, such as `users_not_found` or
+  `invalid_auth`. Rate-limit tier 3 (at least 50 requests per minute for each
+  app and workspace); a request over the limit receives HTTP 429 with
+  `Retry-After`. Verified live on 2026-11-12, except the `users_not_found`
+  outcome for a member deactivated in Slack and the rate limit, which are
+  documentation-only
+- **Integration status**: **Active**. See
+  [user-avatars.md](features/identity/user-avatars.md) for the fetcher and
+  the data-privacy conditions of its use
+- **Documentation**: https://docs.slack.dev/reference/methods/users.lookupByEmail
+
 ---
 
 ## Related Internal Tools
@@ -1368,6 +1397,7 @@ feature documentation (not its implementation status):
 | `sync_kernel_cves` | Linux Kernel CNA | Every 3 hours (`0 */3 * * *`) | None | None (bare clone + fetch) | The Linux kernel CNA as owner of each record, CVSS kernel (`provider_name = "Linux"`), fix/introduce commits (as CVEAffectedVersion with version_type=git), affected kernel versions (semver), programFiles, references. Sets `resolved_packages = ["kernel-source"]` as a package-name candidate. `source_container = "cna"` | [cve-sync-kernel.md](features/tickets/cve-sync-kernel.md#fetcher-definition) | Complete |
 | `sync_osv_advisories` | OSV (osv.dev) | Daily at 05:00 UTC (`0 5 * * *`) | None | None (no rate limits) | GIT fix/introduce commits (CVEAffectedVersion), ecosystem affected versions (CVEAffectedVersion with ecosystem), references (TicketReference), external identifiers (GHSA/PYSEC/RUSTSEC), package-name candidates. `source_container = "osv"` | [cve-sync-osv.md](features/tickets/cve-sync-osv.md#fetcher-definition) | Complete |
 | `evaluate_failed_cve_sources` | Local (no external source) | Daily at 06:00 UTC (`0 6 * * *`) | N/A | N/A | Dispatches retry for CVESource failure records with active tickets (within 30-day window) | [cve-source-failure-retry.md](features/platform/cve-source-failure-retry.md#fetcher-evaluate_failed_cve_sources) | Complete |
+| `sync_slack_avatars` | Slack Web API | Daily at 06:30 UTC (`30 6 * * *`) | Slack bot token (`SLACK_BOT_TOKEN`); without it, the run clears every stored URL | Tier 3 (at least 50 req/min); Sentinel uses a 1.2s delay between requests | Picture URL of each active user who is not a bot account, looked up by email (`users.lookupByEmail`); pictures uploaded to Slack only | [user-avatars.md](features/identity/user-avatars.md#fetcher-sync_slack_avatars) | Complete |
 
 Note: `IBSEventConsumer` provides IBS RabbitMQ acceleration for both track
 release reconciliation and IBS request/submission reconciliation. It is a

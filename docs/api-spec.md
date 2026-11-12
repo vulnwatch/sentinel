@@ -1379,23 +1379,27 @@ relationships.
 
 When a response payload includes a reference to a user (e.g., `actor`,
 `assignee`, `target_user`, `created_by`), it is serialized as an object
-with `id`, `username`, `full_name` (nullable), `active`, and `bot` —
-populated via JOIN to the **current** User record. These values reflect the
-user's current profile data, not a historical snapshot at the time of
-the event or action.
+with `id`, `username`, `full_name` (nullable), `active`, `bot`, and
+`avatar_url` (nullable) — populated via JOIN to the **current** User record.
+These values reflect the user's current profile data, not a historical
+snapshot at the time of the event or action.
 
 Historical values, where relevant, are preserved in dedicated fields of
 the owning entity (e.g., `old_value` / `new_value` in audit events).
 The `id` (UUID) is the stable, immutable identifier; `username`,
-`full_name`, `active`, and `bot` are display conveniences that may change
-over time (e.g., via external sync, deactivation, or an administrator's
-update). The `full_name` field is nullable — it is returned as `null` when
-the user has no display name set, with no substitution of `username` or any
-other fallback value. The `bot` field is `true` for a bot account, an
-account that an automation operates instead of a person, and lets a client
-present its actions differently; it has no effect on authorization, and a bot
-account is never eligible to be a Ticket assignee
-(`docs/features/identity/user-management.md`, Bot Accounts).
+`full_name`, `active`, `bot`, and `avatar_url` are display conveniences that
+may change over time (e.g., via external sync, deactivation, or an
+administrator's update). The `full_name` field is nullable — it is returned as
+`null` when the user has no display name set, with no substitution of
+`username` or any other fallback value. The `bot` field is `true` for a bot
+account, an account that an automation operates instead of a person, and lets
+a client present its actions differently; it has no effect on authorization,
+and a bot account is never eligible to be a Ticket assignee
+(`docs/features/identity/user-management.md`, Bot Accounts). The `avatar_url`
+field is the URL of the user's picture, which a client may load as an image,
+or `null` when Sentinel has none, as for every inactive user and bot account;
+a client treats a picture that fails to load like `null`
+(`docs/features/identity/user-avatars.md`, Avatar URL).
 A user reference that identifies who performed a recorded action is the same
 for every caller that can read the response; it is never masked or
 anonymized according to the caller (`docs/features/identity/rbac.md`, Actor
@@ -1404,12 +1408,12 @@ Identities).
 Users are never physically deleted from the database — all foreign keys
 referencing the User table use `ON DELETE RESTRICT`. Deactivated users
 (`active=false`) are resolved normally, with all fields (`id`, `username`,
-`full_name`, `active`, `bot`) populated from current data. Consequently, a
-user reference object is never null or partial when `user_id` is non-null —
-if a `user_id` foreign key is present, the referenced user record is
-guaranteed to exist and the serialized object will always be complete
-(`full_name` may itself be `null`, but the object's presence and its
-other fields are always populated).
+`full_name`, `active`, `bot`, `avatar_url`) populated from current data.
+Consequently, a user reference object is never null or partial when `user_id`
+is non-null — if a `user_id` foreign key is present, the referenced user
+record is guaranteed to exist and the serialized object will always be
+complete (`full_name` and `avatar_url` may themselves be `null`, but the
+object's presence and its other fields are always populated).
 
 This convention applies to:
 

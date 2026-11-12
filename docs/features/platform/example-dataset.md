@@ -402,7 +402,10 @@ The Ticket work deactivates `eblack` after `eblack` takes `SNTL-9` (Tickets).
 `dbrown` and `ghill` hold no role: users without roles who maintain packages
 (Packages, Tracks, and Maintainers). `security-scanner` is a bot account
 (`docs/features/identity/user-management.md`, Bot Accounts) whose Ticket work
-lets a client show an automated action in a Ticket audit log.
+lets a client show an automated action in a Ticket audit log. No dataset user
+has a picture URL (`avatar_url` is `null`): only `sync_slack_avatars` sets
+one (`docs/features/identity/user-avatars.md`), and the dataset disables it
+like every fetcher.
 
 ### System Settings
 

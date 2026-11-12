@@ -85,11 +85,16 @@ users is the sync process itself (`acting_user_id = None`).
 
 For local users (`external_id IS NULL`), administrators set `bot` at creation
 and change it through `update_user()`. The marker is an input of assignment
-eligibility only (`docs/features/identity/rbac.md`, Business Rule 10):
-`update_user()` unassigns the user from their active-status Tickets when it
-becomes `true`, and no operation in this service reads it except to evaluate
-assignment eligibility (see `docs/features/identity/user-management.md`, Bot
-Accounts).
+eligibility (`docs/features/identity/rbac.md`, Business Rule 10) and of the
+picture URL: `update_user()` unassigns the user from their active-status
+Tickets and clears `avatar_url` when it becomes `true`, and no operation in
+this service reads it for any other purpose (see
+`docs/features/identity/user-management.md`, Bot Accounts).
+
+The picture URL (`avatar_url`) is managed neither by external sync nor by
+administrators, for local and external users alike: only the writers listed in
+Operational metadata exclusions below write it
+(`docs/features/identity/user-avatars.md`, Invariants and Writers).
 
 Fields managed by dedicated operations have their own ownership rules:
 
@@ -171,18 +176,20 @@ association and historical audit trail.
 
 ### Operational metadata exclusions
 
-Three high-frequency operational fields are narrow exceptions to lifecycle
-mutation ownership and identity audit events:
+Four operational fields are narrow exceptions to lifecycle mutation ownership
+and identity audit events:
 
 | Field | Exclusive write boundary |
 |---|---|
 | `User.last_login_at` | Authentication session-creation workflow |
 | `ApiKey.last_used_at` | `api_key_service.update_last_used_at()` |
 | `User.synced_at` | External provisioning synchronization workflow: the initial value through `create_user()` and updates through `update_user()` |
+| `User.avatar_url` | The `sync_slack_avatars` fetcher sets and clears it; `deactivate_user()` and `update_user()` only clear it (`docs/features/identity/user-avatars.md`, Invariants and Writers) |
 
 These boundaries may update only the named metadata field without a lifecycle
 audit event. They do not authorize direct modification of any other user or
-API-key field. See `identity-audit-log.md` (Operational Metadata Exclusions).
+API-key field. See `identity-audit-log.md` (Service Contract, Operational
+metadata exclusions).
 
 ### Deactivation and management
 
@@ -614,10 +621,11 @@ Creates a new User record with optional initial roles.
 7. If `password` is provided, hash it with bcrypt (see
    `docs/features/identity/local-authentication.md` for hashing parameters)
 8. Create User record with provided fields, including `bot`,
-   `password_hash` set to the hash (or NULL if no password), and
-   `synced_at = now()` if `external_id` is set. The initial `bot` value
-   creates no event of its own: like the initial email and display name, it
-   is part of the created record
+   `password_hash` set to the hash (or NULL if no password),
+   `synced_at = now()` if `external_id` is set, and no picture
+   (`avatar_url = NULL`). The initial `bot` value creates no event of its
+   own: like the initial email and display name, it is part of the created
+   record
 9. For each role in `roles`, create UserRole with specified `group_name`
    and `assigned_by = acting_user_id`. If the list contains duplicate
    entries (same role + same `group_name`), deduplicate silently — only
@@ -742,6 +750,13 @@ operations with their own business rules.
    (`docs/conventions.md`, Cross-Domain Root Lock Order). Its events
    therefore record the username before this update. A change of `bot` to
    `false` unassigns nothing and restores no assignment.
+
+   When the effective changes include `email`, or `bot` from `false` to
+   `true`, also set `avatar_url = NULL`, together with the requested values:
+   the stored picture URL was looked up with the previous address, and a bot
+   account has no picture (`docs/features/identity/user-avatars.md`,
+   Invariants and Writers). The clear is not a changed field and creates no
+   audit event.
 7. For each changed field other than `synced_at`, create an
    `IdentityAuditEvent` via `IdentityAuditLog.log_event()`:
    `username_changed`, `email_changed`, `full_name_changed`, `bot_changed`,
@@ -1149,7 +1164,9 @@ database transaction, in this specific order):
    used by the post-commit phase. Session invalidation creates no Identity
    audit event. See `docs/features/identity/authentication.md` (Session
    invalidation).
-3. Set `User.active = false`.
+3. Set `User.active = false` and `User.avatar_url = NULL`: an inactive user
+   keeps no picture URL (`docs/features/identity/user-avatars.md`, Invariants
+   and Writers). The clear creates no audit event.
 4. Unassign active tickets via
    `_unassign_active_tickets(db, user, "user deactivated")`. The
    caller-supplied `reason` is identity-lifecycle context only and is never
@@ -1347,6 +1364,9 @@ there is no no-op path for a human caller on an external user.
 - Revoked API keys are NOT restored (user must create new ones manually)
 - Role assignments are unchanged (roles are not affected by
   deactivation/reactivation)
+- The picture URL that deactivation cleared is NOT restored: the next run of
+  `sync_slack_avatars` looks the user up again
+  (`docs/features/identity/user-avatars.md`)
 
 Retained `TicketAccessGrant` and `TicketPackageMaintainer` rows are not
 restored because they were never removed. They become usable through ordinary
@@ -1787,5 +1807,6 @@ synchronization, which have no such boundary in front of the service.
 | `docs/features/identity/local-authentication.md` | Defines password management. `create_user` accepts an optional password. CLI `set-password` and admin endpoint delegate to `reset_password` |
 | `docs/features/tickets/ticket-audit-log.md` | `deactivate_user`, `update_user` (bot marker), and the role-removing operations create TicketAuditEvents per the `assignment` event type contract |
 | `docs/features/identity/identity-audit-log.md` | All identity mutations create IdentityAuditEvents per the event type contract |
+| `docs/features/identity/user-avatars.md` | Owns `avatar_url` and its fetcher; `deactivate_user` and `update_user` clear the value |
 | `docs/features/platform/audit-trail-infrastructure.md` | BaseAuditLog, AuditEventMixin, naming conventions |
 | `docs/data-model.md` | User and UserRole table definitions |

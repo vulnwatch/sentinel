@@ -266,8 +266,9 @@ be added if an approved contract requires them.
 |---------|------|---------|-------------|------------|
 | `NVD_API_KEY` | string | `""` (optional; recommended in production) | NVD API key for higher rate limits on CVE fetching. Recommended in production: without it, bursts of on-demand fetches, catch-up, and failed-source retries reach NVD's anonymous rate limit. When non-empty, consider reducing the `sync_nvd_cves` fetcher's `request_delay` from 6.0s to ~0.6s through Update Fetcher Config (`docs/features/platform/fetcher-operations.md`). A non-empty value must be printable ASCII without whitespace; any other value fails startup | `docs/features/tickets/cve-sync-nvd.md` |
 | `GITHUB_TOKEN` | string | `""` (required for `sync_ghsa_advisories`) | GitHub personal access token for GHSA advisory sync. Required for production rate limits (see `docs/data-sources.md`). The fetcher refuses to execute if this is empty or unset. A non-empty value must be printable ASCII without whitespace; any other value fails startup | `docs/features/tickets/cve-sync-ghsa.md` |
+| `SLACK_BOT_TOKEN` | secret string | `""` (optional) | Bot token of SUSE's internal Slack app, used only by `sync_slack_avatars` to look up the picture of each user by email address. Empty or unset: the integration is disabled, and the next run of the fetcher clears every stored picture URL. A non-empty value must be printable ASCII without whitespace; any other value fails startup | `docs/features/identity/user-avatars.md` |
 
-Both values are sent verbatim in an HTTP request header, so they follow the
+These values are sent verbatim in an HTTP request header, so they follow the
 header-value rule in `docs/conventions.md` (Secret Field Typing). A value
 with a trailing newline, as a file-based secret may carry, is rejected
 rather than trimmed.

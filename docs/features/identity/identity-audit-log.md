@@ -271,7 +271,8 @@ endpoint is available at `GET /api/v1/users/me/audit-log` (see below).
         "username": "jdoe",
         "full_name": "John Doe",
         "active": true,
-        "bot": false
+        "bot": false,
+        "avatar_url": null
       }
     }
   ],
@@ -334,7 +335,8 @@ omits `target_user`.
         "username": "fictional.admin",
         "full_name": "Fictional Admin",
         "active": true,
-        "bot": false
+        "bot": false,
+        "avatar_url": null
       }
     },
     {
@@ -382,8 +384,12 @@ database transaction as the mutation.
 
 **Operational metadata exclusions**: `User.last_login_at`,
 `ApiKey.last_used_at`, and `User.synced_at` are high-frequency operational
-metadata, not identity lifecycle mutations. Their owning authentication or
-provisioning boundaries may update them without an `IdentityAuditEvent`.
+metadata, and `User.avatar_url` is the URL of a picture that Slack holds
+(`docs/features/identity/user-avatars.md`); none of them is an identity
+lifecycle mutation. Their owning boundaries
+(`docs/features/identity/user-service.md`, Operational metadata exclusions)
+may update them without an `IdentityAuditEvent`. An audit event would also
+retain a picture URL that deactivation must delete.
 This is a narrow exception: changing any API key lifecycle field (`name`,
 `expires_at`, `revoked_at`, or `revoked_by`) remains an audited mutation and
 must go through `api_key_service`. In particular,
@@ -406,8 +412,9 @@ Session invalidation during deactivation does NOT produce audit events
 
 **Field-change events**: the `user_service.update_user()` function
 produces one audit event per changed lifecycle field, the bot marker
-included (`bot_changed`); `synced_at` is an operational metadata exclusion
-and never produces an event (see Operational metadata exclusions above). If
+included (`bot_changed`); `synced_at` and the clearing of `avatar_url` are
+operational metadata exclusions and never produce an event (see Operational
+metadata exclusions above). If
 a single `update_user()` call modifies both `email` and `full_name`, two
 events are created (`email_changed` + `full_name_changed`) in the same
 transaction. An effective change of the bot marker to `true` also creates the
@@ -443,7 +450,8 @@ provider.
 
 **Future fields**: if a new mutable field is added to the User table in
 the future, a corresponding `{field}_changed` event type MUST be added
-to `IdentityAuditEventType`. This is expected to be rare.
+to `IdentityAuditEventType`, unless the field is operational metadata that
+Operational metadata exclusions above lists. This is expected to be rare.
 
 ## Data Retention
 
