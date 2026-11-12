@@ -519,7 +519,8 @@ and a non-null actor's `id` retain their event and User UUID contracts.
         "username": "fictional.analyst",
         "full_name": "Fictional Analyst",
         "active": true,
-        "bot": false
+        "bot": false,
+        "avatar_url": null
       }
     }
   ],
@@ -535,7 +536,8 @@ and a non-null actor's `id` retain their event and User UUID contracts.
 
 - `actor` is `null` for system-generated events (where `user_id IS NULL`).
 - `actor` is the complete current User reference (`id`, `username`, nullable
-  `full_name`, current `active`, and current `bot`) for user-initiated events.
+  `full_name`, current `active`, current `bot`, and current `avatar_url`) for
+  user-initiated events.
 - The `search` filter applies its normalized literal case-insensitive substring
   to `comment`, `old_value`, `new_value`, and `detail::text` with OR semantics.
   This allows searching for product names, track names, statuses, or contextual
@@ -583,7 +585,8 @@ The endpoint declares no query parameter.
       "username": "fictional.analyst",
       "full_name": "Fictional Analyst",
       "active": true,
-      "bot": false
+      "bot": false,
+      "avatar_url": null
     }
   ]
 }
@@ -597,9 +600,10 @@ The endpoint declares no query parameter.
   Ticket whose events are all system events returns an empty array.
 - Each entry is the complete current User reference (`docs/api-spec.md`, User
   References in Responses): `id`, `username`, nullable `full_name`, current
-  `active`, and current `bot`. An inactive User and a bot account are listed
-  like every other actor. A username that an event carries as content, such
-  as the target of an `assignment` or `access_grant_added`, adds no entry.
+  `active`, current `bot`, and current `avatar_url`. An inactive User and a
+  bot account are listed like every other actor. A username that an event
+  carries as content, such as the target of an `assignment` or
+  `access_grant_added`, adds no entry.
 - Entries are ordered by `username` in ascending Unicode code-point order,
   independent of database collation; usernames are unique, so the order is
   total. The order is fixed because the unpaginated list is bounded and has
@@ -682,8 +686,8 @@ Behavior:
    empty with the correct total.
 7. Project each event's `ticket_id` as the parent `SNTL-{n}`. Project a non-null
    actor from the current User row as the complete reference (`id`, `username`,
-   nullable `full_name`, current `active`, current `bot`); system events use
-   `actor = null`.
+   nullable `full_name`, current `active`, current `bot`, current
+   `avatar_url`); system events use `actor = null`.
 
 Parent accessibility, filtered events, actor projection, count, ordering, and
 page derive from one coherent PostgreSQL observation. Concurrent changes may be
@@ -708,10 +712,10 @@ Behavior:
    system event contributes nothing, and several events of one actor
    contribute one entry.
 3. Project each actor from the current User row as the complete reference
-   (`id`, `username`, nullable `full_name`, current `active`, current `bot`),
-   ordered by `username` in ascending Unicode code-point order, independent of
-   database collation. An accessible Ticket without a user-attributed event
-   yields an empty result.
+   (`id`, `username`, nullable `full_name`, current `active`, current `bot`,
+   current `avatar_url`), ordered by `username` in ascending Unicode
+   code-point order, independent of database collation. An accessible Ticket
+   without a user-attributed event yields an empty result.
 
 Parent accessibility, the actor set, and the actor projections derive from one
 coherent PostgreSQL observation, with the same concurrency guarantee as
@@ -879,11 +883,11 @@ required event sequence or explicit no-event outcome. For audited mutations:
     different types, no entry for system events or for a username carried only
     as event content, an empty list for a Ticket whose events are all system
     events, no actor of another Ticket's events, the current `username`,
-    `full_name`, `active`, and `bot` of a renamed, inactive, and bot actor, and
-    ascending code-point `username` order. They cover the visibility cases of
-    requirement 26, a role-less caller, and loss of visibility after the
-    preliminary boundary, each inaccessible case returning `TICKET_NOT_FOUND`
-    rather than an empty list
+    `full_name`, `active`, `bot`, and `avatar_url` of a renamed, inactive, and
+    bot actor, and ascending code-point `username` order. They cover the
+    visibility cases of requirement 26, a role-less caller, and loss of
+    visibility after the preliminary boundary, each inaccessible case
+    returning `TICKET_NOT_FOUND` rather than an empty list
 
 `AGENTS.md` enforces these requirements through Quality and findings
 (mandatory tests) and its audit routing rule, and its Reviewer Trigger Matrix

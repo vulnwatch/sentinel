@@ -1052,13 +1052,16 @@ GET /api/v1/users/me
     "capabilities": ["string"],
     "active": true,
     "bot": false,
+    "avatar_url": "string | null",
     "assignment_eligibility": "all"
   }
 }
 ```
 
 `bot` is the authenticated user's bot marker
-(`docs/features/identity/user-management.md`, Bot Accounts).
+(`docs/features/identity/user-management.md`, Bot Accounts). `avatar_url` is
+the URL of the authenticated user's picture, or `null` when Sentinel has none
+(`docs/features/identity/user-avatars.md`, Avatar URL).
 
 `roles` contains the distinct current role values held by the
 authenticated user (a role held from multiple origins — manual and one

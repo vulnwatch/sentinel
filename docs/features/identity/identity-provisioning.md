@@ -74,7 +74,7 @@ Response:
       "id": "uuid",
       "group_name": "SecurityTeam",
       "role": "vulnerability_analyst",
-      "created_by": { "id": "uuid", "username": "admin1", "full_name": "...", "active": true, "bot": false },
+      "created_by": { "id": "uuid", "username": "admin1", "full_name": "...", "active": true, "bot": false, "avatar_url": null },
       "created_at": "2024-01-01T00:00:00Z"
     }
   ]
@@ -107,8 +107,8 @@ Response:
     "group_name": "SecurityTeam",
     "role": "vulnerability_analyst",
     "affected_users": [
-      { "id": "uuid", "username": "jdoe", "full_name": "John Doe", "active": true, "bot": false, "email": "..." },
-      { "id": "uuid", "username": "asmith", "full_name": "Alice Smith", "active": true, "bot": false, "email": "..." }
+      { "id": "uuid", "username": "jdoe", "full_name": "John Doe", "active": true, "bot": false, "avatar_url": null, "email": "..." },
+      { "id": "uuid", "username": "asmith", "full_name": "Alice Smith", "active": true, "bot": false, "avatar_url": null, "email": "..." }
     ],
     "affected_count": 22,
     "unknown_users": ["newemployee"]
@@ -172,7 +172,7 @@ Response (`201 Created`):
     "id": "uuid",
     "group_name": "SecurityTeam",
     "role": "vulnerability_analyst",
-    "created_by": { "id": "uuid", "username": "admin1", "full_name": "Admin User", "active": true, "bot": false },
+    "created_by": { "id": "uuid", "username": "admin1", "full_name": "Admin User", "active": true, "bot": false, "avatar_url": null },
     "created_at": "2026-05-06T12:00:00Z",
     "affected_users_count": 22
   }

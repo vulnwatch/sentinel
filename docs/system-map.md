@@ -928,6 +928,7 @@ other feature:
 | [package-maintainership](features/packages/package-maintainership.md) | Integration | SMELT package maintainer acquisition and durable package associations |
 | [identity-provisioning](features/identity/identity-provisioning.md) | Identity | External identity provisioning (not yet active) |
 | [rbac](features/identity/rbac.md) | Identity | Role-based access control and permissions |
+| [user-avatars](features/identity/user-avatars.md) | Identity | User picture URLs from Slack profile pictures |
 | [system-settings](features/platform/system-settings.md) | Platform | System settings (default CVSS version) |
 | [default-cvss-version-operations](features/platform/default-cvss-version-operations.md) | Platform | Default-CVSS impact preview, all-CVE recalculation, observability, and recovery |
 | [fetcher-infrastructure](features/platform/fetcher-infrastructure.md) | Platform | BaseFetcher base class, registry, data model |

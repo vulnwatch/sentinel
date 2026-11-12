@@ -1487,8 +1487,9 @@ evaluation instant under
 
 **UserSummary** — inline representation of a user reference. Fields:
 `id` (UUID), `username` (string), `full_name` (string | null), `active`
-(boolean), `bot` (boolean). See `docs/api-spec.md`, "User References in
-Responses" for the canonical definition.
+(boolean), `bot` (boolean), `avatar_url` (string | null). See
+`docs/api-spec.md`, "User References in Responses" for the canonical
+definition.
 
 **TicketAccessGrantResponse** — current projection of one explicit manual
 grant:
@@ -1500,8 +1501,8 @@ grant:
 | `granted_by` | UserSummary | Current profile of the user who created the grant |
 
 Both user references are complete because users are never physically deleted.
-Deactivation changes only the current `active` projection; it does not rewrite
-or remove grant provenance.
+Deactivation changes only the current `active` and `avatar_url` projections;
+it does not rewrite or remove grant provenance.
 
 **PriorityBasis** — what the automatic priority of a Ticket is based on (see
 [ticket-priority.md](ticket-priority.md#automatic-priority-basis)):
@@ -2694,7 +2695,8 @@ List all users with explicit access grants for a confidential ticket.
           "username": "jdoe",
           "full_name": "John Doe",
           "active": true,
-          "bot": false
+          "bot": false,
+          "avatar_url": null
         },
         "granted_at": "2025-03-15T10:30:00Z",
         "granted_by": {
@@ -2702,7 +2704,8 @@ List all users with explicit access grants for a confidential ticket.
           "username": "asmith",
           "full_name": "Alice Smith",
           "active": true,
-          "bot": false
+          "bot": false,
+          "avatar_url": null
         }
       }
     ]

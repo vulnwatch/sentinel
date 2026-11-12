@@ -22,6 +22,7 @@ Index of all feature specification domains.
 - [identity-provisioning.md](identity/identity-provisioning.md) — External identity provisioning, role mapping (deferred)
 - [user-service.md](identity/user-service.md) — Service-layer contract for user mutations
 - [user-management.md](identity/user-management.md) — Admin CLI and API for user operations
+- [user-avatars.md](identity/user-avatars.md) — User picture URLs and the Slack fetcher (`sync_slack_avatars`)
 - [rbac.md](identity/rbac.md) — Role definitions and endpoint permission map
 - [identity-audit-log.md](identity/identity-audit-log.md) — Identity audit trail (IdentityAuditEvent)
 - [api-key-management.md](identity/api-key-management.md) — API key lifecycle, REST API, and CLI

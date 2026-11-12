@@ -1622,12 +1622,13 @@ confidential tickets via `TicketAccessGrant` or an included
 | email            | VARCHAR(255) | UNIQUE, NOT NULL         | Email address (stored as lowercase) |
 | full_name        | VARCHAR(255) | nullable                 | Display name                     |
 | active           | BOOLEAN     | NOT NULL, DEFAULT true   | Whether the account is active. For external users, synced from the identity provider |
-| bot              | BOOLEAN     | NOT NULL, DEFAULT false  | Whether an automation operates the account instead of a person. Not an authorization input; the only business rule that reads it is assignment eligibility: a bot account is never a Ticket assignee (`docs/features/identity/rbac.md`, Business Rule 10). Set by administrators for local users and by external provisioning for external users. See `docs/features/identity/user-management.md` (Bot Accounts) |
+| bot              | BOOLEAN     | NOT NULL, DEFAULT false  | Whether an automation operates the account instead of a person. Not an authorization input; it has two effects: a bot account is never a Ticket assignee (`docs/features/identity/rbac.md`, Business Rule 10), and it has no picture (`avatar_url` is NULL). Set by administrators for local users and by external provisioning for external users. See `docs/features/identity/user-management.md` (Bot Accounts) |
 | password_hash    | VARCHAR(72)  | nullable                 | bcrypt hash of password (with SHA-256 pre-hash). NULL for external users. See `docs/features/identity/local-authentication.md` |
 | external_id      | UUID        | UNIQUE, nullable         | Stable external identifier from the identity provider (immutable after creation). Used as the matching key during external sync. NULL for local users |
 | manager_id       | UUID        | FK(user.id), nullable    | Direct line manager (resolved from external provider's manager reference during sync). Self-referencing foreign key |
 | synced_at        | TIMESTAMPTZ   | nullable                 | Operational provisioning metadata: when this record was last synced from the external provider; excluded from identity lifecycle audit events |
 | last_login_at    | TIMESTAMPTZ   | nullable                 | Operational authentication metadata: when the user last logged in (updated on every session creation); excluded from identity lifecycle audit events. NULL if never logged in |
+| avatar_url       | VARCHAR(2048) | nullable                 | Operational metadata: URL of the user's picture, set from Slack by the `sync_slack_avatars` fetcher; excluded from identity lifecycle audit events. NULL when Sentinel has no picture of the user, and always NULL for an inactive user or a bot account. See `docs/features/identity/user-avatars.md` |
 | created_at       | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record creation timestamp        |
 | updated_at       | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record update timestamp          |
 

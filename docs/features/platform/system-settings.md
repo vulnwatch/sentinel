@@ -534,7 +534,8 @@ semantics and are ignored.
         "username": "asmith",
         "full_name": "Alice Smith",
         "active": true,
-        "bot": false
+        "bot": false,
+        "avatar_url": null
       }
     }
   ],

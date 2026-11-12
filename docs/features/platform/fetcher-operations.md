@@ -289,8 +289,8 @@ disabled, derived from `FetcherAuditEvent` records with
 
 - `disabled_by` / `enabled_by`: the User Reference Object
   (`{"id": "uuid", "username": "...", "full_name": "...", "active": bool,
-  "bot": bool}`) of the actor of the `disabled` and of the `enabled` event
-  that delimit the period, for every caller
+  "bot": bool, "avatar_url": "..."}`) of the actor of the `disabled` and of
+  the `enabled` event that delimit the period, for every caller
   (`docs/features/identity/rbac.md`, Actor Identities). `disabled_by` is
   never `null`, because every fetcher audit event has a user actor
   (`docs/features/platform/fetcher-infrastructure.md`, FetcherAuditEvent).
@@ -1027,8 +1027,8 @@ still appears in its correct chronological position.
 - `error_detail` and `error_traceback` are NOT included in list responses
 - `triggered_by_user`: User Reference Object
   (`{"id": "uuid", "username": "...", "full_name": "...", "active": bool,
-  "bot": bool}`) of the user who triggered the run when `triggered_by` is
-  `manual`, for every caller. Otherwise `null`
+  "bot": bool, "avatar_url": "..."}`) of the user who triggered the run when
+  `triggered_by` is `manual`, for every caller. Otherwise `null`
 - For a run with `status = queued`: `started_at = null`,
   `finished_at = null`, `duration_seconds = null`
 - For a run with `status = running`: `finished_at = null`,
@@ -1206,7 +1206,8 @@ proxy) mitigates abuse.
           "username": "jdoe",
           "full_name": "John Doe",
           "active": true,
-          "bot": false
+          "bot": false,
+          "avatar_url": null
         },
         "enabled_at": "2025-03-17T08:30:00Z",
         "enabled_by": {
@@ -1214,7 +1215,8 @@ proxy) mitigates abuse.
           "username": "jdoe",
           "full_name": "John Doe",
           "active": true,
-          "bot": false
+          "bot": false,
+          "avatar_url": null
         }
       }
     ]
@@ -1533,7 +1535,8 @@ endpoints in the system (`identity-audit-log.md`,
         "username": "jdoe",
         "full_name": "John Doe",
         "active": true,
-        "bot": false
+        "bot": false,
+        "avatar_url": null
       },
       "old_value": "0 */6 * * *",
       "new_value": "0 */4 * * *",
@@ -1549,7 +1552,8 @@ endpoints in the system (`identity-audit-log.md`,
         "username": "jdoe",
         "full_name": "John Doe",
         "active": true,
-        "bot": false
+        "bot": false,
+        "avatar_url": null
       },
       "old_value": null,
       "new_value": null,
