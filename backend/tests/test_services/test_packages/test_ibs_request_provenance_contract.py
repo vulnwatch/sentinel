@@ -519,7 +519,7 @@ class TestRevertedReleases:
             entries[index[number]].srcmd5 for number in (*D_RR_REVOKED, D_RR_REPLACING)
         } == {entries[index[D_RR_REPLACING]].srcmd5}
 
-    async def test_the_scan_reads_the_release_requests_newest_first(
+    async def test_the_complete_history_names_the_scanned_requests_newest_first(
         self, routes: QueryRoutes
     ) -> None:
         async with ibs_client() as client:

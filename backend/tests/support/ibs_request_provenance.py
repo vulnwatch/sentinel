@@ -40,8 +40,10 @@ MD5-shaped value that keeps the equalities of the live data within its
 chain. Revision numbers, timestamps, and the public CVE and bug
 identifiers are as served. Every captured project is a `SUSE:` project.
 The only personal identifiers present were the owners of the `gh` issue
-references of `d_diff_current`, GitHub accounts, each replaced by a
-fictional username (`jdoe`, `asmith`, `bwilson`).
+references of `d_diff_current`, GitHub accounts, which the allow-listed
+rebuild kept; before the document was committed, each was replaced by a
+fictional username (`jdoe`, `asmith`, `bwilson`), equal owners by equal
+names.
 
 Four chains:
 

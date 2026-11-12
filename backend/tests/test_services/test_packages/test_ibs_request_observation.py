@@ -1826,23 +1826,28 @@ class TestReleaseScan:
         ]
         assert not searched(fake)
 
-    async def test_history_of_only_revoked_entries_completes_without_a_proof(
+    async def test_unresolved_action_of_a_request_that_is_not_accepted_is_incomplete(
         self, fake: FakeRequests, package: str
     ) -> None:
-        """Skipped entries leave the scan to exhaust the history; the
-        observation continues with the other roots."""
-        failed = accepted_release(package, acceptinfo=False)
-        fake.request(failed.number, IBSRequestState.REVOKED, failed.action)
+        """The actions of an entry are classified before its request state
+        is considered, so an unresolved release action makes the
+        observation incomplete whatever the state."""
+        number, incident = next_number(), next_incident()
+        fake.request(
+            number,
+            IBSRequestState.REVOKED,
+            release(package, incident, target_package=f"{package}.{incident + 1}"),
+        )
         fake.release_evidence(CODESTREAM, package, cve_issue(TICKET_CVE))
-        codestream_history(fake, package, None, failed.number, None)
-        serve_searches(fake, package)
+        codestream_history(fake, package, number, None)
 
-        observation = await observe(fake, scope(package=package))
+        exc = await unusable(fake, scope(package=package))
 
-        assert observation == Observation(DeliveryStatus.PENDING, (), ())
-        assert detail_numbers(fake) == [failed.number]
+        assert (exc.reason_category, exc.request_number) == (
+            "unresolved_action",
+            number,
+        )
         assert action_diff_paths(fake) == []
-        assert searched(fake)
 
     @pytest.mark.parametrize(
         "accept",

@@ -785,16 +785,17 @@ the release action's own target package carries the released contents.
 An entry can carry the number of a request that is not accepted. IBS executes
 the actions of a request one by one at acceptance and does not undo the commits
 of the actions that it executed before a failure; an automatic acceptance that
-fails declines the request. A maintainer typically reverts such a commit with
-an entry without `requestid` that restores the previous `srcmd5`; the request
-can then be reopened, revoked, or replaced by another request.
+fails with an API error declines the request. In the observed cases, a
+maintainer reverted each such commit in an entry without `requestid` that
+restored the previous `srcmd5`, revoked the request, and released the incident
+with a new release request.
 
 #### Request Contract Verification Status
 
 Sanitized read-only verification against the IBS API on 2026-09-08,
 2026-10-13, 2026-10-14, and 2026-11-12, and inspection of the OBS source,
-established the request operations above. Request numbers, checksums, and personal fields were
-never recorded.
+established the request operations above. Request numbers, checksums, and
+personal fields were never recorded in the repository.
 
 Verified live:
 
@@ -874,12 +875,13 @@ Verified live:
     a release action for that package and codestream. In incident histories,
     a revision without `requestid` (the branch commit) typically precedes a
     submission revision.
-  - On 2026-11-12, 20 codestream histories (eight packages of one incident in
-    three codestreams) carried the numbers of two release requests that IBS
-    declined when their automatic acceptance failed: each such revision was
-    followed by one without `requestid` that restored the previous `srcmd5`.
-    Both requests are now `revoked`, their actions have no acceptinfo, and a
-    later accepted release request of the same incident released it.
+  - On 2026-11-12, 13 codestream histories (six packages of one incident in
+    three codestreams) carried, in 18 revisions, the numbers of two release
+    requests that IBS declined when their automatic acceptance failed: each
+    such revision was followed by one without `requestid` that restored the
+    previous `srcmd5`. Both requests are now `revoked`, their actions have no
+    acceptinfo, and a later accepted release request of the same incident
+    released it.
   - The acceptinfo `srcmd5` of an accepted submission action equals the
     `srcmd5` of its incident-history revision. The acceptinfo `rev` and
     `srcmd5` of an accepted release action equal the exact lookup of its own
@@ -903,7 +905,8 @@ Established only by OBS source inspection:
 - an `accepted` request cannot change state again, and acceptinfo is recorded
   once, at acceptance;
 - acceptance executes the actions of a request one by one and does not undo
-  the commits of the actions executed before a failure;
+  the commits of the actions executed before a failure, and an automatic
+  acceptance that fails with an API error declines the request;
 - the derivation of incident package names from the branch origin, and the
   release of local-link packages as links without acceptinfo.
 
