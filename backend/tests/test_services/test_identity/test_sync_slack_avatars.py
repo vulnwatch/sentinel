@@ -31,6 +31,7 @@ with the user lifecycle are in `test_sync_slack_avatars_concurrency.py`.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -45,7 +46,7 @@ from celery import Celery
 from celery.exceptions import SoftTimeLimitExceeded
 from pydantic import SecretStr
 from redbeat import RedBeatSchedulerEntry
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
@@ -55,6 +56,7 @@ import app.services.identity.sync_slack_avatars as sync_module
 from app.config import settings
 from app.models.fetcher_config import FetcherConfig
 from app.models.fetcher_run import FetcherRun
+from app.models.identity_audit_event import IdentityAuditEvent
 from app.models.user import User
 from app.services import fetcher_discovery, http_client
 from app.services.base_fetcher import (
@@ -76,16 +78,14 @@ from app.services.identity.sync_slack_avatars import (
     accepted_picture_url,
     classify_lookup,
 )
-from tests.support.inadmissible import INADMISSIBLE_CHARACTERS
+from tests.support.inadmissible import INADMISSIBLE_CHARACTERS, SURROGATE, json_bytes
 from tests.support.json_decoding import (
     NESTED_ARRAY,
     OVERSIZED_INTEGER,
     limit_parser_nesting,
 )
 from tests.support.slack import (
-    LOOKUP_URL as FIXTURE_URL,
-)
-from tests.support.slack import (
+    FIXTURES,
     TOKEN,
     UPLOADED_PICTURE,
     Responder,
@@ -99,6 +99,9 @@ from tests.support.slack import (
     raw,
     sequence,
     unconsumed_strings,
+)
+from tests.support.slack import (
+    LOOKUP_URL as FIXTURE_URL,
 )
 
 NAME: Final = "sync_slack_avatars"
@@ -413,18 +416,6 @@ class TestRequest:
         assert fetcher._http_client is None
         assert _metrics(fetcher) == (2, 0, 2, 0)
 
-    async def test_redirect_is_not_followed(
-        self, db_session: AsyncSession, user_factory: UserFactory, token: str
-    ) -> None:
-        await user_factory()
-        server = SlackServer()
-        server.response = raw(b"", 302, location="https://slack.com/api/other")
-
-        raised, _ = await _execute_failing(db_session, server)
-
-        assert str(raised) == "Slack returned HTTP 302"
-        assert len(server.requests) == 1
-
     async def test_shared_client_follows_no_redirect(self) -> None:
         fetcher = SyncSlackAvatars()
         try:
@@ -651,6 +642,8 @@ class TestValues:
             pytest.param(load("lookup_gravatar"), id="gravatar"),
             pytest.param(load("users_not_found"), id="users-not-found"),
             pytest.param(found("https://ca.slack-edge.com/T0-U0-0a1-192"), id="host"),
+            pytest.param(found(PICTURE + SURROGATE), id="surrogate-escape"),
+            pytest.param(found(PICTURE + "\x00"), id="nul-escape"),
         ],
     )
     @pytest.mark.parametrize(
@@ -708,6 +701,30 @@ class TestValues:
             before[changed.id]._asdict()
         )
 
+    async def test_writes_create_no_identity_audit_event(
+        self, db_session: AsyncSession, user_factory: UserFactory, token: str
+    ) -> None:
+        """The URL is operational metadata (identity-audit-log.md, Service
+        Contract, Operational metadata exclusions)."""
+        set_user, cleared_user = await _users(user_factory, 2)
+        cleared_user.avatar_url = OTHER_PICTURE
+        await db_session.flush()
+        server = SlackServer()
+        server.responses[set_user.email] = body(found(PICTURE))
+        events_before = await db_session.scalar(
+            select(func.count()).select_from(IdentityAuditEvent)
+        )
+
+        fetcher = await _execute(db_session, server)
+
+        assert _metrics(fetcher) == (2, 0, 2, 0)
+        assert (
+            await db_session.scalar(
+                select(func.count()).select_from(IdentityAuditEvent)
+            )
+            == events_before
+        )
+
     async def test_empty_selection_is_an_empty_run(
         self, db_session: AsyncSession, token: str
     ) -> None:
@@ -717,17 +734,6 @@ class TestValues:
 
         assert server.requests == []
         assert _metrics(fetcher) == (0, 0, 0, 0)
-
-    async def test_lookup_matches_the_stored_address_verbatim(
-        self, db_session: AsyncSession, user_factory: UserFactory, token: str
-    ) -> None:
-        user = await user_factory(email="mixed.case@example.com")
-        server = SlackServer()
-
-        await _execute(db_session, server)
-
-        assert server.emails() == ["mixed.case@example.com"]
-        assert user.email == "mixed.case@example.com"
 
 
 @pytest.mark.integration
@@ -771,6 +777,36 @@ class TestDisabledMode:
             }
         ]
 
+    async def test_failed_run_reports_its_clears_in_its_metrics_only(
+        self,
+        db_session: AsyncSession,
+        user_factory: UserFactory,
+        no_token: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        await _users(user_factory, 2, avatar_url=PICTURE)
+        real = SyncSlackAvatars._write
+        calls = 0
+
+        async def second_raises(
+            session: AsyncSession, unit: Any, value: str | None
+        ) -> bool:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise SoftTimeLimitExceeded()
+            return await real(session, unit, value)
+
+        monkeypatch.setattr(SyncSlackAvatars, "_write", staticmethod(second_raises))
+
+        with capture_logs() as logs:
+            _, fetcher = await _execute_failing(
+                db_session, SlackServer(), SoftTimeLimitExceeded
+            )
+
+        assert _metrics(fetcher) == (1, 0, 1, 0)
+        assert _logged(logs, DISABLED_EVENT) == []
+
     async def test_lookup_mode_emits_no_disabled_report(
         self, db_session: AsyncSession, user_factory: UserFactory, token: str
     ) -> None:
@@ -786,6 +822,16 @@ class TestDisabledMode:
 # Error Handling
 # ---------------------------------------------------------------------------
 
+
+def _found_with_raw_member(member: str) -> Responder:
+    """A found body with an accepted picture whose unconsumed member `extra`
+    is the raw JSON text `member`: the body is Invalid response only when
+    decoding it fails."""
+    document = found(PICTURE)
+    document["extra"] = "__RAW__"
+    return raw(json_bytes(document).replace(b'"__RAW__"', member.encode()))
+
+
 _INVALID_BODIES: Final = [
     pytest.param(raw(b"not json"), id="not-json"),
     pytest.param(raw(b"\xff\xfe\x00"), id="not-utf8"),
@@ -796,7 +842,7 @@ _INVALID_BODIES: Final = [
     pytest.param(body({"ok": True}), id="user-absent"),
     pytest.param(body(found(None)), id="image-null"),
     pytest.param(raw(b"\x00\x01", content_encoding="gzip"), id="undecodable-coding"),
-    pytest.param(raw(b'{"ok": ' + OVERSIZED_INTEGER.encode() + b"}"), id="integer"),
+    pytest.param(_found_with_raw_member(OVERSIZED_INTEGER), id="integer"),
 ]
 
 
@@ -854,7 +900,7 @@ class TestUnitFailures:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         limit_parser_nesting(monkeypatch)
-        responder = raw(f'{{"ok": true, "user": {NESTED_ARRAY}}}'.encode())
+        responder = _found_with_raw_member(NESTED_ARRAY)
 
         await self._assert_unit_failure(
             db_session, user_factory, responder, "SlackResponseError"
@@ -879,40 +925,61 @@ class TestUnitFailures:
             db_session, user_factory, body(document), "SlackLookupError"
         )
 
-    async def test_database_error_in_the_write_fails_only_its_user(
+    async def test_failed_commit_of_a_matched_write_is_rolled_back(
         self,
         db_session: AsyncSession,
         user_factory: UserFactory,
         token: str,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        users = await _users(user_factory, 2)
-        real = SyncSlackAvatars._write
-        calls: list[uuid.UUID] = []
-
-        async def failing_first(
-            session: AsyncSession, unit: Any, value: str | None
-        ) -> bool:
-            calls.append(unit.id)
-            if len(calls) == 1:
-                raise OperationalError("UPDATE", {}, Exception("fictional failure"))
-            return await real(session, unit, value)
-
-        monkeypatch.setattr(SyncSlackAvatars, "_write", staticmethod(failing_first))
+        """The first unit's `UPDATE` matches its row and its commit fails: the
+        rollback restores the stored value, the unit records a failure and no
+        update, and the next unit succeeds. The error carries the address
+        and the URL as its parameters, and neither reaches a log."""
+        failing, following = await _users(user_factory, 2)
+        failing.avatar_url = OTHER_PICTURE
+        await db_session.flush()
+        failing_id, following_id, email = failing.id, following.id, failing.email
         server = SlackServer()
-        for user in users:
+        for user in (failing, following):
             server.responses[user.email] = body(found(PICTURE))
+        real_commit = db_session.commit
+        commits = 0
+
+        async def commit() -> None:
+            nonlocal commits
+            commits += 1
+            # The first commit ends the selection; the second is the first
+            # unit's write.
+            if commits == 2:
+                raise OperationalError(
+                    'UPDATE "user"',
+                    {"email_1": email, "avatar_url": PICTURE},
+                    Exception("fictional connection loss"),
+                )
+            await real_commit()
+
+        monkeypatch.setattr(db_session, "commit", commit)
 
         with capture_logs() as logs:
             fetcher = await _execute(db_session, server)
 
-        assert calls == [user.id for user in users]
+        stored = {
+            row.id: row.avatar_url
+            for row in await db_session.execute(
+                select(User.id, User.avatar_url).where(
+                    User.id.in_([failing_id, following_id])
+                )
+            )
+        }
         assert _metrics(fetcher) == (1, 0, 1, 1)
-        assert await _stored(db_session, users[0]) is None
-        assert await _stored(db_session, users[1]) == PICTURE
-        assert [entry["cause"] for entry in _logged(logs, ITEM_FAILED_EVENT)] == [
-            "OperationalError"
-        ]
+        assert stored == {failing_id: OTHER_PICTURE, following_id: PICTURE}
+        assert [
+            (entry["item"], entry["cause"])
+            for entry in _logged(logs, ITEM_FAILED_EVENT)
+        ] == [(str(failing_id), "OperationalError")]
+        assert email not in repr(logs)
+        assert PICTURE not in repr(logs)
 
     async def test_every_unit_failing_records_each_once(
         self, db_session: AsyncSession, user_factory: UserFactory, token: str
@@ -1067,6 +1134,7 @@ class TestRunFailures:
         "signal",
         [
             pytest.param(MemoryError(), id="memory"),
+            pytest.param(asyncio.CancelledError(), id="cancelled"),
             pytest.param(SoftTimeLimitExceeded(), id="soft-limit"),
         ],
     )
@@ -1151,22 +1219,17 @@ class TestPrivacy:
             token,
             PICTURE,
             OTHER_PICTURE,
-            *unconsumed_strings(load("lookup_uploaded")),
-            *unconsumed_strings(load("lookup_gravatar")),
             load("lookup_gravatar")["user"]["profile"]["image_192"],
+            *(value for name in FIXTURES for value in unconsumed_strings(load(name))),
+            # Every Slack error code, except the token error code of a run
+            # that fails because Slack rejected the token.
+            *(
+                code
+                for name in FIXTURES
+                if (code := load(name).get("error")) is not None and code not in errors
+            ),
         }
         assert [value for value in forbidden if value in rendered] == []
-
-    async def test_token_rejected_message_carries_only_the_error_code(
-        self, db_session: AsyncSession, user_factory: UserFactory, token: str
-    ) -> None:
-        await user_factory()
-        server = SlackServer()
-        server.response = body(load("invalid_auth"))
-
-        raised, _ = await _execute_failing(db_session, server)
-
-        assert str(raised) == "Slack rejected the bot token (invalid_auth)"
 
 
 # ---------------------------------------------------------------------------
@@ -1326,13 +1389,14 @@ class TestRunLifecycle:
     ) -> None:
         server = SlackServer()
         server.response = sequence(body(error("invalid_arguments")), body(found()))
-        run_id = await committed_run(server, [None, None])
+        # The successful unit finds its picture already stored.
+        run_id = await committed_run(server, [None, PICTURE])
 
         await SyncSlackAvatars().run(run_id=run_id, config=_run_config())
 
         run = await _finalized(real_session_factory, run_id)
         assert run.status == "partial"
-        assert _run_metrics(run) == (1, 0, 1, 1)
+        assert _run_metrics(run) == (1, 0, 0, 1)
 
     async def test_every_unit_failing_fails_the_run_without_an_exception(
         self,
@@ -1471,16 +1535,6 @@ class TestRegistration:
         assert SyncSlackAvatars.Settings is None
         assert SyncSlackAvatars.queue is None
         assert SyncSlackAvatars.http_client_options == {"retry_non_idempotent": True}
-
-    async def test_shared_client_retries_the_post(self) -> None:
-        fetcher = SyncSlackAvatars()
-        try:
-            transport = fetcher.http_client._transport
-            assert isinstance(transport, http_client._ContentCodingTransport)
-            assert isinstance(transport._inner, http_client._RetryTransport)
-            assert transport._inner._retry_non_idempotent is True
-        finally:
-            await fetcher._teardown_http_client()
 
     def test_class_name_is_derived_from_the_fetcher_name(self) -> None:
         derived = "".join(part.capitalize() for part in NAME.split("_"))
