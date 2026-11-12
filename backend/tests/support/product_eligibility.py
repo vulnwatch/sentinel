@@ -120,6 +120,7 @@ def setter_profile(user: User) -> PackageUserProjection:
         full_name=user.full_name,
         active=user.active,
         bot=user.bot,
+        avatar_url=user.avatar_url,
     )
 
 

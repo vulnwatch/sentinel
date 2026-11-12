@@ -77,6 +77,7 @@ def _serialize_actor(actor: TicketEventActor) -> UserReference:
         full_name=actor.full_name,
         active=actor.active,
         bot=actor.bot,
+        avatar_url=actor.avatar_url,
     )
 
 

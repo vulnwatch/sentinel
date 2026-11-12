@@ -343,6 +343,7 @@ def _serialize_directory_entry(user: User) -> UserDirectoryData:
         full_name=user.full_name,
         active=user.active,
         bot=user.bot,
+        avatar_url=user.avatar_url,
         roles=sorted({role_to_wire(Role(user_role.role)) for user_role in user.roles}),
         assignment_eligibility=_assignment_eligibility_of(user),
     )
@@ -366,6 +367,7 @@ def _serialize_user(user: User) -> UserData:
             full_name=user.manager.full_name,
             active=user.manager.active,
             bot=user.manager.bot,
+            avatar_url=user.manager.avatar_url,
             email=user.manager.email,
         )
 
@@ -398,6 +400,7 @@ def _serialize_user(user: User) -> UserData:
         full_name=user.full_name,
         active=user.active,
         bot=user.bot,
+        avatar_url=user.avatar_url,
         source=UserType.EXTERNAL if user.external_id is not None else UserType.LOCAL,
         external_id=user.external_id,
         manager=manager,
@@ -507,6 +510,7 @@ async def get_current_user_profile(
             capabilities=sorted(get_capabilities(roles)),
             active=principal.user.active,
             bot=principal.user.bot,
+            avatar_url=principal.user.avatar_url,
             assignment_eligibility=derive_assignment_eligibility(
                 active=principal.user.active, bot=principal.user.bot, roles=roles
             ),

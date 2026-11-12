@@ -235,6 +235,7 @@ class TestListMyApiKeys:
             "full_name": "Fictional Admin",
             "active": True,
             "bot": False,
+            "avatar_url": None,
         }
 
     async def test_non_revoked_key_has_null_revoked_by(

@@ -177,6 +177,7 @@ def _make_manager_kwargs(**overrides: object) -> dict[str, object]:
         "full_name": "Bob Wilson",
         "active": True,
         "bot": False,
+        "avatar_url": None,
         "email": "bwilson@example.com",
     }
     defaults.update(overrides)
@@ -193,6 +194,7 @@ def _make_role_assignment_kwargs(**overrides: object) -> dict[str, object]:
             full_name="Alice Smith",
             active=True,
             bot=False,
+            avatar_url=None,
         ),
         "created_at": datetime(2026, 5, 1, tzinfo=UTC),
     }
@@ -208,6 +210,7 @@ def _make_user_data_kwargs(**overrides: object) -> dict[str, object]:
         "full_name": "John Doe",
         "active": True,
         "bot": False,
+        "avatar_url": None,
         "source": "local",
         "external_id": None,
         "manager": None,
@@ -229,6 +232,7 @@ def _make_directory_kwargs(**overrides: object) -> dict[str, object]:
         "full_name": "John Doe",
         "active": True,
         "bot": False,
+        "avatar_url": None,
         "roles": ["admin"],
         "assignment_eligibility": AssignmentEligibility.NONE,
     }
@@ -249,6 +253,7 @@ class TestUserDirectoryData:
             "full_name",
             "active",
             "bot",
+            "avatar_url",
             "roles",
             "assignment_eligibility",
         }

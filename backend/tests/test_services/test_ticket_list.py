@@ -254,6 +254,7 @@ class TestSummaryProjection:
                     full_name="Fictional Lead",
                     active=True,
                     bot=False,
+                    avatar_url=None,
                 ),
                 priority_override_at=OVERRIDE_SET_AT,
                 priority_basis=PriorityBasisProjection(
@@ -271,6 +272,7 @@ class TestSummaryProjection:
                     full_name=None,
                     active=False,
                     bot=True,
+                    avatar_url=None,
                 ),
                 cve=CVESummaryProjection(
                     cve_id="CVE-2099-40001",

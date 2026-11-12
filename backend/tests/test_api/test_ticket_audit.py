@@ -166,6 +166,7 @@ class TestListTicketEventsEndpoint:
                     "full_name": "Fictional Analyst",
                     "active": False,
                     "bot": True,
+                    "avatar_url": None,
                 },
             },
             {
@@ -217,6 +218,7 @@ class TestListTicketEventsEndpoint:
             "full_name": "Fictional Admin",
             "active": True,
             "bot": False,
+            "avatar_url": None,
         }
 
     async def test_filters_are_forwarded(

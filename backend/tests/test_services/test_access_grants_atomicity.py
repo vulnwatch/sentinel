@@ -1264,6 +1264,7 @@ class TestListingVisibilityRaces:
                 full_name=None,
                 active=True,
                 bot=False,
+                avatar_url=None,
             )
 
         assert listed == [

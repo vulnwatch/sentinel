@@ -503,6 +503,7 @@ class TicketEventActor:
     full_name: str | None
     active: bool
     bot: bool
+    avatar_url: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -653,6 +654,7 @@ async def list_ticket_events(
             actor_user.full_name.label("actor_full_name"),
             actor_user.active.label("actor_active"),
             actor_user.bot.label("actor_bot"),
+            actor_user.avatar_url.label("actor_avatar_url"),
         )
         .select_from(parent)
         .join(total, true())
@@ -682,6 +684,7 @@ async def list_ticket_events(
                     full_name=row.actor_full_name,
                     active=row.actor_active,
                     bot=row.actor_bot,
+                    avatar_url=row.actor_avatar_url,
                 )
                 if row.actor_id is not None
                 else None
@@ -747,6 +750,7 @@ async def list_ticket_actors(
             actor_user.full_name.label("actor_full_name"),
             actor_user.active.label("actor_active"),
             actor_user.bot.label("actor_bot"),
+            actor_user.avatar_url.label("actor_avatar_url"),
         )
         .select_from(parent)
         .outerjoin(actor_ids, true())
@@ -764,6 +768,7 @@ async def list_ticket_actors(
             full_name=row.actor_full_name,
             active=row.actor_active,
             bot=row.actor_bot,
+            avatar_url=row.actor_avatar_url,
         )
         for row in rows
         if row.actor_id is not None

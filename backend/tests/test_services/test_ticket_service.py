@@ -743,6 +743,7 @@ class TestDetailProjection:
             full_name="Renamed Analyst",
             active=True,
             bot=False,
+            avatar_url=None,
         )
         assert second.assignee == TicketUserProjection(
             id=inactive.id,
@@ -750,6 +751,7 @@ class TestDetailProjection:
             full_name=None,
             active=False,
             bot=False,
+            avatar_url=None,
         )
 
     async def test_inaccessible_duplicate_target_exposes_only_its_identifier(

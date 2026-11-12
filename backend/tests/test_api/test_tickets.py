@@ -296,6 +296,7 @@ class TestGetTicketEndpoint:
                 "full_name": "Fictional Lead",
                 "active": False,
                 "bot": False,
+                "avatar_url": None,
             },
             "priority_override_at": "2026-03-10T15:30:00Z",
             "priority_automatic_basis": {
@@ -309,6 +310,7 @@ class TestGetTicketEndpoint:
                 "full_name": "Fictional Analyst",
                 "active": True,
                 "bot": False,
+                "avatar_url": None,
             },
             "cve": {
                 "cve_id": "CVE-2099-50001",
@@ -526,6 +528,7 @@ class TestTicketAccessibility:
                     "full_name": authenticated_user.full_name,
                     "active": True,
                     "bot": False,
+                    "avatar_url": None,
                 }
             ]
             if branch == "maintainer"

@@ -199,6 +199,7 @@ class TestListEndpoint:
                 "full_name": "Fictional Analyst",
                 "active": True,
                 "bot": True,
+                "avatar_url": None,
             },
             "cve": {
                 "cve_id": "CVE-2099-50001",
@@ -937,6 +938,7 @@ class TestSerializer:
                     full_name="Fictional Lead",
                     active=True,
                     bot=True,
+                    avatar_url=None,
                 ),
                 priority_override_at=_UPDATED_AT,
                 priority_basis=PriorityBasisProjection(
@@ -954,6 +956,7 @@ class TestSerializer:
                     full_name=None,
                     active=False,
                     bot=False,
+                    avatar_url=None,
                 ),
                 cve=CVESummaryProjection(
                     cve_id="CVE-2099-1",
@@ -990,6 +993,7 @@ class TestSerializer:
             "full_name": "Fictional Lead",
             "active": True,
             "bot": True,
+            "avatar_url": None,
         }
         assert serialized.priority_override_at == _UPDATED_AT
         assert serialized.priority_automatic_basis.model_dump(mode="json") == {

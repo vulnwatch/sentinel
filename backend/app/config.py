@@ -86,7 +86,7 @@ def _validate_https_api_prefix(value: str, variable: str) -> str:
 _HEADER_VALUE = re.compile(r"[\x21-\x7e]*")
 """Printable ASCII without whitespace; empty means "not configured"."""
 
-_HEADER_SECRET_FIELDS = ("nvd_api_key", "github_token")
+_HEADER_SECRET_FIELDS = ("nvd_api_key", "github_token", "slack_bot_token")
 """Secret settings sent verbatim as an HTTP header value
 (docs/conventions.md, Secret Field Typing)."""
 
@@ -162,6 +162,10 @@ class Settings(BaseSettings):
 
     # GitHub Advisory Database (sync_ghsa_advisories)
     github_token: SecretStr = SecretStr("")
+
+    # Slack bot token (sync_slack_avatars); empty disables the integration
+    # (docs/features/identity/user-avatars.md, Slack App and Bot Token)
+    slack_bot_token: SecretStr = SecretStr("")
 
     # Git-based fetchers
     git_clone_base_dir: str = "/var/lib/sentinel/git"

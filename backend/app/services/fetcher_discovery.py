@@ -17,6 +17,7 @@ must use the plain `import app.services.<domain>.<module>` form.
 
 from __future__ import annotations
 
+import app.services.identity.sync_slack_avatars
 import app.services.packages.detect_ibs_product_releases
 import app.services.packages.detect_ibs_track_releases
 import app.services.packages.evaluate_lifecycle_transitions

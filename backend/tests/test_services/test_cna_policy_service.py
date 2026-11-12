@@ -597,6 +597,7 @@ class TestListCnaAuditEvents:
             full_name="Fictional Admin",
             active=False,
             bot=True,
+            avatar_url=None,
         )
         assert newest.created_at is not None
 

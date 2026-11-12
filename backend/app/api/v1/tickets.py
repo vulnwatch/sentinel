@@ -1901,6 +1901,7 @@ def serialize_access_grant(
             full_name=grant.user.full_name,
             active=grant.user.active,
             bot=grant.user.bot,
+            avatar_url=grant.user.avatar_url,
         ),
         granted_at=grant.granted_at,
         granted_by=UserReference(
@@ -1909,6 +1910,7 @@ def serialize_access_grant(
             full_name=grant.granted_by.full_name,
             active=grant.granted_by.active,
             bot=grant.granted_by.bot,
+            avatar_url=grant.granted_by.avatar_url,
         ),
     )
 

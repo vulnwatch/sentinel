@@ -31,6 +31,7 @@ def _make_actor(**overrides: object) -> UserReference:
         "full_name": "Alice Smith",
         "active": True,
         "bot": False,
+        "avatar_url": None,
     }
     defaults.update(overrides)
     return UserReference(**defaults)

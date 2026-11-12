@@ -59,10 +59,10 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    # Not an authorization input; the only business rule that reads it is
-    # assignment eligibility: a bot account is never a Ticket assignee
-    # (docs/features/identity/rbac.md, Business Rule 10;
-    # docs/features/identity/user-management.md, Bot Accounts).
+    # Not an authorization input; it has two effects: a bot account is
+    # never a Ticket assignee (docs/features/identity/rbac.md, Business
+    # Rule 10), and it has no picture, so its `avatar_url` is NULL
+    # (docs/features/identity/user-management.md, Bot Accounts).
     bot: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
     )
@@ -79,6 +79,11 @@ class User(Base):
     last_login_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Operational metadata: the URL of the user's picture, NULL for every
+    # inactive user and bot account. Written only by `sync_slack_avatars`,
+    # `deactivate_user()`, and `update_user()`
+    # (docs/features/identity/user-avatars.md, Invariants and Writers).
+    avatar_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

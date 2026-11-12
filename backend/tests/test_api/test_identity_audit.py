@@ -224,6 +224,7 @@ class TestListMyIdentityAuditEvents:
             "full_name": authenticated_user.full_name,
             "active": True,
             "bot": False,
+            "avatar_url": None,
         }
 
     async def test_administrator_action_names_the_administrator_to_a_roleless_caller(
@@ -256,6 +257,7 @@ class TestListMyIdentityAuditEvents:
             "full_name": "Fictional Admin",
             "active": False,
             "bot": False,
+            "avatar_url": None,
         }
 
     async def test_null_target_events_are_excluded(

@@ -1112,8 +1112,11 @@ async def update_user(
     None` always, per the intrinsically system-only contract in
     `docs/features/identity/identity-audit-log.md`; `old_value`/`new_value`
     are the previous/new manager's username, resolved via `_resolve_username()`,
-    or `None`). Returns `UserUpdateResult` whose `user` carries `roles` and
-    `manager` eagerly loaded.
+    or `None`). An effective change of `email`, or of `bot` to `true`, also
+    clears `avatar_url` in the same flush, without a changed field or an
+    audit event (user-avatars.md, Invariants and Writers). Returns
+    `UserUpdateResult` whose `user` carries `roles` and `manager` eagerly
+    loaded.
 
     Q4: creates one event per effectively changed field among
     `username_changed`, `email_changed`, `full_name_changed`, `bot_changed`,
@@ -1296,6 +1299,13 @@ async def update_user(
             if pending_synced_at is not MISSING:
                 user.synced_at = pending_synced_at
                 changed_fields.append("synced_at")
+
+            # The picture URL was looked up with the previous address, and a
+            # bot account has no picture. The clear is operational metadata:
+            # no changed field and no audit event
+            # (docs/features/identity/user-avatars.md, Invariants and Writers).
+            if pending_email is not MISSING or pending_bot is True:
+                user.avatar_url = None
 
             await session.flush()
     except IntegrityError as exc:
@@ -1705,8 +1715,10 @@ async def deactivate_user(
     target, in this fixed order: revokes every non-revoked API key,
     including expired keys (`api_key_service.revoke_all_user_keys()`);
     invalidates every active Session (`session_service`, reason
-    `deactivation`); sets `User.active = False`; unassigns active-status
-    Tickets via `_unassign_active_tickets(..., "user deactivated")`; creates
+    `deactivation`); sets `User.active = False` and clears `avatar_url`
+    without an audit event (user-avatars.md, Invariants and Writers);
+    unassigns active-status Tickets via
+    `_unassign_active_tickets(..., "user deactivated")`; creates
     `user_deactivated`; flushes. Never mutates a `TicketAccessGrant` or
     `TicketPackageMaintainer` row, commits, rolls back, or performs Redis
     I/O — the workflow owner purges the session cache after its commit.
@@ -1760,6 +1772,7 @@ async def deactivate_user(
         session, user.id, SessionInvalidationReason.DEACTIVATION
     )
     user.active = False
+    user.avatar_url = None
     await _unassign_active_tickets(session, user, "user deactivated")
 
     detail: dict[str, str] = {"reason": reason}

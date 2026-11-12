@@ -1425,6 +1425,7 @@ class TestUsers:
         ) -> tuple[
             dict[str, tuple[str | None, str, bool, bool, str | None, uuid.UUID | None]],
             set[tuple[str, str, str, str | None]],
+            dict[str, str | None],
         ]:
             names = await usernames(db)
             users = {
@@ -1447,9 +1448,12 @@ class TestUsers:
                 )
                 for role in (await db.scalars(select(UserRole))).all()
             }
-            return users, roles
+            # No dataset user has a picture (example-dataset.md, Users).
+            rows = await db.execute(select(User.username, User.avatar_url))
+            pictures: dict[str, str | None] = dict(rows.all())
+            return users, roles, pictures
 
-        users, roles = read(loaded.url, reader)
+        users, roles, pictures = read(loaded.url, reader)
 
         assert {
             name: (full_name, email, active, bot)
@@ -1464,6 +1468,7 @@ class TestUsers:
             for role in user_roles
         }
         assert not any(name in {"dbrown", "ghill"} for name, *_ in roles)
+        assert pictures == dict.fromkeys(USERS)
         for name, (_, _, _, _, password_hash, external_id) in users.items():
             assert external_id is None, name
             assert password_hash is not None, name

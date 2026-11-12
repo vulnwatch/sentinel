@@ -97,6 +97,7 @@ class TestCurrentUserData:
             "capabilities": [Capability.MANAGE_USERS],
             "active": True,
             "bot": False,
+            "avatar_url": None,
             "assignment_eligibility": AssignmentEligibility.NONE,
         }
         defaults.update(overrides)
@@ -139,6 +140,7 @@ class TestCurrentUserData:
             "capabilities",
             "active",
             "bot",
+            "avatar_url",
             "assignment_eligibility",
         }
 
@@ -155,6 +157,7 @@ class TestCurrentUserResponse:
             capabilities=[Capability.MANAGE_USERS],
             active=True,
             bot=False,
+            avatar_url=None,
             assignment_eligibility=AssignmentEligibility.NONE,
         )
         response = CurrentUserResponse(data=data)

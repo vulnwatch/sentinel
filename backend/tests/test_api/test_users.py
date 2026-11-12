@@ -222,6 +222,7 @@ _DIRECTORY_ENTRY_FIELDS = {
     "full_name",
     "active",
     "bot",
+    "avatar_url",
     "roles",
     "assignment_eligibility",
 }
@@ -233,6 +234,7 @@ _COMPLETE_PROFILE_FIELDS = {
     "full_name",
     "active",
     "bot",
+    "avatar_url",
     "source",
     "external_id",
     "manager",
@@ -768,6 +770,7 @@ class TestGetUser:
             "full_name": None,
             "active": True,
             "bot": False,
+            "avatar_url": None,
             "roles": ["admin", "vulnerability_analyst"],
             "assignment_eligibility": "all",
         }
@@ -1242,6 +1245,7 @@ class TestGetUserAdmin:
             "full_name": manager.full_name,
             "active": True,
             "bot": False,
+            "avatar_url": None,
             "email": manager.email,
         }
         assert data["roles"] == [
@@ -1260,6 +1264,7 @@ class TestGetUserAdmin:
                     "full_name": "Fictional Assigner",
                     "active": False,
                     "bot": True,
+                    "avatar_url": None,
                 },
                 "created_at": data["roles"][1]["created_at"],
             },
@@ -1460,6 +1465,7 @@ class TestGetCurrentUserProfile:
             "capabilities",
             "active",
             "bot",
+            "avatar_url",
             "assignment_eligibility",
         }
 
@@ -1863,6 +1869,7 @@ class TestCreateUserAdmin:
                 "full_name": admin.full_name,
                 "active": True,
                 "bot": False,
+                "avatar_url": None,
             }
             for entry in response.json()["data"]["roles"]
         )
@@ -3859,6 +3866,32 @@ def test_user_representation_declares_bot_as_a_required_boolean(
     schema = fastapi_app.openapi()["components"]["schemas"][schema_name]
     assert schema["properties"]["bot"]["type"] == "boolean"
     assert "bot" in schema["required"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "schema_name",
+    [
+        "UserReference",
+        "UserDirectoryData",
+        "UserData",
+        "UserManagerData",
+        "CurrentUserData",
+    ],
+)
+def test_user_representation_declares_avatar_url_as_a_required_nullable_string(
+    schema_name: str,
+) -> None:
+    """Every user representation carries the picture URL as a required,
+    nullable string without a `format`
+    (`docs/features/identity/user-avatars.md`, Field)."""
+    from app.main import app as fastapi_app
+
+    schema = fastapi_app.openapi()["components"]["schemas"][schema_name]
+    avatar_url = schema["properties"]["avatar_url"]
+    assert avatar_url["anyOf"] == [{"type": "string"}, {"type": "null"}]
+    assert "format" not in avatar_url
+    assert "avatar_url" in schema["required"]
 
 
 @pytest.mark.unit

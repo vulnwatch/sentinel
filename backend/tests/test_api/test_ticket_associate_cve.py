@@ -1266,9 +1266,9 @@ def _placeholder_cve(cve_id: str) -> dict[str, Any]:
 async def _user_reference(db: AsyncSession, user_id: uuid.UUID) -> dict[str, Any]:
     row = (
         await db.execute(
-            select(User.username, User.full_name, User.active, User.bot).where(
-                User.id == user_id
-            )
+            select(
+                User.username, User.full_name, User.active, User.bot, User.avatar_url
+            ).where(User.id == user_id)
         )
     ).one()
     return {
@@ -1277,6 +1277,7 @@ async def _user_reference(db: AsyncSession, user_id: uuid.UUID) -> dict[str, Any
         "full_name": row.full_name,
         "active": row.active,
         "bot": row.bot,
+        "avatar_url": row.avatar_url,
     }
 
 

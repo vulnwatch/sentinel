@@ -24,7 +24,12 @@ from app.core.enums import (
 )
 from app.core.passwords import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
 from app.core.usernames import RESERVED_USERNAMES, USERNAME_PATTERN
-from app.schemas.common import PaginationMeta, RoleValue, UserReference
+from app.schemas.common import (
+    AVATAR_URL_DESCRIPTION,
+    PaginationMeta,
+    RoleValue,
+    UserReference,
+)
 
 _PASSWORD_DESCRIPTION = (
     f"{MIN_PASSWORD_LENGTH}-{MAX_PASSWORD_LENGTH} characters; no complexity "
@@ -116,6 +121,7 @@ class UserDirectoryData(BaseModel):
     full_name: str | None
     active: bool
     bot: bool
+    avatar_url: str | None = Field(description=AVATAR_URL_DESCRIPTION)
     roles: list[RoleValue]
     assignment_eligibility: AssignmentEligibility
 
@@ -143,6 +149,7 @@ class UserManagerData(BaseModel):
     full_name: str | None
     active: bool
     bot: bool
+    avatar_url: str | None = Field(description=AVATAR_URL_DESCRIPTION)
     email: str
 
 
@@ -175,6 +182,7 @@ class UserData(BaseModel):
     full_name: str | None
     active: bool
     bot: bool
+    avatar_url: str | None = Field(description=AVATAR_URL_DESCRIPTION)
     source: UserType
     external_id: UUID | None
     manager: UserManagerData | None

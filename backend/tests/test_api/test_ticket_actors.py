@@ -56,6 +56,7 @@ def _reference(user: User) -> dict[str, Any]:
         "full_name": user.full_name,
         "active": user.active,
         "bot": user.bot,
+        "avatar_url": user.avatar_url,
     }
 
 
@@ -146,6 +147,7 @@ class TestListTicketActorsEndpoint:
                     "full_name": "Fictional Analyst",
                     "active": True,
                     "bot": False,
+                    "avatar_url": None,
                 },
                 {
                     "id": str(scanner.id),
@@ -153,6 +155,7 @@ class TestListTicketActorsEndpoint:
                     "full_name": None,
                     "active": False,
                     "bot": True,
+                    "avatar_url": None,
                 },
             ]
         }
