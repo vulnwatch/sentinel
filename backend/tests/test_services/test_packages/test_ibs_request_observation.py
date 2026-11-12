@@ -1794,19 +1794,58 @@ class TestReleaseScan:
             False,
         )
 
-    async def test_matching_action_of_open_request_is_contradictory(
+    @pytest.mark.parametrize(
+        "state", [state for state in IBSRequestState if state is not ACCEPTED]
+    )
+    async def test_entry_of_a_request_that_is_not_accepted_is_skipped(
+        self, fake: FakeRequests, package: str, state: IBSRequestState
+    ) -> None:
+        """A failed acceptance leaves the commit of a release request that
+        is not accepted, typically followed by a revert without a request
+        number. The entry proves nothing: the scan requires no diff of it,
+        does not stop at its action without acceptinfo, and proves the
+        older release."""
+        older = accepted_release(package)
+        failed = accepted_release(package, acceptinfo=False)
+        fake.request(
+            failed.number,
+            state,
+            failed.action,
+            superseded_by=next_number() if state is SUPERSEDED else None,
+        )
+        serve_release(fake, package, older, cve_issue(TICKET_CVE))
+        fake.release_evidence(CODESTREAM, package, cve_issue(TICKET_CVE))
+        codestream_history(fake, package, older.number, failed.number, None)
+
+        observation = await observe(fake, scope(package=package))
+
+        assert observation == proven(package, older)
+        assert detail_numbers(fake) == [failed.number, older.number]
+        assert action_diff_paths(fake) == [
+            f"/source/{CODESTREAM}/{older.target_package}"
+        ]
+        assert not searched(fake)
+
+    async def test_unresolved_action_of_a_request_that_is_not_accepted_is_incomplete(
         self, fake: FakeRequests, package: str
     ) -> None:
-        rr = accepted_release(package, acceptinfo=False)
-        fake.request(rr.number, REVIEW, rr.action)
+        """The actions of an entry are classified before its request state
+        is considered, so an unresolved release action makes the
+        observation incomplete whatever the state."""
+        number, incident = next_number(), next_incident()
+        fake.request(
+            number,
+            IBSRequestState.REVOKED,
+            release(package, incident, target_package=f"{package}.{incident + 1}"),
+        )
         fake.release_evidence(CODESTREAM, package, cve_issue(TICKET_CVE))
-        codestream_history(fake, package, rr.number)
+        codestream_history(fake, package, number, None)
 
         exc = await unusable(fake, scope(package=package))
 
         assert (exc.reason_category, exc.request_number) == (
-            "contradictory_evidence",
-            rr.number,
+            "unresolved_action",
+            number,
         )
         assert action_diff_paths(fake) == []
 

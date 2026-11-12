@@ -481,10 +481,12 @@ repositories.
     request by Sentinel's own IBS client;
   - on 2026-10-13, the request operations as currently specified, including
     the request action diff forms compared with the request diff and the
-    unpaged source history with exact lookups; and
+    unpaged source history with exact lookups;
   - on 2026-10-14, the request naming, incident identity, codestream-history
     composition, release provenance, and release actions without acceptinfo
-    used by submission tracking.
+    used by submission tracking; and
+  - on 2026-11-12, codestream-history entries of release requests that are
+    not accepted, left by failed acceptances.
 
   Verified shapes, fields verified only through OBS source inspection, and
   the remaining unverified details of the track-release, authentication, and

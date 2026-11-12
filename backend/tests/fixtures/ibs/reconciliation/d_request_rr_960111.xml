@@ -1,0 +1,153 @@
+<request id="960111">
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="PackageKit.SUSE_SLE-15-SP4_Update" rev="95febd7e62a07873e77bd4937ec40be4" />
+    <target project="SUSE:SLE-15-SP4:Update" package="PackageKit.81119" />
+    <acceptinfo rev="1" srcmd5="40fd23f26fe00b5c39639f43ca028660" osrcmd5="40fd23f26fe00b5c39639f43ca028660" oxsrcmd5="40fd23f26fe00b5c39639f43ca028660" oproject="SUSE:SLE-15-SP4:Update" opackage="PackageKit.81117" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="libzypp.SUSE_SLE-15-SP4_Update" rev="ae8492cfbf7aba95e2b1f5b83549bd36" />
+    <target project="SUSE:SLE-15-SP4:Update" package="libzypp.81119" />
+    <acceptinfo rev="1" srcmd5="4636f66d007cff299f14f77149f70e09" osrcmd5="490bb253a7fac03b0bbefb69cf77653d" oxsrcmd5="490bb253a7fac03b0bbefb69cf77653d" oproject="SUSE:SLE-15-SP4:Update" opackage="libzypp.81118" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="zypper.SUSE_SLE-15-SP4_Update" rev="94cc132a3ae4bba176d0fd030fe166b7" />
+    <target project="SUSE:SLE-15-SP4:Update" package="zypper.81119" />
+    <acceptinfo rev="1" srcmd5="1a4d6056ff3a7eef69304f5c5757e36c" osrcmd5="c6f8a91f8be16570696439d7281a441b" oxsrcmd5="c6f8a91f8be16570696439d7281a441b" oproject="SUSE:SLE-15-SP4:Update" opackage="zypper.81118" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:SLE-15-SP4:Update" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SLES:15-SP4-TERADATA:x86_64" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Micro:5.3:aarch64" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Micro:5.3:s390x" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Micro:5.3:x86_64" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Micro:5.4:aarch64" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Micro:5.4:s390x" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Micro:5.4:x86_64" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-INSTALLER:15-SP4:aarch64" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-INSTALLER:15-SP4:ppc64le" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-INSTALLER:15-SP4:s390x" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-INSTALLER:15-SP4:x86_64" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-HPC:15-SP4-ESPOS:aarch64" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-HPC:15-SP4-ESPOS:x86_64" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-HPC:15-SP4-LTSS:aarch64" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-HPC:15-SP4-LTSS:x86_64" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SLES:15-SP4-LTSS:aarch64" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SLES:15-SP4-LTSS:ppc64le" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SLES:15-SP4-LTSS:s390x" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SLES:15-SP4-LTSS:x86_64" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SLES_SAP:15-SP4:ppc64le" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SLES_SAP:15-SP4:x86_64" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SUSE-Manager-Proxy:4.3-LTS:x86_64" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SUSE-Manager-Retail-Branch-Server:4.3-LTS:x86_64" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SUSE-Manager-Server:4.3-LTS:ppc64le" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SUSE-Manager-Server:4.3-LTS:s390x" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81119" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Product-SUSE-Manager-Server:4.3-LTS:x86_64" package="patchinfo.81119" />
+    <acceptinfo rev="1" srcmd5="9e9914a471ce0071c01aea367c8a4e07" osrcmd5="93f3bf1a44bb559e746277186a74de72" />
+  </action>
+  <state name="accepted" created="2025-09-26T10:21:41" when="2025-10-13T13:35:51" />
+</request>
