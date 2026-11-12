@@ -209,6 +209,7 @@ class PackageUserProjection:
     full_name: str | None
     active: bool
     bot: bool
+    avatar_url: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,6 +329,8 @@ def _user_json(user: type[User] | AliasedClass[User]) -> ColumnElement[Any]:
         user.active,
         _key("bot"),
         user.bot,
+        _key("avatar_url"),
+        user.avatar_url,
     )
 
 
@@ -549,6 +552,7 @@ def _user(raw: Mapping[str, Any]) -> PackageUserProjection:
         full_name=raw["full_name"],
         active=raw["active"],
         bot=raw["bot"],
+        avatar_url=raw["avatar_url"],
     )
 
 

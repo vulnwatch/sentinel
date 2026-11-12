@@ -228,6 +228,7 @@ class TicketUserProjection:
     full_name: str | None
     active: bool
     bot: bool
+    avatar_url: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -399,6 +400,7 @@ def _detail_statement(evaluation_date: date) -> Select[*tuple[Any, ...]]:
             _ASSIGNEE.full_name.label("assignee_full_name"),
             _ASSIGNEE.active.label("assignee_active"),
             _ASSIGNEE.bot.label("assignee_bot"),
+            _ASSIGNEE.avatar_url.label("assignee_avatar_url"),
             _DUPLICATE_TARGET.sequence_id.label("duplicate_sequence_id"),
             *cve_detail_columns(),
             *package_service.ticket_tree_context_columns(),
@@ -440,6 +442,7 @@ def _override_provenance_columns(setter: Any) -> tuple[ColumnElement[Any], ...]:
         setter.full_name.label("override_by_full_name"),
         setter.active.label("override_by_active"),
         setter.bot.label("override_by_bot"),
+        setter.avatar_url.label("override_by_avatar_url"),
     )
 
 
@@ -454,6 +457,7 @@ def _override_setter(row: Row[*tuple[Any, ...]]) -> TicketUserProjection | None:
         full_name=row.override_by_full_name,
         active=row.override_by_active,
         bot=row.override_by_bot,
+        avatar_url=row.override_by_avatar_url,
     )
 
 
@@ -505,6 +509,7 @@ def _project(
             full_name=row.assignee_full_name,
             active=row.assignee_active,
             bot=row.assignee_bot,
+            avatar_url=row.assignee_avatar_url,
         )
         if row.assignee_id is not None
         else None
@@ -1078,6 +1083,7 @@ def _summary(row: Row[*tuple[Any, ...]]) -> TicketSummaryProjection:
                 full_name=row.assignee_full_name,
                 active=row.assignee_active,
                 bot=row.assignee_bot,
+                avatar_url=row.assignee_avatar_url,
             )
             if row.assignee_id is not None
             else None
@@ -1413,6 +1419,7 @@ async def list_tickets(
             _LIST_ASSIGNEE.full_name.label("assignee_full_name"),
             _LIST_ASSIGNEE.active.label("assignee_active"),
             _LIST_ASSIGNEE.bot.label("assignee_bot"),
+            _LIST_ASSIGNEE.avatar_url.label("assignee_avatar_url"),
             _LIST_DUPLICATE_TARGET.sequence_id.label("duplicate_sequence_id"),
             CVE.cve_id.label("cve_id"),
             CVE.title.label("cve_title"),
@@ -3340,6 +3347,7 @@ def _user_projection(user: User) -> TicketUserProjection:
         full_name=user.full_name,
         active=user.active,
         bot=user.bot,
+        avatar_url=user.avatar_url,
     )
 
 
@@ -3585,11 +3593,13 @@ async def list_access_grants(
             _GRANT_TARGET.full_name.label("target_full_name"),
             _GRANT_TARGET.active.label("target_active"),
             _GRANT_TARGET.bot.label("target_bot"),
+            _GRANT_TARGET.avatar_url.label("target_avatar_url"),
             _GRANT_GRANTOR.id.label("grantor_id"),
             _GRANT_GRANTOR.username.label("grantor_username"),
             _GRANT_GRANTOR.full_name.label("grantor_full_name"),
             _GRANT_GRANTOR.active.label("grantor_active"),
             _GRANT_GRANTOR.bot.label("grantor_bot"),
+            _GRANT_GRANTOR.avatar_url.label("grantor_avatar_url"),
         )
         .select_from(Ticket)
         .outerjoin(_LISTED_GRANT, _LISTED_GRANT.ticket_id == Ticket.id)
@@ -3611,6 +3621,7 @@ async def list_access_grants(
                 full_name=row.target_full_name,
                 active=row.target_active,
                 bot=row.target_bot,
+                avatar_url=row.target_avatar_url,
             ),
             granted_at=row.granted_at,
             granted_by=TicketUserProjection(
@@ -3619,6 +3630,7 @@ async def list_access_grants(
                 full_name=row.grantor_full_name,
                 active=row.grantor_active,
                 bot=row.grantor_bot,
+                avatar_url=row.grantor_avatar_url,
             ),
         )
         for row in rows

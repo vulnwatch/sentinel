@@ -233,6 +233,7 @@ class TestListSettingAuditEvents:
             "full_name",
             "active",
             "bot",
+            "avatar_url",
         }
 
     async def test_created_at_serializes_with_utc_z_suffix(

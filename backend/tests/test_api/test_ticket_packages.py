@@ -278,6 +278,7 @@ class TestListTicketPackagesEndpoint:
                                     "full_name": "Eve Setter",
                                     "active": False,
                                     "bot": False,
+                                    "avatar_url": None,
                                 },
                                 "eligibility_override_at": "2026-03-10T16:05:00Z",
                                 "released_at": None,
@@ -296,6 +297,7 @@ class TestListTicketPackagesEndpoint:
                         "full_name": None,
                         "active": True,
                         "bot": False,
+                        "avatar_url": None,
                     },
                     {
                         "id": str(zoe.id),
@@ -303,6 +305,7 @@ class TestListTicketPackagesEndpoint:
                         "full_name": "Zoe Maint",
                         "active": False,
                         "bot": False,
+                        "avatar_url": None,
                     },
                 ],
             },
@@ -320,6 +323,7 @@ class TestListTicketPackagesEndpoint:
                         "full_name": "Bot",
                         "active": True,
                         "bot": True,
+                        "avatar_url": None,
                     },
                 ],
             },
@@ -762,6 +766,7 @@ class TestOpenApiContract:
             "full_name",
             "active",
             "bot",
+            "avatar_url",
         }
         assert not {"maintainer_count", "maintainer_emails", "groups"} & set(
             package["properties"]

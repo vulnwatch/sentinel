@@ -19,7 +19,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.core.enums import AssignmentEligibility, Capability
-from app.schemas.common import RoleValue
+from app.schemas.common import AVATAR_URL_DESCRIPTION, RoleValue
 
 
 class LoginRequest(BaseModel):
@@ -68,6 +68,7 @@ class CurrentUserData(BaseModel):
     capabilities: list[Capability]
     active: bool
     bot: bool
+    avatar_url: str | None = Field(description=AVATAR_URL_DESCRIPTION)
     assignment_eligibility: AssignmentEligibility
 
 

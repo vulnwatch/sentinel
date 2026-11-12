@@ -392,6 +392,7 @@ class TestNoOpRequests:
             "full_name",
             "active",
             "bot",
+            "avatar_url",
             "source",
             "external_id",
             "manager",
@@ -543,6 +544,7 @@ class TestEffectiveMutations:
             "full_name": admin.full_name,
             "active": True,
             "bot": False,
+            "avatar_url": None,
         }
         assert await _origins(db_session, target.id) == {
             (Role.ADMIN.value, "_manual", admin.id),

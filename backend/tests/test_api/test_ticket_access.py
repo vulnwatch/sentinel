@@ -284,6 +284,7 @@ def _profile(
         "full_name": full_name,
         "active": active,
         "bot": bot,
+        "avatar_url": None,
     }
 
 
@@ -1332,6 +1333,7 @@ class TestOpenApiContract:
             "full_name",
             "active",
             "bot",
+            "avatar_url",
         }
 
     def test_grant_request_requires_a_non_nullable_string_user(self) -> None:

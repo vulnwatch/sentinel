@@ -299,6 +299,7 @@ class TestListCnaAuditEvents:
                         "full_name": admin.full_name,
                         "active": True,
                         "bot": False,
+                        "avatar_url": None,
                     },
                     "created_at": "2026-11-09T10:10:00Z",
                 }

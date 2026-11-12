@@ -299,6 +299,7 @@ class TestTreeProjection:
                                     full_name="Alice Setter",
                                     active=True,
                                     bot=False,
+                                    avatar_url=None,
                                 ),
                                 eligibility_override_at=OVERRIDE_SET_AT,
                                 released_at=None,
@@ -511,10 +512,20 @@ class TestTreeProjection:
             projected = await _read(db_session, ticket)
 
         amy_now = PackageUserProjection(
-            id=amy.id, username="amyb", full_name="Amy Renamed", active=True, bot=False
+            id=amy.id,
+            username="amyb",
+            full_name="Amy Renamed",
+            active=True,
+            bot=False,
+            avatar_url=None,
         )
         zed_now = PackageUserProjection(
-            id=zed.id, username="amy-z", full_name=None, active=False, bot=True
+            id=zed.id,
+            username="amy-z",
+            full_name=None,
+            active=False,
+            bot=True,
+            avatar_url=None,
         )
         assert [(p.id, p.maintainers) for p in projected] == [
             (lib.id, (zed_now, amy_now)),
@@ -575,9 +586,15 @@ class TestTreeProjection:
             full_name="Carol Renamed",
             active=False,
             bot=False,
+            avatar_url=None,
         )
         dave_now = PackageUserProjection(
-            id=dave.id, username="dave", full_name=None, active=True, bot=True
+            id=dave.id,
+            username="dave",
+            full_name=None,
+            active=True,
+            bot=True,
+            avatar_url=None,
         )
         (projected_track,) = projected.tracks
         assert [

@@ -950,6 +950,7 @@ class TestAuditLogVisibility:
                 "full_name": _ADMIN_FULL_NAME,
                 "active": True,
                 "bot": False,
+                "avatar_url": None,
             },
         }
         assert item["created_at"].endswith("Z")

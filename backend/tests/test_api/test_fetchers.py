@@ -268,6 +268,7 @@ def _user_reference(user: User) -> dict[str, Any]:
         "full_name": user.full_name,
         "active": user.active,
         "bot": user.bot,
+        "avatar_url": user.avatar_url,
     }
 
 
@@ -2542,6 +2543,7 @@ class TestListFetcherAuditEventsEndpoint:
             "full_name",
             "active",
             "bot",
+            "avatar_url",
         }
 
     async def test_populated_old_new_value_and_detail_round_trip(

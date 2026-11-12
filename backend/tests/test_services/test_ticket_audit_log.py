@@ -1307,6 +1307,7 @@ class TestListTicketEventsProjection:
             full_name="Fictional Analyst",
             active=True,
             bot=False,
+            avatar_url=None,
         )
         assert second.id == older.id
         assert second.actor is None
@@ -1338,6 +1339,7 @@ class TestListTicketEventsProjection:
             full_name=None,
             active=False,
             bot=False,
+            avatar_url=None,
         )
 
     async def test_accessible_ticket_without_events_returns_empty_page(
@@ -2213,6 +2215,7 @@ def _actor(user: User) -> TicketEventActor:
         full_name=user.full_name,
         active=user.active,
         bot=user.bot,
+        avatar_url=user.avatar_url,
     )
 
 
@@ -2322,6 +2325,7 @@ class TestListTicketActorsProjection:
                 full_name=None,
                 active=True,
                 bot=False,
+                avatar_url=None,
             ),
             TicketEventActor(
                 id=inactive.id,
@@ -2329,6 +2333,7 @@ class TestListTicketActorsProjection:
                 full_name=None,
                 active=False,
                 bot=False,
+                avatar_url=None,
             ),
             TicketEventActor(
                 id=bot.id,
@@ -2336,6 +2341,7 @@ class TestListTicketActorsProjection:
                 full_name=None,
                 active=True,
                 bot=True,
+                avatar_url=None,
             ),
         )
 

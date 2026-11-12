@@ -889,6 +889,7 @@ class TestResponse:
                             "full_name": "Frank Setter",
                             "active": False,
                             "bot": False,
+                            "avatar_url": None,
                         },
                         "eligibility_override_at": "2026-09-20T08:00:00Z",
                         "lifecycle_phase": "eol",

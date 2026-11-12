@@ -650,6 +650,7 @@ class CNAAuditEventActor:
     full_name: str | None
     active: bool
     bot: bool
+    avatar_url: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -764,6 +765,7 @@ async def list_cna_audit_events(
             actor_user.full_name.label("actor_full_name"),
             actor_user.active.label("actor_active"),
             actor_user.bot.label("actor_bot"),
+            actor_user.avatar_url.label("actor_avatar_url"),
         )
         .select_from(total)
         .outerjoin(page_rows, true())
@@ -793,6 +795,7 @@ async def list_cna_audit_events(
                     full_name=row.actor_full_name,
                     active=row.actor_active,
                     bot=row.actor_bot,
+                    avatar_url=row.actor_avatar_url,
                 ),
                 created_at=row.created_at,
             )
