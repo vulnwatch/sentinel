@@ -1435,8 +1435,9 @@ minor 6-12 months after its release. A dependency that does not declare
 the minor yet therefore also counts as supporting it when both of these
 hold:
 
-- it is pure Python, or it publishes wheels for that minor for every
-  platform the image is built for; and
+- it is pure Python, or it publishes wheels that install on that minor
+  (version-specific or abi3) for every platform the image is built for;
+  and
 - the Python Forward-Compatibility Check (`docs/deployment.md`) passes on
   a final release of that minor.
 
@@ -1457,7 +1458,7 @@ the Python runtime version used across all environments:
 | ruff `target-version` | Inferred from `requires-python` in `pyproject.toml` (no explicit `target-version`) |
 
 The `requires-python` field in `backend/pyproject.toml` MUST be kept
-aligned with the source of truth (`>=3.<minor>` matching the minor in
+aligned with the source of truth (`>=<minor>` with the minor in
 `.python-version`). It serves as the package metadata floor — not as
 the authoritative pin.
 
@@ -1508,9 +1509,10 @@ When upgrading to a new Python minor version:
 1. **Verify dependency support** under criterion (2) above: check PyPI
    classifiers and changelog for all critical dependencies. For one that
    does not declare the new minor yet, check that it is pure Python or
-   publishes wheels for the new minor, and that the latest Python
-   Forward-Compatibility Check run on a final release of the new minor
-   passed. Priority order (historically slowest to adopt):
+   publishes wheels that install on the new minor (version-specific or
+   abi3), and that the latest Python Forward-Compatibility Check run on
+   a final release of the new minor passed. Priority order (historically
+   slowest to adopt):
    - `celery` / `kombu` / `billiard` (task queue stack)
    - `asyncpg` (C extension, needs wheel)
    - `pydantic-core` (Rust extension, needs wheel)
@@ -1519,7 +1521,8 @@ When upgrading to a new Python minor version:
 2. **Update the source of truth**: change `backend/.python-version` to
    the new minor, without a patch component (see Source of Truth).
 3. **Align `requires-python`**: update `backend/pyproject.toml`
-   `requires-python` to `>=3.<new-minor>`.
+   `requires-python` to `>=<new-minor>`, and its
+   `Programming Language :: Python :: <new-minor>` classifier.
 4. **Update Dockerfile defaults**: change `ARG PYTHON_VERSION=...` in
    `backend/Dockerfile` to match (the drift-check will catch this if
    forgotten), and change `ARG PYTHON_BASE_DIGEST=...` to the digest of
