@@ -3,7 +3,7 @@ name = "sentinel"
 version = "0.23.0"
 description = "Security update management platform for SUSE/openSUSE distributions"
 license = "Apache-2.0"
-requires-python = ">=3.14"
+requires-python = ">=3.15"
 authors = [
     { name = "SUSE LLC" },
 ]
@@ -14,7 +14,7 @@ classifiers = [
     "Intended Audience :: System Administrators",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Security",
     "Topic :: System :: Systems Administration",
     "Typing :: Typed",

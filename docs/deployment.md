@@ -77,7 +77,7 @@ For architectural decisions and design constraints, see
 | PostgreSQL | 18+ | Primary database |
 | Redis | 8+ | Session cache, login lockout, Celery broker |
 | Git | 2.30+ | Git-based CVE fetcher operations (Git worker only; installed in the image, and on the developer host for the local Git worker) |
-| [uv](https://docs.astral.sh/uv/getting-started/installation/) | 0.13.5+ | Manages the Python 3.14 interpreter and all backend dependencies for local development (see "Quick Start" below) and for the image-smoke harness, which runs host pytest and its timeout supervisor on that interpreter (see `docs/features/platform/testing-strategy.md`, Image / Container Smoke Testing). Development only |
+| [uv](https://docs.astral.sh/uv/getting-started/installation/) | 0.13.6+ | Manages the Python interpreter of `backend/.python-version` and all backend dependencies for local development (see "Quick Start" below) and for the image-smoke harness, which runs host pytest and its timeout supervisor on that interpreter (see `docs/features/platform/testing-strategy.md`, Image / Container Smoke Testing). Development only |
 | [gh](https://cli.github.com/) | any recent release | Strongly recommended, development only — manages issues, pull requests, and GitHub Flow from the command line. See `docs/conventions.md` (Git Conventions) |
 | [glab](https://gitlab.com/gitlab-org/cli) | any recent release | Optional, development only — interacts with SUSE-internal GitLab repositories, issues, and merge requests (e.g., SMELT, SMASH). Requires authentication against `gitlab.suse.de`. See `AGENTS.md` (Local Environment) |
 | [gitleaks](https://github.com/gitleaks/gitleaks) | any recent release | Optional, development only — scans staged changes for secrets via the pre-commit hook. Local-only; no CI job performs secret scanning. See `docs/features/platform/testing-strategy.md` (Pre-Commit Hooks) |
@@ -177,8 +177,9 @@ tooling policy is separate from the deployment-agnostic OCI image contract.
 #### Quick Start
 
 ```bash
-# Install dependencies (downloads Python 3.14 and creates
-# backend/.venv automatically if not already present)
+# Install dependencies (downloads the Python version of
+# backend/.python-version and creates backend/.venv automatically if not
+# already present)
 cd backend && uv sync
 
 # (Optional) Enable the repository's local git hooks for fast pre-commit
@@ -964,9 +965,9 @@ for the source-of-truth rules, the build-argument pass-through, and the
 CI drift check.
 
 **Base image pinning.** The `python:${PYTHON_VERSION}-slim` base image
-is pinned by digest (`python:3.14-slim@sha256:...`) in both Dockerfile
-stages, in addition to the tag — the tag documents the intent (Python
-3.14, slim variant) while the digest guarantees immutability. Both
+is pinned by digest (`python:<minor>-slim@sha256:...`) in both Dockerfile
+stages, in addition to the tag — the tag documents the intent (the Python
+minor and the slim variant) while the digest guarantees immutability. Both
 values are supplied through Dockerfile `ARG` values (`PYTHON_VERSION`,
 `PYTHON_BASE_DIGEST`); Renovate's `dockerfile` manager expands `ARG`
 references natively and proposes a PR refreshing `PYTHON_BASE_DIGEST`
@@ -2749,7 +2750,7 @@ with the workflow's `GITHUB_TOKEN`, whose events start no workflow runs.
 covered by GitHub Dependabot alerts, Renovate vulnerability-fix PRs, and
 the `pip-audit` gate on dependency changes and Release PRs (see Workflow
 Conventions, Python dependency updates and vulnerability response), but
-the image is Debian-based (`python:3.14-slim`) and the OS package layer
+the image is Debian-based (`python:<minor>-slim`) and the OS package layer
 is not covered by any dependency scanner. Renovate proposes PRs refreshing
 the `PYTHON_BASE_DIGEST` `ARG` (see Container Build Conventions, Base
 image pinning) when a new base image digest is published, but that is
@@ -2793,12 +2794,12 @@ fixable-only scan reports zero fixable findings.
 the latest open Renovate PR that refreshes `PYTHON_BASE_DIGEST` in
 `backend/Dockerfile` (see Container Build Conventions, Base image
 pinning) — Renovate proposes this PR automatically whenever the
-upstream digest for the current `python:3.14-slim` tag changes, which
+upstream digest for the current `python:<minor>-slim` tag changes, which
 in practice is often the same digest that resolves the finding. If no
 pending Renovate PR resolves the specific finding (e.g. the upstream
 fix has not yet propagated to a new digest), a maintainer resolves the
 current digest manually (e.g. `docker buildx imagetools inspect
-python:3.14-slim` or an equivalent registry query) and opens a PR
+python:<minor>-slim` or an equivalent registry query) and opens a PR
 directly.
 
 A merged refresh reaches the scanned image only with the next release,

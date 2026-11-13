@@ -37,7 +37,7 @@ Please report unacceptable behavior to security@suse.com.
 
 ### Prerequisites
 
-- **Python 3.14** (managed via [uv](https://docs.astral.sh/uv/))
+- **Python 3.15** (managed via [uv](https://docs.astral.sh/uv/))
 - **Docker Engine or Docker Desktop with Docker Compose 2.32.2+** (for local
   PostgreSQL and Redis, automatic test provisioning, the image-smoke suite,
   and the shell lint of the pre-commit hook)

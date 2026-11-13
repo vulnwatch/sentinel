@@ -66,7 +66,7 @@ body:
         method).
       placeholder: |-
         - OS: openSUSE Tumbleweed
-        - Python: 3.14.x
+        - Python: 3.15.x
         - Deployment: Docker / local dev
     validations:
       required: false
