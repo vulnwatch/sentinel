@@ -156,27 +156,31 @@ router = APIRouter(prefix="/api/v1", tags=["Tickets"])
 # Lowercase wire value -> domain filter member (tickets.md, Response
 # Schemas: enum serialization; List Tickets). `unresolved` maps to `None`,
 # the SQL `NULL` member of the nullable severity and priority filters.
-_STATUS_FILTER: Final[Mapping[str, TicketStatus]] = {
-    member.value.lower(): member for member in TicketStatus
-}
-_SEVERITY_FILTER: Final[Mapping[str, Severity | None]] = {
-    **{member.value.lower(): member for member in Severity},
-    "unresolved": None,
-}
-_PRIORITY_FILTER: Final[Mapping[str, TicketPriority | None]] = {
-    **{member.value.lower(): member for member in TicketPriority},
-    "unresolved": None,
-}
+_STATUS_FILTER: Final[frozendict[str, TicketStatus]] = frozendict(
+    {member.value.lower(): member for member in TicketStatus}
+)
+_SEVERITY_FILTER: Final[frozendict[str, Severity | None]] = frozendict(
+    {
+        **{member.value.lower(): member for member in Severity},
+        "unresolved": None,
+    }
+)
+_PRIORITY_FILTER: Final[frozendict[str, TicketPriority | None]] = frozendict(
+    {
+        **{member.value.lower(): member for member in TicketPriority},
+        "unresolved": None,
+    }
+)
 # Lowercase request-body label -> domain severity (tickets.md, Set Severity
 # Manual). JSON `null` is handled separately as "clear".
-_SEVERITY_INPUT: Final[Mapping[str, Severity]] = {
-    member.value.lower(): member for member in Severity
-}
+_SEVERITY_INPUT: Final[frozendict[str, Severity]] = frozendict(
+    {member.value.lower(): member for member in Severity}
+)
 # Lowercase request-body level -> domain priority (tickets.md, Set Priority
 # Override). JSON `null` is handled separately as "clear".
-_PRIORITY_INPUT: Final[Mapping[str, TicketPriority]] = {
-    member.value.lower(): member for member in TicketPriority
-}
+_PRIORITY_INPUT: Final[frozendict[str, TicketPriority]] = frozendict(
+    {member.value.lower(): member for member in TicketPriority}
+)
 
 
 def _utc_now() -> datetime:
@@ -184,15 +188,15 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-_OVERDUE_FILTER: Final[Mapping[str, MilestonePhase]] = {
-    member.value: member for member in MilestonePhase
-}
-_CURRENT_PHASE_FILTER: Final[Mapping[str, CurrentPhase]] = {
-    member.value: member for member in CurrentPhase
-}
-_IGNORE_REASON_FILTER: Final[Mapping[str, TicketIgnoreReason]] = {
-    member.value: member for member in TicketIgnoreReason
-}
+_OVERDUE_FILTER: Final[frozendict[str, MilestonePhase]] = frozendict(
+    {member.value: member for member in MilestonePhase}
+)
+_CURRENT_PHASE_FILTER: Final[frozendict[str, CurrentPhase]] = frozendict(
+    {member.value: member for member in CurrentPhase}
+)
+_IGNORE_REASON_FILTER: Final[frozendict[str, TicketIgnoreReason]] = frozendict(
+    {member.value: member for member in TicketIgnoreReason}
+)
 
 
 def _parse_repeatable[T](raw: list[str], members: Mapping[str, T]) -> list[T] | None:

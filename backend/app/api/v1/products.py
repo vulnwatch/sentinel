@@ -35,12 +35,12 @@ from app.services.product_service import ProductListItemProjection
 
 router = APIRouter(prefix="/api/v1", tags=["Products"])
 
-_CATALOG_PRESENCE_FILTER: Final[Mapping[str, CatalogPresence]] = {
-    member.value: member for member in CatalogPresence
-}
-_LIFECYCLE_PHASE_FILTER: Final[Mapping[str, LifecyclePhaseFilter]] = {
-    member.value: member for member in LifecyclePhaseFilter
-}
+_CATALOG_PRESENCE_FILTER: Final[frozendict[str, CatalogPresence]] = frozendict(
+    {member.value: member for member in CatalogPresence}
+)
+_LIFECYCLE_PHASE_FILTER: Final[frozendict[str, LifecyclePhaseFilter]] = frozendict(
+    {member.value: member for member in LifecyclePhaseFilter}
+)
 
 
 def _utc_now() -> datetime:

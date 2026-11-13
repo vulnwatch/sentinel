@@ -140,17 +140,21 @@ class FenceReleaseOutcome(StrEnum):
     NOT_CONFIRMED = "not_confirmed"
 
 
-_RENEW_OUTCOMES: Final = {
-    1: LeaseRenewOutcome.RENEWED,
-    0: LeaseRenewOutcome.ABSENT,
-    -1: LeaseRenewOutcome.MISMATCH,
-}
+_RENEW_OUTCOMES: Final[frozendict[int, LeaseRenewOutcome]] = frozendict(
+    {
+        1: LeaseRenewOutcome.RENEWED,
+        0: LeaseRenewOutcome.ABSENT,
+        -1: LeaseRenewOutcome.MISMATCH,
+    }
+)
 
-_DELETE_OUTCOMES: Final = {
-    1: LeaseDeleteOutcome.DELETED,
-    0: LeaseDeleteOutcome.ABSENT,
-    -1: LeaseDeleteOutcome.MISMATCH,
-}
+_DELETE_OUTCOMES: Final[frozendict[int, LeaseDeleteOutcome]] = frozendict(
+    {
+        1: LeaseDeleteOutcome.DELETED,
+        0: LeaseDeleteOutcome.ABSENT,
+        -1: LeaseDeleteOutcome.MISMATCH,
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)

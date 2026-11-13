@@ -165,14 +165,16 @@ class RejectionReason(StrEnum):
     FENCE_RELEASE_FAILED = "fence_release_failed"
 
 
-_TERMINAL_EVENTS: Final = {
-    Outcome.COMPLETED: (COMPLETED_EVENT, "info"),
-    Outcome.PARTIAL: (PARTIAL_EVENT, "warning"),
-    Outcome.STALE: (STALE_EVENT, "info"),
-    Outcome.CANCELLED: (CANCELLED_EVENT, "warning"),
-    Outcome.OWNERSHIP_LOST: (OWNERSHIP_LOST_EVENT, "warning"),
-    Outcome.FAILED: (FAILED_EVENT, "error"),
-}
+_TERMINAL_EVENTS: Final[frozendict[Outcome, tuple[str, str]]] = frozendict(
+    {
+        Outcome.COMPLETED: (COMPLETED_EVENT, "info"),
+        Outcome.PARTIAL: (PARTIAL_EVENT, "warning"),
+        Outcome.STALE: (STALE_EVENT, "info"),
+        Outcome.CANCELLED: (CANCELLED_EVENT, "warning"),
+        Outcome.OWNERSHIP_LOST: (OWNERSHIP_LOST_EVENT, "warning"),
+        Outcome.FAILED: (FAILED_EVENT, "error"),
+    }
+)
 
 _CANCELLATION: Final = (asyncio.CancelledError, WorkerShutdown, WorkerTerminate)
 
@@ -191,10 +193,12 @@ _DEFECT_DATABASE_ERRORS: Final = (IntegrityError, DataError, ProgrammingError)
 
 _SERIALIZATION_ERRORS: Final = (EncodeError, SerializerNotInstalled)
 
-_RENEW_REJECTIONS: Final = {
-    LeaseRenewOutcome.ABSENT: RejectionReason.LEASE_ABSENT,
-    LeaseRenewOutcome.MISMATCH: RejectionReason.LEASE_MISMATCH,
-}
+_RENEW_REJECTIONS: Final[frozendict[LeaseRenewOutcome, RejectionReason]] = frozendict(
+    {
+        LeaseRenewOutcome.ABSENT: RejectionReason.LEASE_ABSENT,
+        LeaseRenewOutcome.MISMATCH: RejectionReason.LEASE_MISMATCH,
+    }
+)
 
 
 def _monotonic() -> float:

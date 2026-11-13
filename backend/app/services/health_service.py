@@ -14,6 +14,7 @@ import asyncio
 from collections.abc import Awaitable, Iterable
 from contextlib import suppress
 from dataclasses import dataclass
+from typing import Final
 from urllib.parse import urlsplit
 
 import redis.asyncio as redis_asyncio
@@ -53,11 +54,13 @@ _DEFAULT_REDIS_PORT = 6379
 # a single check result. See health-endpoints.md (Readiness — GET
 # /ready): "ok (severity 0) < timeout (severity 1) < unreachable
 # (severity 2)".
-_SEVERITY: dict[HealthCheckStatus, int] = {
-    HealthCheckStatus.OK: 0,
-    HealthCheckStatus.TIMEOUT: 1,
-    HealthCheckStatus.UNREACHABLE: 2,
-}
+_SEVERITY: Final[frozendict[HealthCheckStatus, int]] = frozendict(
+    {
+        HealthCheckStatus.OK: 0,
+        HealthCheckStatus.TIMEOUT: 1,
+        HealthCheckStatus.UNREACHABLE: 2,
+    }
+)
 
 
 def discover_redis_targets(urls: Iterable[str]) -> list[str]:

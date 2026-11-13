@@ -263,7 +263,9 @@ _USERS: Final = (
     ),
     _User("ghill", "Grace Hill", "grace.hill@example.com", ()),
 )
-_EMAILS: Final = {user.username: user.email for user in _USERS}
+_EMAILS: Final[frozendict[str, str]] = frozendict(
+    {user.username: user.email for user in _USERS}
+)
 _INACTIVE: Final = "eblack"
 """Takes `SNTL-9`, then is deactivated by the Ticket work (Tickets)."""
 _BOT: Final = "security-scanner"
@@ -419,7 +421,7 @@ _CVES: Final = (
     _CVE("CVE-2099-0026", _MITRE),
     _CVE("CVE-2099-0027", None, rejected=True),
 )
-_CVE_DATA: Final = {cve.cve_id: cve for cve in _CVES}
+_CVE_DATA: Final[frozendict[str, _CVE]] = frozendict({cve.cve_id: cve for cve in _CVES})
 
 _FIRST_BEFORE_MANUAL: Final = tuple(f"CVE-2099-{n:04d}" for n in range(1, 18))
 _FIRST_AFTER_MANUAL: Final = tuple(f"CVE-2099-{n:04d}" for n in range(21, 25))
@@ -482,7 +484,9 @@ _CNAS: Final = (
 )
 """The fictional CNAs (CNAs); the third has no short name and therefore no
 metadata."""
-_CNA_OF: Final = {cve_id: cna for cna in _CNAS for cve_id in cna.cve_ids}
+_CNA_OF: Final[frozendict[str, _CNA]] = frozendict(
+    {cve_id: cna for cna in _CNAS for cve_id in cna.cve_ids}
+)
 _AUTO_IGNORE_CHANGES: Final = (
     (uuid.UUID("00000000-0000-4000-8000-0000000000a1"), True),
     (uuid.UUID("00000000-0000-4000-8000-0000000000a1"), False),
@@ -490,36 +494,42 @@ _AUTO_IGNORE_CHANGES: Final = (
 )
 """The `set_cna_auto_ignore()` operations of `jdoe`, in order (CNAs):
 `example` enabled and disabled, then `fictional-plugins` enabled."""
-_KEV_ADDED: Final = {"CVE-2099-0001": -2}
+_KEV_ADDED: Final[frozendict[str, int]] = frozendict({"CVE-2099-0001": -2})
 """KEV date added, in days from `D`."""
-_EPSS: Final = {
-    "CVE-2099-0001": ("0.94", "0.99"),
-    "CVE-2099-0002": ("0.12", "0.85"),
-    "CVE-2099-0007": ("0.45", "0.97"),
-    "CVE-2099-0010": ("0.38", "0.96"),
-    "CVE-2099-0018": ("0.31", "0.92"),
-}
+_EPSS: Final[frozendict[str, tuple[str, str]]] = frozendict(
+    {
+        "CVE-2099-0001": ("0.94", "0.99"),
+        "CVE-2099-0002": ("0.12", "0.85"),
+        "CVE-2099-0007": ("0.45", "0.97"),
+        "CVE-2099-0010": ("0.38", "0.96"),
+        "CVE-2099-0018": ("0.31", "0.92"),
+    }
+)
 """EPSS score and percentile, assessed `D - 1`."""
-_GHSA: Final = {
-    "CVE-2099-0009": "GHSA-8m3w-4xq7-pf2c",
-    "CVE-2099-0010": "GHSA-2c4f-7h9j-mqrv",
-}
+_GHSA: Final[frozendict[str, str]] = frozendict(
+    {
+        "CVE-2099-0009": "GHSA-8m3w-4xq7-pf2c",
+        "CVE-2099-0010": "GHSA-2c4f-7h9j-mqrv",
+    }
+)
 _OSV: Final = ("CVE-2099-0009",)
 
 # Affected versions of CVE-2099-0009 (CVEs): each scope carries the fields
 # that the mapping of its source produces (cve-record-parser.md;
 # cve-sync-ghsa.md; cve-sync-osv.md).
 _TAR_REPO: Final = "https://git.example.com/fictional-tar"
-_TAR_CNA_ELEMENT: Final[dict[str, object]] = {
-    "vendor": "Example",
-    "product": "fictional-tar",
-    "collection_url": "https://packages.example.com",
-    "package_name": "fictional-tar",
-    "repo": _TAR_REPO,
-    "program_files": ["src/extract.c", "src/names.c"],
-    "cpe": "cpe:2.3:a:example:fictional-tar:*:*:*:*:*:*:*:*",
-    "default_status": "unaffected",
-}
+_TAR_CNA_ELEMENT: Final[frozendict[str, str | tuple[str, ...]]] = frozendict(
+    {
+        "vendor": "Example",
+        "product": "fictional-tar",
+        "collection_url": "https://packages.example.com",
+        "package_name": "fictional-tar",
+        "repo": _TAR_REPO,
+        "program_files": ("src/extract.c", "src/names.c"),
+        "cpe": "cpe:2.3:a:example:fictional-tar:*:*:*:*:*:*:*:*",
+        "default_status": "unaffected",
+    }
+)
 _TAR_CNA_ENTRIES: Final = (
     AffectedVersionEntry.model_validate(
         _TAR_CNA_ELEMENT
@@ -536,12 +546,14 @@ _TAR_CNA_ENTRIES: Final = (
         | {"version": "1.5", "version_type": "semver", "status": "unaffected"}
     ),
 )
-_TAR_ADP_ELEMENT: Final[dict[str, object]] = {
-    "vendor": "example",
-    "product": "fictional_tar",
-    "cpe": "cpe:2.3:a:example:fictional_tar:*:*:*:*:*:*:*:*",
-    "default_status": "unknown",
-}
+_TAR_ADP_ELEMENT: Final[frozendict[str, str]] = frozendict(
+    {
+        "vendor": "example",
+        "product": "fictional_tar",
+        "cpe": "cpe:2.3:a:example:fictional_tar:*:*:*:*:*:*:*:*",
+        "default_status": "unknown",
+    }
+)
 _TAR_ADP_ENTRIES: Final = (
     AffectedVersionEntry.model_validate(
         _TAR_ADP_ELEMENT
@@ -634,12 +646,14 @@ _LAST_RUN_SUCCEEDED: Final = 15
 its CVE: the successful items of the last NVD run."""
 _NVD_FAILED_CVE: Final = "CVE-2099-0006"
 _NVD_MISSING_CVE: Final = "CVE-2099-0008"
-_AUTOMATIC_REFERENCES: Final = {
-    "CVE-2099-0001": (
-        ("https://www.example.com/advisories/CVE-2099-0001", "Vendor Advisory"),
-        ("https://git.example.com/fictional-lib/commit/0123abc", "Patch"),
-    ),
-}
+_AUTOMATIC_REFERENCES: Final[frozendict[str, tuple[tuple[str, str], ...]]] = frozendict(
+    {
+        "CVE-2099-0001": (
+            ("https://www.example.com/advisories/CVE-2099-0001", "Vendor Advisory"),
+            ("https://git.example.com/fictional-lib/commit/0123abc", "Patch"),
+        ),
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -734,146 +748,158 @@ _SNTL_11_MORE_PACKAGES: Final = (
 """The packages that `SNTL-11` holds after `fictional-curl`, more than ten
 besides its first (Packages, Tracks, and Maintainers)."""
 
-_PACKAGES: Final = {
-    package.name: package
-    for package in (
-        _Package(
-            11,
-            "fictional-curl",
-            "bwilson",
-            (
-                _Track(_GIT_16, _GIT, (_SERVER_16, _MICRO_6_2)),
-                _Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),
+_PACKAGES: Final[frozendict[str, _Package]] = frozendict(
+    {
+        package.name: package
+        for package in (
+            _Package(
+                11,
+                "fictional-curl",
+                "bwilson",
+                (
+                    _Track(_GIT_16, _GIT, (_SERVER_16, _MICRO_6_2)),
+                    _Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),
+                ),
+                ("dbrown",),
             ),
-            ("dbrown",),
-        ),
-        *(
-            _Package(11, name, "bwilson", (_Track(_GIT_16, _GIT, (_SERVER_16,)),), ())
-            for name in _SNTL_11_MORE_PACKAGES
-        ),
-        _Package(
-            12,
-            "fictional-openssl",
-            "asmith",
-            (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
-            ("dbrown", "ghill"),
-        ),
-        _Package(
-            12,
-            "fictional-zlib",
-            "asmith",
-            (_Track(_GIT_16, _GIT, (_SERVER_16, _MICRO_6_2)),),
-            ("ghill",),
-        ),
-        _Package(
-            13,
-            "fictional-httpd",
-            "asmith",
-            (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
-            ("dbrown",),
-        ),
-        _Package(
-            14,
-            "fictional-libxml",
-            "asmith",
-            (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
-            ("dbrown",),
-        ),
-        _Package(
-            15,
-            "fictional-sudo",
-            "bwilson",
-            (
-                _Track(_GIT_16, _GIT, (_SERVER_16, _MICRO_6_2)),
-                _Track(_SP4_UPDATE, _IBS, (_LTSS_15_SP4,)),
+            *(
+                _Package(
+                    11, name, "bwilson", (_Track(_GIT_16, _GIT, (_SERVER_16,)),), ()
+                )
+                for name in _SNTL_11_MORE_PACKAGES
             ),
-            (),
-        ),
-        _Package(
-            16,
-            "fictional-kernel",
-            "asmith",
-            (
-                _Track(_SP5_UPDATE, _IBS, (_LTSS_15_SP5, _SERVER_15_SP7)),
-                _Track(_SP3_UPDATE, _IBS, (_SERVER_15_SP3,)),
-                _Track(_SP4_UPDATE, _IBS, (_LTSS_15_SP4,)),
+            _Package(
+                12,
+                "fictional-openssl",
+                "asmith",
+                (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
+                ("dbrown", "ghill"),
             ),
-            (),
-        ),
-        _Package(
-            16,
-            "fictional-kernel-firmware",
-            "asmith",
-            (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
-            (),
-        ),
-        _Package(
-            16,
-            "fictional-kernel-compat",
-            "asmith",
-            (_Track(_SP3_UPDATE, _IBS, (_SERVER_15_SP3,)),),
-            (),
-        ),
-        _Package(
-            18,
-            "fictional-openssh",
-            "asmith",
-            (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
-            ("dbrown",),
-        ),
-        _Package(
-            22, "fictional-lz4", "bwilson", (_Track(_GIT_16, _GIT, (_SERVER_16,)),), ()
-        ),
-        _Package(
-            26,
-            "fictional-glibc",
-            "bwilson",
-            (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
-            ("ghill",),
-        ),
-        _Package(
-            26,
-            "fictional-libidn",
-            "bwilson",
-            (_Track(_GIT_16, _GIT, (_SERVER_16,)),),
-            (),
-        ),
-        _Package(
-            27,
-            "fictional-bind",
-            "asmith",
-            (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
-            (),
-        ),
-        _Package(
-            30,
-            "fictional-libarchive",
-            "asmith",
-            (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
-            (),
-        ),
-    )
-}
+            _Package(
+                12,
+                "fictional-zlib",
+                "asmith",
+                (_Track(_GIT_16, _GIT, (_SERVER_16, _MICRO_6_2)),),
+                ("ghill",),
+            ),
+            _Package(
+                13,
+                "fictional-httpd",
+                "asmith",
+                (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
+                ("dbrown",),
+            ),
+            _Package(
+                14,
+                "fictional-libxml",
+                "asmith",
+                (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
+                ("dbrown",),
+            ),
+            _Package(
+                15,
+                "fictional-sudo",
+                "bwilson",
+                (
+                    _Track(_GIT_16, _GIT, (_SERVER_16, _MICRO_6_2)),
+                    _Track(_SP4_UPDATE, _IBS, (_LTSS_15_SP4,)),
+                ),
+                (),
+            ),
+            _Package(
+                16,
+                "fictional-kernel",
+                "asmith",
+                (
+                    _Track(_SP5_UPDATE, _IBS, (_LTSS_15_SP5, _SERVER_15_SP7)),
+                    _Track(_SP3_UPDATE, _IBS, (_SERVER_15_SP3,)),
+                    _Track(_SP4_UPDATE, _IBS, (_LTSS_15_SP4,)),
+                ),
+                (),
+            ),
+            _Package(
+                16,
+                "fictional-kernel-firmware",
+                "asmith",
+                (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
+                (),
+            ),
+            _Package(
+                16,
+                "fictional-kernel-compat",
+                "asmith",
+                (_Track(_SP3_UPDATE, _IBS, (_SERVER_15_SP3,)),),
+                (),
+            ),
+            _Package(
+                18,
+                "fictional-openssh",
+                "asmith",
+                (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
+                ("dbrown",),
+            ),
+            _Package(
+                22,
+                "fictional-lz4",
+                "bwilson",
+                (_Track(_GIT_16, _GIT, (_SERVER_16,)),),
+                (),
+            ),
+            _Package(
+                26,
+                "fictional-glibc",
+                "bwilson",
+                (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
+                ("ghill",),
+            ),
+            _Package(
+                26,
+                "fictional-libidn",
+                "bwilson",
+                (_Track(_GIT_16, _GIT, (_SERVER_16,)),),
+                (),
+            ),
+            _Package(
+                27,
+                "fictional-bind",
+                "asmith",
+                (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
+                (),
+            ),
+            _Package(
+                30,
+                "fictional-libarchive",
+                "asmith",
+                (_Track(_SP7_UPDATE, _IBS, (_SERVER_15_SP7,)),),
+                (),
+            ),
+        )
+    }
+)
 
-_SUSE_ASSESSMENTS: Final = {
-    "CVE-2099-0013": ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H", "asmith"),
-    "CVE-2099-0014": ("CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H", "asmith"),
-    "CVE-2099-0015": ("CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N", "bwilson"),
-    "CVE-2099-0016": ("CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N", "asmith"),
-    "CVE-2099-0012": ("CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H", "asmith"),
-    "CVE-2099-0024": ("CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N", "bwilson"),
-    "CVE-2099-0025": ("CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H", "asmith"),
-}
+_SUSE_ASSESSMENTS: Final[frozendict[str, tuple[str, str]]] = frozendict(
+    {
+        "CVE-2099-0013": ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H", "asmith"),
+        "CVE-2099-0014": ("CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H", "asmith"),
+        "CVE-2099-0015": ("CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N", "bwilson"),
+        "CVE-2099-0016": ("CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N", "asmith"),
+        "CVE-2099-0012": ("CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H", "asmith"),
+        "CVE-2099-0024": ("CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N", "bwilson"),
+        "CVE-2099-0025": ("CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H", "asmith"),
+    }
+)
 
 _AGED_TICKETS: Final = ((7, 5), (12, 20), (13, 25), (26, 35), (27, 12))
 """Aged Tickets: `(SNTL number, age in days)`, in the order of their
 operations."""
-_AGED_PUBLISHED_DAYS: Final = {
-    "CVE-2099-0012": 21,
-    "CVE-2099-0013": 26,
-    "CVE-2099-0024": 36,
-    "CVE-2099-0025": 2,
-}
+_AGED_PUBLISHED_DAYS: Final[frozendict[str, int]] = frozendict(
+    {
+        "CVE-2099-0012": 21,
+        "CVE-2099-0013": 26,
+        "CVE-2099-0024": 36,
+        "CVE-2099-0025": 2,
+    }
+)
 """Aged Tickets: the published date of the CVE of an aged Ticket, in days
 before `T`, where it replaces `T - n`."""
 _EXPIRED_EMBARGO: Final = (27, "asmith", 2)
@@ -915,18 +941,22 @@ _RELEASED_DAYS_AGO: Final = 2
 # IBS Requests: number -> (type, incident, upstream created in days before T)
 _MI: Final = IBSRequestActionType.MAINTENANCE_INCIDENT
 _MR: Final = IBSRequestActionType.MAINTENANCE_RELEASE
-_IBS_REQUESTS: Final = {
-    900000: (_MI, None, 20),
-    900001: (_MI, None, 5),
-    900002: (_MI, 90001, 12),
-    900003: (_MR, 90001, 6),
-    900004: (_MI, 90002, 9),
-    900005: (_MR, 90002, 2),
-    900006: (_MI, 90003, 30),
-    900007: (_MR, 90003, 20),
-    900008: (_MI, 90004, 11),
-    900009: (_MR, 90004, 7),
-}
+_IBS_REQUESTS: Final[frozendict[int, tuple[IBSRequestActionType, int | None, int]]] = (
+    frozendict(
+        {
+            900000: (_MI, None, 20),
+            900001: (_MI, None, 5),
+            900002: (_MI, 90001, 12),
+            900003: (_MR, 90001, 6),
+            900004: (_MI, 90002, 9),
+            900005: (_MR, 90002, 2),
+            900006: (_MI, 90003, 30),
+            900007: (_MR, 90003, 20),
+            900008: (_MI, 90004, 11),
+            900009: (_MR, 90004, 7),
+        }
+    )
+)
 _REVIEW, _NEW = IBSRequestState.REVIEW, IBSRequestState.NEW
 _ACCEPTED, _DECLINED = IBSRequestState.ACCEPTED, IBSRequestState.DECLINED
 
@@ -934,33 +964,41 @@ _Observed = tuple[int, IBSRequestState, int]
 """`(request number, state, upstream update in days before T)`."""
 
 _OBSERVATIONS: Final[
-    dict[str, tuple[tuple[DeliveryStatus, tuple[_Observed, ...]], ...]]
-] = {
-    "fictional-httpd": (
-        (DeliveryStatus.IN_PROGRESS, ((900000, _REVIEW, 19),)),
-        (DeliveryStatus.IN_PROGRESS, ((900000, _DECLINED, 18), (900001, _REVIEW, 4))),
-    ),
-    "fictional-libxml": (
-        (DeliveryStatus.IN_PROGRESS, ((900002, _REVIEW, 11),)),
-        (DeliveryStatus.IN_PROGRESS, ((900002, _ACCEPTED, 10), (900003, _NEW, 6))),
-        (DeliveryStatus.RELEASED, ((900003, _ACCEPTED, 3),)),
-    ),
-    "fictional-openssh": (
-        (DeliveryStatus.IN_PROGRESS, ((900004, _REVIEW, 9),)),
-        (DeliveryStatus.IN_PROGRESS, ((900004, _ACCEPTED, 8), (900005, _NEW, 2))),
-    ),
-    "fictional-glibc": (
-        (DeliveryStatus.IN_PROGRESS, ((900006, _REVIEW, 29),)),
-        (
-            DeliveryStatus.IN_PROGRESS,
-            ((900006, _ACCEPTED, 27), (900007, _REVIEW, 19)),
+    frozendict[str, tuple[tuple[DeliveryStatus, tuple[_Observed, ...]], ...]]
+] = frozendict(
+    {
+        "fictional-httpd": (
+            (DeliveryStatus.IN_PROGRESS, ((900000, _REVIEW, 19),)),
+            (
+                DeliveryStatus.IN_PROGRESS,
+                ((900000, _DECLINED, 18), (900001, _REVIEW, 4)),
+            ),
         ),
-    ),
-    "fictional-bind": (
-        (DeliveryStatus.IN_PROGRESS, ((900008, _REVIEW, 10),)),
-        (DeliveryStatus.IN_PROGRESS, ((900008, _ACCEPTED, 8), (900009, _REVIEW, 6))),
-    ),
-}
+        "fictional-libxml": (
+            (DeliveryStatus.IN_PROGRESS, ((900002, _REVIEW, 11),)),
+            (DeliveryStatus.IN_PROGRESS, ((900002, _ACCEPTED, 10), (900003, _NEW, 6))),
+            (DeliveryStatus.RELEASED, ((900003, _ACCEPTED, 3),)),
+        ),
+        "fictional-openssh": (
+            (DeliveryStatus.IN_PROGRESS, ((900004, _REVIEW, 9),)),
+            (DeliveryStatus.IN_PROGRESS, ((900004, _ACCEPTED, 8), (900005, _NEW, 2))),
+        ),
+        "fictional-glibc": (
+            (DeliveryStatus.IN_PROGRESS, ((900006, _REVIEW, 29),)),
+            (
+                DeliveryStatus.IN_PROGRESS,
+                ((900006, _ACCEPTED, 27), (900007, _REVIEW, 19)),
+            ),
+        ),
+        "fictional-bind": (
+            (DeliveryStatus.IN_PROGRESS, ((900008, _REVIEW, 10),)),
+            (
+                DeliveryStatus.IN_PROGRESS,
+                ((900008, _ACCEPTED, 8), (900009, _REVIEW, 6)),
+            ),
+        ),
+    }
+)
 """The complete observations of each package's SP7 track, in order (IBS
 Requests)."""
 

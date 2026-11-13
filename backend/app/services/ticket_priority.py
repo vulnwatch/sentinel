@@ -17,10 +17,8 @@ the basis always states the level that selected `priority_auto`.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
-from types import MappingProxyType
 from typing import Final
 
 from app.core.enums import (
@@ -77,8 +75,8 @@ def _row(
     medium: TicketPriority,
     low_or_none: TicketPriority,
     unresolved: TicketPriority | None,
-) -> Mapping[Severity | None, TicketPriority | None]:
-    return MappingProxyType(
+) -> frozendict[Severity | None, TicketPriority | None]:
+    return frozendict(
         {
             Severity.CRITICAL: critical,
             Severity.HIGH: high,
@@ -93,8 +91,8 @@ def _row(
 # Decision Table: exploitation level -> resolved severity (Python `None`
 # meaning SQL `NULL`, distinct from `Severity.NONE`) -> automatic priority.
 _DECISION_TABLE: Final[
-    Mapping[ExploitationLevel, Mapping[Severity | None, TicketPriority | None]]
-] = MappingProxyType(
+    frozendict[ExploitationLevel, frozendict[Severity | None, TicketPriority | None]]
+] = frozendict(
     {
         ExploitationLevel.KEV: _row(_P1, _P1, _P1, _P1, _P1),
         ExploitationLevel.ACTIVE: _row(_P1, _P1, _P2, _P3, _P2),

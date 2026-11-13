@@ -742,11 +742,11 @@ _GIT_LOCAL_ENV_VARS: Final[frozenset[str]] = frozenset({
     "GIT_REPLACE_REF_BASE", "GIT_SHALLOW_FILE", "GIT_WORK_TREE",
 })
 
-_GIT_ENV_OVERRIDES: Final[dict[str, str]] = {
+_GIT_ENV_OVERRIDES: Final[frozendict[str, str]] = frozendict({
     "LC_ALL": "C",
     "GIT_TERMINAL_PROMPT": "0",
     "TZ": "UTC",
-}
+})
 
 def _git_subprocess_env() -> dict[str, str]:
     """Process environment without git's repository-local variables,

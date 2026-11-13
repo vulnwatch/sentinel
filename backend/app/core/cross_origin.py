@@ -56,7 +56,9 @@ _SERIALIZED_ORIGIN: Final = re.compile(
     r")"
 )
 
-_ASCII_LOWERCASE: Final = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+_ASCII_LOWERCASE: Final[frozendict[int, int]] = frozendict(
+    str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+)
 
 _ORIGIN_HEADER: Final = b"origin"
 _SEC_FETCH_SITE_HEADER: Final = b"sec-fetch-site"

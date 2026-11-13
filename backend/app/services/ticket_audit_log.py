@@ -100,26 +100,30 @@ MANUAL_TICKET_CREATED_COMMENT: Final = "Ticket created manually"
 # Exhaustive `ticket_created` audit label per CVE source, keyed by Enum
 # member (cve-service.md, `upsert_cve()` parameter `source`). The comment
 # is exactly `CVE ingested from {label}`.
-CVE_SOURCE_AUDIT_LABELS: Final[Mapping[CVESourceType, str]] = {
-    CVESourceType.NVD: "NVD",
-    CVESourceType.MITRE: "MITRE",
-    CVESourceType.KERNEL: "Linux Kernel CNA",
-    CVESourceType.REDHAT: "Red Hat",
-    CVESourceType.GHSA: "GitHub Advisory Database",
-    CVESourceType.OSV: "OSV",
-    CVESourceType.KEV: "CISA KEV",
-    CVESourceType.EPSS: "FIRST.org EPSS",
-}
+CVE_SOURCE_AUDIT_LABELS: Final[frozendict[CVESourceType, str]] = frozendict(
+    {
+        CVESourceType.NVD: "NVD",
+        CVESourceType.MITRE: "MITRE",
+        CVESourceType.KERNEL: "Linux Kernel CNA",
+        CVESourceType.REDHAT: "Red Hat",
+        CVESourceType.GHSA: "GitHub Advisory Database",
+        CVESourceType.OSV: "OSV",
+        CVESourceType.KEV: "CISA KEV",
+        CVESourceType.EPSS: "FIRST.org EPSS",
+    }
+)
 
 CVE_REJECTED_COMMENT: Final = "CVE rejected"
 CNA_POLICY_COMMENT: Final = "CNA auto-ignore policy"
 
 # The canonical comment of each automatic `New -> Ignored`, keyed by the
 # ignore reason that the transition writes (its `detail.ignore_reason`).
-_AUTOMATIC_IGNORE_COMMENTS: Final[Mapping[str, str]] = {
-    TicketIgnoreReason.CVE_REJECTED.value: CVE_REJECTED_COMMENT,
-    TicketIgnoreReason.CNA_POLICY.value: CNA_POLICY_COMMENT,
-}
+_AUTOMATIC_IGNORE_COMMENTS: Final[frozendict[str, str]] = frozendict(
+    {
+        TicketIgnoreReason.CVE_REJECTED.value: CVE_REJECTED_COMMENT,
+        TicketIgnoreReason.CNA_POLICY.value: CNA_POLICY_COMMENT,
+    }
+)
 
 PACKAGE_ADDED_AUTOMATIC_COMMENTS: Final = frozenset(
     {"CVE package resolution", "Product catalog backfill", "Ticket convergence"}
@@ -157,20 +161,28 @@ _REFERENCE_SUBJECT: Final = frozenset({"url"})
 # separately because their presence depends on the actor and on
 # `new_value`. Event types absent from this mapping (and neither of those
 # two) MUST have `detail = NULL`.
-_REQUIRED_DETAIL_KEYS: Final[Mapping[TicketAuditEventType, frozenset[str]]] = {
-    TicketAuditEventType.TRACK_STATUS_CHANGED: _TRACK_SUBJECT,
-    TicketAuditEventType.TRACK_EXCLUDED: _TRACK_SUBJECT,
-    TicketAuditEventType.TRACK_RESTORED: _TRACK_SUBJECT,
-    TicketAuditEventType.PRODUCT_RELEASED: _PRODUCT_SUBJECT | {"advisory_id"},
-    TicketAuditEventType.PRODUCT_ELIGIBILITY_CHANGED: _PRODUCT_SUBJECT | {"reason"},
-    TicketAuditEventType.PRODUCT_EXCLUDED: _PRODUCT_SUBJECT,
-    TicketAuditEventType.PRODUCT_RESTORED: _PRODUCT_SUBJECT,
-    TicketAuditEventType.REFERENCE_TYPE_CHANGED: _REFERENCE_SUBJECT,
-    TicketAuditEventType.REFERENCE_TITLE_CHANGED: _REFERENCE_SUBJECT,
-    TicketAuditEventType.REFERENCE_DESCRIPTION_CHANGED: _REFERENCE_SUBJECT,
-    TicketAuditEventType.DUPLICATE_TARGET_CHANGED: frozenset({"triggered_by_ticket"}),
-    TicketAuditEventType.PACKAGE_MAINTAINER_ADDED: frozenset({"package"}),
-}
+_REQUIRED_DETAIL_KEYS: Final[frozendict[TicketAuditEventType, frozenset[str]]] = (
+    frozendict(
+        {
+            TicketAuditEventType.TRACK_STATUS_CHANGED: _TRACK_SUBJECT,
+            TicketAuditEventType.TRACK_EXCLUDED: _TRACK_SUBJECT,
+            TicketAuditEventType.TRACK_RESTORED: _TRACK_SUBJECT,
+            TicketAuditEventType.PRODUCT_RELEASED: _PRODUCT_SUBJECT | {"advisory_id"},
+            TicketAuditEventType.PRODUCT_ELIGIBILITY_CHANGED: (
+                _PRODUCT_SUBJECT | {"reason"}
+            ),
+            TicketAuditEventType.PRODUCT_EXCLUDED: _PRODUCT_SUBJECT,
+            TicketAuditEventType.PRODUCT_RESTORED: _PRODUCT_SUBJECT,
+            TicketAuditEventType.REFERENCE_TYPE_CHANGED: _REFERENCE_SUBJECT,
+            TicketAuditEventType.REFERENCE_TITLE_CHANGED: _REFERENCE_SUBJECT,
+            TicketAuditEventType.REFERENCE_DESCRIPTION_CHANGED: _REFERENCE_SUBJECT,
+            TicketAuditEventType.DUPLICATE_TARGET_CHANGED: frozenset(
+                {"triggered_by_ticket"}
+            ),
+            TicketAuditEventType.PACKAGE_MAINTAINER_ADDED: frozenset({"package"}),
+        }
+    )
+)
 
 ELIGIBILITY_REASONS: Final = frozenset(
     {"reactive_ltss", "threshold", "reactivation", "cvss", "va_override"}

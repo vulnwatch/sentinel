@@ -359,24 +359,30 @@ class SearchHandler:
 # Request point detail
 # ---------------------------------------------------------------------------
 
-_ACTION_ELEMENTS: Final = {
-    "source": ("project", "package", "rev"),
-    "target": ("project", "package", "releaseproject"),
-    "acceptinfo": ("rev", *_ACCEPTINFO_CHECKSUMS, "oproject", "opackage"),
-}
-_REQUIRED_FIELDS: Final = {
-    IBSRequestActionType.MAINTENANCE_INCIDENT: (
-        ("source", "project"),
-        ("source", "package"),
-        ("target", "releaseproject"),
-    ),
-    IBSRequestActionType.MAINTENANCE_RELEASE: (
-        ("source", "project"),
-        ("source", "package"),
-        ("target", "project"),
-        ("target", "package"),
-    ),
-}
+_ACTION_ELEMENTS: Final[frozendict[str, tuple[str, ...]]] = frozendict(
+    {
+        "source": ("project", "package", "rev"),
+        "target": ("project", "package", "releaseproject"),
+        "acceptinfo": ("rev", *_ACCEPTINFO_CHECKSUMS, "oproject", "opackage"),
+    }
+)
+_REQUIRED_FIELDS: Final[
+    frozendict[IBSRequestActionType, tuple[tuple[str, str], ...]]
+] = frozendict(
+    {
+        IBSRequestActionType.MAINTENANCE_INCIDENT: (
+            ("source", "project"),
+            ("source", "package"),
+            ("target", "releaseproject"),
+        ),
+        IBSRequestActionType.MAINTENANCE_RELEASE: (
+            ("source", "project"),
+            ("source", "package"),
+            ("target", "project"),
+            ("target", "package"),
+        ),
+    }
+)
 
 
 @dataclass

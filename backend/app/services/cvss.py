@@ -37,7 +37,6 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
-from types import MappingProxyType
 from typing import Final, Protocol
 
 from cvss import CVSS2, CVSS3, CVSS4
@@ -87,7 +86,7 @@ CVSS_VERSION_PRECEDENCE: Final[tuple[CVSSVersion, ...]] = (
 Version Precedence). The single version order of the Severity Resolution
 Cascade, the bounded CVSS list, and the trusted-external batch."""
 
-CVSS_VERSION_RANK: Final[Mapping[CVSSVersion, int]] = MappingProxyType(
+CVSS_VERSION_RANK: Final[frozendict[CVSSVersion, int]] = frozendict(
     {version: rank for rank, version in enumerate(CVSS_VERSION_PRECEDENCE)}
 )
 """Ascending sort key of `CVSS_VERSION_PRECEDENCE` (`0` is the highest)."""
@@ -223,24 +222,34 @@ class _VersionSpec:
         return None
 
 
-_V2_IMPACT = {
-    "N": CVSS2Impact.NONE,
-    "P": CVSS2Impact.PARTIAL,
-    "C": CVSS2Impact.COMPLETE,
-}
-_V34_ATTACK_VECTOR = {
-    "N": CVSSAttackVector.NETWORK,
-    "A": CVSSAttackVector.ADJACENT,
-    "L": CVSSAttackVector.LOCAL,
-    "P": CVSSAttackVector.PHYSICAL,
-}
-_V34_ATTACK_COMPLEXITY = {"L": CVSSAttackComplexity.LOW, "H": CVSSAttackComplexity.HIGH}
-_V34_PRIVILEGES_REQUIRED = {
-    "N": CVSSPrivilegesRequired.NONE,
-    "L": CVSSPrivilegesRequired.LOW,
-    "H": CVSSPrivilegesRequired.HIGH,
-}
-_V34_IMPACT = {"N": CVSSImpact.NONE, "L": CVSSImpact.LOW, "H": CVSSImpact.HIGH}
+_V2_IMPACT: Final[frozendict[str, CVSS2Impact]] = frozendict(
+    {
+        "N": CVSS2Impact.NONE,
+        "P": CVSS2Impact.PARTIAL,
+        "C": CVSS2Impact.COMPLETE,
+    }
+)
+_V34_ATTACK_VECTOR: Final[frozendict[str, CVSSAttackVector]] = frozendict(
+    {
+        "N": CVSSAttackVector.NETWORK,
+        "A": CVSSAttackVector.ADJACENT,
+        "L": CVSSAttackVector.LOCAL,
+        "P": CVSSAttackVector.PHYSICAL,
+    }
+)
+_V34_ATTACK_COMPLEXITY: Final[frozendict[str, CVSSAttackComplexity]] = frozendict(
+    {"L": CVSSAttackComplexity.LOW, "H": CVSSAttackComplexity.HIGH}
+)
+_V34_PRIVILEGES_REQUIRED: Final[frozendict[str, CVSSPrivilegesRequired]] = frozendict(
+    {
+        "N": CVSSPrivilegesRequired.NONE,
+        "L": CVSSPrivilegesRequired.LOW,
+        "H": CVSSPrivilegesRequired.HIGH,
+    }
+)
+_V34_IMPACT: Final[frozendict[str, CVSSImpact]] = frozendict(
+    {"N": CVSSImpact.NONE, "L": CVSSImpact.LOW, "H": CVSSImpact.HIGH}
+)
 
 
 def _score_v2(vector: str) -> float:
@@ -349,29 +358,33 @@ _V4_SPEC = _VersionSpec(
     score=_score_v4,
 )
 
-_VERSION_SPECS: Mapping[CVSSVersion, _VersionSpec] = {
-    CVSSVersion.V2_0: _V2_SPEC,
-    CVSSVersion.V3_0: _VersionSpec(
-        prefix="CVSS:3.0/",
-        metrics=_V3_METRICS,
-        metrics_type=CVSS3BaseMetrics,
-        score=_score_v3,
-    ),
-    CVSSVersion.V3_1: _VersionSpec(
-        prefix="CVSS:3.1/",
-        metrics=_V3_METRICS,
-        metrics_type=CVSS3BaseMetrics,
-        score=_score_v3,
-    ),
-    CVSSVersion.V4_0: _V4_SPEC,
-}
+_VERSION_SPECS: Final[frozendict[CVSSVersion, _VersionSpec]] = frozendict(
+    {
+        CVSSVersion.V2_0: _V2_SPEC,
+        CVSSVersion.V3_0: _VersionSpec(
+            prefix="CVSS:3.0/",
+            metrics=_V3_METRICS,
+            metrics_type=CVSS3BaseMetrics,
+            score=_score_v3,
+        ),
+        CVSSVersion.V3_1: _VersionSpec(
+            prefix="CVSS:3.1/",
+            metrics=_V3_METRICS,
+            metrics_type=CVSS3BaseMetrics,
+            score=_score_v3,
+        ),
+        CVSSVersion.V4_0: _V4_SPEC,
+    }
+)
 
 # Exact prefix (without the trailing "/") -> version, for prefixed versions.
-_PREFIXED_VERSIONS: Mapping[str, CVSSVersion] = {
-    spec.prefix.removesuffix("/"): version
-    for version, spec in _VERSION_SPECS.items()
-    if spec.prefix
-}
+_PREFIXED_VERSIONS: Final[frozendict[str, CVSSVersion]] = frozendict(
+    {
+        spec.prefix.removesuffix("/"): version
+        for version, spec in _VERSION_SPECS.items()
+        if spec.prefix
+    }
+)
 _PREFIX_MARKER = "CVSS:"
 
 
@@ -387,73 +400,83 @@ _V2_REQUIREMENT = frozenset({"L", "M", "H", "ND"})
 _V3_REQUIREMENT = frozenset({"X", "H", "M", "L"})
 _V3_IMPACT = frozenset({"X", "N", "L", "H"})
 
-_V2_NON_BASE: Mapping[str, frozenset[str]] = {
-    # Temporal
-    "E": frozenset({"U", "POC", "F", "H", "ND"}),
-    "RL": frozenset({"OF", "TF", "W", "U", "ND"}),
-    "RC": frozenset({"UC", "UR", "C", "ND"}),
-    # Environmental
-    "CDP": frozenset({"N", "L", "LM", "MH", "H", "ND"}),
-    "TD": frozenset({"N", "L", "M", "H", "ND"}),
-    "CR": _V2_REQUIREMENT,
-    "IR": _V2_REQUIREMENT,
-    "AR": _V2_REQUIREMENT,
-}
+_V2_NON_BASE: Final[frozendict[str, frozenset[str]]] = frozendict(
+    {
+        # Temporal
+        "E": frozenset({"U", "POC", "F", "H", "ND"}),
+        "RL": frozenset({"OF", "TF", "W", "U", "ND"}),
+        "RC": frozenset({"UC", "UR", "C", "ND"}),
+        # Environmental
+        "CDP": frozenset({"N", "L", "LM", "MH", "H", "ND"}),
+        "TD": frozenset({"N", "L", "M", "H", "ND"}),
+        "CR": _V2_REQUIREMENT,
+        "IR": _V2_REQUIREMENT,
+        "AR": _V2_REQUIREMENT,
+    }
+)
 
-_V3_NON_BASE: Mapping[str, frozenset[str]] = {
-    # Temporal
-    "E": frozenset({"X", "H", "F", "P", "U"}),
-    "RL": frozenset({"X", "U", "W", "T", "O"}),
-    "RC": frozenset({"X", "C", "R", "U"}),
-    # Environmental
-    "CR": _V3_REQUIREMENT,
-    "IR": _V3_REQUIREMENT,
-    "AR": _V3_REQUIREMENT,
-    "MAV": frozenset({"X", "N", "A", "L", "P"}),
-    "MAC": frozenset({"X", "L", "H"}),
-    "MPR": frozenset({"X", "N", "L", "H"}),
-    "MUI": frozenset({"X", "N", "R"}),
-    "MS": frozenset({"X", "U", "C"}),
-    "MC": _V3_IMPACT,
-    "MI": _V3_IMPACT,
-    "MA": _V3_IMPACT,
-}
+_V3_NON_BASE: Final[frozendict[str, frozenset[str]]] = frozendict(
+    {
+        # Temporal
+        "E": frozenset({"X", "H", "F", "P", "U"}),
+        "RL": frozenset({"X", "U", "W", "T", "O"}),
+        "RC": frozenset({"X", "C", "R", "U"}),
+        # Environmental
+        "CR": _V3_REQUIREMENT,
+        "IR": _V3_REQUIREMENT,
+        "AR": _V3_REQUIREMENT,
+        "MAV": frozenset({"X", "N", "A", "L", "P"}),
+        "MAC": frozenset({"X", "L", "H"}),
+        "MPR": frozenset({"X", "N", "L", "H"}),
+        "MUI": frozenset({"X", "N", "R"}),
+        "MS": frozenset({"X", "U", "C"}),
+        "MC": _V3_IMPACT,
+        "MI": _V3_IMPACT,
+        "MA": _V3_IMPACT,
+    }
+)
 
 _V4_SUBSEQUENT_SAFETY = frozenset({"X", "N", "L", "H", "S"})
 
-_V4_NON_BASE: Mapping[str, frozenset[str]] = {
-    # Threat
-    "E": frozenset({"X", "A", "P", "U"}),
-    # Environmental
-    "CR": _V3_REQUIREMENT,
-    "IR": _V3_REQUIREMENT,
-    "AR": _V3_REQUIREMENT,
-    "MAV": frozenset({"X", "N", "A", "L", "P"}),
-    "MAC": frozenset({"X", "L", "H"}),
-    "MAT": frozenset({"X", "N", "P"}),
-    "MPR": frozenset({"X", "N", "L", "H"}),
-    "MUI": frozenset({"X", "N", "P", "A"}),
-    "MVC": _V3_IMPACT,
-    "MVI": _V3_IMPACT,
-    "MVA": _V3_IMPACT,
-    "MSC": _V3_IMPACT,
-    "MSI": _V4_SUBSEQUENT_SAFETY,
-    "MSA": _V4_SUBSEQUENT_SAFETY,
-    # Supplemental
-    "S": frozenset({"X", "N", "P"}),
-    "AU": frozenset({"X", "N", "Y"}),
-    "R": frozenset({"X", "A", "U", "I"}),
-    "V": frozenset({"X", "D", "C"}),
-    "RE": frozenset({"X", "L", "M", "H"}),
-    "U": frozenset({"X", "Clear", "Green", "Amber", "Red"}),
-}
+_V4_NON_BASE: Final[frozendict[str, frozenset[str]]] = frozendict(
+    {
+        # Threat
+        "E": frozenset({"X", "A", "P", "U"}),
+        # Environmental
+        "CR": _V3_REQUIREMENT,
+        "IR": _V3_REQUIREMENT,
+        "AR": _V3_REQUIREMENT,
+        "MAV": frozenset({"X", "N", "A", "L", "P"}),
+        "MAC": frozenset({"X", "L", "H"}),
+        "MAT": frozenset({"X", "N", "P"}),
+        "MPR": frozenset({"X", "N", "L", "H"}),
+        "MUI": frozenset({"X", "N", "P", "A"}),
+        "MVC": _V3_IMPACT,
+        "MVI": _V3_IMPACT,
+        "MVA": _V3_IMPACT,
+        "MSC": _V3_IMPACT,
+        "MSI": _V4_SUBSEQUENT_SAFETY,
+        "MSA": _V4_SUBSEQUENT_SAFETY,
+        # Supplemental
+        "S": frozenset({"X", "N", "P"}),
+        "AU": frozenset({"X", "N", "Y"}),
+        "R": frozenset({"X", "A", "U", "I"}),
+        "V": frozenset({"X", "D", "C"}),
+        "RE": frozenset({"X", "L", "M", "H"}),
+        "U": frozenset({"X", "Clear", "Green", "Amber", "Red"}),
+    }
+)
 
-_NON_BASE_METRICS: Mapping[CVSSVersion, Mapping[str, frozenset[str]]] = {
-    CVSSVersion.V2_0: _V2_NON_BASE,
-    CVSSVersion.V3_0: _V3_NON_BASE,
-    CVSSVersion.V3_1: _V3_NON_BASE,
-    CVSSVersion.V4_0: _V4_NON_BASE,
-}
+_NON_BASE_METRICS: Final[frozendict[CVSSVersion, frozendict[str, frozenset[str]]]] = (
+    frozendict(
+        {
+            CVSSVersion.V2_0: _V2_NON_BASE,
+            CVSSVersion.V3_0: _V3_NON_BASE,
+            CVSSVersion.V3_1: _V3_NON_BASE,
+            CVSSVersion.V4_0: _V4_NON_BASE,
+        }
+    )
+)
 """Recognized non-Base metrics of each version and their official values
 (FIRST CVSS v2 Table 13, v3.0/v3.1 Table 15, v4.0 Table 23)."""
 

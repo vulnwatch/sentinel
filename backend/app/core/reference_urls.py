@@ -59,16 +59,22 @@ class ReferenceUrlRejection(StrEnum):
     USERINFO_FORBIDDEN = "userinfo_forbidden"
 
 
-_MESSAGES: Final[dict[ReferenceUrlRejection, str]] = {
-    ReferenceUrlRejection.URL_NOT_STRING: "URL must be a string.",
-    ReferenceUrlRejection.URL_EMPTY: "URL must not be empty.",
-    ReferenceUrlRejection.URL_TOO_LONG: "URL must be at most 2048 characters.",
-    ReferenceUrlRejection.CONTROL_CHARACTER: "URL must not contain control characters.",
-    ReferenceUrlRejection.INVALID_URL: "URL must be a well-formed absolute URL.",
-    ReferenceUrlRejection.INVALID_SCHEME: "URL scheme must be http or https.",
-    ReferenceUrlRejection.INVALID_HOST: "URL must have a valid host.",
-    ReferenceUrlRejection.USERINFO_FORBIDDEN: "URL must not contain user information.",
-}
+_MESSAGES: Final[frozendict[ReferenceUrlRejection, str]] = frozendict(
+    {
+        ReferenceUrlRejection.URL_NOT_STRING: "URL must be a string.",
+        ReferenceUrlRejection.URL_EMPTY: "URL must not be empty.",
+        ReferenceUrlRejection.URL_TOO_LONG: "URL must be at most 2048 characters.",
+        ReferenceUrlRejection.CONTROL_CHARACTER: (
+            "URL must not contain control characters."
+        ),
+        ReferenceUrlRejection.INVALID_URL: "URL must be a well-formed absolute URL.",
+        ReferenceUrlRejection.INVALID_SCHEME: "URL scheme must be http or https.",
+        ReferenceUrlRejection.INVALID_HOST: "URL must have a valid host.",
+        ReferenceUrlRejection.USERINFO_FORBIDDEN: (
+            "URL must not contain user information."
+        ),
+    }
+)
 
 
 class ReferenceUrlError(ValueError):

@@ -52,13 +52,15 @@ router = APIRouter(prefix="/api/v1", tags=["Identity Audit Log"])
 # The event types each log can return, which its `event_type` filter
 # accepts and publishes (`identity-audit-log.md`, List Identity Audit
 # Events; List My Identity Audit Events).
-_ADMIN_EVENT_TYPES: Final[Mapping[str, IdentityAuditEventType]] = {
-    member.value: member for member in IdentityAuditEventType
-}
-_SELF_EVENT_TYPES: Final[Mapping[str, IdentityAuditEventType]] = {
-    value: IdentityAuditEventType(value)
-    for value in get_args(SelfIdentityAuditEventTypeValue.__value__)
-}
+_ADMIN_EVENT_TYPES: Final[frozendict[str, IdentityAuditEventType]] = frozendict(
+    {member.value: member for member in IdentityAuditEventType}
+)
+_SELF_EVENT_TYPES: Final[frozendict[str, IdentityAuditEventType]] = frozendict(
+    {
+        value: IdentityAuditEventType(value)
+        for value in get_args(SelfIdentityAuditEventTypeValue.__value__)
+    }
+)
 _EVENT_TYPE_DESCRIPTION: Final = (
     "Filter by event type. Repeatable; OR semantics. Invalid values are "
     "ignored; only invalid values yield an empty page."

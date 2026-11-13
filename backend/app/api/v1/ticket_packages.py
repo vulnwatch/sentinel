@@ -13,7 +13,7 @@ exceptions to HTTP. No business logic or database query lives here.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Awaitable, Mapping
+from collections.abc import AsyncIterator, Awaitable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any, Final
@@ -256,9 +256,9 @@ async def list_ticket_packages(
 
 # Lowercase wire value -> domain filter member (tickets.md, Response
 # Schemas: enum serialization; package-model.md, Query Parameters).
-_TICKET_STATUS_FILTER: Final[Mapping[str, TicketStatus]] = {
-    member.value.lower(): member for member in TicketStatus
-}
+_TICKET_STATUS_FILTER: Final[frozendict[str, TicketStatus]] = frozendict(
+    {member.value.lower(): member for member in TicketStatus}
+)
 
 
 def _ticket_status_filter(raw: list[str]) -> list[TicketStatus] | None:

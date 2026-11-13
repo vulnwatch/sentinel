@@ -24,7 +24,7 @@ Reduction and its bounded `invalid_vector` warning.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Final
@@ -58,26 +58,28 @@ DESCRIPTION_MAX_LENGTH: Final = 65535
 _CWE_PATTERN: Final = re.compile(r"CWE-[1-9][0-9]*")
 _CWE_MAX_LENGTH: Final = 20
 
-ECOSYSTEMS: Final[Mapping[str, str | None]] = {
-    "pip": "PyPI",
-    "go": "Go",
-    "rust": "crates.io",
-    "npm": "npm",
-    "maven": "Maven",
-    "nuget": "NuGet",
-    "composer": "Packagist",
-    "rubygems": "RubyGems",
-    "pub": "Pub",
-    "erlang": "Hex",
-    "actions": "GitHub Actions",
-    "swift": "SwiftURL",
-    "other": None,
-}
+ECOSYSTEMS: Final[frozendict[str, str | None]] = frozendict(
+    {
+        "pip": "PyPI",
+        "go": "Go",
+        "rust": "crates.io",
+        "npm": "npm",
+        "maven": "Maven",
+        "nuget": "NuGet",
+        "composer": "Packagist",
+        "rubygems": "RubyGems",
+        "pub": "Pub",
+        "erlang": "Hex",
+        "actions": "GitHub Actions",
+        "swift": "SwiftURL",
+        "other": None,
+    }
+)
 """§ Ecosystem normalization: GitHub value → OSSF canonical value (`None`
 for `other`). A value outside the mapping is stored as received."""
 
 _LOWER_OPERATORS: Final = frozenset({">=", ">"})
-_UPPER_OPERATORS: Final[Mapping[str, bool]] = {"<": False, "<=": True}
+_UPPER_OPERATORS: Final[frozendict[str, bool]] = frozendict({"<": False, "<=": True})
 _CONSTRAINT: Final = re.compile(r"(<=|>=|<|>|=)\s*([^\s<>=](?:[^<>=]*[^\s<>=])?)")
 
 

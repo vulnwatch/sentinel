@@ -4511,23 +4511,31 @@ class _MarkerDirection(Enum):
 
 
 _MARKER_EVENTS: Final[
-    Mapping[tuple[_MarkerLevel, _MarkerDirection], TicketAuditEventType]
-] = {
-    (_MarkerLevel.PACKAGE, _MarkerDirection.EXCLUDE): (
-        TicketAuditEventType.PACKAGE_EXCLUDED
-    ),
-    (_MarkerLevel.TRACK, _MarkerDirection.EXCLUDE): TicketAuditEventType.TRACK_EXCLUDED,
-    (_MarkerLevel.PRODUCT, _MarkerDirection.EXCLUDE): (
-        TicketAuditEventType.PRODUCT_EXCLUDED
-    ),
-    (_MarkerLevel.PACKAGE, _MarkerDirection.RESTORE): (
-        TicketAuditEventType.PACKAGE_RESTORED
-    ),
-    (_MarkerLevel.TRACK, _MarkerDirection.RESTORE): TicketAuditEventType.TRACK_RESTORED,
-    (_MarkerLevel.PRODUCT, _MarkerDirection.RESTORE): (
-        TicketAuditEventType.PRODUCT_RESTORED
-    ),
-}
+    frozendict[tuple[_MarkerLevel, _MarkerDirection], TicketAuditEventType]
+] = frozendict(
+    {
+        (_MarkerLevel.PACKAGE, _MarkerDirection.EXCLUDE): (
+            TicketAuditEventType.PACKAGE_EXCLUDED
+        ),
+        (
+            _MarkerLevel.TRACK,
+            _MarkerDirection.EXCLUDE,
+        ): TicketAuditEventType.TRACK_EXCLUDED,
+        (_MarkerLevel.PRODUCT, _MarkerDirection.EXCLUDE): (
+            TicketAuditEventType.PRODUCT_EXCLUDED
+        ),
+        (_MarkerLevel.PACKAGE, _MarkerDirection.RESTORE): (
+            TicketAuditEventType.PACKAGE_RESTORED
+        ),
+        (
+            _MarkerLevel.TRACK,
+            _MarkerDirection.RESTORE,
+        ): TicketAuditEventType.TRACK_RESTORED,
+        (_MarkerLevel.PRODUCT, _MarkerDirection.RESTORE): (
+            TicketAuditEventType.PRODUCT_RESTORED
+        ),
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)

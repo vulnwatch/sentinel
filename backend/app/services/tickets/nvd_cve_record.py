@@ -100,7 +100,7 @@ INVALID_REFERENCE: Final = "invalid_reference"
 INVALID_CPE_CONFIGURATION: Final = "invalid_cpe_configuration"
 INVALID_CPE_MATCH: Final = "invalid_cpe_match"
 
-_VULN_STATUS_STATES: Final[Mapping[str, CveState]] = MappingProxyType(
+_VULN_STATUS_STATES: Final[frozendict[str, CveState]] = frozendict(
     {
         "Received": CveState.PUBLISHED,
         "Awaiting Analysis": CveState.PUBLISHED,

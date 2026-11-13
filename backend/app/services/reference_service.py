@@ -304,13 +304,15 @@ _TAG_TABLE: Final[tuple[tuple[str | None, str | None, ReferenceType | None], ...
 
 # Recognized tags that map to a type. Tags mapped to `NULL` are omitted:
 # they never prevent a later tag or URL-pattern classification.
-_TAG_TYPES: Final[dict[str, ReferenceType]] = {
-    tag: reference_type
-    for nvd_tag, mitre_tag, reference_type in _TAG_TABLE
-    if reference_type is not None
-    for tag in (nvd_tag, mitre_tag)
-    if tag is not None
-}
+_TAG_TYPES: Final[frozendict[str, ReferenceType]] = frozendict(
+    {
+        tag: reference_type
+        for nvd_tag, mitre_tag, reference_type in _TAG_TABLE
+        if reference_type is not None
+        for tag in (nvd_tag, mitre_tag)
+        if tag is not None
+    }
+)
 
 _TAG_TYPE_PRIORITY: Final[tuple[ReferenceType, ...]] = (
     ReferenceType.PATCH,

@@ -128,7 +128,7 @@ _CROSS_ORIGIN: Final = DerivedResponse(
     "API's own nor a configured browser client.",
 )
 
-_NULL_SCHEMA: Final = {"type": "null"}
+_NULL_SCHEMA: Final[frozendict[str, str]] = frozendict({"type": "null"})
 # docs/api-spec.md (Parameter Nullability): the parameter locations it covers.
 _NON_NULLABLE_PARAMETER_LOCATIONS: Final = frozenset({"path", "query"})
 
