@@ -189,18 +189,6 @@ class TestRoleWireFormat:
             assert role_from_wire(role_to_wire(role)) == role
 
 
-_MUTATING_METHODS = (
-    "__setitem__",
-    "__delitem__",
-    "__ior__",
-    "update",
-    "pop",
-    "popitem",
-    "setdefault",
-    "clear",
-)
-
-
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "name", ["ROLE_CAPABILITIES", "ROLE_SCOPES", "_ROLE_TO_WIRE", "_WIRE_TO_ROLE"]
@@ -228,8 +216,3 @@ class TestRbacTablesRejectMutation:
             del table[key]
 
         assert dict(table) == before
-
-    def test_table_has_no_mutating_method(self, name: str) -> None:
-        table = getattr(permissions, name)
-
-        assert [m for m in _MUTATING_METHODS if hasattr(table, m)] == []

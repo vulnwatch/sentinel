@@ -518,7 +518,7 @@ _OSV: Final = ("CVE-2099-0009",)
 # that the mapping of its source produces (cve-record-parser.md;
 # cve-sync-ghsa.md; cve-sync-osv.md).
 _TAR_REPO: Final = "https://git.example.com/fictional-tar"
-_TAR_CNA_ELEMENT: Final[frozendict[str, object]] = frozendict(
+_TAR_CNA_ELEMENT: Final[frozendict[str, str | tuple[str, ...]]] = frozendict(
     {
         "vendor": "Example",
         "product": "fictional-tar",
@@ -546,7 +546,7 @@ _TAR_CNA_ENTRIES: Final = (
         | {"version": "1.5", "version_type": "semver", "status": "unaffected"}
     ),
 )
-_TAR_ADP_ELEMENT: Final[frozendict[str, object]] = frozendict(
+_TAR_ADP_ELEMENT: Final[frozendict[str, str]] = frozendict(
     {
         "vendor": "example",
         "product": "fictional_tar",

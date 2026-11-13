@@ -116,16 +116,16 @@ _MICROSECONDS_PER_HOUR: Final = 3600 * _MICROSECONDS_PER_SECOND
 _LATER_PHASES: Final = (MilestonePhase.SUBMISSION, MilestonePhase.UM, MilestonePhase.QA)
 
 
-def _cumulative_shares() -> dict[MilestonePhase, int]:
+def _cumulative_shares() -> frozendict[MilestonePhase, int]:
     cumulative = 0
     shares: dict[MilestonePhase, int] = {}
     for phase in MilestonePhase:
         cumulative += PHASE_SHARES[phase]
         shares[phase] = cumulative
-    return shares
+    return frozendict(shares)
 
 
-_CUMULATIVE_SHARES: Final = _cumulative_shares()
+_CUMULATIVE_SHARES: Final[frozendict[MilestonePhase, int]] = _cumulative_shares()
 
 
 def _sorted_values(members: Iterable[str]) -> list[str]:

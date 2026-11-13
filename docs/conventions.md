@@ -427,10 +427,11 @@ A module-level mapping is a `dict` in two cases only:
 
 - a registry that code fills at import time, such as `FETCHER_REGISTRY`
   (`docs/features/platform/fetcher-infrastructure.md`, Registry); and
-- a value that a third-party API requires to be a `dict`: an entry of a
-  FastAPI `responses=` declaration, a `json_schema_extra` fragment, which
-  Pydantic and FastAPI ignore unless it is a `dict`, the Celery Beat
-  schedule, or PyJWT's decoding options.
+- a value that a third-party API requires to be a `dict`: a FastAPI
+  `responses=` declaration or an entry of one, a `json_schema_extra`
+  fragment, which Pydantic and FastAPI ignore unless it is a `dict`, a
+  Pydantic `ConfigDict`, the Celery Beat schedule, or PyJWT's decoding
+  options.
 
 Mappings inside functions, class attributes, Pydantic model fields, and code
 in `backend/tests/` are not constant mappings. A structural test enforces the

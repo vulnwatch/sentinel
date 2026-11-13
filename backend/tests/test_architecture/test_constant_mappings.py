@@ -12,11 +12,13 @@ name is read with `ast`, outside function and class bodies:
   registry or third-party API that requires the `dict`;
 - a binding to a `frozendict` is annotated `Final[frozendict[K, V]]`; and
 - the value of every `frozendict` binding, read from the imported module,
-  nests no mutable container and no mapping other than a `frozendict`.
+  is a `frozendict` and nests no mutable container and no mapping other than
+  a `frozendict`.
 
-A mapping built by a function call without a mapping annotation, and a
-mapping nested in a constant of another type, such as a dataclass field, are
-out of scope and remain with review.
+A call of a function that the same module defines is classified by the
+function's return annotation. A mapping built by any other function call
+without a mapping annotation, and a mapping nested in a constant of another
+type, such as a dataclass field, are out of scope and remain with review.
 """
 
 from __future__ import annotations
@@ -134,14 +136,35 @@ def _is_final_frozendict(annotation: ast.expr | None) -> bool:
     )
 
 
-def _kind(annotation: ast.expr | None, value: ast.expr | None) -> str | None:
+def _local_return_types(tree: ast.Module) -> dict[str, ast.expr]:
+    """The return annotation of every function that the module defines at
+    its top level, by function name."""
+    return {
+        statement.name: statement.returns
+        for statement in tree.body
+        if isinstance(statement, ast.FunctionDef) and statement.returns is not None
+    }
+
+
+def _kind(
+    annotation: ast.expr | None,
+    value: ast.expr | None,
+    returns: Mapping[str, ast.expr],
+) -> str | None:
     """`FROZEN` for a `frozendict` binding, `MUTABLE` for a binding to
-    another mapping, `None` for any other binding."""
-    type_name = _type_name(annotation)
-    if type_name == "frozendict" or _is_call(value, frozenset({"frozendict"})):
+    another mapping, `None` for any other binding. A call of a function that
+    the module defines is classified by the function's return annotation."""
+    type_names = {_type_name(annotation)}
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id in returns
+    ):
+        type_names.add(_type_name(returns[value.func.id]))
+    if "frozendict" in type_names or _is_call(value, frozenset({"frozendict"})):
         return FROZEN
     if (
-        type_name in MAPPING_TYPES
+        type_names & MAPPING_TYPES
         or isinstance(value, ast.Dict | ast.DictComp)
         or _is_call(value, MUTABLE_MAPPING_CALLS)
     ):
@@ -149,10 +172,12 @@ def _kind(annotation: ast.expr | None, value: ast.expr | None) -> str | None:
     return None
 
 
-def _mapping_bindings(tree: ast.Module) -> list[tuple[int, str, str]]:
-    """The line, name, and kind of every module-level binding of a constant
-    name to a mapping."""
-    bindings: list[tuple[int, str, str]] = []
+def _constant_mapping_bindings(
+    tree: ast.Module,
+) -> Iterator[tuple[int, str, str, ast.expr | None]]:
+    """The line, name, kind, and annotation of every module-level binding of
+    a constant name to a mapping."""
+    returns = _local_return_types(tree)
     targets: list[ast.expr]
     annotation: ast.expr | None
     for statement in _module_statements(tree.body):
@@ -162,31 +187,30 @@ def _mapping_bindings(tree: ast.Module) -> list[tuple[int, str, str]]:
             targets, annotation = statement.targets, None
         else:
             continue
-        kind = _kind(annotation, statement.value)
+        kind = _kind(annotation, statement.value, returns)
         if kind is None:
             continue
-        bindings.extend(
-            (statement.lineno, target.id, kind)
-            for target in targets
-            if isinstance(target, ast.Name) and CONSTANT_NAME.fullmatch(target.id)
-        )
-    return bindings
+        for target in targets:
+            if isinstance(target, ast.Name) and CONSTANT_NAME.fullmatch(target.id):
+                yield statement.lineno, target.id, kind, annotation
+
+
+def _mapping_bindings(tree: ast.Module) -> list[tuple[int, str, str]]:
+    """The line, name, and kind of every module-level binding of a constant
+    name to a mapping."""
+    return [
+        (line, name, kind) for line, name, kind, _ in _constant_mapping_bindings(tree)
+    ]
 
 
 def _form_violations(tree: ast.Module) -> list[tuple[int, str]]:
-    """The line and reason of every `frozendict` binding that is not
-    annotated `Final[frozendict[K, V]]`."""
-    violations: list[tuple[int, str]] = []
-    for statement in _module_statements(tree.body):
-        annotation = (
-            statement.annotation if isinstance(statement, ast.AnnAssign) else None
-        )
-        if isinstance(statement, ast.AnnAssign | ast.Assign) and (
-            _kind(annotation, statement.value) == FROZEN
-            and not _is_final_frozendict(annotation)
-        ):
-            violations.append((statement.lineno, FORM))
-    return violations
+    """The line and reason of every `frozendict` binding of a constant name
+    that is not annotated `Final[frozendict[K, V]]`."""
+    return [
+        (line, FORM)
+        for line, _, kind, annotation in _constant_mapping_bindings(tree)
+        if kind == FROZEN and not _is_final_frozendict(annotation)
+    ]
 
 
 def _mutable_parts(value: object, location: str = "") -> list[str]:
@@ -209,6 +233,14 @@ def _mutable_parts(value: object, location: str = "") -> list[str]:
     if isinstance(value, Mapping | MutableSequence | MutableSet):
         return [f"{location}: {type(value).__name__}"]
     return []
+
+
+def _value_violations(value: object) -> list[str]:
+    """Why the value of a `frozendict` binding breaks the convention: it is
+    not a `frozendict`, or it nests a mutable container."""
+    if type(value) is not frozendict:
+        return [f": is a {type(value).__name__}"]
+    return _mutable_parts(value)
 
 
 def _parse(path: Path) -> ast.Module:
@@ -273,11 +305,10 @@ def test_every_frozendict_constant_nests_no_mutable_container() -> None:
         if kind != FROZEN:
             continue
         value = getattr(importlib.import_module(_module_name(path)), name)
-        where = f"{_relative(path)}:{line}: {name}"
-        if type(value) is not frozendict:
-            violations.append(f"{where}: is a {type(value).__name__}")
-        else:
-            violations.extend(f"{where}{part}" for part in _mutable_parts(value))
+        violations.extend(
+            f"{_relative(path)}:{line}: {name}{violation}"
+            for violation in _value_violations(value)
+        )
 
     assert violations == []
 
@@ -295,6 +326,12 @@ def test_every_frozendict_constant_nests_no_mutable_container() -> None:
         ("X = defaultdict(list)\n", [(1, "X", MUTABLE)]),
         ("X: dict[str, int] = build()\n", [(1, "X", MUTABLE)]),
         ("X: Final[Mapping[str, int]] = build()\n", [(1, "X", MUTABLE)]),
+        ("X: Final[typing.Mapping[str, int]] = build()\n", [(1, "X", MUTABLE)]),
+        ("X: types.MappingProxyType[str, int] = build()\n", [(1, "X", MUTABLE)]),
+        (
+            "def build() -> dict[str, int]:\n    return {}\n\nX: Final = build()\n",
+            [(4, "X", MUTABLE)],
+        ),
         ("X = Y = {}\n", [(1, "X", MUTABLE), (1, "Y", MUTABLE)]),
         (
             "if TYPE_CHECKING:\n    pass\nelse:\n    X = {}\n",
@@ -304,6 +341,11 @@ def test_every_frozendict_constant_nests_no_mutable_container() -> None:
         ("X: Final[frozendict[str, int]] = frozendict({})\n", [(1, "X", FROZEN)]),
         ("X: Final = frozendict(a=1)\n", [(1, "X", FROZEN)]),
         ("X: Final[frozendict[str, int]] = build()\n", [(1, "X", FROZEN)]),
+        (
+            "def build() -> frozendict[str, int]:\n    return frozendict()\n\n"
+            "X = build()\n",
+            [(4, "X", FROZEN)],
+        ),
     ],
     ids=[
         "dict-display",
@@ -315,12 +357,16 @@ def test_every_frozendict_constant_nests_no_mutable_container() -> None:
         "defaultdict",
         "dict-annotation",
         "mapping-annotation",
+        "typing-mapping-annotation",
+        "mapping-proxy-annotation",
+        "local-dict-builder",
         "chained-targets",
         "compound-if",
         "compound-try",
         "frozendict",
         "frozendict-final-only",
         "frozendict-annotation",
+        "local-frozendict-builder",
     ],
 )
 def test_each_mapping_binding_is_detected(
@@ -340,6 +386,7 @@ def test_each_mapping_binding_is_detected(
         "X = frozenset({1})\n",
         "X: Final = (1, 2)\n",
         "X = build()\n",
+        "def build() -> int:\n    return 1\n\nX: Final = build()\n",
         "X: Final = case({1: 2}, value=column)\n",
         "X: Final = Limits(counts={'a': 1})\n",
     ],
@@ -350,6 +397,7 @@ def test_each_mapping_binding_is_detected(
         "frozenset",
         "tuple",
         "unannotated-call",
+        "local-non-mapping-builder",
         "mapping-argument",
         "dataclass-field",
     ],
@@ -367,7 +415,13 @@ def test_other_bindings_are_not_reported(source: str) -> None:
         ("X: frozendict[str, int] = frozendict(a=1)\n", [(1, FORM)]),
         ("X: Final[frozendict] = frozendict(a=1)\n", [(1, FORM)]),
         ("X: Final[Mapping[str, int]] = frozendict(a=1)\n", [(1, FORM)]),
+        (
+            "def build() -> frozendict[str, int]:\n    return frozendict()\n\n"
+            "X: Final = build()\n",
+            [(4, FORM)],
+        ),
         ("X: Final[frozendict[str, int]] = frozendict(a=1)\n", []),
+        ("x = frozendict(a=1)\n", []),
     ],
     ids=[
         "final-only",
@@ -375,7 +429,9 @@ def test_other_bindings_are_not_reported(source: str) -> None:
         "without-final",
         "unsubscripted",
         "mapping-annotation",
+        "local-builder-final-only",
         "final-frozendict",
+        "lowercase-name",
     ],
 )
 def test_each_form_violation_is_detected(
@@ -388,6 +444,8 @@ def test_each_form_violation_is_detected(
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
+        ({"a": 1}, [": is a dict"]),
+        (MappingProxyType({"a": 1}), [": is a mappingproxy"]),
         (frozendict(a={}), ["['a']: dict"]),
         (frozendict(a=[1]), ["['a']: list"]),
         (frozendict(a={1}), ["['a']: set"]),
@@ -407,6 +465,8 @@ def test_each_form_violation_is_detected(
         ),
     ],
     ids=[
+        "dict",
+        "mapping-proxy",
         "nested-dict",
         "nested-list",
         "nested-set",
@@ -418,5 +478,5 @@ def test_each_form_violation_is_detected(
         "immutable",
     ],
 )
-def test_each_mutable_part_is_detected(value: object, expected: list[str]) -> None:
-    assert _mutable_parts(value) == expected
+def test_each_value_violation_is_detected(value: object, expected: list[str]) -> None:
+    assert _value_violations(value) == expected
