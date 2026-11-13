@@ -2164,7 +2164,9 @@ limits.
 capability, privilege escalation, or privileged port; the API listens on port
 8000. Run every workload with the settings of the Pod Security `restricted`
 profile: `runAsNonRoot: true`, `seccompProfile: RuntimeDefault`,
-`allowPrivilegeEscalation: false`, and `capabilities.drop: [ALL]`.
+`allowPrivilegeEscalation: false`, and `capabilities.drop: [ALL]`. The debug
+container of [Slow or Hung Process](#slow-or-hung-process) is not a workload:
+an operator starts it for one diagnostic session, and no manifest declares it.
 
 **Routing.** An Ingress or a Gateway API HTTPRoute implements the routing of
 the [Sentinel Host](#sentinel-host) with two path-prefix rules: `/api` to the
@@ -2960,3 +2962,106 @@ permission.
 3. `Local git clone directory could not be removed — manual intervention
    required`: check the volume's mount state and permissions, then remove
    the clone directory manually
+
+#### Slow or Hung Process
+
+When a runtime process is slow or appears hung (requests time out, a fetcher
+run or task stays `running`, Beat or the IBS RabbitMQ consumer makes no
+progress), the sampling profiler of the image's standard library,
+`python -m profiling.sampling`, shows what it is doing without restarting it
+or changing the image. It reads the target's memory from outside; the target
+keeps running and is not paused. The profiler must run the same Python minor
+version as the target, so it always runs from the target's own image. The
+Python documentation of that minor (`profiling.sampling`) describes every
+option.
+
+**Finding the process.** The main process of a role is PID 1 of its
+container, unless the runtime adds an init process or the containers of a pod
+share one PID namespace; the image has no `ps`, so
+`for p in /proc/[0-9]*; do echo "${p#/proc/} $(tr '\0' ' ' <"$p/cmdline")"; done`
+lists the processes. In the Celery worker and the Git worker, PID 1 only
+dispatches: each task runs in a `prefork` child process.
+`celery -A app.celery_app inspect active -d <node>`, run in the worker's
+container, reports the `worker_pid` of each running task; the node is
+`celery@<hostname>` for the Celery worker and `git@<hostname>` for the Git
+worker (see [Container Images](#container-images)).
+
+**Hung: one snapshot.** `python -m profiling.sampling dump --async-aware <pid>`
+prints the `await` chain of every asyncio task of the API, the IBS RabbitMQ
+consumer, or a worker child that executes a task, including tasks suspended
+on a wait. Beat, the main process of a worker, and an idle child run no event
+loop; for them `--async-aware` finds no stack, and `dump -a <pid>` prints the
+stack of every thread instead. The two options cannot be combined. Take two or
+three dumps a few seconds apart: a frame that persists is where the process
+waits. The hard time limit of a fetcher run ends the child that executes it
+(see [Celery Worker Pool Requirement](#celery-worker-pool-requirement)), so
+dump a stuck run's child before then.
+
+**Slow: a bounded sample.**
+`python -m profiling.sampling attach -d 30 --async-aware --flamegraph -o /tmp/profile.html <pid>`
+samples for 30 seconds and writes a flame graph, a self-contained HTML file
+that loads nothing from the network and can be shared as is; `--async-mode all`
+adds the tasks suspended on a wait, and omitting `--flamegraph` and `-o` prints
+a text table instead. Always pass `-d`: without it, sampling continues until
+the target exits. Write the file under `/tmp` of the container that runs the
+profiler and copy it out with `cat` through `docker exec` or `kubectl exec`
+(`docker cp` cannot read a `tmpfs`).
+
+**Privileges.** Linux lets the profiler read another process's memory only
+with ptrace access to it. Use the first of these two ways that works:
+
+1. **The target's own container, without added privilege.** Run the commands
+   with `docker exec <container> ...` or `kubectl exec <pod> -c <container>
+   -- ...`, as the image's user, like the target. This works only when the
+   kernel of the host lets a process trace another process of the same user:
+   Yama's `kernel.yama.ptrace_scope` is `0`, or Yama is absent. With `1`, the
+   default of many distributions, or `2`, the profiler fails with "unable to
+   access process memory". The setting belongs to the host, applies to every
+   process on it, and is not changed for this procedure.
+2. **A temporary debug container.** Start a container from the target's
+   image that shares the target container's PID namespace and runs as root
+   with `SYS_PTRACE` as its only capability, no privilege escalation, and no
+   network. Root is required: Docker and containerd grant a capability that
+   they add to a non-root process only in its bounding set, not as an
+   effective capability, so a non-root debug container cannot attach even
+   with `SYS_PTRACE`. This works with `ptrace_scope` up to `2`; `3` disables
+   ptrace on the host, and the procedure is then unavailable there. With
+   Docker, where `sleep 900` ends the session and `--rm` removes the
+   container even if it is forgotten:
+
+   ```bash
+   docker run -d --rm --name sentinel-profiler --pid container:<target> \
+     --user 0:0 --cap-drop ALL --cap-add SYS_PTRACE \
+     --security-opt no-new-privileges --network none \
+     "$(docker inspect --format '{{.Image}}' <target>)" sleep 900
+   docker exec sentinel-profiler python -m profiling.sampling dump --async-aware 1
+   docker rm -f sentinel-profiler
+   ```
+
+   In Kubernetes, an ephemeral container that targets the process container
+   shares its PID namespace, for example
+   `kubectl debug <pod> --target=<container> --image=<the pod's image digest>
+   --profile=general --custom=profiler.yaml -c profiler -- sleep 900`, with a
+   `profiler.yaml` that sets `securityContext` to `runAsUser: 0`,
+   `runAsNonRoot: false`, `allowPrivilegeEscalation: false`,
+   `capabilities: {drop: [ALL], add: [SYS_PTRACE]}`, and
+   `seccompProfile: {type: RuntimeDefault}`. An ephemeral container cannot be
+   removed: it remains in the pod's specification, stopped, until the pod is
+   replaced. A namespace that enforces the Pod Security `baseline` or
+   `restricted` profile rejects it; whether an environment's admission and
+   permissions allow it is part of the environment configuration, which is
+   maintained outside this repository.
+
+**Security.** Ptrace access to a process is full access to it: whoever runs
+the profiler can read and change the target's memory, which holds every
+secret of its configuration (`docs/configuration.md`) and the data it
+processes, and can read its environment and files. Run the procedure only as
+an operator who is already trusted with the environment's secrets, as a
+time-boxed diagnostic session. It is never a default: no compose file or
+deployment manifest grants `SYS_PTRACE`, root, or a shared PID namespace, and
+every role keeps the [Security context](#kubernetes-workloads) of its
+workload. The debug container departs from the Pod Security `restricted` and
+`baseline` profiles, because it runs as root and adds a capability that
+neither profile permits, and exists only for the session. The profiler's
+output shows code locations (functions, files, line numbers, and source
+lines), not the values of variables.
