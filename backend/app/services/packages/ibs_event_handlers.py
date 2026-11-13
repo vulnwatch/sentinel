@@ -294,20 +294,28 @@ async def handle_request_event(event: EventObject, client: IBSClient) -> Deliver
     return DeliveryResult(DeliveryOutcome.PROCESSED, fields=selected)
 
 
-HANDLERS: Final[dict[str, Handler]] = {
-    PACKAGE_COMMIT_ROUTING_KEY: handle_package_commit,
-    REQUEST_CREATE_ROUTING_KEY: handle_request_event,
-    REQUEST_STATE_CHANGE_ROUTING_KEY: handle_request_event,
-}
+HANDLERS: Final[frozendict[str, Handler]] = frozendict(
+    {
+        PACKAGE_COMMIT_ROUTING_KEY: handle_package_commit,
+        REQUEST_CREATE_ROUTING_KEY: handle_request_event,
+        REQUEST_STATE_CHANGE_ROUTING_KEY: handle_request_event,
+    }
+)
 """The application handler of every bound routing key."""
 
-FAILURE_CATEGORIES: Final[dict[str, IBSConsumerErrorCategory]] = {
-    PACKAGE_COMMIT_ROUTING_KEY: IBSConsumerErrorCategory.PACKAGE_RECONCILIATION_FAILED,
-    REQUEST_CREATE_ROUTING_KEY: IBSConsumerErrorCategory.REQUEST_RECONCILIATION_FAILED,
-    REQUEST_STATE_CHANGE_ROUTING_KEY: (
-        IBSConsumerErrorCategory.REQUEST_RECONCILIATION_FAILED
-    ),
-}
+FAILURE_CATEGORIES: Final[frozendict[str, IBSConsumerErrorCategory]] = frozendict(
+    {
+        PACKAGE_COMMIT_ROUTING_KEY: (
+            IBSConsumerErrorCategory.PACKAGE_RECONCILIATION_FAILED
+        ),
+        REQUEST_CREATE_ROUTING_KEY: (
+            IBSConsumerErrorCategory.REQUEST_RECONCILIATION_FAILED
+        ),
+        REQUEST_STATE_CHANGE_ROUTING_KEY: (
+            IBSConsumerErrorCategory.REQUEST_RECONCILIATION_FAILED
+        ),
+    }
+)
 """The heartbeat `last_error` category of a failed delivery of every bound
 routing key (Heartbeat Storage)."""
 

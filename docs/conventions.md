@@ -18,6 +18,7 @@
   - [Style](#style)
   - [Type Hints](#type-hints)
   - [Omitted Values](#omitted-values)
+  - [Constant Mappings](#constant-mappings)
   - [Static Type Checking](#static-type-checking)
   - [Static Security Analysis](#static-security-analysis)
   - [Naming](#naming)
@@ -385,6 +386,56 @@ and `backend/tests/`:
 the builtin `sentinel` type, so this convention does not change with the
 runtime version. Pydantic Conventions applies the rule to request and response
 schemas. A structural test enforces the absence of other markers (see
+`docs/features/platform/testing-strategy.md`, Structural Tests).
+
+### Constant Mappings
+
+A constant mapping is a mapping that module-level code binds to an
+`UPPER_SNAKE_CASE` name (Naming) and that no code changes after its
+definition, such as a lookup table, a translation between two sets of values,
+or a set of fixed messages. In `backend/app/`, a constant mapping is a builtin
+`frozendict` (PEP 814, Python 3.15 and later), annotated with its key and
+value types inside `Final`:
+
+```python
+ROLE_SCOPES: Final[frozendict[Role, Scope]] = frozendict(
+    {
+        Role.ADMIN: Scope.ALL,
+        Role.VULNERABILITY_ANALYST: Scope.ALL,
+        Role.RESTRICTED_ANALYST: Scope.NON_CONFIDENTIAL,
+    }
+)
+```
+
+- `frozendict` has no method that changes it, and item assignment and
+  deletion raise `TypeError`, so neither the type checker nor the runtime
+  lets code change the table. A `dict` annotated `Mapping` is still mutable
+  at runtime, and a `MappingProxyType` is a read-only view of a `dict` that
+  remains mutable; neither is used for a constant mapping.
+- A container in its values is immutable too: a nested mapping is a
+  `frozendict`, a sequence a `tuple`, and a set a `frozenset`. The annotation
+  names the nested types, for example
+  `Final[frozendict[str, frozendict[str, str]]]`, so that the type checker
+  rejects a nested `dict`; a bare `Final` lets it infer one.
+- `frozendict` is a `Mapping` but not a `dict` subclass. A third-party call
+  that accepts only a `dict` at runtime receives `dict(TABLE)` at the call
+  site, also when its signature accepts any `Mapping`: SQLAlchemy's
+  `case(TABLE, value=...)`, for example, reads a mapping as `WHEN` value
+  pairs only when it is a `dict`.
+
+A module-level mapping is a `dict` in two cases only:
+
+- a registry that code fills at import time, such as `FETCHER_REGISTRY`
+  (`docs/features/platform/fetcher-infrastructure.md`, Registry); and
+- a value that a third-party API requires to be a `dict`: an entry of a
+  FastAPI `responses=` declaration, a `json_schema_extra` fragment, which
+  Pydantic and FastAPI ignore unless it is a `dict`, the Celery Beat
+  schedule, or PyJWT's decoding options.
+
+Mappings inside functions, class attributes, Pydantic model fields, and code
+in `backend/tests/` are not constant mappings. A structural test enforces the
+declaration form, the reviewed list of module-level `dict` mappings, and the
+absence of mutable nested containers (see
 `docs/features/platform/testing-strategy.md`, Structural Tests).
 
 ### Static Type Checking

@@ -86,11 +86,13 @@ class RetryOutcome(StrEnum):
     EXCLUDED_AT_REVALIDATION = "excluded_at_revalidation"
 
 
-_SKIP_REASONS: Final = {
-    RetryOutcome.SKIPPED_NO_CAPABILITY: "not_fetch_single_capable",
-    RetryOutcome.SKIPPED_NO_ACTIVE_TICKET: "no_active_ticket",
-    RetryOutcome.EXCLUDED_AT_REVALIDATION: "excluded_at_revalidation",
-}
+_SKIP_REASONS: Final[frozendict[RetryOutcome, str]] = frozendict(
+    {
+        RetryOutcome.SKIPPED_NO_CAPABILITY: "not_fetch_single_capable",
+        RetryOutcome.SKIPPED_NO_ACTIVE_TICKET: "no_active_ticket",
+        RetryOutcome.EXCLUDED_AT_REVALIDATION: "excluded_at_revalidation",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)

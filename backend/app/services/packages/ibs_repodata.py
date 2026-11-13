@@ -184,13 +184,15 @@ _FIELDS: Final = (
     "open-size",
     "timestamp",
 )
-_FIELD_NAMES: Final = {
-    f"{REPOMD_NAMESPACE}{NAMESPACE_SEPARATOR}{field}": field for field in _FIELDS
-}
+_FIELD_NAMES: Final[frozendict[str, str]] = frozendict(
+    {f"{REPOMD_NAMESPACE}{NAMESPACE_SEPARATOR}{field}": field for field in _FIELDS}
+)
 _TEXT_FIELDS: Final = frozenset(_FIELDS) - {"location"}
 _MAX_FIELD_TEXT: Final = 128
 
-CHECKSUM_ALGORITHMS: Final = {"sha256": ("sha256", 64), "sha": ("sha1", 40)}
+CHECKSUM_ALGORITHMS: Final[frozendict[str, tuple[str, int]]] = frozendict(
+    {"sha256": ("sha256", 64), "sha": ("sha1", 40)}
+)
 """Accepted repomd checksum names: hashlib name and hexadecimal length."""
 
 _HEX: Final = re.compile(r"[0-9A-Fa-f]+")

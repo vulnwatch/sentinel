@@ -15,7 +15,6 @@ manual-zone exceptions and never produce `TICKET_NOT_MUTABLE`.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Annotated, Final
 from uuid import UUID
 
@@ -65,9 +64,9 @@ ManageReferencesPrincipal = Annotated[
 ]
 
 # Wire value -> filter member (`docs/api-spec.md`, Enum Filter Validation).
-_TYPE_FILTER: Final[Mapping[str, ReferenceType]] = {
-    member.value: member for member in ReferenceType
-}
+_TYPE_FILTER: Final[frozendict[str, ReferenceType]] = frozendict(
+    {member.value: member for member in ReferenceType}
+)
 
 _TICKET_NOT_FOUND_DESCRIPTION: Final = (
     "`TICKET_NOT_FOUND`: Ticket identifier is malformed, does not exist, or "

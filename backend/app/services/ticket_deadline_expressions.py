@@ -448,10 +448,12 @@ def track_milestone_status_expression(
 # the tracks of a Ticket is its earliest open later phase and, for that
 # phase, `overdue` when any track has it overdue. Then the marker of a track
 # with a `null` member, then a track without an open later phase.
-_OPEN_PHASE_CODES: Final[dict[MilestonePhase, tuple[int, int]]] = {
-    phase: (2 * index, 2 * index + 1)
-    for index, phase in enumerate(_LATER_PHASES, start=1)
-}
+_OPEN_PHASE_CODES: Final[frozendict[MilestonePhase, tuple[int, int]]] = frozendict(
+    {
+        phase: (2 * index, 2 * index + 1)
+        for index, phase in enumerate(_LATER_PHASES, start=1)
+    }
+)
 _NULL_MEMBER_CODE: Final = 2 * len(_LATER_PHASES) + 2
 _NO_OPEN_PHASE_CODE: Final = _NULL_MEMBER_CODE + 1
 _NULL_STATUS: Final = ""

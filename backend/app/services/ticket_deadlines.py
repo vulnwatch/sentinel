@@ -26,7 +26,6 @@ from __future__ import annotations
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from types import MappingProxyType
 from typing import Final
 
 from app.core.enums import (
@@ -42,7 +41,7 @@ from app.core.enums import (
     WorkflowType,
 )
 
-SLA_TIER_DAYS: Final[Mapping[Severity, int]] = MappingProxyType(
+SLA_TIER_DAYS: Final[frozendict[Severity, int]] = frozendict(
     {
         Severity.CRITICAL: 30,
         Severity.HIGH: 30,
@@ -55,7 +54,7 @@ SLA_TIER_DAYS: Final[Mapping[Severity, int]] = MappingProxyType(
 UNRESOLVED_SLA_DAYS: Final = 30
 """SLA tier for an unresolved (SQL `NULL`) severity: the worst case."""
 
-PHASE_SHARES: Final[Mapping[MilestonePhase, int]] = MappingProxyType(
+PHASE_SHARES: Final[frozendict[MilestonePhase, int]] = frozendict(
     {
         MilestonePhase.TRIAGE: 10,
         MilestonePhase.SUBMISSION: 50,
@@ -96,18 +95,16 @@ TRIAGE_OPEN_TICKET_STATUSES: Final = frozenset(
 """Ticket statuses with the Ticket-level `triage` phase open (Ticket-Level
 Overdue Filter; Ticket Current Phase, Open Phases)."""
 
-CURRENT_PHASE_TICKET_STATUSES: Final[Mapping[CurrentPhase, frozenset[TicketStatus]]] = (
-    MappingProxyType(
-        {
-            CurrentPhase.TRIAGE: TRIAGE_OPEN_TICKET_STATUSES,
-            CurrentPhase.SUBMISSION: frozenset({TicketStatus.ANALYZED}),
-            CurrentPhase.UM: frozenset({TicketStatus.ANALYZED}),
-            CurrentPhase.QA: frozenset({TicketStatus.ANALYZED}),
-            CurrentPhase.DONE: frozenset(
-                {TicketStatus.ANALYZED, TicketStatus.RESOLVED}
-            ),
-        }
-    )
+CURRENT_PHASE_TICKET_STATUSES: Final[
+    frozendict[CurrentPhase, frozenset[TicketStatus]]
+] = frozendict(
+    {
+        CurrentPhase.TRIAGE: TRIAGE_OPEN_TICKET_STATUSES,
+        CurrentPhase.SUBMISSION: frozenset({TicketStatus.ANALYZED}),
+        CurrentPhase.UM: frozenset({TicketStatus.ANALYZED}),
+        CurrentPhase.QA: frozenset({TicketStatus.ANALYZED}),
+        CurrentPhase.DONE: frozenset({TicketStatus.ANALYZED, TicketStatus.RESOLVED}),
+    }
 )
 """The only Ticket statuses that can have each Ticket `current_phase` value,
 as the Rules of Ticket Current Phase imply: `triage` comes from a `New` or

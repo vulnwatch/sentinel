@@ -213,11 +213,13 @@ async def _unhandled_exception_handler(
 # The single `errors` entry for a JSON body that FastAPI could not read or
 # decode: the `type` and `msg` FastAPI itself reports for a JSON syntax error
 # (`docs/api-spec.md`, JSON Request Body Decoding).
-_UNDECODABLE_BODY_ERROR: Final = {
-    "loc": ("body",),
-    "msg": "JSON decode error",
-    "type": "json_invalid",
-}
+_UNDECODABLE_BODY_ERROR: Final[frozendict[str, str | tuple[str, ...]]] = frozendict(
+    {
+        "loc": ("body",),
+        "msg": "JSON decode error",
+        "type": "json_invalid",
+    }
+)
 
 
 def _allowed_methods(request: Request) -> list[str]:

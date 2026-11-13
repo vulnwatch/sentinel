@@ -714,21 +714,27 @@ _ACTIVE_STATUSES: Final = tuple(
 )
 
 # Semantic ranks (docs/api-spec.md, Semantic Sort Fields). SQL `NULL` is
-# not ranked, so it sorts last under Nullable Sort Field Ordering.
-_PRIORITY_RANK: Final[dict[str, int]] = {
-    TicketPriority.P4.value: 0,
-    TicketPriority.P3.value: 1,
-    TicketPriority.P2.value: 2,
-    TicketPriority.P1.value: 3,
-}
-_STATUS_RANK: Final[dict[str, int]] = {
-    TicketStatus.NEW.value: 0,
-    TicketStatus.ANALYSIS.value: 1,
-    TicketStatus.ANALYZED.value: 2,
-    TicketStatus.RESOLVED.value: 3,
-    TicketStatus.IGNORED.value: 4,
-    TicketStatus.DUPLICATED.value: 5,
-}
+# not ranked, so it sorts last under Nullable Sort Field Ordering. `case()`
+# reads a mapping as `WHEN` value pairs only when it is a `dict`, so the sort
+# keys pass `dict(...)` (docs/conventions.md, Constant Mappings).
+_PRIORITY_RANK: Final[frozendict[str, int]] = frozendict(
+    {
+        TicketPriority.P4.value: 0,
+        TicketPriority.P3.value: 1,
+        TicketPriority.P2.value: 2,
+        TicketPriority.P1.value: 3,
+    }
+)
+_STATUS_RANK: Final[frozendict[str, int]] = frozendict(
+    {
+        TicketStatus.NEW.value: 0,
+        TicketStatus.ANALYSIS.value: 1,
+        TicketStatus.ANALYZED.value: 2,
+        TicketStatus.RESOLVED.value: 3,
+        TicketStatus.IGNORED.value: 4,
+        TicketStatus.DUPLICATED.value: 5,
+    }
+)
 
 _LIST_ASSIGNEE = aliased(User, name="list_assignee")
 _LIST_OVERRIDE_SETTER = aliased(User, name="list_override_setter")
@@ -999,9 +1005,9 @@ def _sort_keys(
         case TicketSortField.SEVERITY:
             return (_SortKey(severity_rank_expression(severity)),)
         case TicketSortField.PRIORITY:
-            return (_SortKey(case(_PRIORITY_RANK, value=priority)),)
+            return (_SortKey(case(dict(_PRIORITY_RANK), value=priority)),)
         case TicketSortField.STATUS:
-            return (_SortKey(case(_STATUS_RANK, value=Ticket.status)),)
+            return (_SortKey(case(dict(_STATUS_RANK), value=Ticket.status)),)
         case TicketSortField.TRIAGE_DUE_AT:
             return (_SortKey(due.triage),)
         case TicketSortField.SUBMISSION_DUE_AT:
@@ -1019,7 +1025,7 @@ def _sort_keys(
             # the earliest current due date (ticket-deadlines.md, Current
             # Due Date).
             return (
-                _SortKey(case(_PRIORITY_RANK, value=priority)),
+                _SortKey(case(dict(_PRIORITY_RANK), value=priority)),
                 _SortKey(current_due, against_order=True),
             )
         case TicketSortField.COORDINATED_RELEASE_AT:

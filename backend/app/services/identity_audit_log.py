@@ -45,103 +45,137 @@ _REQUIRED: Final = "required"
 _FORBIDDEN: Final = "forbidden"
 _OPTIONAL: Final = "optional"
 
-_FIELD_RULES: Final[dict[IdentityAuditEventType, dict[str, str]]] = {
-    IdentityAuditEventType.USER_CREATED: {
-        "user_id": _OPTIONAL,
-        "target_user_id": _REQUIRED,
-        "old_value": _FORBIDDEN,
-        "new_value": _REQUIRED,
-    },
-    IdentityAuditEventType.USER_DEACTIVATED: {
-        "user_id": _OPTIONAL,
-        "target_user_id": _REQUIRED,
-        "old_value": _REQUIRED,
-        "new_value": _REQUIRED,
-    },
-    IdentityAuditEventType.USER_REACTIVATED: {
-        "user_id": _OPTIONAL,
-        "target_user_id": _REQUIRED,
-        "old_value": _REQUIRED,
-        "new_value": _REQUIRED,
-    },
-    IdentityAuditEventType.PASSWORD_RESET: {
-        "user_id": _OPTIONAL,
-        "target_user_id": _REQUIRED,
-        "old_value": _FORBIDDEN,
-        "new_value": _FORBIDDEN,
-    },
-    IdentityAuditEventType.ROLE_ADDED: {
-        "user_id": _OPTIONAL,
-        "target_user_id": _REQUIRED,
-        "old_value": _FORBIDDEN,
-        "new_value": _REQUIRED,
-    },
-    IdentityAuditEventType.ROLE_REMOVED: {
-        "user_id": _OPTIONAL,
-        "target_user_id": _REQUIRED,
-        "old_value": _REQUIRED,
-        "new_value": _FORBIDDEN,
-    },
-    # Intrinsically administrator-only: user_id (the actor) is required.
-    # log_event() cannot verify the actor actually holds the Admin role
-    # (that is an authorization concern outside this module) — it only
-    # enforces that an actor is attributed.
-    IdentityAuditEventType.ROLE_MAPPING_CREATED: {
-        "user_id": _REQUIRED,
-        "target_user_id": _FORBIDDEN,
-        "old_value": _FORBIDDEN,
-        "new_value": _REQUIRED,
-    },
-    IdentityAuditEventType.ROLE_MAPPING_DELETED: {
-        "user_id": _REQUIRED,
-        "target_user_id": _FORBIDDEN,
-        "old_value": _REQUIRED,
-        "new_value": _FORBIDDEN,
-    },
-    IdentityAuditEventType.USERNAME_CHANGED: {
-        "user_id": _OPTIONAL,
-        "target_user_id": _REQUIRED,
-        "old_value": _REQUIRED,
-        "new_value": _REQUIRED,
-    },
-    IdentityAuditEventType.API_KEY_CREATED: {
-        "user_id": _REQUIRED,
-        "target_user_id": _REQUIRED,
-        "old_value": _FORBIDDEN,
-        "new_value": _REQUIRED,
-    },
-    IdentityAuditEventType.API_KEY_REVOKED: {
-        "user_id": _OPTIONAL,
-        "target_user_id": _REQUIRED,
-        "old_value": _REQUIRED,
-        "new_value": _FORBIDDEN,
-    },
-    IdentityAuditEventType.EMAIL_CHANGED: {
-        "user_id": _OPTIONAL,
-        "target_user_id": _REQUIRED,
-        "old_value": _REQUIRED,
-        "new_value": _REQUIRED,
-    },
-    IdentityAuditEventType.FULL_NAME_CHANGED: {
-        "user_id": _OPTIONAL,
-        "target_user_id": _REQUIRED,
-        "old_value": _OPTIONAL,
-        "new_value": _OPTIONAL,
-    },
-    IdentityAuditEventType.BOT_CHANGED: {
-        "user_id": _OPTIONAL,
-        "target_user_id": _REQUIRED,
-        "old_value": _REQUIRED,
-        "new_value": _REQUIRED,
-    },
-    # Intrinsically system-only: user_id (the actor) must be NULL.
-    IdentityAuditEventType.MANAGER_CHANGED: {
-        "user_id": _FORBIDDEN,
-        "target_user_id": _REQUIRED,
-        "old_value": _OPTIONAL,
-        "new_value": _OPTIONAL,
-    },
-}
+_FIELD_RULES: Final[frozendict[IdentityAuditEventType, frozendict[str, str]]] = (
+    frozendict(
+        {
+            IdentityAuditEventType.USER_CREATED: frozendict(
+                {
+                    "user_id": _OPTIONAL,
+                    "target_user_id": _REQUIRED,
+                    "old_value": _FORBIDDEN,
+                    "new_value": _REQUIRED,
+                }
+            ),
+            IdentityAuditEventType.USER_DEACTIVATED: frozendict(
+                {
+                    "user_id": _OPTIONAL,
+                    "target_user_id": _REQUIRED,
+                    "old_value": _REQUIRED,
+                    "new_value": _REQUIRED,
+                }
+            ),
+            IdentityAuditEventType.USER_REACTIVATED: frozendict(
+                {
+                    "user_id": _OPTIONAL,
+                    "target_user_id": _REQUIRED,
+                    "old_value": _REQUIRED,
+                    "new_value": _REQUIRED,
+                }
+            ),
+            IdentityAuditEventType.PASSWORD_RESET: frozendict(
+                {
+                    "user_id": _OPTIONAL,
+                    "target_user_id": _REQUIRED,
+                    "old_value": _FORBIDDEN,
+                    "new_value": _FORBIDDEN,
+                }
+            ),
+            IdentityAuditEventType.ROLE_ADDED: frozendict(
+                {
+                    "user_id": _OPTIONAL,
+                    "target_user_id": _REQUIRED,
+                    "old_value": _FORBIDDEN,
+                    "new_value": _REQUIRED,
+                }
+            ),
+            IdentityAuditEventType.ROLE_REMOVED: frozendict(
+                {
+                    "user_id": _OPTIONAL,
+                    "target_user_id": _REQUIRED,
+                    "old_value": _REQUIRED,
+                    "new_value": _FORBIDDEN,
+                }
+            ),
+            # Intrinsically administrator-only: user_id (the actor) is required.
+            # log_event() cannot verify the actor actually holds the Admin role
+            # (that is an authorization concern outside this module) — it only
+            # enforces that an actor is attributed.
+            IdentityAuditEventType.ROLE_MAPPING_CREATED: frozendict(
+                {
+                    "user_id": _REQUIRED,
+                    "target_user_id": _FORBIDDEN,
+                    "old_value": _FORBIDDEN,
+                    "new_value": _REQUIRED,
+                }
+            ),
+            IdentityAuditEventType.ROLE_MAPPING_DELETED: frozendict(
+                {
+                    "user_id": _REQUIRED,
+                    "target_user_id": _FORBIDDEN,
+                    "old_value": _REQUIRED,
+                    "new_value": _FORBIDDEN,
+                }
+            ),
+            IdentityAuditEventType.USERNAME_CHANGED: frozendict(
+                {
+                    "user_id": _OPTIONAL,
+                    "target_user_id": _REQUIRED,
+                    "old_value": _REQUIRED,
+                    "new_value": _REQUIRED,
+                }
+            ),
+            IdentityAuditEventType.API_KEY_CREATED: frozendict(
+                {
+                    "user_id": _REQUIRED,
+                    "target_user_id": _REQUIRED,
+                    "old_value": _FORBIDDEN,
+                    "new_value": _REQUIRED,
+                }
+            ),
+            IdentityAuditEventType.API_KEY_REVOKED: frozendict(
+                {
+                    "user_id": _OPTIONAL,
+                    "target_user_id": _REQUIRED,
+                    "old_value": _REQUIRED,
+                    "new_value": _FORBIDDEN,
+                }
+            ),
+            IdentityAuditEventType.EMAIL_CHANGED: frozendict(
+                {
+                    "user_id": _OPTIONAL,
+                    "target_user_id": _REQUIRED,
+                    "old_value": _REQUIRED,
+                    "new_value": _REQUIRED,
+                }
+            ),
+            IdentityAuditEventType.FULL_NAME_CHANGED: frozendict(
+                {
+                    "user_id": _OPTIONAL,
+                    "target_user_id": _REQUIRED,
+                    "old_value": _OPTIONAL,
+                    "new_value": _OPTIONAL,
+                }
+            ),
+            IdentityAuditEventType.BOT_CHANGED: frozendict(
+                {
+                    "user_id": _OPTIONAL,
+                    "target_user_id": _REQUIRED,
+                    "old_value": _REQUIRED,
+                    "new_value": _REQUIRED,
+                }
+            ),
+            # Intrinsically system-only: user_id (the actor) must be NULL.
+            IdentityAuditEventType.MANAGER_CHANGED: frozendict(
+                {
+                    "user_id": _FORBIDDEN,
+                    "target_user_id": _REQUIRED,
+                    "old_value": _OPTIONAL,
+                    "new_value": _OPTIONAL,
+                }
+            ),
+        }
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -169,44 +203,46 @@ _SOURCE_ONLY_SCHEMA: Final = _DetailSchema(optional=frozenset({"source"}))
 # Event types not present in this mapping MUST have `detail = NULL`
 # (`password_reset`, `manager_changed` — see the detail JSONB Schema
 # Contract, "Event types not listed here MUST set detail to NULL").
-_DETAIL_SCHEMAS: Final[dict[IdentityAuditEventType, _DetailSchema]] = {
-    IdentityAuditEventType.USER_CREATED: _SOURCE_ONLY_SCHEMA,
-    IdentityAuditEventType.USER_REACTIVATED: _SOURCE_ONLY_SCHEMA,
-    IdentityAuditEventType.USERNAME_CHANGED: _SOURCE_ONLY_SCHEMA,
-    IdentityAuditEventType.EMAIL_CHANGED: _SOURCE_ONLY_SCHEMA,
-    IdentityAuditEventType.FULL_NAME_CHANGED: _SOURCE_ONLY_SCHEMA,
-    IdentityAuditEventType.BOT_CHANGED: _SOURCE_ONLY_SCHEMA,
-    IdentityAuditEventType.USER_DEACTIVATED: _DetailSchema(
-        required=frozenset({"reason"}),
-        optional=frozenset({"source"}),
-        require_present=True,
-    ),
-    IdentityAuditEventType.ROLE_ADDED: _DetailSchema(
-        optional=frozenset({"source", "mapping"}),
-        paired=("source", "mapping"),
-    ),
-    IdentityAuditEventType.ROLE_REMOVED: _DetailSchema(
-        optional=frozenset({"source", "mapping"}),
-        paired=("source", "mapping"),
-    ),
-    IdentityAuditEventType.ROLE_MAPPING_CREATED: _DetailSchema(
-        required=frozenset({"group_name", "role", "affected_users"}),
-        require_present=True,
-    ),
-    IdentityAuditEventType.ROLE_MAPPING_DELETED: _DetailSchema(
-        required=frozenset({"group_name", "role", "affected_users"}),
-        require_present=True,
-    ),
-    IdentityAuditEventType.API_KEY_CREATED: _DetailSchema(
-        required=frozenset({"key_id"}),
-        require_present=True,
-    ),
-    IdentityAuditEventType.API_KEY_REVOKED: _DetailSchema(
-        required=frozenset({"key_id"}),
-        optional=frozenset({"reason"}),
-        require_present=True,
-    ),
-}
+_DETAIL_SCHEMAS: Final[frozendict[IdentityAuditEventType, _DetailSchema]] = frozendict(
+    {
+        IdentityAuditEventType.USER_CREATED: _SOURCE_ONLY_SCHEMA,
+        IdentityAuditEventType.USER_REACTIVATED: _SOURCE_ONLY_SCHEMA,
+        IdentityAuditEventType.USERNAME_CHANGED: _SOURCE_ONLY_SCHEMA,
+        IdentityAuditEventType.EMAIL_CHANGED: _SOURCE_ONLY_SCHEMA,
+        IdentityAuditEventType.FULL_NAME_CHANGED: _SOURCE_ONLY_SCHEMA,
+        IdentityAuditEventType.BOT_CHANGED: _SOURCE_ONLY_SCHEMA,
+        IdentityAuditEventType.USER_DEACTIVATED: _DetailSchema(
+            required=frozenset({"reason"}),
+            optional=frozenset({"source"}),
+            require_present=True,
+        ),
+        IdentityAuditEventType.ROLE_ADDED: _DetailSchema(
+            optional=frozenset({"source", "mapping"}),
+            paired=("source", "mapping"),
+        ),
+        IdentityAuditEventType.ROLE_REMOVED: _DetailSchema(
+            optional=frozenset({"source", "mapping"}),
+            paired=("source", "mapping"),
+        ),
+        IdentityAuditEventType.ROLE_MAPPING_CREATED: _DetailSchema(
+            required=frozenset({"group_name", "role", "affected_users"}),
+            require_present=True,
+        ),
+        IdentityAuditEventType.ROLE_MAPPING_DELETED: _DetailSchema(
+            required=frozenset({"group_name", "role", "affected_users"}),
+            require_present=True,
+        ),
+        IdentityAuditEventType.API_KEY_CREATED: _DetailSchema(
+            required=frozenset({"key_id"}),
+            require_present=True,
+        ),
+        IdentityAuditEventType.API_KEY_REVOKED: _DetailSchema(
+            required=frozenset({"key_id"}),
+            optional=frozenset({"reason"}),
+            require_present=True,
+        ),
+    }
+)
 
 
 def _validate_source(value: object) -> None:
@@ -238,15 +274,17 @@ def _validate_key_id(value: object) -> None:
         raise ValueError("detail.key_id must be a canonical UUID string")
 
 
-_KEY_VALIDATORS: Final[dict[str, Any]] = {
-    "source": _validate_source,
-    "mapping": lambda value: _validate_string("mapping", value),
-    "group_name": lambda value: _validate_string("group_name", value),
-    "role": lambda value: _validate_string("role", value),
-    "reason": lambda value: _validate_string("reason", value),
-    "affected_users": _validate_affected_users,
-    "key_id": _validate_key_id,
-}
+_KEY_VALIDATORS: Final[frozendict[str, Any]] = frozendict(
+    {
+        "source": _validate_source,
+        "mapping": lambda value: _validate_string("mapping", value),
+        "group_name": lambda value: _validate_string("group_name", value),
+        "role": lambda value: _validate_string("role", value),
+        "reason": lambda value: _validate_string("reason", value),
+        "affected_users": _validate_affected_users,
+        "key_id": _validate_key_id,
+    }
+)
 
 
 def _check_field_presence(

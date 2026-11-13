@@ -470,7 +470,11 @@ class TestDispatch:
         async def broken(*_: Any) -> DeliveryResult:
             raise RuntimeError("fictional bug")
 
-        monkeypatch.setitem(HANDLERS, PACKAGE_COMMIT_ROUTING_KEY, broken)
+        monkeypatch.setattr(
+            ibs_event_handlers,
+            "HANDLERS",
+            HANDLERS | {PACKAGE_COMMIT_ROUTING_KEY: broken},
+        )
 
         result = await handle_delivery(
             PACKAGE_COMMIT_ROUTING_KEY,
@@ -490,7 +494,9 @@ class TestDispatch:
         async def broken(*_: Any) -> DeliveryResult:
             raise RuntimeError("fictional bug")
 
-        monkeypatch.setitem(HANDLERS, routing_key, broken)
+        monkeypatch.setattr(
+            ibs_event_handlers, "HANDLERS", HANDLERS | {routing_key: broken}
+        )
 
         result = await handle_delivery(
             routing_key,
@@ -512,7 +518,11 @@ class TestDispatch:
         async def raising(*_: Any) -> DeliveryResult:
             raise error
 
-        monkeypatch.setitem(HANDLERS, PACKAGE_COMMIT_ROUTING_KEY, raising)
+        monkeypatch.setattr(
+            ibs_event_handlers,
+            "HANDLERS",
+            HANDLERS | {PACKAGE_COMMIT_ROUTING_KEY: raising},
+        )
 
         with pytest.raises(type(error)):
             await handle_delivery(

@@ -10,60 +10,69 @@ no capability, scope, or role-mapping tables in the database (see
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Final
 
 from app.core.enums import Capability, Role, Scope
 
 # Role -> granted capabilities. See `docs/features/identity/rbac.md`
 # (Predefined Roles). `admin` does NOT inherit VA capabilities; a user
 # needing both must hold both roles.
-ROLE_CAPABILITIES: dict[Role, frozenset[Capability]] = {
-    Role.ADMIN: frozenset(
-        {
-            Capability.MANAGE_USERS,
-            Capability.MANAGE_ROLE_MAPPINGS,
-            Capability.MANAGE_SETTINGS,
-            Capability.MANAGE_FETCHERS,
-            Capability.ADMIN_TICKET_OPS,
-        }
-    ),
-    Role.VULNERABILITY_ANALYST: frozenset(
-        {
-            Capability.CREATE_TICKET,
-            Capability.TRIAGE_TICKET,
-            Capability.MANAGE_PACKAGES,
-            Capability.MANAGE_CVSS,
-            Capability.MANAGE_REFERENCES,
-            Capability.MANAGE_CONFIDENTIALITY,
-        }
-    ),
-    Role.RESTRICTED_ANALYST: frozenset(
-        {
-            Capability.CREATE_TICKET,
-            Capability.TRIAGE_TICKET,
-            Capability.MANAGE_PACKAGES,
-            Capability.MANAGE_CVSS,
-            Capability.MANAGE_REFERENCES,
-        }
-    ),
-}
+ROLE_CAPABILITIES: Final[frozendict[Role, frozenset[Capability]]] = frozendict(
+    {
+        Role.ADMIN: frozenset(
+            {
+                Capability.MANAGE_USERS,
+                Capability.MANAGE_ROLE_MAPPINGS,
+                Capability.MANAGE_SETTINGS,
+                Capability.MANAGE_FETCHERS,
+                Capability.ADMIN_TICKET_OPS,
+            }
+        ),
+        Role.VULNERABILITY_ANALYST: frozenset(
+            {
+                Capability.CREATE_TICKET,
+                Capability.TRIAGE_TICKET,
+                Capability.MANAGE_PACKAGES,
+                Capability.MANAGE_CVSS,
+                Capability.MANAGE_REFERENCES,
+                Capability.MANAGE_CONFIDENTIALITY,
+            }
+        ),
+        Role.RESTRICTED_ANALYST: frozenset(
+            {
+                Capability.CREATE_TICKET,
+                Capability.TRIAGE_TICKET,
+                Capability.MANAGE_PACKAGES,
+                Capability.MANAGE_CVSS,
+                Capability.MANAGE_REFERENCES,
+            }
+        ),
+    }
+)
 
 # Role -> default visibility scope. See `docs/features/identity/rbac.md`
 # (Scope, Predefined Roles).
-ROLE_SCOPES: dict[Role, Scope] = {
-    Role.ADMIN: Scope.ALL,
-    Role.VULNERABILITY_ANALYST: Scope.ALL,
-    Role.RESTRICTED_ANALYST: Scope.NON_CONFIDENTIAL,
-}
+ROLE_SCOPES: Final[frozendict[Role, Scope]] = frozendict(
+    {
+        Role.ADMIN: Scope.ALL,
+        Role.VULNERABILITY_ANALYST: Scope.ALL,
+        Role.RESTRICTED_ANALYST: Scope.NON_CONFIDENTIAL,
+    }
+)
 
 # Role <-> wire format (lowercase with underscores). See
 # `docs/features/identity/rbac.md` (Role Wire Format). Used by all
 # endpoints and CLI options that accept or return role values.
-_ROLE_TO_WIRE: dict[Role, str] = {
-    Role.ADMIN: "admin",
-    Role.VULNERABILITY_ANALYST: "vulnerability_analyst",
-    Role.RESTRICTED_ANALYST: "restricted_analyst",
-}
-_WIRE_TO_ROLE: dict[str, Role] = {wire: role for role, wire in _ROLE_TO_WIRE.items()}
+_ROLE_TO_WIRE: Final[frozendict[Role, str]] = frozendict(
+    {
+        Role.ADMIN: "admin",
+        Role.VULNERABILITY_ANALYST: "vulnerability_analyst",
+        Role.RESTRICTED_ANALYST: "restricted_analyst",
+    }
+)
+_WIRE_TO_ROLE: Final[frozendict[str, Role]] = frozendict(
+    {wire: role for role, wire in _ROLE_TO_WIRE.items()}
+)
 
 
 def get_capabilities(roles: Iterable[Role]) -> frozenset[Capability]:

@@ -24,7 +24,6 @@ expressions can use it without a dependency cycle.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Final
 
 from sqlalchemy import ColumnElement, case, select
@@ -36,13 +35,15 @@ from app.models.ticket import Ticket
 
 # Semantic ranks (docs/api-spec.md, Semantic Sort Fields). SQL `NULL` is
 # not ranked, so it sorts last under Nullable Sort Field Ordering.
-_SEVERITY_RANK: Final[Mapping[str, int]] = {
-    Severity.NONE.value: 0,
-    Severity.LOW.value: 1,
-    Severity.MEDIUM.value: 2,
-    Severity.HIGH.value: 3,
-    Severity.CRITICAL.value: 4,
-}
+_SEVERITY_RANK: Final[frozendict[str, int]] = frozendict(
+    {
+        Severity.NONE.value: 0,
+        Severity.LOW.value: 1,
+        Severity.MEDIUM.value: 2,
+        Severity.HIGH.value: 3,
+        Severity.CRITICAL.value: 4,
+    }
+)
 
 
 def resolved_severity_expression(

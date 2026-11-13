@@ -87,11 +87,13 @@ _GIT_LOCAL_ENV_VARS: Final[frozenset[str]] = frozenset(
     }
 )
 
-_GIT_ENV_OVERRIDES: Final[dict[str, str]] = {
-    "LC_ALL": "C",
-    "GIT_TERMINAL_PROMPT": "0",
-    "TZ": "UTC",
-}
+_GIT_ENV_OVERRIDES: Final[frozendict[str, str]] = frozendict(
+    {
+        "LC_ALL": "C",
+        "GIT_TERMINAL_PROMPT": "0",
+        "TZ": "UTC",
+    }
+)
 
 
 class GitError(Exception):

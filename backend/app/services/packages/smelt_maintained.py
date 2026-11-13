@@ -68,7 +68,9 @@ MaintainedUnavailableCategory = Literal[
     "transport", "http_status", "envelope", "schema"
 ]
 
-_WORKFLOW_TYPES: Final = {"SLFO": WorkflowType.GIT, "SLE_15": WorkflowType.IBS}
+_WORKFLOW_TYPES: Final[frozendict[str, WorkflowType]] = frozendict(
+    {"SLFO": WorkflowType.GIT, "SLE_15": WorkflowType.IBS}
+)
 _NOT_A_PATH_SEGMENT = frozenset({"", ".", ".."})
 _CREDENTIAL_HEADERS = ("authorization", "cookie")
 

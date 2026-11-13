@@ -106,17 +106,21 @@ logger = structlog.get_logger(__name__)
 # (see the PR description for the verification note).
 ConflictField = Literal["username", "email", "external_id"]
 
-_CONSTRAINT_TO_FIELD: Final[dict[str, ConflictField]] = {
-    "user_username_key": "username",
-    "user_email_key": "email",
-    "user_external_id_key": "external_id",
-}
+_CONSTRAINT_TO_FIELD: Final[frozendict[str, ConflictField]] = frozendict(
+    {
+        "user_username_key": "username",
+        "user_email_key": "email",
+        "user_external_id_key": "external_id",
+    }
+)
 
-_CONFLICT_MESSAGES: Final[dict[ConflictField, str]] = {
-    "username": "Username already exists.",
-    "email": "Email already exists.",
-    "external_id": "External ID already exists.",
-}
+_CONFLICT_MESSAGES: Final[frozendict[ConflictField, str]] = frozendict(
+    {
+        "username": "Username already exists.",
+        "email": "Email already exists.",
+        "external_id": "External ID already exists.",
+    }
+)
 
 _MANUAL_GROUP: Final = "_manual"
 """`UserRole.group_name` of manual role assignments

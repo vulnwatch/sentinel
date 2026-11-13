@@ -60,7 +60,7 @@ leaf `ticket_mutations_errors` hierarchy.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -178,12 +178,14 @@ __all__ = [
 
 logger = structlog.get_logger(__name__)
 
-INELIGIBLE_ASSIGNEE_REASONS: Final[Mapping[AssigneeIneligibility, str]] = {
-    AssigneeIneligibility.INACTIVE: "inactive assignee",
-    AssigneeIneligibility.BOT: "bot account",
-    AssigneeIneligibility.NO_TRIAGE_TICKET: "role removed",
-    AssigneeIneligibility.CONFIDENTIAL: "confidential ticket",
-}
+INELIGIBLE_ASSIGNEE_REASONS: Final[frozendict[AssigneeIneligibility, str]] = frozendict(
+    {
+        AssigneeIneligibility.INACTIVE: "inactive assignee",
+        AssigneeIneligibility.BOT: "bot account",
+        AssigneeIneligibility.NO_TRIAGE_TICKET: "role removed",
+        AssigneeIneligibility.CONFIDENTIAL: "confidential ticket",
+    }
+)
 """The closed reason of the assignee eligibility observation for each
 failing condition (ticket-audit-log.md, Canonical Automatic Comment
 Vocabulary). The condition precedence is `AssigneeIneligibility` order."""

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.core import permissions
 from app.core.enums import Capability, Role, Scope
 from app.core.permissions import (
     ROLE_CAPABILITIES,
@@ -186,3 +187,49 @@ class TestRoleWireFormat:
     def test_roundtrip_all_roles(self) -> None:
         for role in Role:
             assert role_from_wire(role_to_wire(role)) == role
+
+
+_MUTATING_METHODS = (
+    "__setitem__",
+    "__delitem__",
+    "__ior__",
+    "update",
+    "pop",
+    "popitem",
+    "setdefault",
+    "clear",
+)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "name", ["ROLE_CAPABILITIES", "ROLE_SCOPES", "_ROLE_TO_WIRE", "_WIRE_TO_ROLE"]
+)
+class TestRbacTablesRejectMutation:
+    """The static RBAC tables are `frozendict` constants, so no code can
+    change an access decision process-wide by changing a table at runtime
+    (docs/conventions.md, Constant Mappings). Each table is read by name, so
+    the writes below reach the runtime rather than the type checker, which
+    rejects them statically."""
+
+    def test_table_is_a_frozendict(self, name: str) -> None:
+        assert type(getattr(permissions, name)) is frozendict
+
+    def test_item_writes_raise_type_error_and_keep_the_table(self, name: str) -> None:
+        table = getattr(permissions, name)
+        before = dict(table)
+        key = next(iter(table))
+
+        with pytest.raises(TypeError):
+            table[key] = table[key]
+        with pytest.raises(TypeError):
+            table["fictional_role"] = table[key]
+        with pytest.raises(TypeError):
+            del table[key]
+
+        assert dict(table) == before
+
+    def test_table_has_no_mutating_method(self, name: str) -> None:
+        table = getattr(permissions, name)
+
+        assert [m for m in _MUTATING_METHODS if hasattr(table, m)] == []

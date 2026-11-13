@@ -17,7 +17,6 @@ here.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Annotated, Final
 
@@ -46,9 +45,9 @@ from app.services.packages.ibs_request_lists import IBSRequestActionItem
 router = APIRouter(prefix="/api/v1", tags=["IBS Submission Tracking"])
 
 # Wire value -> filter member (`docs/api-spec.md`, Enum Filter Validation).
-_STATE_FILTER: Final[Mapping[str, IBSRequestState]] = {
-    member.value: member for member in IBSRequestState
-}
+_STATE_FILTER: Final[frozendict[str, IBSRequestState]] = frozendict(
+    {member.value: member for member in IBSRequestState}
+)
 
 _TICKET_NOT_FOUND_DESCRIPTION: Final = (
     "`TICKET_NOT_FOUND`: Ticket identifier is malformed, does not exist, or "

@@ -651,13 +651,15 @@ Also bounds the retry window of `evaluate_failed_cve_sources`
 # CVEs, Query Parameters). `unresolved` is the SQL `NULL` severity. The
 # API publishes the keys as the filters' values (`docs/api-spec.md`,
 # Published Input Constraints).
-CVE_STATE_FILTER: Final[Mapping[str, str]] = {
-    member.value.lower(): member.value for member in CveState
-}
-CVE_SEVERITY_FILTER: Final[Mapping[str, str | None]] = {
-    **{member.value.lower(): member.value for member in Severity},
-    "unresolved": None,
-}
+CVE_STATE_FILTER: Final[frozendict[str, str]] = frozendict(
+    {member.value.lower(): member.value for member in CveState}
+)
+CVE_SEVERITY_FILTER: Final[frozendict[str, str | None]] = frozendict(
+    {
+        **{member.value.lower(): member.value for member in Severity},
+        "unresolved": None,
+    }
+)
 CVE_SOURCE_STATUS_FILTER: Final[tuple[str, ...]] = tuple(
     member.value for member in CVESourceFetchStatus
 )
