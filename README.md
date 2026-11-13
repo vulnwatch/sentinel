@@ -14,7 +14,7 @@
 
 <p align="center">
 <a href="https://github.com/vulnwatch/sentinel/releases"><img src="https://img.shields.io/github/v/release/vulnwatch/sentinel" alt="Release"></a>
-<a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.14-blue?logo=python&logoColor=white" alt="Python"></a>
+<a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.15-blue?logo=python&logoColor=white" alt="Python"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
 </p>
 
@@ -128,7 +128,7 @@ commands.
 
 | Component | Technology |
 |-----------|------------|
-| Language | Python 3.14 |
+| Language | Python 3.15 |
 | Package Manager | uv |
 | API Framework | FastAPI on uvicorn |
 | ORM | SQLAlchemy (async, asyncpg) |

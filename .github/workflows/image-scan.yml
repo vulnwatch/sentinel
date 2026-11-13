@@ -6,7 +6,7 @@ name: Image Vulnerability Scan
 # rationale: Python dependencies are covered by
 # GitHub Dependabot alerts, Renovate vulnerability-fix PRs, and the
 # pip-audit gate on dependency changes and Release PRs, but the Debian
-# base layer (python:3.14-slim) is otherwise unmonitored for known
+# base layer (python:<minor>-slim) is otherwise unmonitored for known
 # vulnerabilities.
 # Renovate proposes PRs bumping the ARG-templated base image digest in
 # backend/Dockerfile (its dockerfile manager resolves ARG values
@@ -187,7 +187,7 @@ jobs:
           {
             echo "Automated scan of \`${{ steps.image.outputs.ref }}\` found fixable HIGH/CRITICAL OS-level vulnerabilities."
             echo ""
-            echo "This scan is non-blocking by design (see \`docs/deployment.md\`, Image Vulnerability Monitoring). Renovate periodically proposes a PR bumping \`PYTHON_BASE_DIGEST\` in \`backend/Dockerfile\` to the current \`python:3.14-slim\` digest (see \`docs/deployment.md\`, Container Build Conventions → Base image pinning); merging the latest such PR is the expected remediation. If no pending Renovate PR resolves this finding, a maintainer can resolve the current digest manually and open one directly. Merge the remediating PR with a \`fix(deps):\` commit subject so that release-please proposes a patch release that ships the fix; for a Renovate PR, set the subject when squash-merging, because Renovate restores its own PR title (see \`docs/deployment.md\`, Image Vulnerability Monitoring → Remediation path, and Squash Merge). The scan that runs after that release closes this issue once no fixable finding remains."
+            echo "This scan is non-blocking by design (see \`docs/deployment.md\`, Image Vulnerability Monitoring). Renovate periodically proposes a PR bumping \`PYTHON_BASE_DIGEST\` in \`backend/Dockerfile\` to the current digest of its \`python:<minor>-slim\` base image tag (see \`docs/deployment.md\`, Container Build Conventions → Base image pinning); merging the latest such PR is the expected remediation. If no pending Renovate PR resolves this finding, a maintainer can resolve the current digest manually and open one directly. Merge the remediating PR with a \`fix(deps):\` commit subject so that release-please proposes a patch release that ships the fix; for a Renovate PR, set the subject when squash-merging, because Renovate restores its own PR title (see \`docs/deployment.md\`, Image Vulnerability Monitoring → Remediation path, and Squash Merge). The scan that runs after that release closes this issue once no fixable finding remains."
             echo ""
             echo "<details><summary>Fixable HIGH/CRITICAL findings</summary>"
             echo ""

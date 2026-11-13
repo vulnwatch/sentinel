@@ -210,7 +210,7 @@ def test_shell_lint_manager_extracts_every_image_with_its_digest() -> None:
 def test_shell_lint_image_updates_use_the_ci_prefix_within_the_title_limit() -> None:
     # The images run only in CI and in the developer's local checks, so their
     # updates carry no release signal. The longest title Renovate gives them,
-    # in the form of its digest updates ("<prefix> Update python:3.14-slim
+    # in the form of its digest updates ("<prefix> Update python:3.15-slim
     # Docker digest to 35caba8"), must pass the PR Metadata check.
     rules = [
         rule

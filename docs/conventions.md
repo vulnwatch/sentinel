@@ -1427,11 +1427,20 @@ scenario is defined in `docs/features/platform/testing-strategy.md`
 
 Sentinel targets a single Python minor version for all runtime
 components. The version is chosen based on: (1) active bugfix
-maintenance status from python.org, and (2) declared support from all
-critical dependencies (Celery in particular historically lags new
-Python releases by 6-12 months).
+maintenance status from python.org, and (2) support from all critical
+dependencies. A critical dependency supports a minor when it declares
+that minor (PyPI classifiers or changelog). Declarations lag behind
+compatibility: the Celery stack has historically declared a new Python
+minor 6-12 months after its release. A dependency that does not declare
+the minor yet therefore also counts as supporting it when both of these
+hold:
 
-**Current target**: Python **3.14** (bugfix maintenance, EOL 2030-10).
+- it is pure Python, or it publishes wheels for that minor for every
+  platform the image is built for; and
+- the Python Forward-Compatibility Check (`docs/deployment.md`) passes on
+  a final release of that minor.
+
+**Current target**: Python **3.15** (bugfix maintenance, EOL 2031-10).
 
 #### Source of Truth
 
@@ -1480,7 +1489,7 @@ All Dockerfiles in the repository MUST use a global `ARG` for the
 Python version:
 
 ```dockerfile
-ARG PYTHON_VERSION=3.14
+ARG PYTHON_VERSION=<minor>
 ARG PYTHON_BASE_DIGEST=sha256:...
 FROM python:${PYTHON_VERSION}-slim@${PYTHON_BASE_DIGEST} AS builder
 ...
@@ -1496,16 +1505,19 @@ step verifies this automatically — a mismatch fails the build.
 
 When upgrading to a new Python minor version:
 
-1. **Verify dependency support**: check PyPI classifiers and changelog
-   for all critical dependencies. Priority order (historically slowest
-   to adopt):
+1. **Verify dependency support** under criterion (2) above: check PyPI
+   classifiers and changelog for all critical dependencies. For one that
+   does not declare the new minor yet, check that it is pure Python or
+   publishes wheels for the new minor, and that the latest Python
+   Forward-Compatibility Check run on a final release of the new minor
+   passed. Priority order (historically slowest to adopt):
    - `celery` / `kombu` / `billiard` (task queue stack)
    - `asyncpg` (C extension, needs wheel)
    - `pydantic-core` (Rust extension, needs wheel)
    - `bcrypt` (C extension)
    - All other dependencies with C/Rust extensions
 2. **Update the source of truth**: change `backend/.python-version` to
-   the new minor (e.g., `3.14`).
+   the new minor, without a patch component (see Source of Truth).
 3. **Align `requires-python`**: update `backend/pyproject.toml`
    `requires-python` to `>=3.<new-minor>`.
 4. **Update Dockerfile defaults**: change `ARG PYTHON_VERSION=...` in
@@ -1522,11 +1534,12 @@ When upgrading to a new Python minor version:
    bumps the version, add the old version alongside the new one in CI
    to confirm no regressions. Remove the old version after merge.
 7. **Update documentation**: change the "Current target" line in this
-   section and the prerequisite in `docs/deployment.md` (Software
-   Requirements table).
-8. **Update prose references**: search for hardcoded version strings in
-   `docs/` (e.g., `python:3.13-slim` in spec prose) and update or make
-   version-agnostic.
+   section, and raise the uv minimum in `docs/deployment.md` (Software
+   Requirements table) when that uv version cannot install the new
+   minor's latest bugfix release.
+8. **Update prose references**: search the repository, not only `docs/`,
+   for hardcoded version strings (e.g., `python:3.13-slim` in spec prose)
+   and update them or make them version-agnostic.
 9. **Rebuild and test images**: build the Docker image with the new
    base, run smoke tests against it.
 10. **Deploy**: staging first, observe for one cycle of all fetchers,
