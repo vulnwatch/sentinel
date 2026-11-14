@@ -610,7 +610,8 @@ start. Updates of the dependencies that these custom managers find under
 like GitHub Actions updates, and each tool gets its own PR. The `ci` type
 carries no release signal (`docs/conventions.md`, Versioning). Swagger UI
 updates use `chore(deps):` instead, because the image ships the copy of the
-`/api/docs` page; that type carries no release signal either.
+`/api/docs` page; that prefix is a release signal (see Release signal of
+dependency updates below).
 
 `renovate-validation.yml` is a separate, advisory repository check. It runs
 on every pull request rather than maintaining a whitelist of Renovate-managed
@@ -648,6 +649,34 @@ Dashboard open in the next run, at any hour. Outside the window, Renovate
 still updates and rebases the PRs that are already open. `master` requires
 up-to-date branches, so each merge makes Renovate rebase its other open PRs
 in its next run, and each rebase runs CI again.
+
+**Release signal of dependency updates.** The title prefix that
+`renovate.jsonc` gives an update states whether the update changes the
+published image, and therefore whether release-please proposes a release for
+it (Semantic Versioning Policy):
+
+| Prefix | Updates | Release signal |
+|--------|---------|----------------|
+| `chore(deps):` | What the image ships or is built from: the backend's Python runtime dependencies (`[project]` `dependencies`) with the script pins that move with them, lock file maintenance of `backend/uv.lock`, the `python` base image, and Swagger UI | Patch, listed under Dependencies |
+| `ci(deps):` | What only CI, development, and tests use: Actions and the tools that the workflows and `scripts/lint-shell.sh` run, the Python development dependencies (`[dependency-groups]`), the images of the Compose files and of the testcontainers fixtures, the Dockerfile frontend, and the uv group (see Container Build Conventions) | None |
+| `fix(deps):` | Vulnerability-fix PRs (see Python dependency updates and vulnerability response below) | Patch, listed under Bug Fixes |
+
+Every PR keeps the title that Renovate generates, so a merged update that
+changes the image reaches the next Release PR without a maintainer's action.
+The merging maintainer replaces the subject only for an update that breaks
+consumers of earlier releases (see Squash Merge). A `chore(deps):` commit
+proposes a release only when it changes a path under `backend/` (Platform
+Version and Source of Truth), so an update of a script-only pin under
+`scripts/` proposes none. Lock file maintenance also regenerates the locked
+development dependencies, so a regeneration that moves only them still
+proposes a release; that noise is accepted. An update that no rule
+classifies keeps the prefix of the `config:recommended` preset,
+`chore(deps):` or, for the runtime dependencies of some managers,
+`fix(deps):`; both are release signals, so an unclassified update is proposed
+for a release rather than silently left out of one. A dependency that the
+image does not ship gets a `ci(deps):` rule when Renovate starts tracking it.
+A manually opened dependency PR follows the same classification in its
+title.
 
 **Python dependency updates and vulnerability response.** Renovate's
 `pep621` manager reads `backend/pyproject.toml` together with
@@ -707,19 +736,14 @@ three complementary mechanisms:
   it yet; see Security fixes under the cooldown below.
 - **Release signal.** A security fix is a patch release under the
   Semantic Versioning Policy, so it is merged as `fix(deps):` —
-  `renovate.jsonc` sets this prefix on vulnerability-fix PRs. Routine
-  updates and lock file maintenance use `chore(deps):` and never create a
-  release on their own, unless the update breaks consumers of earlier
-  releases. A Renovate PR whose update breaks them, a vulnerability-fix PR
-  included, is merged with a `fix(deps)!:` subject (see Squash Merge and
-  Consumer Compatibility). A security fix delivered by a lock file
-  maintenance PR or a manually opened PR lands on `master` with a
-  `fix(deps):` commit subject — the title of a manually opened PR, or for
-  a lock file maintenance PR the subject set when squash-merging (see
-  Squash Merge) — so that release-please proposes a patch release; the
-  hidden `chore` type is not made visible for this purpose, because it
-  would turn every routine update and infrastructure change into a
-  release.
+  `renovate.jsonc` sets this prefix on vulnerability-fix PRs, whatever the
+  dependency, and a manually opened PR that delivers a security fix carries
+  it in its title. A security fix delivered by a lock file maintenance PR
+  keeps that PR's `chore(deps):` title, which already proposes a patch
+  release (see Release signal of dependency updates above). A Renovate PR
+  whose update breaks consumers of earlier releases, a vulnerability-fix
+  PR included, is merged with a `fix(deps)!:` subject (see Squash Merge
+  and Consumer Compatibility).
 - **`pip-audit`** in `ci.yml` (`Backend Security Scan`) audits the set
   locked in `backend/uv.lock` and blocks every change to
   `backend/pyproject.toml` or `backend/uv.lock` and every Release PR — see
@@ -1120,10 +1144,11 @@ version changes are:
 | Commit on `master` | Current version | Result |
 |--------------------|-----------------|--------|
 | `fix:` | Any | Patch (`X.Y.Z` → `X.Y.Z+1`) |
+| `chore(deps):` | Any | Patch (`X.Y.Z` → `X.Y.Z+1`) |
 | `feat:` | Any | Minor (`X.Y.Z` → `X.Y+1.0`) |
 | `fix!:` or `feat!:` | `0.x.y` | Next minor (`0.x.y` → `0.x+1.0`) |
 | `fix!:` or `feat!:` | `1.x.y` or later | Next major (`X.y.z` → `X+1.0.0`) |
-| `docs:`, `chore:`, `ci:`, `test:`, `refactor:` | Any | No release on their own |
+| `docs:`, `chore:` with another scope or none, `ci:`, `test:`, `refactor:` | Any | No release on their own |
 
 The semantic meaning of the three release levels is:
 
@@ -1131,11 +1156,24 @@ The semantic meaning of the three release levels is:
 |------|-----------------|
 | Major | Breaking REST API changes, database migrations requiring manual operator intervention, or fundamental architectural changes after `1.0.0` |
 | Minor | New API endpoints, fetchers, features, non-breaking database migrations, or CLI commands |
-| Patch | Bug fixes, security patches, performance improvements, or operational fixes |
+| Patch | Bug fixes, security patches, performance improvements, operational fixes, or updates of the dependencies that the image ships |
 
-Only `feat` and `fix` appear in generated release notes, under Features and Bug
-Fixes. The other accepted repository commit types are hidden, so a set
-containing only those types does not create or keep a non-empty Release PR.
+Only `feat`, `fix`, and `chore(deps)` appear in generated release notes, under
+Features, Bug Fixes, and Dependencies. `chore(deps)` is the type and scope of
+an update that changes the published image; an update that only CI,
+development, or tests use is `ci(deps)` (Workflow Conventions, Release signal
+of dependency updates). The other accepted repository commit types, and
+`chore` with another scope or none, are hidden, so a set containing only
+those does not create or keep a non-empty Release PR.
+
+The Dependencies section matches the `deps` scope of a `chore` commit through
+the `scope` key of its `changelog-sections` entry in
+`release-please-config.json`, which the changelog writer bundled in
+release-please applies before the hidden `chore` entry. Should a
+release-please upgrade stop applying that key, every `chore` commit would
+appear under Dependencies: a Release PR that lists another `chore` commit
+there shows the regression, and no dependency update is left out of a release.
+
 Sentinel uses `!` as its only supported breaking-change marker and permits it
 only on `feat` and `fix` in PR titles and local commit subjects. Every change
 that breaks consumers of earlier releases carries it, before `1.0.0` as after
@@ -1189,11 +1227,13 @@ The PR title remains an accurate `feat` or `fix` description of its substantive
 change; `Release-As` supplies the exceptional target version. Before confirming
 the squash merge, verify that GitHub's generated commit body contains the
 footer. A footer present only in the PR description is not sufficient. A
-`chore` commit cannot be used for graduation because hidden changelog types do
-not keep a Release PR non-empty. Do not create an artificial backend marker or
-edit release-please configuration or manifest state to force participation; if
-no substantive releasable backend change is appropriate, create a dedicated
-work item to decide the release mechanism instead.
+`chore` commit is not used for graduation: one with a hidden changelog type
+does not keep a Release PR non-empty, and a `chore(deps)` dependency update is
+not the substantive change that graduation records. Do not create an
+artificial backend marker or edit release-please configuration or manifest
+state to force participation; if no substantive releasable backend change is
+appropriate, create a dedicated work item to decide the release mechanism
+instead.
 
 After that PR reaches `master`, review and merge the generated `1.0.0` Release
 PR through the normal explicit merge-authorization gate. From `1.0.0` onward,
@@ -1303,35 +1343,40 @@ release-please a clean, single commit to analyze per PR. With squash
 merge, the PR title becomes the commit message — ensure it follows the
 Conventional Commits format defined in `docs/conventions.md` (Git
 Conventions). The merging maintainer replaces that subject only where
-this document requires a release signal that the PR title cannot carry:
-
-- a Renovate lock file maintenance PR that delivers a security fix (see
-  Workflow Conventions, Python dependency updates and vulnerability
-  response);
-- a Renovate base-digest refresh that remediates an open image-scan
-  tracking issue (see Image Vulnerability Monitoring, Remediation path); and
-- a Renovate PR whose update breaks consumers of earlier releases (see
-  Consumer Compatibility).
-
-The first two require a `fix(deps):` subject and the third a `fix(deps)!:`
-subject, which prevails when a PR also falls under one of the first two.
-Renaming the PR does not last: Renovate restores the title that it generates
-when it next processes a PR whose title differs from that title. The
-maintainer therefore sets the subject when squash-merging, for example
-`gh pr merge <number> --squash --subject "fix(deps): <description> (#<number>)"`.
+this document requires a release signal that the PR title cannot carry: a
+Renovate PR whose update breaks consumers of earlier releases (see Consumer
+Compatibility) requires a `fix(deps)!:` subject. Renaming the PR does not
+last: Renovate restores the title that it generates when it next processes
+a PR whose title differs from that title. The maintainer therefore sets the
+subject when squash-merging, for example
+`gh pr merge <number> --squash --subject "fix(deps)!: <description> (#<number>)"`.
 The replacement follows the same Conventional Commits format and length
 limit; CI validates only the PR title, so the maintainer checks the
 subject before confirming the merge. A manually opened PR carries that
 subject in its title instead.
 
+A commit already on `master` whose subject lacks the release signal of its
+change, such as an update of the image merged as `chore:`, is corrected in the
+body of its merged PR rather than by rewriting history. Release-please reads a
+commit override there in place of the commit message:
+
+```
+BEGIN_COMMIT_OVERRIDE
+chore(deps): <description> (#<number>)
+END_COMMIT_OVERRIDE
+```
+
+The override takes effect from the next release-please run until a release
+contains the commit, and follows the same format and length limit.
+
 ### Changelog
 
 `CHANGELOG.md` (repository root) is maintained automatically by
 release-please. Do not edit it manually. New release entries contain only
-Features and Bug Fixes and link to commits and PRs; historical entries are not
-rewritten when this policy changes. The changelog lives at
-the repository root while the version bump it accompanies
-(`backend/pyproject.toml`, `backend/uv.lock`) stays scoped to the
+Features, Bug Fixes, and Dependencies (Semantic Versioning Policy) and link to
+commits and PRs; historical entries are not rewritten when this policy
+changes. The changelog lives at the repository root while the version bump it
+accompanies (`backend/pyproject.toml`, `backend/uv.lock`) stays scoped to the
 `backend` release-please package — see `changelog-path` in
 `release-please-config.json`.
 
@@ -2806,16 +2851,12 @@ directly.
 
 A merged refresh reaches the scanned image only with the next release,
 because `latest` moves only on a version-tag build. Renovate titles a
-digest refresh `chore(deps):`, a type that creates no release on its own
-(see Semantic Versioning Policy). A refresh merged to remediate an open
-tracking issue therefore lands on `master` with a `fix(deps):` commit
-subject, so that release-please proposes a patch release that ships it —
-the same release signal as a Python security fix (see Workflow
-Conventions, Python dependency updates and vulnerability response). A
-manually opened PR carries it in its title; for a Renovate PR it is set
-when squash-merging (see Squash Merge). Refreshes merged while no tracking
-issue is open keep `chore(deps):`, unless they break consumers of earlier
-releases (see Squash Merge). The scan that runs after the release
+digest refresh `chore(deps):`, and a manually opened refresh PR uses the
+same prefix in its title. It is a patch release signal (see Workflow
+Conventions, Release signal of dependency updates), so release-please
+proposes a release that ships the merged refresh, whether or not a tracking
+issue is open; only a refresh that breaks consumers of earlier releases gets
+another subject (see Squash Merge). The scan that runs after the release
 confirms the remediation: it closes the tracking issue, or updates it if a
 fixable finding remains.
 

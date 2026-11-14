@@ -144,11 +144,13 @@ test: add integration tests for CVE sync service
 ```
 
 Pull request titles follow the same format and must stay under 72 characters (validated by CI).
-Only `feat` and `fix` commits trigger releases or appear in generated release
-notes. Before `1.0.0`, a breaking `feat!` or `fix!` advances the minor version;
-after `1.0.0`, it advances the major version. See the authoritative
-[Release Process](docs/deployment.md#release-process), including the intentional
-`1.0.0` graduation procedure.
+Only `feat`, `fix`, and `chore(deps)` commits trigger releases or appear in
+generated release notes; `chore(deps)` is an update of a dependency that the
+image ships, and a dependency that only CI, development, or tests use is
+updated as `ci(deps)`. Before `1.0.0`, a breaking `feat!` or `fix!` advances
+the minor version; after `1.0.0`, it advances the major version. See the
+authoritative [Release Process](docs/deployment.md#release-process), including
+the intentional `1.0.0` graduation procedure.
 
 ## Testing
 
