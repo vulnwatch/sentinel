@@ -1,8 +1,8 @@
 """Parsed dependency-update configuration for tests that read it.
 
-Tests of the Renovate managers and of the release-age cooldown
-(`docs/deployment.md`, Workflow Conventions) read `renovate.jsonc` and the
-`[tool.uv]` table of `backend/pyproject.toml` through this module.
+Tests of the Renovate managers, of the release signal of their updates, and of
+the release-age cooldown (`docs/deployment.md`, Workflow Conventions) read
+`renovate.jsonc` and `backend/pyproject.toml` through this module.
 """
 
 from __future__ import annotations
@@ -25,10 +25,16 @@ def renovate_config() -> dict[str, Any]:
     return config
 
 
+def backend_pyproject() -> dict[str, Any]:
+    """`backend/pyproject.toml`, parsed."""
+    document = PYPROJECT_PATH.read_text(encoding="utf-8")
+    pyproject: dict[str, Any] = tomllib.loads(document)
+    return pyproject
+
+
 def backend_uv_settings() -> dict[str, Any]:
     """The `[tool.uv]` table of `backend/pyproject.toml`."""
-    pyproject = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))
-    settings: dict[str, Any] = pyproject["tool"]["uv"]
+    settings: dict[str, Any] = backend_pyproject()["tool"]["uv"]
     return settings
 
 

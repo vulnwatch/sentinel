@@ -651,31 +651,33 @@ up-to-date branches, so each merge makes Renovate rebase its other open PRs
 in its next run, and each rebase runs CI again.
 
 **Release signal of dependency updates.** The title prefix that
-`renovate.jsonc` gives an update states whether the update changes the
-published image, and therefore whether release-please proposes a release for
+`renovate.jsonc` gives an update states whether the update changes what the
+image contains, and therefore whether release-please proposes a release for
 it (Semantic Versioning Policy):
 
 | Prefix | Updates | Release signal |
 |--------|---------|----------------|
-| `chore(deps):` | What the image ships or is built from: the backend's Python runtime dependencies (`[project]` `dependencies`) with the script pins that move with them, lock file maintenance of `backend/uv.lock`, the `python` base image, and Swagger UI | Patch, listed under Dependencies |
-| `ci(deps):` | What only CI, development, and tests use: Actions and the tools that the workflows and `scripts/lint-shell.sh` run, the Python development dependencies (`[dependency-groups]`), the images of the Compose files and of the testcontainers fixtures, the Dockerfile frontend, and the uv group (see Container Build Conventions) | None |
+| `chore(deps):` | What the image contains: the backend's Python runtime dependencies (`[project]` `dependencies`) with the script pins that move with them, lock file maintenance of `backend/uv.lock`, the `python` base image, and Swagger UI | Patch, listed under Dependencies |
+| `ci(deps):` | What only CI, development, and tests use: Actions and the tools that the workflows and `scripts/lint-shell.sh` run, the Python development dependencies (`[dependency-groups]`), and the images of the Compose files and of the testcontainers fixtures. Also the build tools that the image does not contain, the Dockerfile frontend and the uv group (see Container Build Conventions): a change that their update makes to the built image ships with the next release, which the update does not create on its own | None |
 | `fix(deps):` | Vulnerability-fix PRs (see Python dependency updates and vulnerability response below) | Patch, listed under Bug Fixes |
 
 Every PR keeps the title that Renovate generates, so a merged update that
-changes the image reaches the next Release PR without a maintainer's action.
-The merging maintainer replaces the subject only for an update that breaks
-consumers of earlier releases (see Squash Merge). A `chore(deps):` commit
-proposes a release only when it changes a path under `backend/` (Platform
-Version and Source of Truth), so an update of a script-only pin under
-`scripts/` proposes none. Lock file maintenance also regenerates the locked
-development dependencies, so a regeneration that moves only them still
-proposes a release; that noise is accepted. An update that no rule
-classifies keeps the prefix of the `config:recommended` preset,
-`chore(deps):` or, for the runtime dependencies of some managers,
+changes what the image contains reaches the next Release PR without a
+maintainer's action. The merging maintainer replaces the subject only for an
+update that breaks consumers of earlier releases (see Squash Merge). A
+`chore(deps):` commit proposes a release only when it changes a path under
+`backend/` (Platform Version and Source of Truth), so an update of a
+script-only pin under `scripts/` proposes none. Lock file maintenance also
+regenerates the locked development dependencies, so a regeneration that moves
+only them still proposes a release; that noise is accepted. Conversely, an
+update of a development dependency can raise a locked package that the
+runtime dependencies share; that change ships with the next release. An
+update that no rule classifies keeps the prefix of the `config:recommended`
+preset, `chore(deps):` or, for the runtime dependencies of some managers,
 `fix(deps):`; both are release signals, so an unclassified update is proposed
 for a release rather than silently left out of one. A dependency that the
-image does not ship gets a `ci(deps):` rule when Renovate starts tracking it.
-A manually opened dependency PR follows the same classification in its
+image does not contain gets a `ci(deps):` rule when Renovate starts tracking
+it. A manually opened dependency PR follows the same classification in its
 title.
 
 **Python dependency updates and vulnerability response.** Renovate's
@@ -691,13 +693,16 @@ beside it naming the upstream defect: no resolution locks the excluded
 version, so neither a Renovate update nor lock file maintenance brings it
 in, and Renovate does not propose it, while a later release inside the
 range is proposed as usual. Once a later release is locked, a later PR
-removes the exclusion. Minor and patch updates are grouped into one
-PR; each major update gets its own PR. Lock file maintenance regenerates
-`backend/uv.lock` in a separate PR, which keeps transitive dependencies
-current because the manager extracts only direct dependencies. It runs
+removes the exclusion. Minor and patch updates are grouped into one PR for
+the runtime dependencies and one for the development dependencies, so that
+the development updates never share the release signal of the runtime ones
+(see Release signal of dependency updates above); each major update gets its
+own PR. Lock file maintenance regenerates `backend/uv.lock` in a separate PR,
+which keeps transitive dependencies current because the manager extracts
+only direct dependencies. It runs
 weekly, on Monday in the hours of the update schedule, because a nightly
 regeneration would open, almost every night, a PR that conflicts with the
-grouped PR on the same file. `renovate.jsonc` sets that schedule on lock
+grouped PRs on the same file. `renovate.jsonc` sets that schedule on lock
 file maintenance itself, whose default schedule does not follow the root
 one. The `[build-system]` `uv_build` requirement is the exception: it is a
 bounded range outside `backend/uv.lock`, updated together with the `uv`
@@ -1156,23 +1161,25 @@ The semantic meaning of the three release levels is:
 |------|-----------------|
 | Major | Breaking REST API changes, database migrations requiring manual operator intervention, or fundamental architectural changes after `1.0.0` |
 | Minor | New API endpoints, fetchers, features, non-breaking database migrations, or CLI commands |
-| Patch | Bug fixes, security patches, performance improvements, operational fixes, or updates of the dependencies that the image ships |
+| Patch | Bug fixes, security patches, performance improvements, operational fixes, or updates of the dependencies that the image contains |
 
 Only `feat`, `fix`, and `chore(deps)` appear in generated release notes, under
 Features, Bug Fixes, and Dependencies. `chore(deps)` is the type and scope of
-an update that changes the published image; an update that only CI,
-development, or tests use is `ci(deps)` (Workflow Conventions, Release signal
-of dependency updates). The other accepted repository commit types, and
-`chore` with another scope or none, are hidden, so a set containing only
-those does not create or keep a non-empty Release PR.
+an update of a dependency that the image contains; an update that only CI,
+development, tests, or the build tools use is `ci(deps)` (Workflow
+Conventions, Release signal of dependency updates). The other accepted
+repository commit types, and `chore` with another scope or none, are hidden,
+so a set containing only those does not create or keep a non-empty Release
+PR.
 
 The Dependencies section matches the `deps` scope of a `chore` commit through
 the `scope` key of its `changelog-sections` entry in
-`release-please-config.json`, which the changelog writer bundled in
-release-please applies before the hidden `chore` entry. Should a
-release-please upgrade stop applying that key, every `chore` commit would
-appear under Dependencies: a Release PR that lists another `chore` commit
-there shows the regression, and no dependency update is left out of a release.
+`release-please-config.json`. The changelog writer bundled in release-please
+applies the first entry whose type and scope match, so the Dependencies entry
+precedes the hidden `chore` entry. Should a release-please upgrade stop
+applying the `scope` key, every `chore` commit would appear under
+Dependencies: a Release PR that lists another `chore` commit there shows the
+regression, and no dependency update is left out of a release.
 
 Sentinel uses `!` as its only supported breaking-change marker and permits it
 only on `feat` and `fix` in PR titles and local commit subjects. Every change

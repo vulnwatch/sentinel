@@ -21,13 +21,12 @@
   // repository). The pep621 manager extracts direct dependencies only, so
   // this is what keeps transitive dependencies current. The image installs
   // the locked runtime set, so its chore(deps): prefix makes a merged
-  // regeneration a release signal (patch). Its own schedule holds it to
-  // the hours of the schedule above, on Monday only: its
-  // default ("before 4am on monday") never follows the root schedule, and
-  // a nightly regeneration would open, almost every night, a PR that
-  // conflicts with the Python group on the same file. minimumReleaseAge
-  // does not apply to it: the exclude-newer cooldown in
-  // backend/pyproject.toml limits what it locks.
+  // regeneration a release signal (patch). Its own schedule holds it to the
+  // hours of the schedule above, on Monday only: its default ("before 4am
+  // on monday") never follows the root schedule, and a nightly regeneration
+  // would open, almost every night, a PR that conflicts with the Python
+  // groups on the same file. minimumReleaseAge does not apply to it: the
+  // exclude-newer cooldown in backend/pyproject.toml limits what it locks.
   "lockFileMaintenance": {
     "enabled": true,
     "commitMessagePrefix": "chore(deps):",
@@ -40,16 +39,16 @@
   // Conventions, Python dependency updates and vulnerability response).
   // fix(deps): makes a merged security fix a release signal (patch) for
   // release-please, listed under Bug Fixes, whatever the dependency. The
-  // routine updates below use chore(deps): when they change the image,
-  // which is also a release signal (patch, listed under Dependencies), and
-  // ci(deps): when they do not, which never cuts a release on its own — see
-  // docs/deployment.md (Workflow Conventions, Release signal of dependency
-  // updates). Renovate appends alert rules after packageRules, so this
-  // prefix overrides the per-manager prefixes below, and Renovate's
-  // minimumReleaseAge default of null for alerts overrides
-  // the release-age cooldown rule. uv still locks a Python fix only once it
-  // is seven days old, so a younger fix gets no PR that updates
-  // backend/uv.lock — see docs/deployment.md (Workflow Conventions,
+  // routine updates below use chore(deps): when they update what the image
+  // contains, which is also a release signal (patch, listed under
+  // Dependencies), and ci(deps): when they do not, which never cuts a
+  // release on its own — see docs/deployment.md (Workflow Conventions,
+  // Release signal of dependency updates). Renovate appends alert rules
+  // after packageRules, so this prefix overrides the per-manager prefixes
+  // below, and Renovate's minimumReleaseAge default of null for alerts
+  // overrides the release-age cooldown rule. uv still locks a Python fix
+  // only once it is seven days old, so a younger fix gets no PR that
+  // updates backend/uv.lock — see docs/deployment.md (Workflow Conventions,
   // Security fixes under the cooldown) for the manual path.
   "vulnerabilityAlerts": {
     "labels": ["dependencies", "security"],
@@ -237,7 +236,7 @@
       "commitMessagePrefix": "chore(deps):"
     },
     {
-      "description": "The BuildKit Dockerfile frontend of the '# syntax=' directive in backend/Dockerfile parses the Dockerfile in every build but ships nothing in the image, so its updates carry no release signal",
+      "description": "The BuildKit Dockerfile frontend of the '# syntax=' directive in backend/Dockerfile parses the Dockerfile in every build but is a build tool that the image does not contain, so its updates carry no release signal",
       "matchManagers": ["dockerfile"],
       "matchPackageNames": ["docker/dockerfile"],
       "commitMessagePrefix": "ci(deps):"
@@ -255,12 +254,12 @@
       "commitMessagePrefix": "ci(deps):"
     },
     {
-      "description": "Images of the Compose files: the development stack (docker-compose.yml) and the image smoke stack (docker-compose.smoke.yml). The image does not ship them, so their updates carry no release signal",
+      "description": "Images of the Compose files: the development stack (docker-compose.yml) and the image smoke stack (docker-compose.smoke.yml). The image does not contain them, so their updates carry no release signal",
       "matchManagers": ["docker-compose"],
       "commitMessagePrefix": "ci(deps):"
     },
     {
-      "description": "Keep the uv version used by astral-sh/setup-uv (CI), the uv binary copied into the Docker image (COPY --from), and the uv_build range in backend/pyproject.toml [build-system] (the backend bundled in that binary; pep621 normalizes the name to uv-build) in sync — see backend/Dockerfile comment. The image comes from Docker Hub (astral/uv), the only registry from which Renovate reads the release timestamps of images, so the whole group waits for the release-age cooldown. A lookup that lacks the image's timestamps (it has more than 1,000 tags) holds its update, and the group's PR then opens without it: a unit test fails it until the Dockerfile tag matches the setup-uv version. uv runs only in CI, locally, and in the builder stage, whose uv the runtime stage does not copy, so the group's updates carry no release signal; the prefix is set here because the members' managers set different ones",
+      "description": "Keep the uv version used by astral-sh/setup-uv (CI), the uv binary copied into the Docker image (COPY --from), and the uv_build range in backend/pyproject.toml [build-system] (the backend bundled in that binary; pep621 normalizes the name to uv-build) in sync — see backend/Dockerfile comment. The image comes from Docker Hub (astral/uv), the only registry from which Renovate reads the release timestamps of images, so the whole group waits for the release-age cooldown. A lookup that lacks the image's timestamps (it has more than 1,000 tags) holds its update, and the group's PR then opens without it: a unit test fails it until the Dockerfile tag matches the setup-uv version. uv is a build tool that the image does not contain (the runtime stage copies the virtual environment that it installs, not uv), so the group's updates carry no release signal: a change that they make to the installed environment ships with the next release. The prefix is set here because the members' managers set different ones",
       "matchPackageNames": ["astral-sh/uv", "astral/uv", "uv-build"],
       "groupName": "uv version (CI + Docker image)",
       "commitMessagePrefix": "ci(deps):"

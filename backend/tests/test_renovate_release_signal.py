@@ -22,13 +22,12 @@ from __future__ import annotations
 
 import fnmatch
 import re
-import tomllib
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
-from tests.support.dependency_config import PYPROJECT_PATH, renovate_config
+from tests.support.dependency_config import backend_pyproject, renovate_config
 
 IMAGE_PREFIX = "chore(deps):"
 NON_IMAGE_PREFIX = "ci(deps):"
@@ -46,27 +45,39 @@ SUPPORTED_MATCHERS = frozenset(
 )
 # The distribution name that starts a PEP 508 requirement.
 REQUIREMENT_NAME = re.compile(r"\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)")
+# The package patterns that the evaluation reads as Renovate does: an exact
+# name, or its negation. A glob or a /regular expression/ would need
+# Renovate's own matching.
+EXACT_PACKAGE_PATTERN = re.compile(r"!?[A-Za-z0-9@](?:[A-Za-z0-9._/@-]*[A-Za-z0-9])?")
+# The file patterns that fnmatch reads as Renovate's minimatch does: an exact
+# path, or every file below a directory.
+EXACT_FILE_PATTERN = re.compile(r"[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*(?:/\*\*)?")
 
 
 @dataclass(frozen=True)
 class Update:
     """The properties of an update that the package rules of
-    `renovate.jsonc` match."""
+    `renovate.jsonc` match. Lock file maintenance has no package or depType."""
 
     manager: str
-    package: str
+    package: str | None
     file: str
     update_type: str = "minor"
     dep_type: str | None = None
 
 
-def _matches_package(patterns: list[str], package: str) -> bool:
-    # Exact names and their negations only: a glob or regular expression
-    # would need Renovate's own matching.
-    assert all(re.fullmatch(r"!?[A-Za-z0-9._/@-]+", p) for p in patterns), patterns
+def _matches_package(patterns: list[str], package: str | None) -> bool:
+    assert all(EXACT_PACKAGE_PATTERN.fullmatch(p) for p in patterns), patterns
+    if package is None:
+        return False
     excluded = {p.removeprefix("!") for p in patterns if p.startswith("!")}
     included = {p for p in patterns if not p.startswith("!")}
     return package not in excluded and (not included or package in included)
+
+
+def _matches_file(patterns: list[str], file: str) -> bool:
+    assert all(EXACT_FILE_PATTERN.fullmatch(p) for p in patterns), patterns
+    return any(fnmatch.fnmatchcase(file, pattern) for pattern in patterns)
 
 
 def _rule_matches(rule: dict[str, Any], update: Update) -> bool:
@@ -77,9 +88,7 @@ def _rule_matches(rule: dict[str, Any], update: Update) -> bool:
         "matchDepTypes": lambda values: update.dep_type in values,
         "matchUpdateTypes": lambda values: update.update_type in values,
         "matchPackageNames": lambda values: _matches_package(values, update.package),
-        "matchFileNames": lambda values: any(
-            fnmatch.fnmatchcase(update.file, pattern) for pattern in values
-        ),
+        "matchFileNames": lambda values: _matches_file(values, update.file),
     }
     return all(checks[key](rule[key]) for key in matchers)
 
@@ -103,13 +112,8 @@ def _requirement_names(requirements: list[str]) -> list[str]:
     return names
 
 
-def _pyproject() -> dict[str, Any]:
-    pyproject: dict[str, Any] = tomllib.loads(PYPROJECT_PATH.read_text("utf-8"))
-    return pyproject
-
-
 def _runtime_updates(update_type: str) -> list[Update]:
-    names = _requirement_names(_pyproject()["project"]["dependencies"])
+    names = _requirement_names(backend_pyproject()["project"]["dependencies"])
     assert names
     return [
         Update(
@@ -124,7 +128,7 @@ def _runtime_updates(update_type: str) -> list[Update]:
 
 
 def _development_updates(update_type: str) -> list[Update]:
-    groups: dict[str, list[str]] = _pyproject()["dependency-groups"]
+    groups: dict[str, list[str]] = backend_pyproject()["dependency-groups"]
     names = [name for group in groups.values() for name in _requirement_names(group)]
     assert names
     return [
@@ -241,10 +245,12 @@ def test_updates_outside_the_image_carry_no_release_signal(update: Update) -> No
 @pytest.mark.unit
 def test_lock_file_maintenance_is_a_release_signal() -> None:
     # The regeneration moves the transitive runtime dependencies that the image
-    # installs.
-    assert renovate_config()["lockFileMaintenance"]["commitMessagePrefix"] == (
-        IMAGE_PREFIX
-    )
+    # installs. A package rule that matched the update would override the
+    # prefix of the lockFileMaintenance block.
+    update = Update("pep621", None, "backend/pyproject.toml", "lockFileMaintenance")
+    block = renovate_config()["lockFileMaintenance"]["commitMessagePrefix"]
+
+    assert (_setting(update, "commitMessagePrefix") or block) == IMAGE_PREFIX
 
 
 @pytest.mark.unit
