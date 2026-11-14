@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.23.1](https://github.com/vulnwatch/sentinel/compare/v0.23.0...v0.23.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **deps:** Update dependency dnspython to v2.9.2 [SECURITY] ([#1300](https://github.com/vulnwatch/sentinel/issues/1300)) ([a54a875](https://github.com/vulnwatch/sentinel/commit/a54a87529595b6e0804e0913d2ba180c3e2d0d4e))
+
+
+### Dependencies
+
+* **deps:** Update dependency click to v8.5.1 ([#1296](https://github.com/vulnwatch/sentinel/issues/1296)) ([90ed7c9](https://github.com/vulnwatch/sentinel/commit/90ed7c956789f3b3b8105be27674d200b3185334))
+* **deps:** Update python minor and patch dependencies ([#1277](https://github.com/vulnwatch/sentinel/issues/1277)) ([855cdb2](https://github.com/vulnwatch/sentinel/commit/855cdb2d523dec4f4707697fba60530fec996286))
+* **deps:** upgrade Python runtime to 3.15 ([#1293](https://github.com/vulnwatch/sentinel/issues/1293)) ([a24bb6a](https://github.com/vulnwatch/sentinel/commit/a24bb6a344b2a4cfd3bb53483995ee5e6f77e219))
+
 ## [0.23.0](https://github.com/vulnwatch/sentinel/compare/v0.22.0...v0.23.0) (2026-11-12)
 
 
