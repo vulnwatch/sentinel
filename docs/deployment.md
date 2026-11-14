@@ -699,14 +699,14 @@ the development updates never share the release signal of the runtime ones
 (see Release signal of dependency updates above); each major update gets its
 own PR. Lock file maintenance regenerates `backend/uv.lock` in a separate PR,
 which keeps transitive dependencies current because the manager extracts
-only direct dependencies. It runs
-weekly, on Monday in the hours of the update schedule, because a nightly
-regeneration would open, almost every night, a PR that conflicts with the
-grouped PRs on the same file. `renovate.jsonc` sets that schedule on lock
-file maintenance itself, whose default schedule does not follow the root
-one. The `[build-system]` `uv_build` requirement is the exception: it is a
-bounded range outside `backend/uv.lock`, updated together with the `uv`
-binary (see Container Build Conventions, uv image pinning).
+only direct dependencies. It runs weekly, on Monday in the hours of the
+update schedule, because a nightly regeneration would open, almost every
+night, a PR that conflicts with the grouped PRs on the same file.
+`renovate.jsonc` sets that schedule on lock file maintenance itself, whose
+default schedule does not follow the root one. The `[build-system]`
+`uv_build` requirement is the exception: it is a bounded range outside
+`backend/uv.lock`, updated together with the `uv` binary (see Container Build
+Conventions, uv image pinning).
 
 Standalone Python scripts under `scripts/` that run through
 `uv run --script` (for example `scripts/capture-ibs-rabbitmq.py`) declare

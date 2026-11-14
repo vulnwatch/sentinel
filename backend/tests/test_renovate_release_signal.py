@@ -1,12 +1,12 @@
 """Contract tests for the release signal of Renovate's update titles.
 
 `docs/deployment.md` (Workflow Conventions, Release signal of dependency
-updates) titles an update that changes the published image `chore(deps):`,
-which release-please releases as a patch and lists under Dependencies, and an
-update that only CI, development, or tests use `ci(deps):`, which creates no
-release. Every Renovate PR keeps its generated title, so the classification in
-`renovate.jsonc` alone decides whether a merged update reaches a release. See
-issue #1298.
+updates) titles an update of what the image contains `chore(deps):`, which
+release-please releases as a patch and lists under Dependencies, and an update
+of what only CI, development, tests, or the build tools use `ci(deps):`, which
+creates no release. Every Renovate PR keeps its generated title, so the
+classification in `renovate.jsonc` alone decides whether a merged update
+reaches a release. See issue #1298.
 
 Renovate takes the prefix of an update from the last `packageRules` entry that
 matches it and sets one. These tests evaluate the entries against the updates
@@ -150,16 +150,16 @@ SCRIPT_PIN = Update(
     dep_type="project.dependencies",
 )
 
-# Updates of what the image ships or is built from, other than the Python
-# runtime dependencies.
+# Updates of what the image contains, other than the Python runtime
+# dependencies.
 IMAGE_UPDATES = [
     Update("dockerfile", "python", "backend/Dockerfile", "digest"),
     Update("custom.regex", "swagger-ui-dist", "backend/app/api/interactive_docs.py"),
     Update("custom.regex", "swagger-ui-dist", ".github/workflows/deploy-api-docs.yml"),
 ]
 
-# Updates of what only CI, development, and tests use, other than the Python
-# development dependencies.
+# Updates of what only CI, development, tests, and the build tools that the
+# image does not contain use, other than the Python development dependencies.
 NON_IMAGE_UPDATES = [
     Update("github-actions", "actions/checkout", ".github/workflows/ci.yml"),
     Update("github-actions", "postgres", ".github/workflows/ci.yml"),
