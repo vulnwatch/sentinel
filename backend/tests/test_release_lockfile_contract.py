@@ -51,6 +51,10 @@ _EXPECTED_CHANGELOG_SECTIONS = [
     {"type": "feat", "section": "Features"},
     {"type": "fix", "section": "Bug Fixes"},
     {"type": "docs", "section": "Documentation", "hidden": True},
+    # Before the hidden chore entry: the changelog writer applies the first
+    # entry whose type and scope match (docs/deployment.md, Semantic
+    # Versioning Policy).
+    {"type": "chore", "scope": "deps", "section": "Dependencies"},
     {"type": "chore", "section": "Miscellaneous", "hidden": True},
     {"type": "ci", "section": "Continuous Integration", "hidden": True},
     {"type": "test", "section": "Tests", "hidden": True},
@@ -86,7 +90,7 @@ def test_release_please_config_uses_pre_major_minor_bumps() -> None:
 
 
 @pytest.mark.unit
-def test_release_please_config_exposes_only_features_and_fixes() -> None:
+def test_release_please_config_exposes_features_fixes_and_image_dependencies() -> None:
     package_config = _release_package_config()
 
     assert package_config["changelog-sections"] == _EXPECTED_CHANGELOG_SECTIONS

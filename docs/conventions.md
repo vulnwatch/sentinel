@@ -1556,7 +1556,10 @@ step verifies this automatically — a mismatch fails the build.
 
 #### Version Bump Checklist
 
-When upgrading to a new Python minor version:
+When upgrading to a new Python minor version, title the PR `chore(deps):`:
+the bump changes the interpreter that the image contains, so the prefix makes
+release-please propose a release that ships it (Git Conventions,
+Versioning). Then:
 
 1. **Verify dependency support** under criterion (2) above: check PyPI
    classifiers and changelog for all critical dependencies. For one that
@@ -2079,9 +2082,14 @@ Merge):
 | Commit type | Release signal |
 |-------------|----------------|
 | `fix` | Patch |
+| `chore(deps)` | Patch: an update of a dependency that the image contains |
 | `feat` | Minor |
 | `fix!`, `feat!` | Breaking release; the resulting version depends on whether Sentinel is pre-1.0 or stable |
-| `docs`, `chore`, `ci`, `test`, `refactor` | No release on their own; `!` is not permitted |
+| `docs`, `chore` with another scope or none, `ci`, `test`, `refactor` | No release on their own; `!` is not permitted |
+
+A dependency update that only CI, development, tests, or the build tools use
+is `ci(deps)` (`docs/deployment.md`, Workflow Conventions, Release signal of
+dependency updates).
 
 The complete Semantic Versioning interpretation, pre-1.0 policy, changelog
 policy, version source of truth, and intentional `1.0.0` graduation procedure
