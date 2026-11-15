@@ -2305,10 +2305,10 @@ a version without this expiry published never expires.
 `0 0 31 2 *`, has no interval. The PATCH validation rejects it as a
 `schedule_override` (`docs/features/platform/fetcher-operations.md`,
 Update Fetcher Config), and the import-time validation rejects it as a
-`default_schedule` (see "Import-time validation", rule 11), so only a
-`schedule_override` written outside the API, by direct database
-manipulation, or accepted by a version whose PATCH validation did not
-check occurrences can have no occurrence. Building the entry of such a
+`default_schedule` (see "Import-time validation", rule 11), so a
+`schedule_override` without occurrence can only have been written outside
+the API (by direct database manipulation) or accepted by a version whose
+PATCH validation did not check occurrences. Building the entry of such a
 fetcher raises a `ValueError` that names the fetcher. While the fetcher
 is enabled, every Beat start then fails in startup reconciliation
 (step 2), and a PATCH whose propagation writes the entry fails to write
