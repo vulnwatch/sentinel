@@ -252,6 +252,7 @@ class TestScheduledRunExpiry:
     @pytest.mark.parametrize(
         ("expression", "expected"),
         [
+            ("0 * * * *", 3600 - 60),
             # Every three hours: 3 h within a day and from 21:00 to 00:00.
             ("0 */3 * * *", 10800 - 60),
             ("0 */6 * * *", 21600 - 60),
@@ -270,6 +271,8 @@ class TestScheduledRunExpiry:
             ("*/3 * * * *", 180 - 60),
             # Restricted day of the month, every month: days 1 to 5.
             ("0 0 1-5 * *", 86400 - 60),
+            # Monthly: 1 February to 1 March of a common year.
+            ("0 0 1 * *", 28 * 86400 - 60),
             # Once a year: 365 days in a common year.
             ("0 0 1 1 *", 365 * 86400 - 60),
             # 29 February: four years (1461 days).
@@ -285,7 +288,9 @@ class TestScheduledRunExpiry:
             ("0 0 13 * 5", 28 * 86400 - 60),
         ],
     )
-    def test_expiry_of_the_schedule(self, expression: str, expected: int) -> None:
+    def test_expiry_is_the_shortest_interval_minus_the_capped_margin(
+        self, expression: str, expected: int
+    ) -> None:
         schedule = crontab.from_string(expression)
 
         assert fetcher_schedule_module._scheduled_run_expiry_seconds(schedule) == (
@@ -295,6 +300,7 @@ class TestScheduledRunExpiry:
     @pytest.mark.parametrize(
         ("expression", "count"),
         [
+            ("0 0 1 * *", 4),
             ("0 0 13 * 5", 4),
             ("0 0 31 * 1", 40),
             ("0 3 * * 1-5", 10),

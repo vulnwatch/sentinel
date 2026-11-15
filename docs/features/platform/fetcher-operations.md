@@ -1453,7 +1453,10 @@ with a caller-owned transaction.
   `null` to revert to the default schedule. Validated by constructing a
   `celery.schedules.crontab` object — the same parser used by RedBeat at
   runtime — ensuring that any value accepted at PATCH time is guaranteed
-  parseable at Beat startup
+  parseable at Beat startup. The validation does not check that the
+  expression ever fires; for the consequence of one that never does, see
+  `docs/features/platform/fetcher-infrastructure.md` (Scheduled Run
+  Expiry, Schedule without occurrence)
 - `run_timeout`: must be an integer between 60 and 604800 (1 minute
   to 7 days). Controls Celery hard/soft time limits and the stale run
   detection threshold. Default: 3600 (1 hour)

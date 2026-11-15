@@ -2215,8 +2215,8 @@ large node starts more children than its CPU and memory limits support. Both
 worker roles MUST pass `--concurrency` explicitly, sized to their resource
 limits.
 
-**Worker recovery and probes.** Both worker roles MUST resume consuming
-after the broker restarts or is unreachable for a while, without a process
+**Worker recovery and probes.** Both worker roles MUST resume consuming once
+the broker is reachable again after a restart or an outage, without a process
 restart: the worker reconnects with its own retries and executes the tasks
 published after the reconnection. Celery's Redis transport, kombu, provides
 this; releases before 5.7.0 could leave a worker connected but idle after a
@@ -2224,10 +2224,9 @@ reconnection (celery/celery#8030, celery/kombu#2629). The local process
 system suite verifies the requirement with a real worker and repeated
 restarts of a real broker
 (`docs/features/platform/testing-strategy.md`, Broker Restart Recovery).
-From the scheduled runs that Beat published while no worker consumed, each
-fetcher runs at most once, because a scheduled run expires when the next
-occurrence of its schedule is due
-(`docs/features/platform/fetcher-infrastructure.md`, Scheduled Run Expiry).
+The scheduled runs that Beat published while no worker consumed expire (see
+[Redis Durability, Memory, and Persistence](#redis-durability-memory-and-persistence),
+Task queue loss is acceptable).
 
 The worker roles have no probe: the orchestrator restarts a worker only when
 it exits. `celery inspect ping`, Celery's check of one worker, is not a
@@ -2547,10 +2546,11 @@ appendonly no
    source's schedule (see the Fetcher Registry in `docs/data-sources.md`).
    On-demand fetches can be re-triggered via the API. The `FetcherRun` table in
    PostgreSQL tracks outcomes — no Celery result backend is used. Conversely, a
-   scheduled fetcher run that stays queued until the next occurrence of its
-   schedule is due expires unexecuted, so a backlog accumulated while no worker
-   consumed runs each fetcher at most once
-   (`docs/features/platform/fetcher-infrastructure.md`, Scheduled Run Expiry).
+   scheduled fetcher run that stays queued longer than the shortest interval of
+   its schedule expires unexecuted, before Beat publishes the next occurrence,
+   so a backlog accumulated while no worker consumed runs each fetcher at most
+   once (`docs/features/platform/fetcher-infrastructure.md`, Scheduled Run
+   Expiry).
 
 The IBS consumer heartbeat is not a task result, delivery checkpoint, or domain
 state. The consumer writes the complete `sentinel:ibs_consumer_status` JSON
@@ -3026,12 +3026,16 @@ for the record schema.
    Celery worker does not consume it
 8. If a worker runs but receives no task while its queue grows (`LLEN celery`
    or `LLEN git` in the broker database), and its log ends after a reconnection
-   to the broker (`Connected to redis://…`, then `mingle: all alone`), the
-   worker is connected but does not consume, which
-   [Kubernetes Workloads](#kubernetes-workloads) (Worker recovery and probes)
-   excludes for the locked dependencies. Restart the worker and report the
-   deployed version. After the restart, the worker discards the scheduled runs
-   that expired in the meantime and logs `scheduled_run_expired` for each
+   to the broker (`Connected to redis://…`, then a `mingle:` line), the worker
+   is connected but does not consume, which should not occur with the locked
+   dependencies (see [Kubernetes Workloads](#kubernetes-workloads), Worker
+   recovery and probes). Restart the worker and report the deployed version.
+   After the restart, the worker discards the scheduled runs that expired in
+   the meantime and logs `scheduled_run_expired` for each. Runs that a version
+   without scheduled run expiry published never expire; to drop such a backlog,
+   empty the queues, which
+   [Task queue loss is acceptable](#redis-durability-memory-and-persistence)
+   permits
 
 #### Git Fetcher Runs Keep Failing
 

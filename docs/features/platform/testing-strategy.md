@@ -1961,7 +1961,7 @@ path is not bypassed).
 
 ### Broker Restart Recovery
 
-A second system test proves that a worker resumes consuming after the
+A system test proves that a worker resumes consuming after the
 broker restarts, without a process restart (`docs/deployment.md`,
 Kubernetes Workloads, Worker recovery and probes). The broker's lifecycle
 is server-global, so the spawned worker uses a Redis 8 container dedicated
@@ -1976,24 +1976,27 @@ the pytest worker's database. The test MUST prove:
    as Beat publishes them (`docs/features/platform/fetcher-infrastructure.md`,
    Redbeat Entry Structure), is executed and finalizes a `FetcherRun` with
    the outcome of Test-Only Fetcher.
-3. At least three times in a row, the broker is stopped long enough for
-   the worker's reconnection attempts to fail, and started again without
-   any key; a scheduled message published after each restart is executed
-   and finalizes a new `FetcherRun`.
+3. At least three times in a row, the broker is stopped until the
+   worker's log shows two failed reconnection attempts, and started again
+   without any key. Once the worker's log shows the reconnection, the
+   worker stays idle for a few seconds, as after the observed outage; a
+   scheduled message published then is executed and finalizes a new
+   `FetcherRun`.
 4. The worker is the same process throughout: it never exited.
 
 The test publishes the messages itself instead of starting Beat, because
 Beat recovers from Redis data loss by exiting for an orchestrator restart
 (`docs/features/platform/fetcher-infrastructure.md`, Runtime: Redis Data
-Loss). Each outage lasts a fixed interval, which constructs the scenario
-and is not a wait for a condition; every wait for a run uses the bounded
-polls of Bounded Waiting and Diagnostics. Cleanup follows Deterministic
+Loss). The waits for the failed attempt, the reconnection, and each run
+use the bounded polls of Bounded Waiting and Diagnostics, on Celery's
+worker log records for the first two. The idle interval constructs the
+scenario and is not a wait for a condition. Cleanup follows Deterministic
 Cleanup on the dedicated container, which is removed last, after the
 worker has stopped.
 
 ### Scheduled Run Expiry
 
-A third system test proves, on the pytest worker's Redis logical database,
+A system test proves, on the pytest worker's Redis logical database,
 that a real worker discards an expired scheduled message
 (`docs/features/platform/fetcher-infrastructure.md`, Scheduled Run Expiry):
 

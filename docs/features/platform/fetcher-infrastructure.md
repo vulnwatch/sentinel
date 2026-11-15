@@ -2239,9 +2239,9 @@ occurrence of the same entry. While no worker consumes (a broker restart
 that left the workers idle, workers stopped, or a long backlog), Beat
 keeps publishing one message per occurrence; the expiry makes a worker
 that resumes run each fetcher at most once from that backlog instead of
-once per missed occurrence. The run that executes resumes from the
-fetcher's cursor, as after Beat downtime (Startup Reconciliation,
-step 2).
+once per missed occurrence. The run that executes synchronizes its
+source under the fetcher's own contract, like the first run after Beat
+downtime.
 
 **Value**: the entry's Options carry `expires`, in seconds:
 
@@ -2254,10 +2254,7 @@ occurrences of the effective schedule in UTC. An occurrence is a minute
 whose minute, hour, day of the month, month, and day of the week all
 match the expression: Celery's `crontab` combines the day of the month
 and the day of the week with AND, unlike standard cron. The computation
-is exact. It compares consecutive times of one day and consecutive
-matching days; when the expression restricts the day of the month or the
-month, it covers the 400-year cycle of the Gregorian calendar, after
-which the calendar and the days of the week repeat.
+is exact over the Gregorian calendar, leap years included.
 
 | Effective schedule | `g` (seconds) | `expires` (seconds) |
 |---|---|---|
@@ -2274,7 +2271,8 @@ with its own clock. The 60-second margin makes a message expire before
 Beat publishes the next occurrence, even with a dispatch delay or a clock
 offset between Beat and the worker below the margin
 (`docs/deployment.md`, Clock Synchronization), so at most one message of
-an entry is unexpired at any time. The margin is a hardcoded constant,
+an entry is unexpired at any time while its schedule is unchanged. The
+margin is a hardcoded constant,
 not configurable. It is capped at half the interval so that an
 every-minute schedule keeps a positive expiry.
 
@@ -2294,14 +2292,24 @@ of an entry: startup reconciliation (step 2) and the PATCH propagation
 (see "Runtime Propagation"). RedBeat stores the schedule and the Options
 of an entry in one hash field with one write, so they never diverge. As
 for the time limits, a message already queued keeps the expiry fixed at
-its publication; a change affects only later publications. A schedule
-with no occurrence at all, such as `0 0 31 2 *`, has no interval:
-building its entry raises `ValueError`, with the consequence of an
-unparsable expression in startup reconciliation (step 2).
+its publication; a change affects only later publications, so after a
+schedule change an older message can stay valid next to a newer one, and
+Concurrency Control serializes their runs. A message that a version
+without this expiry published never expires.
+
+**Schedule without occurrence**: an expression that never fires, such as
+`0 0 31 2 *`, has no interval, and building its entry raises
+`ValueError`. The PATCH validation checks only the syntax
+(`docs/features/platform/fetcher-operations.md`, Update Fetcher Config)
+and accepts such a `schedule_override`. Its post-commit propagation then
+fails and is logged as a failed post-commit callback, and every later Beat
+start fails in startup reconciliation (step 2) until the override is
+changed. Celery's own scheduler cannot compute a next run for such an
+expression either.
 
 **Manual runs**: a manual trigger publishes no expiry
-(`docs/features/platform/fetcher-operations.md`, Trigger Fetcher, Celery
-Publication). Its `FetcherRun` is already `queued`, and the Queued Stale
+(`docs/features/platform/fetcher-operations.md`, `trigger_fetcher`,
+Celery Publication). Its `FetcherRun` is already `queued`, and the Queued Stale
 Threshold bounds its wait (see "Stale Run Detection").
 
 **Trade-off**: a scheduled message that waits longer than its expiry is

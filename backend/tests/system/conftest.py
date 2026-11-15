@@ -535,28 +535,45 @@ class FetcherPipelineHarness:
             entry.task, args=entry.args, kwargs=entry.kwargs, **options
         )
 
+    def _worker_log_lines(self, fragments: tuple[str, ...]) -> list[str]:
+        """The lines of the worker's captured output that contain every
+        fragment. The logging pipeline flushes each record, so the file
+        follows the worker without delay."""
+        assert self.worker_process is not None
+        try:
+            text = self.worker_process.log_path.read_text(errors="replace")
+        except OSError:
+            return []
+        return [
+            line
+            for line in text.splitlines()
+            if all(fragment in line for fragment in fragments)
+        ]
+
+    def worker_log_count(self, *fragments: str) -> int:
+        """Number of worker log lines that contain every fragment."""
+        return len(self._worker_log_lines(fragments))
+
     async def wait_worker_log(
-        self, *fragments: str, timeout_seconds: float = _RUN_FINALIZED_TIMEOUT
+        self,
+        *fragments: str,
+        count: int = 1,
+        timeout_seconds: float = _RUN_FINALIZED_TIMEOUT,
     ) -> str:
-        """Poll the worker's captured output until one line contains every
-        fragment, and return that line. The logging pipeline flushes each
-        record, so the file follows the worker without delay."""
+        """Poll the worker's captured output until `count` lines contain
+        every fragment, and return the `count`-th of them."""
         assert self.worker_process is not None
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             self.worker_process.assert_alive()
-            try:
-                text = self.worker_process.log_path.read_text(errors="replace")
-            except OSError:
-                text = ""
-            for line in text.splitlines():
-                if all(fragment in line for fragment in fragments):
-                    return line
+            lines = self._worker_log_lines(fragments)
+            if len(lines) >= count:
+                return lines[count - 1]
             await asyncio.sleep(_POLL_INTERVAL)
         diagnostics = await self._timeout_diagnostics()
         pytest.fail(
-            f"no worker log line with {fragments!r} within {timeout_seconds}s\n"
-            f"{diagnostics}"
+            f"fewer than {count} worker log lines with {fragments!r} within "
+            f"{timeout_seconds}s\n{diagnostics}"
         )
 
     # -- PostgreSQL (FetcherConfig / FetcherRun / FetcherAuditEvent) ----

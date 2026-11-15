@@ -6,8 +6,10 @@ Testing, Broker Restart Recovery) for the contract this test proves, and
 `docs/deployment.md` (Kubernetes Workloads, Worker recovery and probes)
 for the requirement: a real worker on a dedicated Redis broker executes a
 scheduled `run_fetcher` message published after each of several broker
-restarts, without exiting. A worker that stays connected but idle after a
-restart fails the test with a timeout.
+restarts, without exiting. As after the observed outage, each message
+arrives only once the worker has reconnected and stayed idle, so the
+worker must keep polling the new connection. A worker that stays
+connected but idle fails the test with a timeout.
 """
 
 from __future__ import annotations
@@ -20,11 +22,16 @@ import pytest
 from tests.system.conftest import FetcherPipelineHarness
 
 _RESTART_CYCLES = 3
-# Long enough for the worker's immediate reconnection attempt and its
-# first retry, two seconds later, to fail against the stopped broker,
-# as during the outage of the observed case.
-_BROKER_OUTAGE_SECONDS = 5.0
-# Bounds the reconnection with its growing retry delays plus the run.
+# Celery's worker log records of a failed reconnection attempt and of a
+# reconnection to the broker.
+_RECONNECTION_FAILED = "Cannot connect to redis://"
+_RECONNECTED = "Connected to redis://"
+# Failed attempts per outage: Celery retries at once and again two
+# seconds later, as in the observed outage's `Trying again … (n/100)`.
+_FAILED_ATTEMPTS_PER_OUTAGE = 2
+# Several BRPOP timeouts (one second each) after the reconnection.
+_IDLE_AFTER_RECONNECTION_SECONDS = 5.0
+# Bounds the reconnection with its growing retry delays, and each run.
 _RECOVERY_TIMEOUT = 60.0
 
 
@@ -45,11 +52,23 @@ async def test_worker_resumes_consuming_after_each_broker_restart(
     observed: set[uuid.UUID] = set()
     for cycle in range(_RESTART_CYCLES + 1):
         if cycle:
+            failures = harness.worker_log_count(_RECONNECTION_FAILED)
+            connections = harness.worker_log_count(_RECONNECTED)
             # The stopped container drops every connection, and its start
             # without persistence brings back an empty server.
             await asyncio.to_thread(broker.stop)
-            await asyncio.sleep(_BROKER_OUTAGE_SECONDS)
+            await harness.wait_worker_log(
+                _RECONNECTION_FAILED,
+                count=failures + _FAILED_ATTEMPTS_PER_OUTAGE,
+                timeout_seconds=_RECOVERY_TIMEOUT,
+            )
             await asyncio.to_thread(broker.start)
+            await harness.wait_worker_log(
+                _RECONNECTED,
+                count=connections + 1,
+                timeout_seconds=_RECOVERY_TIMEOUT,
+            )
+            await asyncio.sleep(_IDLE_AFTER_RECONNECTION_SECONDS)
 
         await asyncio.to_thread(harness.publish_scheduled_run, config)
         run = await harness.wait_finalized_run(
