@@ -1,7 +1,7 @@
 """Tests for the Celery application bootstrap (backend/app/celery_app.py).
 
 See docs/features/platform/fetcher-infrastructure.md (Celery Integration,
-Redbeat Configuration, Startup Validation) and
+Redbeat Configuration, Non-Fetcher Periodic Tasks, Startup Validation) and
 docs/features/platform/logging.md (Correlation IDs, Integration with
 Third-Party Loggers) for the specifications exercised here.
 
@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import warnings
 from collections.abc import Iterator
+from datetime import timedelta
 
 import pytest
 import structlog
@@ -34,7 +35,8 @@ from celery.signals import (
     task_postrun,
     task_prerun,
 )
-from redbeat.schedulers import ensure_conf
+from redbeat import RedBeatScheduler, RedBeatSchedulerEntry
+from redbeat.schedulers import ensure_conf, get_redis
 
 from app.celery_app import (
     _CORRELATION_KEYS,
@@ -128,6 +130,10 @@ class TestCreateCeleryAppDefaults:
     def test_results_ignored(self) -> None:
         app = create_celery_app(_settings())
         assert app.conf.task_ignore_result is True
+
+    def test_result_expiry_disabled(self) -> None:
+        app = create_celery_app(_settings())
+        assert app.conf.result_expires is None
 
     def test_timezone_and_enable_utc_propagated(self) -> None:
         app = create_celery_app(_settings())
@@ -324,6 +330,54 @@ class TestValidateCeleryConfigLockRejection:
 
 
 @pytest.mark.unit
+class TestValidateCeleryConfigResultBackendRejection:
+    """A configured result backend is rejected without its value (see
+    docs/features/platform/fetcher-infrastructure.md, Startup
+    Validation)."""
+
+    def _base_app(self) -> Celery:
+        app = Celery("test")
+        app.conf.update(
+            timezone="UTC",
+            enable_utc=True,
+            redbeat_lock_key="redbeat::lock",
+            redbeat_lock_timeout=300,
+            result_backend=None,
+        )
+        return app
+
+    def test_configured_result_backend_raises(self) -> None:
+        app = self._base_app()
+        app.conf.result_backend = "redis://backend.example.invalid:6379/2"
+        with pytest.raises(
+            RuntimeError, match="Celery result backend must be disabled"
+        ):
+            validate_celery_config(app)
+
+    def test_rejection_message_names_the_variable_but_not_the_value(self) -> None:
+        app = self._base_app()
+        app.conf.result_backend = (
+            "redis://:fictional-password@backend.example.invalid:6379/2"
+        )
+        with pytest.raises(RuntimeError) as exc_info:
+            validate_celery_config(app)
+
+        message = str(exc_info.value)
+        assert "CELERY_RESULT_BACKEND" in message
+        assert "fictional-password" not in message
+        assert "backend.example.invalid" not in message
+
+    def test_empty_result_backend_does_not_raise(self) -> None:
+        # Celery resolves an empty value to its disabled backend.
+        app = self._base_app()
+        app.conf.result_backend = ""
+        validate_celery_config(app)
+
+    def test_unset_result_backend_does_not_raise(self) -> None:
+        validate_celery_config(self._base_app())
+
+
+@pytest.mark.unit
 class TestCreateCeleryAppPropagatesValidationFailure:
     """create_celery_app() itself rejects invalid settings at construction."""
 
@@ -334,6 +388,67 @@ class TestCreateCeleryAppPropagatesValidationFailure:
     def test_disabled_utc_setting_raises(self) -> None:
         with pytest.raises(RuntimeError, match="Celery timezone must be UTC"):
             create_celery_app(_settings(celery_enable_utc=False))
+
+    def test_result_backend_from_environment_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Celery reads this variable before the hard-coded `None`, and the
+        # `celery --result-backend` option sets it before loading the app.
+        monkeypatch.setenv(
+            "CELERY_RESULT_BACKEND",
+            "redis://:fictional-password@backend.example.invalid:6379/2",
+        )
+        with pytest.raises(RuntimeError) as exc_info:
+            create_celery_app(_settings())
+
+        message = str(exc_info.value)
+        assert "Celery result backend must be disabled" in message
+        assert "fictional-password" not in message
+
+    def test_empty_result_backend_environment_variable_does_not_raise(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CELERY_RESULT_BACKEND", "")
+        app = create_celery_app(_settings())
+        assert not app.conf.result_backend
+
+
+@pytest.mark.integration
+class TestBeatScheduleSetup:
+    """RedBeat's `setup_schedule()` — run by the scheduler's constructor,
+    as at Beat startup — installs exactly the static `beat_schedule`
+    entries and no Celery default entry (see
+    docs/features/platform/fetcher-infrastructure.md, Non-Fetcher
+    Periodic Tasks, Mechanism)."""
+
+    @staticmethod
+    def _stored_entry_names(app: Celery) -> set[str]:
+        conf = ensure_conf(app)
+        redis_client = get_redis(app)
+        return {
+            RedBeatSchedulerEntry.from_key(key, app=app).name
+            for key in redis_client.zrange(conf.schedule_key, 0, -1)
+        }
+
+    def test_installs_only_static_entries(self, celery_test_app: Celery) -> None:
+        RedBeatScheduler(app=celery_test_app)
+
+        assert self._stored_entry_names(celery_test_app) == {"cleanup_sessions"}
+
+    def test_result_expiry_would_install_backend_cleanup_entry(
+        self, celery_test_app: Celery
+    ) -> None:
+        """Control: with Celery's default expiry, the same startup
+        installs `celery.backend_cleanup`, so the test above proves the
+        effect of `result_expires = None`."""
+        celery_test_app.conf.result_expires = timedelta(days=1)
+
+        RedBeatScheduler(app=celery_test_app)
+
+        assert self._stored_entry_names(celery_test_app) == {
+            "cleanup_sessions",
+            "celery.backend_cleanup",
+        }
 
 
 @pytest.mark.unit

@@ -148,12 +148,20 @@ cross-cutting UTC requirement in `docs/deployment.md`.
 
 ### Result Handling
 
-`task_ignore_result = True` is a fixed Celery application setting — task
-return values are never stored. `FetcherRun` tracks executions of
-`BaseFetcher` subclasses. Non-fetcher sub-operations create no `FetcherRun` and
-rely on durable domain state plus the structured logs defined by their owning
-specifications. See
+`task_ignore_result = True` and `result_expires = None` are fixed Celery
+application settings — task return values are never stored, and Celery
+Beat installs no `celery.backend_cleanup` entry. `FetcherRun` tracks
+executions of `BaseFetcher` subclasses. Non-fetcher sub-operations create
+no `FetcherRun` and rely on durable domain state plus the structured logs
+defined by their owning specifications. See
 `docs/features/platform/fetcher-infrastructure.md` (Result handling).
+
+`CELERY_RESULT_BACKEND`, which Celery reads directly from the
+environment, MUST NOT be set, and the `celery` command's
+`--result-backend` option MUST NOT be used. Either configures a result
+backend, and the Celery app factory then refuses to start with an error
+that names the variable but never its value — see
+`docs/features/platform/fetcher-infrastructure.md` (Startup Validation).
 
 ### Redbeat Scheduler
 
