@@ -457,6 +457,61 @@ class TestScheduleValidation:
                 async def execute(self, session: AsyncSession) -> None:
                     pass
 
+    @pytest.mark.parametrize(
+        "bad_schedule", [", * * * *", "-1 * * * *"], ids=["empty-part", "negative"]
+    )
+    def test_cron_parse_exception_raises_type_error_naming_the_fetcher(
+        self, bad_schedule: str
+    ) -> None:
+        """Regression: Celery raises `ParseException`, which is not a
+        `ValueError`, for these expressions; it escaped the import-time
+        validation without naming the fetcher (fetcher-infrastructure.md,
+        Import-time validation, rule 11)."""
+        with pytest.raises(TypeError, match=r"^ParseErrorCron\.default_schedule "):
+
+            class ParseErrorCron(BaseFetcher):
+                name = "sync_parse_error_cron"
+                description = "x"
+                default_schedule = bad_schedule
+
+                async def execute(self, session: AsyncSession) -> None:
+                    pass
+
+    def test_schedule_without_occurrence_raises_and_does_not_register(
+        self,
+    ) -> None:
+        """`0 0 31 2 *` parses but never fires, so Beat could not build its
+        entry: it is rejected at import time (fetcher-infrastructure.md,
+        Import-time validation, rule 11)."""
+        with pytest.raises(
+            TypeError,
+            match=r"^NeverFires\.default_schedule .*'0 0 31 2 \*' "
+            r"\(Schedule has no occurrence\)$",
+        ):
+
+            class NeverFires(BaseFetcher):
+                name = "sync_never_fires"
+                description = "x"
+                default_schedule = "0 0 31 2 *"
+
+                async def execute(self, session: AsyncSession) -> None:
+                    pass
+
+        assert "sync_never_fires" not in FETCHER_REGISTRY
+
+    def test_irregular_schedule_that_fires_registers(self) -> None:
+        """`0 0 29 2 *` fires once every four years."""
+
+        class LeapDay(BaseFetcher):
+            name = "sync_leap_day"
+            description = "x"
+            default_schedule = "0 0 29 2 *"
+
+            async def execute(self, session: AsyncSession) -> None:
+                pass
+
+        assert FETCHER_REGISTRY["sync_leap_day"] is LeapDay
+
 
 @pytest.mark.unit
 class TestRequestDelayValidation:
