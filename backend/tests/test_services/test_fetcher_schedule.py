@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Generator
 from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 from typing import Any, cast
 
 import pytest
@@ -190,6 +191,138 @@ class TestEffectiveOptions:
 
         assert options["queue"] == "git"
 
+    def test_expires_derives_from_the_default_schedule(self) -> None:
+        """`0 3 * * *` fires once a day: 86400 s minus the 60 s margin."""
+        config = _make_config(schedule_override=None)
+
+        options = fetcher_schedule_module._effective_options(_NoQueueFetcher, config)
+
+        assert options["expires"] == 86340
+
+    def test_expires_derives_from_the_schedule_override(self) -> None:
+        config = _make_config(schedule_override="*/15 * * * *")
+
+        options = fetcher_schedule_module._effective_options(_NoQueueFetcher, config)
+
+        assert options["expires"] == 900 - 60
+
+    def test_expires_does_not_depend_on_run_timeout(self) -> None:
+        short = fetcher_schedule_module._effective_options(
+            _NoQueueFetcher, _make_config(run_timeout=60)
+        )
+        long = fetcher_schedule_module._effective_options(
+            _NoQueueFetcher, _make_config(run_timeout=604800)
+        )
+
+        assert short["expires"] == long["expires"] == 86340
+
+    def test_schedule_without_occurrence_raises_value_error(self) -> None:
+        config = _make_config(schedule_override="0 0 31 2 *")
+
+        with pytest.raises(ValueError, match="no occurrence"):
+            fetcher_schedule_module._effective_options(_NoQueueFetcher, config)
+
+
+def _celery_shortest_gap(expression: str, *, start: datetime, count: int) -> int:
+    """Shortest gap in seconds between `count` consecutive occurrences
+    of `expression` after `start`, as Celery's own scheduler computes
+    each next occurrence (`remaining_estimate` with `now` pinned to the
+    previous occurrence). An independent oracle for the day semantics:
+    the minimum over a window can only equal the exact interval when the
+    window contains the shortest gap, which each caller's window does."""
+    schedule = crontab.from_string(expression)
+    occurrences: list[datetime] = []
+    current = start
+    for _ in range(count):
+        schedule.nowfun = lambda pinned=current: pinned
+        current = current + schedule.remaining_estimate(current)
+        occurrences.append(current)
+    return min(
+        int((later - earlier).total_seconds())
+        for earlier, later in pairwise(occurrences)
+    )
+
+
+@pytest.mark.unit
+class TestScheduledRunExpiry:
+    """`_scheduled_run_expiry_seconds`: `g - min(60, g // 2)`, where `g`
+    is the shortest interval of the schedule (fetcher-infrastructure.md,
+    Scheduled Run Expiry)."""
+
+    @pytest.mark.parametrize(
+        ("expression", "expected"),
+        [
+            # Every three hours: 3 h within a day and from 21:00 to 00:00.
+            ("0 */3 * * *", 10800 - 60),
+            ("0 */6 * * *", 21600 - 60),
+            ("0 14 * * *", 86400 - 60),
+            # Weekdays: Monday to Tuesday is the shortest gap.
+            ("0 3 * * 1-5", 86400 - 60),
+            # Weekly: one day of the week wraps around to itself.
+            ("0 3 * * 0", 7 * 86400 - 60),
+            # Minutes 0, 7, ..., 56: from minute 56 to minute 0 is 4 min.
+            ("*/7 * * * *", 240 - 60),
+            # Working hours twice an hour: 30 min.
+            ("0,30 9-17 * * 1-5", 1800 - 60),
+            # The margin is capped at half the interval.
+            ("* * * * *", 30),
+            ("*/2 * * * *", 120 - 60),
+            ("*/3 * * * *", 180 - 60),
+            # Restricted day of the month, every month: days 1 to 5.
+            ("0 0 1-5 * *", 86400 - 60),
+            # Once a year: 365 days in a common year.
+            ("0 0 1 1 *", 365 * 86400 - 60),
+            # 29 February: four years (1461 days).
+            ("0 0 29 2 *", 1461 * 86400 - 60),
+            # 29 February on a Monday: 12 years, from 2196 to 2208 across
+            # the common year 2200 (checked against the calendar).
+            ("0 0 29 2 1", 4382 * 86400 - 60),
+            # Celery combines the day of the month and the day of the
+            # week with AND: a 31st that is a Monday, at least 91 days
+            # apart (OR would fire every Monday and every 31st).
+            ("0 0 31 * 1", 91 * 86400 - 60),
+            # Friday the 13th: 13 February to 13 March of a common year.
+            ("0 0 13 * 5", 28 * 86400 - 60),
+        ],
+    )
+    def test_expiry_of_the_schedule(self, expression: str, expected: int) -> None:
+        schedule = crontab.from_string(expression)
+
+        assert fetcher_schedule_module._scheduled_run_expiry_seconds(schedule) == (
+            expected
+        )
+
+    @pytest.mark.parametrize(
+        ("expression", "count"),
+        [
+            ("0 0 13 * 5", 4),
+            ("0 0 31 * 1", 40),
+            ("0 3 * * 1-5", 10),
+            ("*/7 * * * *", 20),
+            ("0,30 9-17 * * 1-5", 40),
+        ],
+    )
+    def test_interval_matches_the_occurrences_of_celerys_scheduler(
+        self, expression: str, count: int
+    ) -> None:
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        shortest = _celery_shortest_gap(expression, start=start, count=count)
+
+        expiry = fetcher_schedule_module._scheduled_run_expiry_seconds(
+            crontab.from_string(expression)
+        )
+
+        assert expiry == shortest - min(60, shortest // 2)
+
+    @pytest.mark.parametrize("expression", ["0 0 31 2 *", "0 0 30 2 *", "0 0 31 4 *"])
+    def test_schedule_without_occurrence_raises_value_error(
+        self, expression: str
+    ) -> None:
+        with pytest.raises(ValueError, match="no occurrence"):
+            fetcher_schedule_module._scheduled_run_expiry_seconds(
+                crontab.from_string(expression)
+            )
+
 
 # ---------------------------------------------------------------------------
 # Entry construction and upsert/delete (real Redis)
@@ -213,7 +346,11 @@ class TestBuildEntry:
             "triggered_by": "schedule",
         }
         assert entry.enabled is True
-        assert entry.options["time_limit"] == 120
+        assert entry.options == {
+            "time_limit": 120,
+            "soft_time_limit": 114,
+            "expires": 86340,
+        }
 
 
 @pytest.mark.integration
@@ -364,6 +501,7 @@ class TestPropagateConfigUpdate:
         entry = RedBeatSchedulerEntry.from_key(key, app=celery_test_app)
         assert entry.schedule.minute == {0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}
         assert entry.options["time_limit"] == 1200
+        assert entry.options["expires"] == 300 - 60
 
     def test_upsert_action_falls_back_to_default_schedule_when_override_is_none(
         self, celery_test_app: Celery
@@ -401,6 +539,29 @@ class TestPropagateConfigUpdate:
         entry = RedBeatSchedulerEntry.from_key(key, app=celery_test_app)
         assert entry.schedule.minute == {0, 10, 20, 30, 40, 50}
         assert entry.options["time_limit"] == 600
+        # The schedule change replaces the expiry of the daily default
+        # schedule (86340 s) in the same write.
+        assert entry.options["expires"] == 600 - 60
+
+    def test_upsert_action_for_a_run_timeout_change_keeps_the_expiry(
+        self, celery_test_app: Celery
+    ) -> None:
+        _register(_NoQueueFetcher)
+        config = _make_config(fetcher_name=_NoQueueFetcher.name, run_timeout=3600)
+        upsert_fetcher_entry(celery_test_app, _NoQueueFetcher, config)
+
+        propagate_config_update(
+            celery_test_app,
+            fetcher_name=_NoQueueFetcher.name,
+            action="upsert",
+            schedule_override=None,
+            run_timeout=7200,
+        )
+
+        key = RedBeatSchedulerEntry.generate_key(celery_test_app, _NoQueueFetcher.name)
+        entry = RedBeatSchedulerEntry.from_key(key, app=celery_test_app)
+        assert entry.options["time_limit"] == 7200
+        assert entry.options["expires"] == 86340
 
     def test_redis_error_propagates_uncaught(
         self, celery_test_app: Celery, monkeypatch: pytest.MonkeyPatch
@@ -466,6 +627,54 @@ class TestReconcileBeatScheduleEnabledDisabled:
 
         assert summary.written == 1
         assert _entry_exists(celery_test_app, _NoQueueFetcher.name)
+
+    async def test_writes_the_expiry_of_the_effective_schedule(
+        self,
+        db_session: AsyncSession,
+        celery_test_app: Celery,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        _register(_NoQueueFetcher, _QueuedFetcher)
+        await fetcher_config_factory(fetcher_name=_NoQueueFetcher.name, enabled=True)
+        await fetcher_config_factory(
+            fetcher_name=_QueuedFetcher.name,
+            enabled=True,
+            schedule_override="0 */6 * * *",
+        )
+
+        await reconcile_beat_schedule(db_session, celery_test_app)
+
+        default_entry = RedBeatSchedulerEntry.from_key(
+            RedBeatSchedulerEntry.generate_key(celery_test_app, _NoQueueFetcher.name),
+            app=celery_test_app,
+        )
+        override_entry = RedBeatSchedulerEntry.from_key(
+            RedBeatSchedulerEntry.generate_key(celery_test_app, _QueuedFetcher.name),
+            app=celery_test_app,
+        )
+        assert default_entry.options["expires"] == 86340
+        assert override_entry.options["expires"] == 21540
+
+    async def test_schedule_without_occurrence_fails_the_reconciliation(
+        self,
+        db_session: AsyncSession,
+        celery_test_app: Celery,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        """Startup Reconciliation, step 2: like an unparsable expression,
+        a schedule that never fires propagates `ValueError`, so Beat does
+        not start with a partial schedule."""
+        _register(_NoQueueFetcher)
+        await fetcher_config_factory(
+            fetcher_name=_NoQueueFetcher.name,
+            enabled=True,
+            schedule_override="0 0 31 2 *",
+        )
+
+        with pytest.raises(ValueError, match="no occurrence"):
+            await reconcile_beat_schedule(db_session, celery_test_app)
+
+        assert not _entry_exists(celery_test_app, _NoQueueFetcher.name)
 
     async def test_removes_entry_for_disabled_registered_fetcher(
         self,

@@ -2098,6 +2098,10 @@ timestamps for several security and correctness mechanisms:
   compares the timestamps written by the consumer process with the API
   process's clock and reports `unreachable` for a heartbeat dated in the
   future or more than 60 seconds old
+- Expiry of scheduled fetcher runs: Beat fixes the expiry instant of a
+  scheduled `run_fetcher` message with its clock, and the worker compares it
+  with its own; a 60-second margin absorbs a smaller offset
+  (`docs/features/platform/fetcher-infrastructure.md`, Scheduled Run Expiry)
 
 Clock skew between instances can shorten or lengthen time-based windows
 unpredictably. For example, if the instance generating an SSO state has
@@ -2180,8 +2184,8 @@ Deployment-agnostic packaging).
 | Role | Workload | Replicas | Update strategy | Further requirements |
 |------|----------|----------|-----------------|----------------------|
 | API server | Deployment | 1 or more | Rolling update | Liveness probe `/health`, readiness probe `/ready`, `timeoutSeconds` of at least 5 (see [Health Checks](#health-checks)) |
-| Celery worker | Deployment | 1 or more | Rolling update | Explicit `--concurrency` (see Worker concurrency below) |
-| Git worker | Deployment | Exactly 1 | `Recreate` | ReadWriteOnce volume at `GIT_CLONE_BASE_DIR` with `fsGroup: 1000` (see [Git Worker Volume](#git-worker-volume)); explicit `--concurrency` |
+| Celery worker | Deployment | 1 or more | Rolling update | Explicit `--concurrency` (see Worker concurrency below); no probe (see Worker recovery and probes below) |
+| Git worker | Deployment | Exactly 1 | `Recreate` | ReadWriteOnce volume at `GIT_CLONE_BASE_DIR` with `fsGroup: 1000` (see [Git Worker Volume](#git-worker-volume)); explicit `--concurrency`; no probe (see Worker recovery and probes below) |
 | Celery Beat | Deployment | Exactly 1 | Any | A replacement waits for the redbeat distributed lock until the previous instance stops (`docs/features/platform/fetcher-infrastructure.md`, Lock Acquisition) |
 | IBS RabbitMQ consumer | Deployment | Exactly 1 | `Recreate` | `terminationGracePeriodSeconds` of at least 60 (see [Singleton Processes](#singleton-processes)). Not deployed when `IBS_RABBITMQ_ENABLED=false`, because a Deployment restarts a successful exit |
 | Alembic migration | Job | — | — | Completes before any runtime workload starts (see [Database Migrations](#database-migrations)) |
@@ -2210,6 +2214,34 @@ that is the node's CPU count, not the container's CPU limit, so a worker on a
 large node starts more children than its CPU and memory limits support. Both
 worker roles MUST pass `--concurrency` explicitly, sized to their resource
 limits.
+
+**Worker recovery and probes.** Both worker roles MUST resume consuming
+after the broker restarts or is unreachable for a while, without a process
+restart: the worker reconnects with its own retries and executes the tasks
+published after the reconnection. Celery's Redis transport, kombu, provides
+this; releases before 5.7.0 could leave a worker connected but idle after a
+reconnection (celery/celery#8030, celery/kombu#2629). The local process
+system suite verifies the requirement with a real worker and repeated
+restarts of a real broker
+(`docs/features/platform/testing-strategy.md`, Broker Restart Recovery).
+From the scheduled runs that Beat published while no worker consumed, each
+fetcher runs at most once, because a scheduled run expires when the next
+occurrence of its schedule is due
+(`docs/features/platform/fetcher-infrastructure.md`, Scheduled Run Expiry).
+
+The worker roles have no probe: the orchestrator restarts a worker only when
+it exits. `celery inspect ping`, Celery's check of one worker, is not a
+reliable signal of a worker that is connected but does not consume: such a
+worker answered it in some reported cases and not in others
+(celery/celery#8030, celery/kombu#2629). As an exec probe, it would also
+start a Python interpreter that imports the application inside the worker's
+memory limit at every period, and it would restart every worker during a
+broker outage, which leaves the interrupted runs `running` until stale run
+detection (see Grace periods above). A probe task sent through the queue
+would report a worker whose pool and prefetch are full as dead. A worker that
+stops consuming is detected by
+[Monitoring Scheduler Liveness](#monitoring-scheduler-liveness-recommended)
+and diagnosed as in [Celery Tasks Not Running](#celery-tasks-not-running).
 
 **Security context.** Every role runs as the image's numeric non-root user
 (see [Container Build Conventions](#container-build-conventions)) and needs no
@@ -2415,6 +2447,9 @@ credential). That endpoint reports `disabled` when the consumer is configured
 off and `unreachable` when Redis cannot provide a valid fresh heartbeat; both
 are HTTP 200 operational observations.
 
+The Celery worker and the Git worker have no probe (see
+[Kubernetes Workloads](#kubernetes-workloads), Worker recovery and probes).
+
 ### Product Catalog Initialization
 
 Automatic package resolution requires a ready Product catalog, which the first
@@ -2511,7 +2546,11 @@ appendonly no
    a Redis restart are recovered by the next periodic fetcher execution on that
    source's schedule (see the Fetcher Registry in `docs/data-sources.md`).
    On-demand fetches can be re-triggered via the API. The `FetcherRun` table in
-   PostgreSQL tracks outcomes — no Celery result backend is used.
+   PostgreSQL tracks outcomes — no Celery result backend is used. Conversely, a
+   scheduled fetcher run that stays queued until the next occurrence of its
+   schedule is due expires unexecuted, so a backlog accumulated while no worker
+   consumed runs each fetcher at most once
+   (`docs/features/platform/fetcher-infrastructure.md`, Scheduled Run Expiry).
 
 The IBS consumer heartbeat is not a task result, delivery checkpoint, or domain
 state. The consumer writes the complete `sentinel:ibs_consumer_status` JSON
@@ -2616,8 +2655,9 @@ system authenticates with an API key
 (`docs/features/identity/api-key-management.md`). The key of a role-less
 account, the read-only profile (`docs/features/identity/rbac.md`, Access
 Levels), suffices and grants no capability. The signal detects
-not only empty schedules but also dead workers, database unavailability, or
-any other cause of stalled processing. Runs still in progress (`status` is
+not only empty schedules but also dead workers, workers that are connected but
+do not consume, database unavailability, or any other cause of stalled
+processing. Runs still in progress (`status` is
 `queued` or `running`) have `last_run.finished_at = null` and are covered by
 the `last_run.stale` condition once the respective threshold is reached —
 600 seconds for a `queued` run awaiting worker adoption,
@@ -2984,6 +3024,14 @@ for the record schema.
    `sync_mitre_cves`) never run, check that a Git worker consuming the `git`
    queue is running (see [Container Images](#container-images)); the
    Celery worker does not consume it
+8. If a worker runs but receives no task while its queue grows (`LLEN celery`
+   or `LLEN git` in the broker database), and its log ends after a reconnection
+   to the broker (`Connected to redis://…`, then `mingle: all alone`), the
+   worker is connected but does not consume, which
+   [Kubernetes Workloads](#kubernetes-workloads) (Worker recovery and probes)
+   excludes for the locked dependencies. Restart the worker and report the
+   deployed version. After the restart, the worker discards the scheduled runs
+   that expired in the meantime and logs `scheduled_run_expired` for each
 
 #### Git Fetcher Runs Keep Failing
 

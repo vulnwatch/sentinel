@@ -42,8 +42,6 @@ os.environ.setdefault(
 
 from app.api.dependencies import SESSION_COOKIE_NAME
 from app.api.health import get_readiness_redis_urls
-from app.celery_app import create_celery_app
-from app.config import Settings
 from app.core.enums import (
     IBSRequestActionType,
     IBSRequestState,
@@ -108,6 +106,7 @@ from app.services.base_fetcher import FETCHER_REGISTRY
 from app.services.session_service import create_session
 from app.services.tickets import sync_nvd_cves
 from tests.support.audit_models import SampleAuditEvent
+from tests.support.celery_apps import create_celery_test_app
 from tests.support.database import create_database, drop_database
 from tests.support.logging_state import preserved_logging_state
 from tests.support.openapi_contract import (
@@ -395,7 +394,7 @@ def celery_test_app(
     initializing it (see `fetcher_schedule.fetcher_entry_key`).
     """
     monkeypatch.delenv("CELERY_BROKER_URL", raising=False)
-    celery_test_app = _create_celery_test_app(_redis_test_url)
+    celery_test_app = create_celery_test_app(_redis_test_url)
     ensure_conf(celery_test_app)
     return celery_test_app
 
@@ -413,23 +412,7 @@ def uninitialized_celery_test_app(
     Requesting `celery_test_app` composes its Redis isolation and
     `CELERY_BROKER_URL` handling.
     """
-    return _create_celery_test_app(_redis_test_url)
-
-
-def _create_celery_test_app(redis_url: str) -> Celery:
-    """Build a Sentinel Celery app whose broker and RedBeat use
-    `redis_url`, without initializing `redbeat_conf`."""
-    settings = Settings(
-        _env_file=None,
-        jwt_secret_key="a" * 32,
-        app_name="sentinel-test",
-        log_level="INFO",
-        log_format="json",
-        celery_broker_url=redis_url,
-        celery_timezone="UTC",
-        celery_enable_utc=True,
-    )
-    return create_celery_app(settings)
+    return create_celery_test_app(_redis_test_url)
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")

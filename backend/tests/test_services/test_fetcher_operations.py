@@ -4424,6 +4424,9 @@ class TestTriggerFetcherSuccess:
             assert send_task_spy.call_args.kwargs["time_limit"] == 100
             assert send_task_spy.call_args.kwargs["soft_time_limit"] == 95
             assert send_task_spy.call_args.kwargs["ignore_result"] is True
+            # A manual run does not expire in the broker
+            # (fetcher-infrastructure.md, Scheduled Run Expiry).
+            assert "expires" not in send_task_spy.call_args.kwargs
         finally:
             await _cleanup_trigger_rows(
                 real_session_factory, fetcher_name=fetcher_name, user_id=user_id

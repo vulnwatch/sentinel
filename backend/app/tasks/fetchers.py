@@ -4,7 +4,9 @@ See `docs/features/platform/fetcher-infrastructure.md` (Celery
 Integration, Concurrency Control, Stale Run Detection) for the
 authoritative `run_fetcher` contract, and (Per-Ticket Catch-Up — Celery
 task wrapper, Interface contract; `fetch_single()` and `catch_up()`
-Lifecycle) for the `run_catch_up` contract this module implements.
+Lifecycle) for the `run_catch_up` contract this module implements. The
+`task_revoked` receiver logs the scheduled runs that a worker discards
+because they expired (Scheduled Run Expiry).
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from uuid import UUID
 
 import structlog
 from celery.exceptions import SoftTimeLimitExceeded
+from celery.signals import task_revoked
 
 from app.celery_app import celery_app
 from app.core.enums import FetcherRunTriggeredBy
@@ -265,6 +268,42 @@ def _run_fetcher_sync(
 
 
 run_fetcher = celery_app.task(bind=True, name="run_fetcher")(_run_fetcher_sync)
+
+
+def _log_expired_scheduled_run(
+    sender: Any = None,
+    request: Any = None,
+    expired: bool = False,
+    **_kwargs: Any,
+) -> None:
+    """`task_revoked` receiver — logs INFO `scheduled_run_expired` with
+    `fetcher_name` when the worker discards a scheduled `run_fetcher`
+    message because its expiry passed.
+
+    See `docs/features/platform/fetcher-infrastructure.md` (Scheduled Run
+    Expiry). Celery sends the signal in the worker's main process, with
+    the task as `sender` and the message's request context, whose
+    `kwargs` are the task's keyword arguments, before any `FetcherRun`
+    exists. A revocation for another reason, another task, or a manual
+    run is ignored; Celery's own `Discarding revoked task` record still
+    reports it.
+    """
+    if not expired or getattr(sender, "name", None) != "run_fetcher":
+        return
+    task_kwargs = getattr(request, "kwargs", None)
+    if not isinstance(task_kwargs, dict):
+        return
+    if task_kwargs.get("triggered_by") != FetcherRunTriggeredBy.SCHEDULE.value:
+        return
+    logger.info("scheduled_run_expired", fetcher_name=task_kwargs.get("fetcher_name"))
+
+
+# Explicit `.connect(...)` for the same reason documented in
+# `app/celery_app.py`: `celery.signals` ships no type stubs.
+task_revoked.connect(
+    _log_expired_scheduled_run,
+    dispatch_uid="sentinel.tasks.fetchers.task_revoked",
+)
 
 
 # ---------------------------------------------------------------------------

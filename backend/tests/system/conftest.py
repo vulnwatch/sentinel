@@ -8,9 +8,14 @@ waiting/diagnostics, and deterministic cleanup ordering.
 
 Nothing in this module imports `tests.support.system_fetcher` at module
 level — that import (and the `FETCHER_REGISTRY` mutation it triggers as
-a side effect) happens exclusively inside `fetcher_pipeline_harness`,
-so a `pytest -m 'not system'` collection of this directory never
-registers the test-only fetcher in the collecting process.
+a side effect) happens exclusively inside `_fetcher_harness`, so a
+`pytest -m 'not system'` collection of this directory never registers
+the test-only fetcher in the collecting process.
+
+Two fixtures share that harness: `fetcher_pipeline_harness` on the pytest
+worker's Redis logical database, and `broker_restart_harness` on a Redis
+container dedicated to the test (testing-strategy.md, Broker Restart
+Recovery).
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -35,6 +40,7 @@ import pytest_asyncio
 import redis.asyncio as redis_asyncio
 from celery import Celery
 from redbeat import RedBeatSchedulerEntry
+from redbeat.schedulers import ensure_conf
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -46,8 +52,10 @@ from app.models.fetcher_run import FetcherRun
 from app.models.session import Session
 from app.models.user import User
 from app.services.base_fetcher import FETCHER_REGISTRY
-from app.services.fetcher_schedule import delete_fetcher_entry
+from app.services.fetcher_schedule import _build_entry, delete_fetcher_entry
 from app.services.session_service import create_session
+from tests.support.celery_apps import create_celery_test_app
+from tests.support.redis import DedicatedRedisContainer, dedicated_redis_container
 
 _BACKEND_DIR = Path(__file__).resolve().parents[2]
 
@@ -294,6 +302,10 @@ class FetcherPipelineHarness:
     #: before the test body, so its rows are part of both domain
     #: snapshots, and deleted at teardown.
     reader_token: str = ""
+    #: The Redis container that is the spawned processes' broker, for the
+    #: broker restart test only (`broker_restart_harness`); `None` on the
+    #: pytest worker's Redis logical database.
+    broker: DedicatedRedisContainer | None = None
 
     # -- Process lifecycle ---------------------------------------------
 
@@ -497,6 +509,56 @@ class FetcherPipelineHarness:
         entry = RedBeatSchedulerEntry.from_key(key, app=self.celery_app)
         entry.reschedule(last_run_at=datetime.now(UTC) - timedelta(days=days_ago))
 
+    def publish_scheduled_run(
+        self, config: FetcherConfig, *, expires: datetime | None = None
+    ) -> None:
+        """Publish the test fetcher's scheduled `run_fetcher` message as
+        Beat publishes it: the task, arguments, and Options of the entry
+        that reconciliation writes for `config` (`_build_entry`; Beat
+        calls `apply_async(entry.args, entry.kwargs, **entry.options)`).
+        `expires`, when given, replaces the entry's own expiry.
+
+        For the tests that run without Beat (testing-strategy.md, Broker
+        Restart Recovery and Scheduled Run Expiry). The entry is built
+        but never saved: only Beat and the API write RedBeat entries. A
+        blocking kombu publication, which reconnects after a broker
+        restart through Celery's publish retry; callers run it via
+        `asyncio.to_thread()`.
+        """
+        entry = _build_entry(
+            self.celery_app, FETCHER_REGISTRY[SYSTEM_FETCHER_NAME], config
+        )
+        options = dict(entry.options)
+        if expires is not None:
+            options["expires"] = expires
+        self.celery_app.send_task(
+            entry.task, args=entry.args, kwargs=entry.kwargs, **options
+        )
+
+    async def wait_worker_log(
+        self, *fragments: str, timeout_seconds: float = _RUN_FINALIZED_TIMEOUT
+    ) -> str:
+        """Poll the worker's captured output until one line contains every
+        fragment, and return that line. The logging pipeline flushes each
+        record, so the file follows the worker without delay."""
+        assert self.worker_process is not None
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            self.worker_process.assert_alive()
+            try:
+                text = self.worker_process.log_path.read_text(errors="replace")
+            except OSError:
+                text = ""
+            for line in text.splitlines():
+                if all(fragment in line for fragment in fragments):
+                    return line
+            await asyncio.sleep(_POLL_INTERVAL)
+        diagnostics = await self._timeout_diagnostics()
+        pytest.fail(
+            f"no worker log line with {fragments!r} within {timeout_seconds}s\n"
+            f"{diagnostics}"
+        )
+
     # -- PostgreSQL (FetcherConfig / FetcherRun / FetcherAuditEvent) ----
 
     async def wait_config_row(
@@ -528,16 +590,21 @@ class FetcherPipelineHarness:
         )
 
     async def wait_finalized_run(
-        self, timeout_seconds: float = _RUN_FINALIZED_TIMEOUT
+        self,
+        timeout_seconds: float = _RUN_FINALIZED_TIMEOUT,
+        *,
+        exclude: frozenset[uuid.UUID] = frozenset(),
     ) -> FetcherRun:
         """Poll until a terminal (`success` or `failure`) `FetcherRun`
         row exists for the test fetcher, excluding any row already
         present before this invocation's preflight purge
-        (`preexisting_run_ids`) — see the field's docstring. This
+        (`preexisting_run_ids`) — see the field's docstring — and the
+        rows in `exclude`, the runs a test already observed. This
         guarantees the returned run is evidence of this invocation's
         own worker/Beat/broker path, independent of whether the
         preflight purge itself succeeded.
         """
+        excluded = self.preexisting_run_ids | exclude
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             if self.worker_process is not None:
@@ -551,8 +618,8 @@ class FetcherPipelineHarness:
                     .where(FetcherRun.status.in_(["success", "failure"]))
                     .order_by(FetcherRun.created_at.desc())
                 )
-                if self.preexisting_run_ids:
-                    query = query.where(FetcherRun.id.notin_(self.preexisting_run_ids))
+                if excluded:
+                    query = query.where(FetcherRun.id.notin_(excluded))
                 result = await session.execute(query)
                 run = result.scalars().first()
             if run is not None:
@@ -733,13 +800,16 @@ async def _residual_reader(
         ]
 
 
-@pytest_asyncio.fixture
-async def fetcher_pipeline_harness(
-    tmp_path: Path,
-    celery_test_app: Celery,
-    redis_client: redis_asyncio.Redis,
-    real_session_factory: async_sessionmaker[AsyncSession],
-    system_process_env: dict[str, str],
+@contextlib.asynccontextmanager
+async def _fetcher_harness(
+    *,
+    run_dir: Path,
+    celery_app: Celery,
+    session_factory: async_sessionmaker[AsyncSession],
+    env: dict[str, str],
+    flush_redis: Callable[[], Awaitable[Any]],
+    count_redis_keys: Callable[[], Awaitable[int]],
+    broker: DedicatedRedisContainer | None = None,
 ) -> AsyncIterator[FetcherPipelineHarness]:
     """Registers the test-only fetcher, yields a `FetcherPipelineHarness`,
     then performs deterministic cleanup — in the exact order mandated by
@@ -749,12 +819,10 @@ async def fetcher_pipeline_harness(
     committed role-less reader of the fetcher observation API, whose rows
     step 6 deletes and step 8 verifies absent.
 
-    Depends on `redis_client` (rather than opening a separate Redis
-    connection) to reuse its existing FLUSHDB-before/after isolation
-    guarantee and connection lifecycle management — this fixture's own
-    teardown still performs the mandated `FLUSHDB` at the documented
-    step (4), `redis_client`'s own teardown is an additional safety net,
-    not a substitute.
+    `celery_app` and `env` address the Redis database of the spawned
+    processes; `flush_redis` and `count_redis_keys` run `FLUSHDB` and
+    `DBSIZE` on it (cleanup steps 5 and 8). `broker` is that Redis
+    container when it is dedicated to the test.
     """
     # Baseline: capture any `FetcherRun` ids that already exist for the
     # test fetcher BEFORE the preflight purge below — residue left by a
@@ -766,7 +834,7 @@ async def fetcher_pipeline_harness(
     # never be mistaken for evidence of this invocation's own dispatch
     # — independent of whether the purge below itself succeeds. See
     # testing-strategy.md, Execution.
-    async with real_session_factory() as baseline_run_session:
+    async with session_factory() as baseline_run_session:
         baseline_run_result = await baseline_run_session.execute(
             select(FetcherRun.id).where(FetcherRun.fetcher_name == SYSTEM_FETCHER_NAME)
         )
@@ -776,9 +844,9 @@ async def fetcher_pipeline_harness(
     # also removes a leftover `FetcherConfig` row that could otherwise
     # be disabled or hold a stale `schedule_override` from a prior
     # invocation.
-    await _delete_fetcher_artifacts(real_session_factory, {SYSTEM_FETCHER_NAME})
+    await _delete_fetcher_artifacts(session_factory, {SYSTEM_FETCHER_NAME})
 
-    async with real_session_factory() as baseline_session:
+    async with session_factory() as baseline_session:
         baseline_result = await baseline_session.execute(
             select(FetcherConfig.fetcher_name)
         )
@@ -786,12 +854,13 @@ async def fetcher_pipeline_harness(
 
     worker_hostname = f"systemtest-{uuid.uuid4().hex[:10]}@{socket.gethostname()}"
     harness = FetcherPipelineHarness(
-        env=system_process_env,
-        run_dir=tmp_path,
-        celery_app=celery_test_app,
-        session_factory=real_session_factory,
+        env=env,
+        run_dir=run_dir,
+        celery_app=celery_app,
+        session_factory=session_factory,
         worker_hostname=worker_hostname,
         preexisting_run_ids=preexisting_run_ids,
+        broker=broker,
     )
 
     # Registration happens only inside the `try` below, after every
@@ -810,7 +879,7 @@ async def fetcher_pipeline_harness(
     cleanup_errors: list[str] = []
     reader_id: uuid.UUID | None = None
     try:
-        reader_id, harness.reader_token = await _create_reader(real_session_factory)
+        reader_id, harness.reader_token = await _create_reader(session_factory)
 
         # Registration boundary: import only now — never at collection time
         # — so a `pytest -m 'not system'` run of the wider suite never
@@ -845,13 +914,13 @@ async def fetcher_pipeline_harness(
 
         # 4. Delete the test redbeat entry through the library's public API.
         try:
-            delete_fetcher_entry(celery_test_app, SYSTEM_FETCHER_NAME)
+            delete_fetcher_entry(celery_app, SYSTEM_FETCHER_NAME)
         except Exception as exc:
             cleanup_errors.append(f"redbeat entry deletion failed: {exc!r}")
 
         # 5. Clear only the designated Redis logical database.
         try:
-            await redis_client.flushdb()
+            await flush_redis()
         except Exception as exc:
             cleanup_errors.append(f"redis flushdb failed: {exc!r}")
 
@@ -867,17 +936,17 @@ async def fetcher_pipeline_harness(
         # bootstrap regression without silently leaving orphaned rows.
         created_names: set[str] = set()
         try:
-            async with real_session_factory() as cleanup_session:
+            async with session_factory() as cleanup_session:
                 current_result = await cleanup_session.execute(
                     select(FetcherConfig.fetcher_name)
                 )
                 created_names = set(current_result.scalars().all()) - baseline_names
-            await _delete_fetcher_artifacts(real_session_factory, created_names)
+            await _delete_fetcher_artifacts(session_factory, created_names)
         except Exception as exc:
             cleanup_errors.append(f"postgres row cleanup failed: {exc!r}")
         if reader_id is not None:
             try:
-                await _delete_reader(real_session_factory, reader_id)
+                await _delete_reader(session_factory, reader_id)
             except Exception as exc:
                 cleanup_errors.append(f"reader cleanup failed: {exc!r}")
 
@@ -924,7 +993,7 @@ async def fetcher_pipeline_harness(
 
         try:
             residues = await _residual_fetcher_artifacts(
-                real_session_factory, created_names | {SYSTEM_FETCHER_NAME}
+                session_factory, created_names | {SYSTEM_FETCHER_NAME}
             )
             if residues:
                 cleanup_errors.append(
@@ -934,9 +1003,7 @@ async def fetcher_pipeline_harness(
             cleanup_errors.append(f"postgres residue verification failed: {exc!r}")
         if reader_id is not None:
             try:
-                reader_residues = await _residual_reader(
-                    real_session_factory, reader_id
-                )
+                reader_residues = await _residual_reader(session_factory, reader_id)
                 if reader_residues:
                     cleanup_errors.append(
                         f"reader rows still present after cleanup: {reader_residues}"
@@ -945,10 +1012,8 @@ async def fetcher_pipeline_harness(
                 cleanup_errors.append(f"reader residue verification failed: {exc!r}")
 
         try:
-            key = RedBeatSchedulerEntry.generate_key(
-                celery_test_app, SYSTEM_FETCHER_NAME
-            )
-            RedBeatSchedulerEntry.from_key(key, app=celery_test_app)
+            key = RedBeatSchedulerEntry.generate_key(celery_app, SYSTEM_FETCHER_NAME)
+            RedBeatSchedulerEntry.from_key(key, app=celery_app)
         except KeyError:
             pass
         except Exception as exc:
@@ -959,7 +1024,7 @@ async def fetcher_pipeline_harness(
             )
 
         try:
-            remaining_keys = await redis_client.dbsize()
+            remaining_keys = await count_redis_keys()
             if remaining_keys != 0:
                 cleanup_errors.append(
                     "Redis logical database not empty after FLUSHDB: "
@@ -973,3 +1038,88 @@ async def fetcher_pipeline_harness(
                 "Local process system suite cleanup failed:\n"
                 + "\n".join(cleanup_errors)
             )
+
+
+@pytest_asyncio.fixture
+async def fetcher_pipeline_harness(
+    tmp_path: Path,
+    celery_test_app: Celery,
+    redis_client: redis_asyncio.Redis,
+    real_session_factory: async_sessionmaker[AsyncSession],
+    system_process_env: dict[str, str],
+) -> AsyncIterator[FetcherPipelineHarness]:
+    """`_fetcher_harness` on the pytest worker's Redis logical database.
+
+    Depends on `redis_client` (rather than opening a separate Redis
+    connection) to reuse its existing FLUSHDB-before/after isolation
+    guarantee and connection lifecycle management — the harness's own
+    teardown still performs the mandated `FLUSHDB` at the documented
+    step (5), `redis_client`'s own teardown is an additional safety net,
+    not a substitute.
+    """
+    async with _fetcher_harness(
+        run_dir=tmp_path,
+        celery_app=celery_test_app,
+        session_factory=real_session_factory,
+        env=system_process_env,
+        flush_redis=redis_client.flushdb,
+        count_redis_keys=redis_client.dbsize,
+    ) as harness:
+        yield harness
+
+
+async def _flush_dedicated_redis(url: str) -> None:
+    """`FLUSHDB` on the dedicated container through a new client, which
+    no earlier broker restart has left with a closed connection."""
+    async with redis_asyncio.Redis.from_url(url) as client:
+        await client.flushdb()
+
+
+async def _count_dedicated_redis_keys(url: str) -> int:
+    """`DBSIZE` of the dedicated container through a new client."""
+    async with redis_asyncio.Redis.from_url(url) as client:
+        size: int = await client.dbsize()
+        return size
+
+
+@pytest_asyncio.fixture
+async def broker_restart_harness(
+    tmp_path: Path,
+    _engine: AsyncEngine,
+    real_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncIterator[FetcherPipelineHarness]:
+    """`_fetcher_harness` on a Redis 8 container dedicated to the test,
+    with persistence disabled: the spawned processes' broker and
+    application Redis, which the test may stop and start
+    (testing-strategy.md, Broker Restart Recovery). PostgreSQL remains
+    the pytest worker's database.
+
+    The pytest-host Celery app publishes to the container, so
+    `CELERY_BROKER_URL` is removed from the environment as in
+    `celery_test_app`. The harness cleanup stops the worker before the
+    container is removed.
+    """
+    monkeypatch.delenv("CELERY_BROKER_URL", raising=False)
+    with dedicated_redis_container() as broker:
+        celery_app = create_celery_test_app(broker.url)
+        ensure_conf(celery_app)
+        env = build_system_process_env(
+            database_url=_engine.url.render_as_string(hide_password=False),
+            redis_url=broker.url,
+            jwt_secret_key=_SYSTEM_TEST_JWT_SECRET_KEY,
+            home_dir=tmp_path,
+        )
+        try:
+            async with _fetcher_harness(
+                run_dir=tmp_path,
+                celery_app=celery_app,
+                session_factory=real_session_factory,
+                env=env,
+                flush_redis=lambda: _flush_dedicated_redis(broker.url),
+                count_redis_keys=lambda: _count_dedicated_redis_keys(broker.url),
+                broker=broker,
+            ) as harness:
+                yield harness
+        finally:
+            celery_app.close()
