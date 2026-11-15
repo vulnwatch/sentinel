@@ -2085,8 +2085,8 @@ backend**. Task return values are never stored or read. A configured
 result backend fails startup (see "Startup Validation" below).
 `result_expires = None` keeps Celery Beat from installing its
 `celery.backend_cleanup` entry, which would have no stored result to
-expire (see "Non-Fetcher Periodic Tasks", Mechanism). All `BaseFetcher` task executions return
-`None`, and their execution state (status, terminal succeeded/failed counts,
+expire (see "Non-Fetcher Periodic Tasks", Mechanism).
+All `BaseFetcher` task executions return `None`, and their execution state (status, terminal succeeded/failed counts,
 durable created/updated effect counts, error message, and timing) is persisted
 in the `FetcherRun` table only during finalization. Non-fetcher sub-operations also return
 `None`, but do not create `FetcherRun` records; their owning specifications
@@ -2389,6 +2389,7 @@ signal handler** registered in the Celery app module.
    → Celery app factory runs
    → Timezone validation (UTC check)
    → Lock sentinel validation (redbeat_lock_key, redbeat_lock_timeout)
+   → Result backend validation (no result backend)
    → import app.services.fetcher_discovery  (populates FETCHER_REGISTRY)
 
 2. RedBeatScheduler.__init__()
@@ -3264,16 +3265,18 @@ fires only if an operator explicitly overrides the defaults.
 validate that no result backend is configured (see "Celery Integration",
 Result handling). The factory configures none, but Celery reads the
 `CELERY_RESULT_BACKEND` environment variable before the configured
-value, and the `celery` command's `--result-backend` option sets that
-variable before it loads the application. After app configuration is
-complete, the factory checks that `result_backend` is empty or `None`;
-any other value fails with a `RuntimeError`:
+value, and the `celery` command's `--result-backend` option, given
+directly or through its `RESULT_BACKEND` environment variable, sets
+that variable before it loads the application. After app configuration
+is complete, the factory checks that `result_backend` is empty or
+`None`; any other value fails with a `RuntimeError`:
 
 ```
 "FATAL: Celery result backend must be disabled. A result backend is
-configured through CELERY_RESULT_BACKEND or the celery --result-backend
-option; remove it. Task outcomes are persisted in PostgreSQL — see
-docs/architecture.md (Celery + Redis with no result backend)."
+configured through CELERY_RESULT_BACKEND, RESULT_BACKEND, or the celery
+--result-backend option; remove it. Task outcomes are persisted in
+PostgreSQL — see docs/architecture.md (Celery + Redis with no result
+backend)."
 ```
 
 The message never contains the configured value, which is a URL that
@@ -3298,9 +3301,8 @@ Reconciliation" above) implicitly validates:
 **Worker pool validation is a separate, per-worker check**: unlike the
 timezone, lock-sentinel, and result-backend validations above, the
 execution pool (`--pool`) is not part of the shared `Celery()`
-application object —
-it is resolved by each individual worker process from its own CLI
-invocation, and Beat has no pool to validate. For this reason, pool
+application object — it is resolved by each individual worker process
+from its own CLI invocation, and Beat has no pool to validate. For this reason, pool
 validation cannot live in the app factory; it is
 performed by the Worker Startup Handler below, which runs once per
 worker process before that worker's consumer starts accepting tasks.

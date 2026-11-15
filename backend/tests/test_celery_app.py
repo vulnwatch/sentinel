@@ -364,6 +364,8 @@ class TestValidateCeleryConfigResultBackendRejection:
 
         message = str(exc_info.value)
         assert "CELERY_RESULT_BACKEND" in message
+        assert "RESULT_BACKEND," in message
+        assert "--result-backend" in message
         assert "fictional-password" not in message
         assert "backend.example.invalid" not in message
 
@@ -433,7 +435,9 @@ class TestBeatScheduleSetup:
     def test_installs_only_static_entries(self, celery_test_app: Celery) -> None:
         RedBeatScheduler(app=celery_test_app)
 
-        assert self._stored_entry_names(celery_test_app) == {"cleanup_sessions"}
+        assert self._stored_entry_names(celery_test_app) == set(
+            celery_test_app.conf.beat_schedule
+        )
 
     def test_result_expiry_would_install_backend_cleanup_entry(
         self, celery_test_app: Celery
@@ -446,7 +450,7 @@ class TestBeatScheduleSetup:
         RedBeatScheduler(app=celery_test_app)
 
         assert self._stored_entry_names(celery_test_app) == {
-            "cleanup_sessions",
+            *celery_test_app.conf.beat_schedule,
             "celery.backend_cleanup",
         }
 

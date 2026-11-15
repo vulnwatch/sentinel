@@ -157,10 +157,11 @@ defined by their owning specifications. See
 `docs/features/platform/fetcher-infrastructure.md` (Result handling).
 
 `CELERY_RESULT_BACKEND`, which Celery reads directly from the
-environment, MUST NOT be set, and the `celery` command's
-`--result-backend` option MUST NOT be used. Either configures a result
-backend, and the Celery app factory then refuses to start with an error
-that names the variable but never its value — see
+environment, MUST NOT be set, and neither the `celery` command's
+`--result-backend` option nor its environment variable `RESULT_BACKEND`
+may be used. Each configures a result backend, and the Celery app
+factory then refuses to start with an error that names these settings
+but never their value — see
 `docs/features/platform/fetcher-infrastructure.md` (Startup Validation).
 
 ### Redbeat Scheduler

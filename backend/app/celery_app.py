@@ -125,14 +125,15 @@ def validate_celery_config(app: Celery) -> None:
 
     # Celery's `result_backend` property reads `CELERY_RESULT_BACKEND`
     # before the configured `None`, and the `celery` command's
-    # `--result-backend` option sets that variable before loading the app.
+    # `--result-backend` option (environment variable `RESULT_BACKEND`)
+    # sets that variable before loading the app.
     if app.conf.result_backend:
         msg = (
             "FATAL: Celery result backend must be disabled. A result backend "
-            "is configured through CELERY_RESULT_BACKEND or the celery "
-            "--result-backend option; remove it. Task outcomes are persisted "
-            "in PostgreSQL — see docs/architecture.md (Celery + Redis with no "
-            "result backend)."
+            "is configured through CELERY_RESULT_BACKEND, RESULT_BACKEND, or "
+            "the celery --result-backend option; remove it. Task outcomes are "
+            "persisted in PostgreSQL — see docs/architecture.md (Celery + "
+            "Redis with no result backend)."
         )
         raise RuntimeError(msg)
 
