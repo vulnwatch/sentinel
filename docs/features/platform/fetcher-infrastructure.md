@@ -2294,18 +2294,19 @@ of an entry in one hash field with one write, so they never diverge. As
 for the time limits, a message already queued keeps the expiry fixed at
 its publication; a change affects only later publications, so after a
 schedule change an older message can stay valid next to a newer one, and
-Concurrency Control serializes their runs. A message that a version
-without this expiry published never expires.
+Concurrency Control prevents their runs from overlapping. A message that
+a version without this expiry published never expires.
 
 **Schedule without occurrence**: an expression that never fires, such as
-`0 0 31 2 *`, has no interval, and building its entry raises
-`ValueError`. The PATCH validation checks only the syntax
-(`docs/features/platform/fetcher-operations.md`, Update Fetcher Config)
-and accepts such a `schedule_override`. Its post-commit propagation then
-fails and is logged as a failed post-commit callback, and every later Beat
-start fails in startup reconciliation (step 2) until the override is
-changed. Celery's own scheduler cannot compute a next run for such an
-expression either.
+`0 0 31 2 *`, has no interval, and building its entry raises a
+`ValueError` that names the fetcher. The PATCH validation checks only the
+syntax (`docs/features/platform/fetcher-operations.md`, Update Fetcher
+Config) and accepts such a `schedule_override`. While the fetcher is
+enabled, its post-commit propagation then fails and is logged as a failed
+post-commit callback, without changing the PATCH response or the previous
+entry, and every later Beat start fails in startup reconciliation
+(step 2) until the override is changed. Celery's own scheduler cannot
+compute a next run for such an expression either.
 
 **Manual runs**: a manual trigger publishes no expiry
 (`docs/features/platform/fetcher-operations.md`, `trigger_fetcher`,
@@ -2510,6 +2511,8 @@ Steps:
      PostgreSQL failure). This can only occur if `schedule_override` is
      corrupted via direct database manipulation — the PATCH endpoint
      validates cron syntax before persisting
+   - A parseable effective schedule that never fires fails the same way
+     (see "Scheduled Run Expiry" above, Schedule without occurrence)
 
 3. **Remove entries for disabled fetchers**: for each fetcher that is
    present in `FETCHER_REGISTRY` but has `enabled = false`:

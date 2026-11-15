@@ -2224,7 +2224,8 @@ reconnection (celery/celery#8030, celery/kombu#2629). The local process
 system suite verifies the requirement with a real worker and repeated
 restarts of a real broker
 (`docs/features/platform/testing-strategy.md`, Broker Restart Recovery).
-The scheduled runs that Beat published while no worker consumed expire (see
+The scheduled runs that Beat published while no worker consumed expire,
+except the most recent of each fetcher (see
 [Redis Durability, Memory, and Persistence](#redis-durability-memory-and-persistence),
 Task queue loss is acceptable).
 
@@ -2546,11 +2547,12 @@ appendonly no
    source's schedule (see the Fetcher Registry in `docs/data-sources.md`).
    On-demand fetches can be re-triggered via the API. The `FetcherRun` table in
    PostgreSQL tracks outcomes — no Celery result backend is used. Conversely, a
-   scheduled fetcher run that stays queued longer than the shortest interval of
-   its schedule expires unexecuted, before Beat publishes the next occurrence,
-   so a backlog accumulated while no worker consumed runs each fetcher at most
-   once (`docs/features/platform/fetcher-infrastructure.md`, Scheduled Run
-   Expiry).
+   queued scheduled fetcher run expires unexecuted shortly before Beat publishes
+   the next occurrence (after the shortest interval of its schedule, less a
+   margin), so a backlog accumulated while no worker consumed runs each fetcher
+   at most once, with the exceptions that
+   `docs/features/platform/fetcher-infrastructure.md` (Scheduled Run Expiry)
+   lists.
 
 The IBS consumer heartbeat is not a task result, delivery checkpoint, or domain
 state. The consumer writes the complete `sentinel:ibs_consumer_status` JSON
@@ -3019,7 +3021,11 @@ for the record schema.
    with `stage="bootstrap_and_reconciliation"`, check its `error_type` and
    `error`: for a PostgreSQL error, ensure the database is reachable before
    Beat can start successfully (Beat fails fast when PostgreSQL is
-   unavailable at startup)
+   unavailable at startup); for a `ValueError` whose `error` says that the
+   schedule of a fetcher has no occurrence, change that fetcher's
+   `schedule_override` with `PATCH /api/v1/fetchers/{fetcher_name}/config`
+   (`docs/features/platform/fetcher-infrastructure.md`, Scheduled Run
+   Expiry, Schedule without occurrence)
 7. If only the Git-based CVE fetchers (`sync_kernel_cves`,
    `sync_mitre_cves`) never run, check that a Git worker consuming the `git`
    queue is running (see [Container Images](#container-images)); the

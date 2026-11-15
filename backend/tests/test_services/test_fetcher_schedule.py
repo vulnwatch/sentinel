@@ -216,10 +216,15 @@ class TestEffectiveOptions:
 
         assert short["expires"] == long["expires"] == 86340
 
-    def test_schedule_without_occurrence_raises_value_error(self) -> None:
+    def test_schedule_without_occurrence_raises_value_error_naming_the_fetcher(
+        self,
+    ) -> None:
         config = _make_config(schedule_override="0 0 31 2 *")
 
-        with pytest.raises(ValueError, match="no occurrence"):
+        with pytest.raises(
+            ValueError,
+            match="Schedule of fetcher 'test_schedule_no_queue' has no occurrence",
+        ):
             fetcher_schedule_module._effective_options(_NoQueueFetcher, config)
 
 

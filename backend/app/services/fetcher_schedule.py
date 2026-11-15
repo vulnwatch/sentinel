@@ -272,12 +272,16 @@ def _effective_options(
 
     Raises:
         ValueError: the effective schedule is not a valid 5-field cron
-            expression, or it has no occurrence.
+            expression, or it has no occurrence; the latter names the
+            fetcher, which the Beat startup failure log otherwise lacks.
     """
     options: dict[str, Any] = dict(effective_task_time_limits(config.run_timeout))
-    options["expires"] = _scheduled_run_expiry_seconds(
-        _effective_schedule(fetcher, config)
-    )
+    schedule = _effective_schedule(fetcher, config)
+    try:
+        options["expires"] = _scheduled_run_expiry_seconds(schedule)
+    except ValueError as exc:
+        msg = f"Schedule of fetcher '{fetcher.name}' has no occurrence"
+        raise ValueError(msg) from exc
     if fetcher.queue is not None:
         options["queue"] = fetcher.queue
     return options

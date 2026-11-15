@@ -1979,15 +1979,15 @@ the pytest worker's database. The test MUST prove:
 3. At least three times in a row, the broker is stopped until the
    worker's log shows two failed reconnection attempts, and started again
    without any key. Once the worker's log shows the reconnection, the
-   worker stays idle for a few seconds, as after the observed outage; a
-   scheduled message published then is executed and finalizes a new
-   `FetcherRun`.
+   worker stays idle for a few seconds, so that the message arrives only
+   after the reconnected worker has polled an empty queue; a scheduled
+   message published then is executed and finalizes a new `FetcherRun`.
 4. The worker is the same process throughout: it never exited.
 
 The test publishes the messages itself instead of starting Beat, because
 Beat recovers from Redis data loss by exiting for an orchestrator restart
 (`docs/features/platform/fetcher-infrastructure.md`, Runtime: Redis Data
-Loss). The waits for the failed attempt, the reconnection, and each run
+Loss). The waits for the failed attempts, the reconnection, and each run
 use the bounded polls of Bounded Waiting and Diagnostics, on Celery's
 worker log records for the first two. The idle interval constructs the
 scenario and is not a wait for a condition. Cleanup follows Deterministic
