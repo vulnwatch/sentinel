@@ -14,9 +14,9 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
-from celery.schedules import ParseException, crontab
 from pydantic import MISSING, BaseModel, Field, field_validator, model_validator
 
+from app.core.cron import parse_schedule
 from app.core.enums import (
     FetcherAuditEventType,
     FetcherRunStatus,
@@ -290,9 +290,10 @@ class FetcherConfigUpdateRequest(BaseModel):
     only validates the group-level shape and the input-only
     constraints (`docs/features/platform/fetcher-operations.md`,
     `update_fetcher_config`, Q3 step 1) that must produce the generic
-    `422 VALIDATION_ERROR`: `schedule_override` cron syntax and
-    50-character storage bound (matching `FetcherConfig.schedule_override`,
-    `VARCHAR(50)`), and the `run_timeout`/`request_delay` numeric bounds.
+    `422 VALIDATION_ERROR`: `schedule_override` cron syntax, its having at
+    least one occurrence, and its 50-character storage bound (matching
+    `FetcherConfig.schedule_override`, `VARCHAR(50)`), and the
+    `run_timeout`/`request_delay` numeric bounds.
     `enabled`, `run_timeout`, and `request_delay` accept only their JSON
     type without coercion (`docs/api-spec.md`, JSON Request Body Scalar
     Types): a JSON integer is still a valid `request_delay`, but `600.0`
@@ -305,8 +306,10 @@ class FetcherConfigUpdateRequest(BaseModel):
         max_length=50,
         description=(
             "Five-field cron expression (minute, hour, day of month, month, "
-            "day of week), as Celery's `crontab` parses it; `null` reverts to "
-            "the default schedule. An expression that does not parse returns "
+            "day of week), as Celery's `crontab` parses it, in UTC; Celery "
+            "combines the day of the month and the day of the week with AND. "
+            "`null` reverts to the default schedule. An expression that does "
+            "not parse, or that never fires, such as `0 0 31 2 *`, returns "
             "`422 VALIDATION_ERROR`."
         ),
     )
@@ -318,17 +321,12 @@ class FetcherConfigUpdateRequest(BaseModel):
     @classmethod
     def _validate_cron(cls, value: str | None) -> str | None:
         if value is not None:
-            # The same parser redbeat uses at runtime (see
-            # `docs/features/platform/fetcher-operations.md`, Update
-            # Fetcher Config, Validation rules). It raises `ValueError` for
-            # most invalid expressions, but `ParseException`, which is not a
-            # `ValueError`, for an empty part or step (`", * * * *"`) and a
-            # negative number; Pydantic would let that escape as a `500`, so
-            # it is re-raised as the `ValueError` of a `422 VALIDATION_ERROR`.
-            try:
-                crontab.from_string(value)
-            except ParseException as exc:
-                raise ValueError(str(exc)) from exc
+            # The parser RedBeat uses at runtime, plus the occurrence check
+            # without which Beat cannot build the entry (see
+            # `docs/features/platform/fetcher-operations.md`, Update Fetcher
+            # Config, Validation rules). It raises only `ValueError`, which
+            # Pydantic reports as a `422 VALIDATION_ERROR`.
+            parse_schedule(value)
         return value
 
     @model_validator(mode="after")

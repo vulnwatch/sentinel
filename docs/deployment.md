@@ -3022,7 +3022,9 @@ for the record schema.
    `error`: for a PostgreSQL error, ensure the database is reachable before
    Beat can start successfully (Beat fails fast when PostgreSQL is
    unavailable at startup); for a `ValueError` whose `error` says that the
-   schedule of a fetcher has no occurrence, change that fetcher's
+   schedule of a fetcher has no occurrence, which only a `schedule_override`
+   written outside the API or accepted by a version whose PATCH validation
+   did not check occurrences can cause, change that fetcher's
    `schedule_override` with `PATCH /api/v1/fetchers/{fetcher_name}/config`
    (`docs/features/platform/fetcher-infrastructure.md`, Scheduled Run
    Expiry, Schedule without occurrence)

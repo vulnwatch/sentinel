@@ -352,14 +352,15 @@ of its Pydantic error, such as `less_than_equal`. An error of the whole
 
 1. **Input-only validation**: reject an empty request body (no fields
    provided) with `422 VALIDATION_ERROR` and the message "At least one
-   field must be provided." Validate `schedule_override` cron syntax and
-   its 50-character storage bound (`FetcherConfig.schedule_override` is
-   `VARCHAR(50)`), `run_timeout` bounds (60–604800), `request_delay`
-   bounds (0–300). These constraints are enforced at the request-schema
-   layer (Pydantic validators) and produce the global `422
-   VALIDATION_ERROR` response per `docs/api-spec.md`. They execute
-   before any database operation and before the service function is
-   called.
+   field must be provided." Validate `schedule_override` cron syntax, its
+   having at least one occurrence (see Update Fetcher Config, Validation
+   rules), and its 50-character storage bound
+   (`FetcherConfig.schedule_override` is `VARCHAR(50)`), `run_timeout`
+   bounds (60–604800), `request_delay` bounds (0–300). These constraints
+   are enforced at the request-schema layer (Pydantic validators) and
+   produce the global `422 VALIDATION_ERROR` response per
+   `docs/api-spec.md`. They execute before any database operation and
+   before the service function is called.
 2. **Lock**: `SELECT ... FOR UPDATE` on `FetcherConfig` where
    `fetcher_name` matches. This is the first database operation.
 3. **Guards**: evaluate guards 1–5 in order. On any failure, raise the
@@ -1449,14 +1450,19 @@ with a caller-owned transaction.
   VALIDATION_ERROR` with the message "At least one field must be
   provided."
 - `schedule_override`: must be a valid 5-field cron expression of at
-  most 50 characters (matching the `VARCHAR(50)` storage column), or
-  `null` to revert to the default schedule. Validated by constructing a
-  `celery.schedules.crontab` object — the same parser used by RedBeat at
-  runtime — ensuring that any value accepted at PATCH time is guaranteed
-  parseable at Beat startup. The validation does not check that the
-  expression ever fires; for the consequence of one that never does, see
-  `docs/features/platform/fetcher-infrastructure.md` (Scheduled Run
-  Expiry, Schedule without occurrence)
+  most 50 characters (matching the `VARCHAR(50)` storage column) that
+  fires at least once, or `null` to revert to the default schedule.
+  Validated by constructing a `celery.schedules.crontab` object — the
+  same parser used by RedBeat at runtime — and by computing the shortest
+  interval between two of its occurrences, from which the expiry of its
+  entry derives (`docs/features/platform/fetcher-infrastructure.md`,
+  Scheduled Run Expiry). Occurrences follow Celery's semantics in UTC: the
+  day of the month and the day of the week combine with AND. An expression
+  that never fires, such as `0 0 31 2 *` or `0 0 31 4,6,9,11 *`, returns
+  `422 VALIDATION_ERROR`; an irregular one that fires, such as
+  `0 0 29 2 *` or `0 0 13 * 5`, is accepted. Any value accepted at PATCH
+  time is therefore guaranteed parseable at Beat startup, and its entry
+  can be built
 - `run_timeout`: must be an integer between 60 and 604800 (1 minute
   to 7 days). Controls Celery hard/soft time limits and the stale run
   detection threshold. Default: 3600 (1 hour)

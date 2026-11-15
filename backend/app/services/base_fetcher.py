@@ -45,12 +45,12 @@ from uuid import UUID
 import httpx
 import structlog
 from celery.exceptions import SoftTimeLimitExceeded
-from celery.schedules import crontab
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
+from app.core.cron import parse_schedule
 from app.core.enums import FetcherRunStatus
 from app.database import async_session_factory
 from app.models.fetcher_run import FetcherRun
@@ -156,11 +156,11 @@ def _validate_schedule(cls: type[BaseFetcher]) -> None:
     if not isinstance(schedule, str):
         raise TypeError(f"{cls.__name__}.default_schedule must be a string")
     try:
-        crontab.from_string(schedule)
+        parse_schedule(schedule)
     except ValueError as exc:
         raise TypeError(
             f"{cls.__name__}.default_schedule is not a valid 5-field cron "
-            f"expression: {schedule!r} ({exc})"
+            f"expression that fires: {schedule!r} ({exc})"
         ) from exc
 
 

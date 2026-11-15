@@ -43,6 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
 
 import app.api.v1.fetchers as fetchers_module
+import app.services.fetcher_operations as fetcher_operations_module
 import app.services.fetcher_schedule as fetcher_schedule_module
 from app.api import dependencies
 from app.api.dependencies import SESSION_COOKIE_NAME
@@ -1986,6 +1987,57 @@ class TestUpdateFetcherConfigEndpoint:
             f"/api/v1/fetchers/{config.fetcher_name}/config"
         )
         assert follow_up.json()["data"]["schedule_override"] is None
+
+    async def test_schedule_override_without_occurrence_returns_422_and_changes_nothing(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """`0 0 31 2 *` parses but never fires, so Beat could not build its
+        entry. The request schema rejects it before the service runs: the
+        service, the only writer of the row and its audit events, is never
+        awaited, and the route registers RedBeat propagation only after the
+        service returns (`fetcher-operations.md`, Update Fetcher Config,
+        Validation rules)."""
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_StubFetcher.name, enabled=True
+        )
+        service = AsyncMock()
+        monkeypatch.setattr(fetcher_operations_module, "update_fetcher_config", service)
+
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"schedule_override": "0 0 31 2 *"},
+        )
+
+        assert response.status_code == 422
+        body = response.json()
+        assert body["code"] == "VALIDATION_ERROR"
+        assert [(error["loc"], error["type"]) for error in body["errors"]] == [
+            (["body", "schedule_override"], "value_error")
+        ]
+        service.assert_not_awaited()
+
+    async def test_irregular_schedule_override_that_fires_is_accepted(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        """`0 0 29 2 *` fires once every four years: it has an occurrence,
+        so it is accepted (`fetcher-operations.md`, Update Fetcher Config,
+        Validation rules)."""
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
+
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"schedule_override": "0 0 29 2 *"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["schedule_override"] == "0 0 29 2 *"
 
     async def test_run_timeout_out_of_bounds_returns_422(
         self,

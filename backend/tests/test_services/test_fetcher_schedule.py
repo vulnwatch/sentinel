@@ -20,7 +20,6 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Generator
 from datetime import UTC, datetime, timedelta
-from itertools import pairwise
 from typing import Any, cast
 
 import pytest
@@ -228,69 +227,24 @@ class TestEffectiveOptions:
             fetcher_schedule_module._effective_options(_NoQueueFetcher, config)
 
 
-def _celery_shortest_gap(expression: str, *, start: datetime, count: int) -> int:
-    """Shortest gap in seconds between `count` consecutive occurrences
-    of `expression` after `start`, as Celery's own scheduler computes
-    each next occurrence (`remaining_estimate` with `now` pinned to the
-    previous occurrence). An independent oracle for the day semantics:
-    the minimum over a window can only equal the exact interval when the
-    window contains the shortest gap, which each caller's window does."""
-    schedule = crontab.from_string(expression)
-    occurrences: list[datetime] = []
-    current = start
-    for _ in range(count):
-        schedule.nowfun = lambda pinned=current: pinned
-        current = current + schedule.remaining_estimate(current)
-        occurrences.append(current)
-    return min(
-        int((later - earlier).total_seconds())
-        for earlier, later in pairwise(occurrences)
-    )
-
-
 @pytest.mark.unit
 class TestScheduledRunExpiry:
     """`_scheduled_run_expiry_seconds`: `g - min(60, g // 2)`, where `g`
     is the shortest interval of the schedule (fetcher-infrastructure.md,
-    Scheduled Run Expiry)."""
+    Scheduled Run Expiry). The interval itself is tested in
+    `tests/test_core/test_cron.py`."""
 
     @pytest.mark.parametrize(
         ("expression", "expected"),
         [
-            ("0 * * * *", 3600 - 60),
-            # Every three hours: 3 h within a day and from 21:00 to 00:00.
             ("0 */3 * * *", 10800 - 60),
-            ("0 */6 * * *", 21600 - 60),
             ("0 14 * * *", 86400 - 60),
-            # Weekdays: Monday to Tuesday is the shortest gap.
-            ("0 3 * * 1-5", 86400 - 60),
-            # Weekly: one day of the week wraps around to itself.
-            ("0 3 * * 0", 7 * 86400 - 60),
-            # Minutes 0, 7, ..., 56: from minute 56 to minute 0 is 4 min.
-            ("*/7 * * * *", 240 - 60),
-            # Working hours twice an hour: 30 min.
-            ("0,30 9-17 * * 1-5", 1800 - 60),
-            # The margin is capped at half the interval.
-            ("* * * * *", 30),
-            ("*/2 * * * *", 120 - 60),
-            ("*/3 * * * *", 180 - 60),
-            # Restricted day of the month, every month: days 1 to 5.
-            ("0 0 1-5 * *", 86400 - 60),
-            # Monthly: 1 February to 1 March of a common year.
-            ("0 0 1 * *", 28 * 86400 - 60),
-            # Once a year: 365 days in a common year.
-            ("0 0 1 1 *", 365 * 86400 - 60),
             # 29 February: four years (1461 days).
             ("0 0 29 2 *", 1461 * 86400 - 60),
-            # 29 February on a Monday: 12 years, from 2196 to 2208 across
-            # the common year 2200 (checked against the calendar).
-            ("0 0 29 2 1", 4382 * 86400 - 60),
-            # Celery combines the day of the month and the day of the
-            # week with AND: a 31st that is a Monday, at least 91 days
-            # apart (OR would fire every Monday and every 31st).
-            ("0 0 31 * 1", 91 * 86400 - 60),
-            # Friday the 13th: 13 February to 13 March of a common year.
-            ("0 0 13 * 5", 28 * 86400 - 60),
+            ("*/3 * * * *", 180 - 60),
+            # The margin is capped at half the interval.
+            ("*/2 * * * *", 120 - 60),
+            ("* * * * *", 30),
         ],
     )
     def test_expiry_is_the_shortest_interval_minus_the_capped_margin(
@@ -301,38 +255,6 @@ class TestScheduledRunExpiry:
         assert fetcher_schedule_module._scheduled_run_expiry_seconds(schedule) == (
             expected
         )
-
-    @pytest.mark.parametrize(
-        ("expression", "count"),
-        [
-            ("0 0 1 * *", 4),
-            ("0 0 13 * 5", 4),
-            ("0 0 31 * 1", 40),
-            ("0 3 * * 1-5", 10),
-            ("*/7 * * * *", 20),
-            ("0,30 9-17 * * 1-5", 40),
-        ],
-    )
-    def test_interval_matches_the_occurrences_of_celerys_scheduler(
-        self, expression: str, count: int
-    ) -> None:
-        start = datetime(2026, 1, 1, tzinfo=UTC)
-        shortest = _celery_shortest_gap(expression, start=start, count=count)
-
-        expiry = fetcher_schedule_module._scheduled_run_expiry_seconds(
-            crontab.from_string(expression)
-        )
-
-        assert expiry == shortest - min(60, shortest // 2)
-
-    @pytest.mark.parametrize("expression", ["0 0 31 2 *", "0 0 30 2 *", "0 0 31 4 *"])
-    def test_schedule_without_occurrence_raises_value_error(
-        self, expression: str
-    ) -> None:
-        with pytest.raises(ValueError, match="no occurrence"):
-            fetcher_schedule_module._scheduled_run_expiry_seconds(
-                crontab.from_string(expression)
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -673,8 +595,9 @@ class TestReconcileBeatScheduleEnabledDisabled:
         fetcher_config_factory: FetcherConfigFactory,
     ) -> None:
         """Startup Reconciliation, step 2: like an unparsable expression,
-        a schedule that never fires propagates `ValueError`, so Beat does
-        not start with a partial schedule."""
+        a schedule that never fires, which only a row written outside the
+        API can hold, propagates `ValueError`, so Beat does not start with
+        a partial schedule."""
         _register(_NoQueueFetcher)
         await fetcher_config_factory(
             fetcher_name=_NoQueueFetcher.name,

@@ -1261,8 +1261,12 @@ the invalid field.
 10. `description` MUST be a non-empty string. A fetcher without a
     description cannot be meaningfully described by List Fetchers or
     `sentinel fetcher list`.
-11. `default_schedule` MUST be a valid 5-field cron expression. Invalid
-    syntax is rejected at import time (not deferred to Beat startup).
+11. `default_schedule` MUST be a valid 5-field cron expression that fires
+    at least once, under the same parsing and occurrence check as
+    `schedule_override` (`docs/features/platform/fetcher-operations.md`,
+    Update Fetcher Config, Validation rules). Invalid syntax and an
+    expression that never fires, such as `0 0 31 2 *`, are rejected at
+    import time (not deferred to Beat startup).
 12. The concrete class MUST define an `execute()` coroutine (checked
     via `inspect.iscoroutinefunction` or equivalent). A class that
     inherits `execute()` from `BaseFetcher` without overriding it
@@ -2298,15 +2302,20 @@ Concurrency Control prevents their runs from overlapping. A message that
 a version without this expiry published never expires.
 
 **Schedule without occurrence**: an expression that never fires, such as
-`0 0 31 2 *`, has no interval, and building its entry raises a
-`ValueError` that names the fetcher. The PATCH validation checks only the
-syntax (`docs/features/platform/fetcher-operations.md`, Update Fetcher
-Config) and accepts such a `schedule_override`. While the fetcher is
-enabled, its post-commit propagation then fails and is logged as a failed
-post-commit callback, without changing the PATCH response or the previous
-entry, and every later Beat start fails in startup reconciliation
-(step 2) until the override is changed. Celery's own scheduler cannot
-compute a next run for such an expression either.
+`0 0 31 2 *`, has no interval. The PATCH validation rejects it as a
+`schedule_override` (`docs/features/platform/fetcher-operations.md`,
+Update Fetcher Config), and the import-time validation rejects it as a
+`default_schedule` (see "Import-time validation", rule 11), so a
+`schedule_override` without occurrence can only have been written outside
+the API (by direct database manipulation) or accepted by a version whose
+PATCH validation did not check occurrences. Building the entry of such a
+fetcher raises a `ValueError` that names the fetcher. While the fetcher
+is enabled, every Beat start then fails in startup reconciliation
+(step 2), and a PATCH whose propagation writes the entry fails to write
+it and is logged as a failed post-commit callback, without changing the
+PATCH response or the previous entry, until a PATCH replaces the
+override. Celery's own scheduler cannot compute a next run for such an
+expression either.
 
 **Manual runs**: a manual trigger publishes no expiry
 (`docs/features/platform/fetcher-operations.md`, `trigger_fetcher`,
@@ -2478,8 +2487,9 @@ it does not replace or alter that native retry behavior.
 - `FETCHER_REGISTRY` is populated (step 1)
 - `FetcherConfig` records exist for all registered fetchers (step 4b)
 - Every fetcher in `FETCHER_REGISTRY` has a valid, non-None
-  `default_schedule` (5-field cron expression) — guaranteed by the
-  `BaseFetcher` abstract interface contract (Abstract Interface above)
+  `default_schedule` (5-field cron expression that fires at least once)
+  — guaranteed by the import-time validation of the `BaseFetcher`
+  contract ("Import-time validation", rule 11)
 - The redbeat distributed lock has been acquired (step 2) and its
   acquisition verified (step 4a, see Lock Acquisition Verification
   above)
@@ -2511,8 +2521,11 @@ Steps:
      PostgreSQL failure). This can only occur if `schedule_override` is
      corrupted via direct database manipulation — the PATCH endpoint
      validates cron syntax before persisting
-   - A parseable effective schedule that never fires fails the same way
-     (see "Scheduled Run Expiry" above, Schedule without occurrence)
+   - A parseable `schedule_override` that never fires fails the same way.
+     It too can only come from direct database manipulation or from a
+     version whose PATCH validation did not check occurrences, since the
+     PATCH endpoint rejects it as well (see "Scheduled Run Expiry" above,
+     Schedule without occurrence)
 
 3. **Remove entries for disabled fetchers**: for each fetcher that is
    present in `FETCHER_REGISTRY` but has `enabled = false`:
