@@ -2085,14 +2085,15 @@ backend**. Task return values are never stored or read. A configured
 result backend fails startup (see "Startup Validation" below).
 `result_expires = None` keeps Celery Beat from installing its
 `celery.backend_cleanup` entry, which would have no stored result to
-expire (see "Non-Fetcher Periodic Tasks", Mechanism).
-All `BaseFetcher` task executions return `None`, and their execution state (status, terminal succeeded/failed counts,
-durable created/updated effect counts, error message, and timing) is persisted
-in the `FetcherRun` table only during finalization. Non-fetcher sub-operations also return
-`None`, but do not create `FetcherRun` records; their owning specifications
-define domain-state and structured-log observability. `celery-redbeat` stores
-its dynamic schedule under the broker URL (`redbeat:` key prefix) and has no
-dependency on a result backend.
+expire (see "Non-Fetcher Periodic Tasks", Mechanism). All `BaseFetcher`
+task executions return `None`, and their execution state (status,
+terminal succeeded/failed counts, durable created/updated effect counts,
+error message, and timing) is persisted in the `FetcherRun` table only
+during finalization. Non-fetcher sub-operations also return `None`, but
+do not create `FetcherRun` records; their owning specifications define
+domain-state and structured-log observability. `celery-redbeat` stores
+its dynamic schedule under the broker URL (`redbeat:` key prefix) and has
+no dependency on a result backend.
 
 The Celery application imports task modules explicitly after constructing the
 singleton app so decorators register against that instance. The
@@ -3302,10 +3303,10 @@ Reconciliation" above) implicitly validates:
 timezone, lock-sentinel, and result-backend validations above, the
 execution pool (`--pool`) is not part of the shared `Celery()`
 application object — it is resolved by each individual worker process
-from its own CLI invocation, and Beat has no pool to validate. For this reason, pool
-validation cannot live in the app factory; it is
-performed by the Worker Startup Handler below, which runs once per
-worker process before that worker's consumer starts accepting tasks.
+from its own CLI invocation, and Beat has no pool to validate. For this
+reason, pool validation cannot live in the app factory; it is performed
+by the Worker Startup Handler below, which runs once per worker process
+before that worker's consumer starts accepting tasks.
 
 #### Worker Startup Handler
 
