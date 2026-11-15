@@ -28,9 +28,10 @@ accessor.
 
 All public functions in this module propagate exceptions from the
 underlying redbeat/Redis client (typically `redis.exceptions.RedisError`)
-and from `celery.schedules.crontab.from_string` (`ValueError` on an
-invalid cron expression) uncaught. No function in this module creates
-audit events. `reconcile_beat_schedule` is idempotent: re-running it
+and the `ValueError` of an invalid cron expression (from
+`celery.schedules.crontab.from_string`) or of a schedule without
+occurrence (from the expiry computation) uncaught. No function in this
+module creates audit events. `reconcile_beat_schedule` is idempotent: re-running it
 with unchanged PostgreSQL/registry state reproduces the same redbeat
 state. `propagate_config_update()` is not idempotent in the general
 sense — each call applies the specific `action` requested by the
@@ -41,8 +42,11 @@ same redbeat state (both `upsert_fetcher_entry` and
 
 from __future__ import annotations
 
+import calendar
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from functools import lru_cache
+from itertools import pairwise
 from math import floor
 from typing import Any, Literal, Protocol
 
@@ -64,6 +68,21 @@ logger = structlog.get_logger(__name__)
 # fetcher-infrastructure.md, Celery Integration). Reconciliation step 4
 # uses it as a strict pre-filter to protect static/framework entries.
 _RUN_FETCHER_TASK_NAME = "run_fetcher"
+
+# Hardcoded margin subtracted from a schedule's shortest interval to
+# obtain the `expires` option of its entry, capped at half the interval
+# (fetcher-infrastructure.md, Scheduled Run Expiry).
+_EXPIRY_MARGIN_SECONDS = 60
+
+_MINUTES_PER_DAY = 24 * 60
+_DAYS_PER_WEEK = 7
+# The Gregorian calendar, days of the week included, repeats every 400
+# years (146097 days, a multiple of 7).
+_GREGORIAN_CYCLE_START_YEAR = 2000
+_GREGORIAN_CYCLE_YEARS = 400
+_GREGORIAN_CYCLE_DAYS = 146097
+_ALL_DAYS_OF_MONTH = frozenset(range(1, 32))
+_ALL_MONTHS = frozenset(range(1, 13))
 
 
 class _ScheduleConfigLike(Protocol):
@@ -146,16 +165,123 @@ def effective_task_time_limits(run_timeout: int) -> dict[str, int]:
     }
 
 
+def _shortest_day_gap(
+    days_of_month: frozenset[int],
+    months: frozenset[int],
+    days_of_week: frozenset[int],
+) -> int:
+    """Shortest number of days between two consecutive days on which a
+    schedule fires, with Celery's AND of day of the month, month, and
+    day of the week (0 is Sunday).
+
+    When neither the day of the month nor the month is restricted, only
+    the day of the week decides, with a period of one week. Otherwise
+    every matching day of one 400-year Gregorian cycle is listed; the gap
+    from the last one wraps around to the first one of the next cycle.
+
+    Raises:
+        ValueError: no day matches.
+    """
+    if days_of_month == _ALL_DAYS_OF_MONTH and months == _ALL_MONTHS:
+        weekdays = sorted(days_of_week)
+        if not weekdays:
+            raise ValueError("Schedule has no occurrence")
+        # The last day of the week wraps around to the first one of the
+        # next week; a single day wraps around to itself (seven days).
+        return min(
+            (later - earlier) % _DAYS_PER_WEEK or _DAYS_PER_WEEK
+            for earlier, later in pairwise([*weekdays, weekdays[0]])
+        )
+
+    matching: list[int] = []
+    for year in range(
+        _GREGORIAN_CYCLE_START_YEAR,
+        _GREGORIAN_CYCLE_START_YEAR + _GREGORIAN_CYCLE_YEARS,
+    ):
+        for month in sorted(months):
+            last_day = calendar.monthrange(year, month)[1]
+            first_ordinal = date(year, month, 1).toordinal()
+            for day in sorted(days_of_month):
+                ordinal = first_ordinal + day - 1
+                # `toordinal() % 7` numbers the days of the week as
+                # Celery does: 0 is Sunday.
+                if day <= last_day and ordinal % _DAYS_PER_WEEK in days_of_week:
+                    matching.append(ordinal)
+    if not matching:
+        raise ValueError("Schedule has no occurrence")
+    gaps = [b - a for a, b in pairwise(matching)]
+    gaps.append(matching[0] + _GREGORIAN_CYCLE_DAYS - matching[-1])
+    return min(gaps)
+
+
+@lru_cache(maxsize=128)
+def _shortest_interval_minutes(
+    minutes: frozenset[int],
+    hours: frozenset[int],
+    days_of_month: frozenset[int],
+    months: frozenset[int],
+    days_of_week: frozenset[int],
+) -> int:
+    """Shortest interval, in minutes, between two consecutive occurrences
+    of the crontab fields: the smaller of the shortest gap between two
+    times of one day and the gap from the last time of a matching day to
+    the first time of the next matching day. Cached because the
+    computation can cover a 400-year cycle (see `_shortest_day_gap`).
+
+    Raises:
+        ValueError: the fields have no occurrence.
+    """
+    times = sorted(hour * 60 + minute for hour in hours for minute in minutes)
+    if not times:
+        raise ValueError("Schedule has no occurrence")
+    day_gap = _shortest_day_gap(days_of_month, months, days_of_week)
+    across_days = day_gap * _MINUTES_PER_DAY + times[0] - times[-1]
+    within_day = min((b - a for a, b in pairwise(times)), default=across_days)
+    return min(within_day, across_days)
+
+
+def _scheduled_run_expiry_seconds(schedule: crontab) -> int:
+    """Return the `expires` option, in seconds, of a fetcher entry with
+    `schedule`: `g - min(60, g // 2)`, where `g` is the shortest interval
+    in seconds between two consecutive occurrences of the schedule. See
+    fetcher-infrastructure.md (Scheduled Run Expiry).
+
+    Raises:
+        ValueError: the schedule has no occurrence (for example
+            `0 0 31 2 *`).
+    """
+    interval = 60 * _shortest_interval_minutes(
+        frozenset(schedule.minute),
+        frozenset(schedule.hour),
+        frozenset(schedule.day_of_month),
+        frozenset(schedule.month_of_year),
+        frozenset(schedule.day_of_week),
+    )
+    return interval - min(_EXPIRY_MARGIN_SECONDS, interval // 2)
+
+
 def _effective_options(
     fetcher: type[BaseFetcher], config: _ScheduleConfigLike
 ) -> dict[str, Any]:
     """Build the `apply_async()` options dict for `fetcher`'s redbeat entry.
 
     Always includes `time_limit` and `soft_time_limit` (see
-    `effective_task_time_limits`). Includes `queue` only when
-    `fetcher.queue` is not `None`.
+    `effective_task_time_limits`) and `expires`, derived from the
+    effective schedule (see `_scheduled_run_expiry_seconds`). Includes
+    `queue` only when `fetcher.queue` is not `None`.
+
+    Raises:
+        ValueError: the effective schedule is not a valid 5-field cron
+            expression, or it has no occurrence; the latter names the
+            fetcher, which the Beat startup failure log otherwise lacks.
     """
     options: dict[str, Any] = dict(effective_task_time_limits(config.run_timeout))
+    schedule = _effective_schedule(fetcher, config)
+    try:
+        options["expires"] = _scheduled_run_expiry_seconds(schedule)
+    except ValueError as exc:
+        msg = f"Schedule of fetcher '{fetcher.name}' has no occurrence"
+        raise ValueError(msg) from exc
     if fetcher.queue is not None:
         options["queue"] = fetcher.queue
     return options
@@ -393,7 +519,7 @@ async def reconcile_beat_schedule(
         RuntimeError: a registered fetcher has no `FetcherConfig` row
             (bootstrap ordering bug).
         ValueError: a fetcher's effective schedule is not a valid
-            5-field cron expression.
+            5-field cron expression, or it has no occurrence.
         redis.exceptions.RedisError (or any other exception from the
             underlying redbeat/Redis client): propagates immediately —
             fail-on-first-error semantics per fetcher-infrastructure.md

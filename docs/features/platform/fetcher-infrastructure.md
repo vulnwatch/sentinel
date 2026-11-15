@@ -2183,10 +2183,11 @@ from `FetcherConfig` and fetcher class attributes:
 |-----|-------|-----------|
 | `time_limit` | `max(5, run_timeout)` | Always |
 | `soft_time_limit` | `max(1, floor(run_timeout * 0.95))` | Always |
+| `expires` | `g - min(60, g // 2)` seconds, where `g` is the shortest interval of the effective schedule (see "Scheduled Run Expiry" below) | Always |
 | `queue` | fetcher's `queue` class attribute | `queue is not None` |
 
-If `queue is None`, Options contains only `time_limit` and `soft_time_limit`.
-The `queue` attribute is a code-defined routing decision (class
+If `queue is None`, Options contains only `time_limit`, `soft_time_limit`,
+and `expires`. The `queue` attribute is a code-defined routing decision (class
 attribute, not configurable via `FetcherConfig`) — it does not require
 redbeat propagation on PATCH.
 
@@ -2208,6 +2209,9 @@ redbeat entry. Therefore:
 - If the fetcher class defines `queue` (non-None): the Options also
   include `"queue": "<queue>"`. Beat passes this to `apply_async()`,
   routing the task to the correct worker.
+- The Options always include `expires` (see "Scheduled Run Expiry"
+  below). Beat passes it to `apply_async()`, which converts it into the
+  expiry instant of the published message.
 
 This means that a PATCH to `run_timeout` requires a redbeat entry update
 (see "Which Changes Require Redbeat Propagation" below). The change takes
@@ -2227,6 +2231,96 @@ formula defined in the `FetcherConfig` section. With the minimum
 `run_timeout` of 60, the soft limit is always >= 57 (the `max(1, ...)`
 never activates in practice). The gap between soft and hard limits (5%
 of `run_timeout`) provides a grace window for clean finalization.
+
+### Scheduled Run Expiry
+
+A scheduled `run_fetcher` message expires before Beat publishes the next
+occurrence of the same entry. While no worker consumes (a broker restart
+that left the workers idle, workers stopped, or a long backlog), Beat
+keeps publishing one message per occurrence; the expiry makes a worker
+that resumes run each fetcher at most once from that backlog instead of
+once per missed occurrence. The run that executes synchronizes its
+source under the fetcher's own contract, like the first run after Beat
+downtime.
+
+**Value**: the entry's Options carry `expires`, in seconds:
+
+```
+expires = g - min(60, g // 2)
+```
+
+`g` is the shortest interval, in seconds, between two consecutive
+occurrences of the effective schedule in UTC. An occurrence is a minute
+whose minute, hour, day of the month, month, and day of the week all
+match the expression: Celery's `crontab` combines the day of the month
+and the day of the week with AND, unlike standard cron. The computation
+is exact over the Gregorian calendar, leap years included.
+
+| Effective schedule | `g` (seconds) | `expires` (seconds) |
+|---|---|---|
+| `0 */3 * * *` | 10800 | 10740 |
+| `0 14 * * *` | 86400 | 86340 |
+| `0 3 * * 1-5` | 86400 (Monday to Tuesday) | 86340 |
+| `*/7 * * * *` | 240 (minute 56 to minute 0 of the next hour) | 180 |
+| `* * * * *` | 60 | 30 |
+| `0 0 1 1 *` | 31536000 (365 days) | 31535940 |
+
+**Margin**: Beat converts `expires` into an absolute instant with its own
+clock when it publishes the message, and the worker compares that instant
+with its own clock. The 60-second margin makes a message expire before
+Beat publishes the next occurrence, even with a dispatch delay or a clock
+offset between Beat and the worker below the margin
+(`docs/deployment.md`, Clock Synchronization), so at most one message of
+an entry is unexpired at any time while its schedule is unchanged. The
+margin is a hardcoded constant,
+not configurable. It is capped at half the interval so that an
+every-minute schedule keeps a positive expiry.
+
+**Worker behavior**: Celery checks the expiry when the worker receives
+the message and again before the pool executes it, so `run_fetcher` never
+starts for an expired message. The worker acknowledges and discards the
+message: the Atomic Run Acquisition Protocol does not run, and no
+`FetcherRun` or audit event is created. Celery logs
+`Discarding revoked task: run_fetcher[<task id>]` at INFO. A receiver of
+Celery's `task_revoked` signal in `backend/app/tasks/fetchers.py` also
+logs INFO `scheduled_run_expired` with `fetcher_name` for an expired
+`run_fetcher` message whose `triggered_by` is `"schedule"`.
+
+**When it changes**: `expires` derives from the effective schedule only.
+The entry builder writes it with the other Options in every redbeat write
+of an entry: startup reconciliation (step 2) and the PATCH propagation
+(see "Runtime Propagation"). RedBeat stores the schedule and the Options
+of an entry in one hash field with one write, so they never diverge. As
+for the time limits, a message already queued keeps the expiry fixed at
+its publication; a change affects only later publications, so after a
+schedule change an older message can stay valid next to a newer one, and
+Concurrency Control prevents their runs from overlapping. A message that
+a version without this expiry published never expires.
+
+**Schedule without occurrence**: an expression that never fires, such as
+`0 0 31 2 *`, has no interval, and building its entry raises a
+`ValueError` that names the fetcher. The PATCH validation checks only the
+syntax (`docs/features/platform/fetcher-operations.md`, Update Fetcher
+Config) and accepts such a `schedule_override`. While the fetcher is
+enabled, its post-commit propagation then fails and is logged as a failed
+post-commit callback, without changing the PATCH response or the previous
+entry, and every later Beat start fails in startup reconciliation
+(step 2) until the override is changed. Celery's own scheduler cannot
+compute a next run for such an expression either.
+
+**Manual runs**: a manual trigger publishes no expiry
+(`docs/features/platform/fetcher-operations.md`, `trigger_fetcher`,
+Celery Publication). Its `FetcherRun` is already `queued`, and the Queued Stale
+Threshold bounds its wait (see "Stale Run Detection").
+
+**Trade-off**: a scheduled message that waits longer than its expiry is
+discarded, and the next occurrence runs instead. For a schedule with
+uneven intervals, such as `0 3 * * 1-5`, the next occurrence can come
+later than the expiry: a Friday message that waits more than a day is
+discarded, and the next run is on Monday. While every scheduled message
+of a fetcher waits longer than its expiry, its scheduled runs are
+discarded; Monitoring Scheduler Liveness (`docs/deployment.md`) reports
+the fetcher, whose last run ages.
 
 ### Startup Reconciliation
 
@@ -2401,8 +2495,10 @@ Steps:
    that is (a) present in `FETCHER_REGISTRY` AND (b) has `enabled = true`
    in `FetcherConfig`:
    - Create or unconditionally overwrite the redbeat entry with the
-     computed effective schedule and time limit options (derived from
-     `run_timeout` per the formula in "Time Limits" above)
+     computed effective schedule and Options: the time limits (derived
+     from `run_timeout` per the formula in "Time Limits" above) and the
+     expiry (derived from the effective schedule per "Scheduled Run
+     Expiry" above)
    - This is an idempotent upsert — existing entries are updated, missing
      entries are created
    - The overwrite computes `due_at` from the cron schedule relative to
@@ -2415,6 +2511,8 @@ Steps:
      PostgreSQL failure). This can only occur if `schedule_override` is
      corrupted via direct database manipulation — the PATCH endpoint
      validates cron syntax before persisting
+   - A parseable effective schedule that never fires fails the same way
+     (see "Scheduled Run Expiry" above, Schedule without occurrence)
 
 3. **Remove entries for disabled fetchers**: for each fetcher that is
    present in `FETCHER_REGISTRY` but has `enabled = false`:
@@ -2540,10 +2638,10 @@ request.
 
 | Change | Propagation |
 |--------|-------------|
-| `schedule_override` changed (new value or set to null) | Update the redbeat entry's schedule with the new effective cron (only if fetcher is currently enabled) |
+| `schedule_override` changed (new value or set to null) | Update the redbeat entry's schedule with the new effective cron, and its `expires` option with the value derived from it (only if fetcher is currently enabled) |
 | `enabled` changed to `false` | Remove the redbeat entry |
-| `enabled` changed to `true` | Create the redbeat entry with effective schedule and time limit options |
-| `run_timeout` changed | Update the redbeat entry's Options (`time_limit`, `soft_time_limit`) with the new derived values (only if fetcher is currently enabled) |
+| `enabled` changed to `true` | Create the redbeat entry with effective schedule and Options (time limits and expiry) |
+| `run_timeout` changed | Update the redbeat entry's Options (`time_limit`, `soft_time_limit`) with the new derived values (only if fetcher is currently enabled); `expires` keeps its value |
 | `request_delay` changed | No propagation needed (read from DB at execution time) |
 | `custom_settings` changed | No propagation needed (read from DB at execution time) |
 
@@ -2563,11 +2661,12 @@ Propagation):
      other field changes in the same PATCH are moot (a disabled fetcher
      has no entry) — skip remaining propagation steps
    - If `enabled` changed to `true`: create the redbeat entry with the
-     effective schedule and time limit options (incorporating any
+     effective schedule and Options (incorporating any
      `schedule_override` or `run_timeout` changes from the same PATCH)
    - If `schedule_override` changed (without `enabled` change) **and the
      fetcher is currently enabled**: update the redbeat entry's schedule
-     with the new effective cron expression
+     with the new effective cron expression, and its `expires` option
+     with the value derived from it
     - If `run_timeout` changed (without `enabled` change) **and the
       fetcher is currently enabled**: update the redbeat entry's Options
       with the new `time_limit` and `soft_time_limit` values
@@ -3425,6 +3524,7 @@ existing run's status is `queued` or `running`:
 | Duplicate or redelivered Celery message for an already-adopted or completed run | `running`, `success`, `failure`, or `partial` / `manual` | (redelivery, not a new attempt) | Adoption predicate fails; skip without execution, no retry, no error |
 | Schedule fires while stale run exists | any active status | `schedule` | Stale run marked as `failure`, new run proceeds |
 | Admin triggers while stale run exists | any active status | `manual` | Stale run marked as `failure`, new run proceeds (API returns **202 Accepted**) |
+| Scheduled message received after its expiry | any | `schedule` | Discarded by the worker before the task starts: no acquisition, no `FetcherRun`, INFO log `scheduled_run_expired` (see "Scheduled Run Expiry") |
 
 The distinction is:
 

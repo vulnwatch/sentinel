@@ -508,8 +508,10 @@ After the API workflow commits the transaction containing
       race condition" below). The disable takes effect for scheduled
       triggers from the next scheduled cycle.
    - If `enabled` changed to `true`: create the RedBeat entry with the
-     effective schedule and time limit options (incorporating any
-     `schedule_override` or `run_timeout` changes from the same PATCH).
+     effective schedule and Options, the time limits and the expiry
+     (`docs/features/platform/fetcher-infrastructure.md`, Redbeat Entry
+     Structure), incorporating any `schedule_override` or `run_timeout`
+     changes from the same PATCH.
    - If `schedule_override` or `run_timeout` changed (without `enabled`
      change) **and the fetcher is currently enabled**: upsert the entry
      with updated values. If the fetcher is disabled (and stays
@@ -638,6 +640,10 @@ and transactions.
    - `time_limit`: `max(5, run_timeout)` (from locked config snapshot)
    - `soft_time_limit`: `max(1, floor(run_timeout * 0.95))`
    - `queue`: from `FETCHER_REGISTRY[name].queue` (or omitted if `None`)
+   - no `expires`: a manual run does not expire in the broker; the
+     Queued Stale Threshold bounds its wait
+     (`docs/features/platform/fetcher-infrastructure.md`, Scheduled Run
+     Expiry)
 
 ##### Success Path
 
@@ -1447,7 +1453,10 @@ with a caller-owned transaction.
   `null` to revert to the default schedule. Validated by constructing a
   `celery.schedules.crontab` object — the same parser used by RedBeat at
   runtime — ensuring that any value accepted at PATCH time is guaranteed
-  parseable at Beat startup
+  parseable at Beat startup. The validation does not check that the
+  expression ever fires; for the consequence of one that never does, see
+  `docs/features/platform/fetcher-infrastructure.md` (Scheduled Run
+  Expiry, Schedule without occurrence)
 - `run_timeout`: must be an integer between 60 and 604800 (1 minute
   to 7 days). Controls Celery hard/soft time limits and the stale run
   detection threshold. Default: 3600 (1 hour)

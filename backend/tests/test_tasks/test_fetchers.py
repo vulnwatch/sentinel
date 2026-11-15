@@ -7,7 +7,8 @@ argument validation and its order, unknown/deregistered fetcher
 handling, the synchronous `asyncio.run()` bridge, task registration
 under the exact name `run_fetcher`, no-retry/no-result-backend
 behavior, and delegation to `BaseFetcher.run()` only after the
-acquisition transaction commits.
+acquisition transaction commits. Also the `task_revoked` receiver that
+logs an expired scheduled run (Scheduled Run Expiry).
 
 Acquisition logic itself (locking, staleness, adoption) is exercised
 against real PostgreSQL in
@@ -25,6 +26,8 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from celery.app.task import Context
+from celery.signals import task_revoked
 
 from app.services.base_fetcher import FETCHER_REGISTRY, FetcherRunConfig
 from app.services.fetcher_execution import FetcherAcquisition
@@ -648,6 +651,90 @@ def test_sync_wrapper_extraction_failure_prevents_workflow_call(
 # ---------------------------------------------------------------------------
 # Task registration
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestLogExpiredScheduledRun:
+    """`task_revoked` receiver of fetcher-infrastructure.md (Scheduled Run
+    Expiry). `Context` is the request object that Celery's worker passes
+    as `request`; its `kwargs` are the message's keyword arguments."""
+
+    @staticmethod
+    def _expired_records(caplog: pytest.LogCaptureFixture) -> list[str]:
+        return [
+            record.getMessage()
+            for record in caplog.records
+            if "scheduled_run_expired" in record.getMessage()
+        ]
+
+    @staticmethod
+    def _request(triggered_by: str = "schedule") -> Context:
+        kwargs = {"fetcher_name": "sync_example", "triggered_by": triggered_by}
+        return Context({"id": str(uuid4()), "kwargs": kwargs})
+
+    def test_expired_scheduled_run_logs_its_fetcher(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level("INFO"):
+            fetchers._log_expired_scheduled_run(
+                sender=fetchers.run_fetcher, request=self._request(), expired=True
+            )
+
+        records = self._expired_records(caplog)
+        assert len(records) == 1
+        assert "sync_example" in records[0]
+
+    def test_signal_sent_by_the_worker_reaches_the_receiver(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The module connects the receiver to Celery's `task_revoked`
+        with the arguments that the worker's request sends."""
+        with caplog.at_level("INFO"):
+            task_revoked.send(
+                sender=fetchers.run_fetcher,
+                request=self._request(),
+                terminated=False,
+                signum=None,
+                expired=True,
+            )
+
+        assert len(self._expired_records(caplog)) == 1
+
+    @pytest.mark.parametrize(
+        ("sender_name", "triggered_by", "expired", "kwargs_valid"),
+        [
+            # Revoked for another reason (control command, termination).
+            ("run_fetcher", "schedule", False, True),
+            # Another task.
+            ("run_catch_up", "schedule", True, True),
+            # A manual run publishes no expiry; ignored if one expires.
+            ("run_fetcher", "manual", True, True),
+            # A request without keyword arguments.
+            ("run_fetcher", "schedule", True, False),
+        ],
+    )
+    def test_other_revocations_log_nothing(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        sender_name: str,
+        triggered_by: str,
+        expired: bool,
+        kwargs_valid: bool,
+    ) -> None:
+        sender = MagicMock()
+        sender.name = sender_name
+        request = (
+            self._request(triggered_by)
+            if kwargs_valid
+            else Context({"id": str(uuid4()), "kwargs": None})
+        )
+
+        with caplog.at_level("INFO"):
+            fetchers._log_expired_scheduled_run(
+                sender=sender, request=request, expired=expired
+            )
+
+        assert self._expired_records(caplog) == []
 
 
 @pytest.mark.unit

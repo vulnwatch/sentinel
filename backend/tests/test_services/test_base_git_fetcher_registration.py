@@ -405,7 +405,13 @@ class TestClassAttributes:
 
         options = fetcher_schedule._effective_options(concrete, fetcher_config)
 
-        assert options == {"time_limit": 3600, "soft_time_limit": 3420, "queue": "git"}
+        # `expires` derives from the hourly default schedule (`0 * * * *`).
+        assert options == {
+            "time_limit": 3600,
+            "soft_time_limit": 3420,
+            "expires": 3540,
+            "queue": "git",
+        }
 
 
 class TestHooks:

@@ -639,8 +639,13 @@ class TestBootstrapAndSchedule:
         assert entry.schedule.day_of_month == set(range(1, 32))
         assert entry.schedule.month_of_year == set(range(1, 13))
         assert entry.schedule.day_of_week == set(range(7))
-        # max(5, 3600) and max(1, floor(3600 * 0.95)); no queue.
-        assert entry.options == {"time_limit": 3600, "soft_time_limit": 3420}
+        # max(5, 3600) and max(1, floor(3600 * 0.95)); a daily schedule
+        # expires after 86400 - 60 seconds; no queue.
+        assert entry.options == {
+            "time_limit": 3600,
+            "soft_time_limit": 3420,
+            "expires": 86340,
+        }
 
 
 @pytest.mark.integration
