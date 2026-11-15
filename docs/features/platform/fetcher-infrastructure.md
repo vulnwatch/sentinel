@@ -1262,11 +1262,11 @@ the invalid field.
     description cannot be meaningfully described by List Fetchers or
     `sentinel fetcher list`.
 11. `default_schedule` MUST be a valid 5-field cron expression that fires
-    at least once, under the validation of `schedule_override`
-    (`docs/features/platform/fetcher-operations.md`, Update Fetcher
-    Config, Validation rules). Invalid syntax and an expression that never
-    fires, such as `0 0 31 2 *`, are rejected at import time (not deferred
-    to Beat startup).
+    at least once, under the same parsing and occurrence check as
+    `schedule_override` (`docs/features/platform/fetcher-operations.md`,
+    Update Fetcher Config, Validation rules). Invalid syntax and an
+    expression that never fires, such as `0 0 31 2 *`, are rejected at
+    import time (not deferred to Beat startup).
 12. The concrete class MUST define an `execute()` coroutine (checked
     via `inspect.iscoroutinefunction` or equivalent). A class that
     inherits `execute()` from `BaseFetcher` without overriding it
@@ -2307,7 +2307,8 @@ a version without this expiry published never expires.
 Update Fetcher Config), and the import-time validation rejects it as a
 `default_schedule` (see "Import-time validation", rule 11), so only a
 `schedule_override` written outside the API, by direct database
-manipulation, can have no occurrence. Building the entry of such a
+manipulation, or accepted by a version whose PATCH validation did not
+check occurrences can have no occurrence. Building the entry of such a
 fetcher raises a `ValueError` that names the fetcher. While the fetcher
 is enabled, every Beat start then fails in startup reconciliation
 (step 2), and a PATCH whose propagation writes the entry fails to write
@@ -2521,7 +2522,8 @@ Steps:
      corrupted via direct database manipulation — the PATCH endpoint
      validates cron syntax before persisting
    - A parseable `schedule_override` that never fires fails the same way.
-     It too can only come from direct database manipulation, since the
+     It too can only come from direct database manipulation or from a
+     version whose PATCH validation did not check occurrences, since the
      PATCH endpoint rejects it as well (see "Scheduled Run Expiry" above,
      Schedule without occurrence)
 

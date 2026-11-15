@@ -1995,9 +1995,10 @@ class TestUpdateFetcherConfigEndpoint:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """`0 0 31 2 *` parses but never fires, so Beat could not build its
-        entry. The request schema rejects it before the service runs, so no
-        row changes, no audit event is created, and no RedBeat propagation
-        is registered (`fetcher-operations.md`, Update Fetcher Config,
+        entry. The request schema rejects it before the service runs: the
+        service, the only writer of the row and its audit events, is never
+        awaited, and the route registers RedBeat propagation only after the
+        service returns (`fetcher-operations.md`, Update Fetcher Config,
         Validation rules)."""
         _register(_StubFetcher)
         config = await fetcher_config_factory(
@@ -2018,14 +2019,6 @@ class TestUpdateFetcherConfigEndpoint:
             (["body", "schedule_override"], "value_error")
         ]
         service.assert_not_awaited()
-        follow_up = await admin_client.get(
-            f"/api/v1/fetchers/{config.fetcher_name}/config"
-        )
-        assert follow_up.json()["data"]["schedule_override"] is None
-        audit_log = await admin_client.get(
-            f"/api/v1/fetchers/{config.fetcher_name}/audit-log"
-        )
-        assert audit_log.json()["data"] == []
 
     async def test_irregular_schedule_override_that_fires_is_accepted(
         self,
