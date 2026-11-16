@@ -640,6 +640,7 @@ representations) for the complete boundary-conversion contract.
 | `"osv"` | OSV (osv.dev) — aggregated ecosystem advisory data |
 | `"kev"` | CISA Known Exploited Vulnerabilities catalog |
 | `"epss"` | FIRST EPSS (Exploit Prediction Scoring System) |
+| `"bugzilla"` | SUSE Bugzilla REST API — the public bug of each CVE |
 
 **Format constraint**: values MUST match `^[a-z][a-z0-9_]*$` and not
 exceed 100 characters (matching the `CVESource.source` VARCHAR(100)

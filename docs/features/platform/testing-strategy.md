@@ -2183,14 +2183,15 @@ contract is mandatory:
   field-level visibility, and authorization remain unchanged.
 - **Concrete mappings**: tests cover the selected unit, all successful
   terminal outcomes, all failed terminal outcomes, pre-scope exclusions, and
-  durable create/update effects documented by the owning specs for all 18
+  durable create/update effects documented by the owning specs for all 19
   registered fetchers: `sync_nvd_cves`, `sync_mitre_cves`,
   `sync_mitre_cnas`, `sync_redhat_cves`, `sync_smelt_products`, `sync_aimaas_lifecycle`,
   `sync_aimaas_thresholds`, `detect_ibs_track_releases`,
   `detect_ibs_product_releases`, `evaluate_lifecycle_transitions`,
   `sync_ibs_requests`, `sync_cisa_kev`, `sync_epss_scores`,
   `sync_ghsa_advisories`, `sync_kernel_cves`, `sync_osv_advisories`,
-  `evaluate_failed_cve_sources`, and `sync_slack_avatars`. Shared failures
+  `sync_bugzilla_bugs`, `evaluate_failed_cve_sources`, and
+  `sync_slack_avatars`. Shared failures
   affecting several selected units count each unit exactly once, not each
   retry, parser stage, or log.
 
@@ -2478,10 +2479,10 @@ changed, focused tests MUST cover this complete contract:
   clone mutation, candidate read failures never call `record_failed()` without
   a run, `queue = "git"` is preserved, and concrete subclasses do not override
   `execute()`.
-- **Concrete compliance**: all eight CVE sources comply with typed return,
+- **Concrete compliance**: all nine CVE sources comply with typed return,
   pre-finalization flush, centralized finalization, hard commit-failure,
-  metric, status, and capability contracts. NVD and
-  GHSA inline paths construct the token; MITRE and Kernel return it from
+  metric, status, and capability contracts. NVD, GHSA, and Bugzilla inline
+  paths construct the token; MITRE and Kernel return it from
   `process_item`; Red Hat, OSV, and EPSS preserve `UpsertResult.action`; KEV
   remains non-refetchable and preserves its documented isolated-status
   deviation. `CompletenessGuardError` remains in the OSV module.
