@@ -643,8 +643,10 @@ attributes:
 |---|---|---|
 | Accepted | `target/@project` / `target/@package` | `rev` = `xsrcmd5`, or `srcmd5` when `xsrcmd5` is absent; `orev` = `oxsrcmd5`, or `osrcmd5` when `oxsrcmd5` is absent, or `0` when both are absent; `oproject` and `opackage`, each only when present |
 | Not accepted | `source/@project` / `source/@package` | `expand=1`; `rev` = `source/@rev`; `oproject` = the codestream, which is `target/@releaseproject` of a `maintenance_incident` action and `target/@project` of a `maintenance_release` action; `opackage` = the caller-supplied logical package of that codestream |
+| Link base | As in the not-accepted form | The not-accepted parameters, followed by `linkrev=base` |
 
-These fallbacks select diff inputs only.
+These attribute fallbacks select diff inputs only. The link-base form applies
+only to an action that is not accepted.
 
 The accepted form is the diff IBS shows for an accepted action: it compares the
 stored source states before and after acceptance. The not-accepted form
@@ -667,13 +669,31 @@ without it. The not-accepted form deliberately differs from IBS in these cases:
 - IBS diffs the current source of an action without `source/@rev`. Sentinel
   requests no diff for it, and the result is incomplete.
 
+The link-base form does not depend on the current state of the link target.
+The source package of a request is normally a branch link: it stores the
+changes of the submitted source and the target revision on which they were
+made (the link's `baserev`), and IBS expands it by a three-way merge with the
+current target. When the codestream package changed after the branch in the
+same lines, typically through a release, the merge fails: the not-accepted
+form answers HTTP 400 with a backend status document whose summary starts
+with `bad link: conflict in file`, and IBS shows no diff for the action. With
+`linkrev=base`, IBS expands the link against its `baserev` instead, which
+cannot conflict. When the link target is the form's `oproject` and `opackage`,
+IBS also compares with that base revision, so the diff carries exactly the
+changes of the submitted source. When the link target is another package, the
+old side remains the current codestream package, as in the not-accepted form.
+The consuming reconciliation requests the link-base form only after the
+not-accepted form of the same action answered HTTP 400
+(`docs/features/packages/ibs-submission-tracking.md`, Action-Scoped CVE
+Evidence); its responses have the outcomes of the not-accepted form.
+
 The diff is not requested, and the result is incomplete, when a required form
 input is absent (accepted form: `target/@project`, `target/@package`, or both
-`xsrcmd5` and `srcmd5`; not-accepted form: `source/@rev`), or when the path
-project or `oproject` is not a `SUSE:` project. The last rule keeps every
-project outside the `SUSE:` namespace out of request URLs; point detail has
-already replaced such a project by `_redacted_`. A not-accepted action from such
-a project therefore has no available diff.
+`xsrcmd5` and `srcmd5`; not-accepted and link-base forms: `source/@rev`), or
+when the path project or `oproject` is not a `SUSE:` project. The last rule
+keeps every project outside the `SUSE:` namespace out of request URLs; point
+detail has already replaced such a project by `_redacted_`. A not-accepted
+action from such a project therefore has no available diff.
 
 Example response, with fictional values:
 
@@ -710,13 +730,17 @@ A completely parsed action diff with no qualifying issue is a successful
 no-match for that action. An HTTP 400 or 404 response makes the action's diff
 incomplete, and its body is not consumed. Observed causes are a source link
 that no longer expands against the current codestream (400 with a backend
-status document), a removed request staging project, and a codestream without
-the old package (404). A malformed, interrupted, or partially parsed diff is
-also incomplete. The consuming reconciliation decides whether an action's diff
-is required; an incomplete diff never proves a negative and never deletes or
-invalidates retained request/action history. The diff of a not-accepted action
-can become permanently unavailable once its link conflicts with the current
-codestream or its staging project is removed.
+status document; the link-base form above remains available), and, with 404, a
+removed request staging project, a source project that the IBS account cannot
+read, and a codestream without the old package. OBS answers a project that the
+account cannot read, such as a project whose access is disabled, like an
+unknown project, so the two cannot be told apart. A malformed, interrupted, or
+partially parsed diff is also incomplete. The consuming reconciliation decides
+whether an action's diff is required; an incomplete diff never proves a
+negative and never deletes or invalidates retained request/action history. The
+diff of a not-accepted action can become permanently unavailable once its
+staging project is removed, and remains unavailable while the account cannot
+read its source project.
 
 #### Package Source History
 
@@ -793,9 +817,9 @@ with a new release request.
 #### Request Contract Verification Status
 
 Sanitized read-only verification against the IBS API on 2026-09-08,
-2026-10-13, 2026-10-14, and 2026-11-12, and inspection of the OBS source,
-established the request operations above. Request numbers, checksums, and
-personal fields were never recorded in the repository.
+2026-10-13, 2026-10-14, 2026-11-12, and 2026-11-16, and inspection of the OBS
+source, established the request operations above. Request numbers, checksums,
+and personal fields were never recorded in the repository.
 
 Verified live:
 
@@ -854,6 +878,22 @@ Verified live:
     status document), where the request diff fails the whole request with
     HTTP 404. A removed staging project and a missing old package return
     HTTP 404.
+  - On 2026-11-16, 6 of the 26 open submission requests had a source link that
+    conflicted with the current codestream package, in a `.spec` or a
+    `_service` file. The not-accepted form of each answered HTTP 400 with a
+    backend status document whose summary starts with `bad link: conflict in
+    file`, and the link-base form answered each with a complete diff. Every
+    open submission action had a branch link to its codestream and logical
+    package, and the old side of every link-base diff was the link's
+    `baserev`. For the 30 other open submission actions and 42 actions of open
+    release requests, the `cve` issues in state `added` or `changed` were the
+    same in both forms, including for an action whose codestream package had
+    changed after the branch without a conflict.
+  - The request action diff of an action whose source project the IBS
+    account could not read answered HTTP 404 while the point detail of its
+    request answered 200 (a deployment's request logs, 2026-11-15 and
+    2026-11-16). For the same diff, an operator account with a role in that
+    project received HTTP 400 for a conflicting link instead.
   - Without `expand=1`, a not-accepted action reports its entire changelog as
     added.
   - Issues carry `state`, `tracker`, `name`, `label`, and `url`, including the
@@ -902,6 +942,12 @@ Established only by OBS source inspection:
   `startbefore` and applies no default `limit`;
 - how IBS builds the diff of a request action, including the cases in which
   the not-accepted form deliberately differs;
+- the link-base form: `linkrev=base` expands a branch link against its
+  `baserev`, and the source diff compares with that revision when the link
+  target is its `oproject` and `opackage` (`BSSrcServer::Link::handlelinks`,
+  `sourcediff` of the source server);
+- a project that the account cannot read answers like an unknown project
+  (`Project#check_access?`; `ReadAccessError` is an `UnknownObjectError`);
 - an `accepted` request cannot change state again, and acceptinfo is recorded
   once, at acceptance;
 - acceptance executes the actions of a request one by one and does not undo
@@ -915,8 +961,9 @@ request; an action of an unknown type; a supported action missing a required
 field; malformed or interrupted bodies and U+0000 (synthetic test data only);
 an accepted action with neither `oxsrcmd5` nor `osrcmd5`; a not-accepted action
 whose source is a local link carried by another action of the same request, or
-that updates its link; and a not-accepted action for a package that does not yet
-exist in the codestream.
+that updates its link; a not-accepted action for a package that does not yet
+exist in the codestream; and a link-base diff of an action whose source link
+targets a package other than its codestream package.
 
 IBS does not guarantee indefinite retention of detail, diff, or source history.
 The resulting unavailable-evidence outcomes are part of the contract, not an
@@ -1003,16 +1050,20 @@ Methods:
   [Request Point Detail](#request-point-detail). A detail 404 is an incomplete
   result rather than a synthetic deleted state.
 - `get_request_action_diff(action: IBSRequestActionDetail, *,
-  codestream_package: str) -> RequestEvidenceResult[RequestActionDiff]`: diffs
-  one supported action of a complete `IBSRequestDetail` with the semantically
-  read-only [Request Action Diff](#request-action-diff). It selects the accepted
-  form when the action has acceptinfo, and the not-accepted form otherwise.
-  `codestream_package` is the logical package of the action's codestream,
-  supplied by the caller from its package identity; it must be an IBS name and
-  is used only by the not-accepted form. A missing form input or a project
-  outside the `SUSE:` namespace is an incomplete result without a request. A complete result contains the action's typed issues with `tracker`,
-  `state`, `name`, and `label` preserved for the owning reconciliation to
-  evaluate; `changed` evidence is not filtered out.
+  codestream_package: str, link_base: bool = False) ->
+  RequestEvidenceResult[RequestActionDiff]`: diffs one supported action of a
+  complete `IBSRequestDetail` with the semantically read-only
+  [Request Action Diff](#request-action-diff). It selects the accepted form
+  when the action has acceptinfo, and the not-accepted form otherwise. With
+  `link_base`, it selects the link-base form; `link_base` with an action that
+  has acceptinfo is invalid input. `codestream_package` is the logical package
+  of the action's codestream, supplied by the caller from its package
+  identity; it must be an IBS name and is used only by the not-accepted and
+  link-base forms. A missing form input or a project outside the `SUSE:`
+  namespace is an incomplete result without a request. A complete result
+  contains the action's typed issues with `tracker`, `state`, `name`, and
+  `label` preserved for the owning reconciliation to evaluate; `changed`
+  evidence is not filtered out.
 - `get_source_history(project: str, package: str, *, revision: str | None =
   None) -> RequestEvidenceResult[SourceHistory]`: without `revision`, reads the
   complete unpaged history; with `revision`, performs the exact lookup by
@@ -1037,7 +1088,7 @@ The methods have these escaping outcomes:
 
 | Condition | Signal to caller |
 |---|---|
-| Invalid or empty method input, including an unbounded request search, a name input that is not an IBS name, a request-operation project input outside the `SUSE:` namespace, or an invalid source-history revision | `ValueError` before HTTP I/O |
+| Invalid or empty method input, including an unbounded request search, a name input that is not an IBS name, a request-operation project input outside the `SUSE:` namespace, an invalid source-history revision, or a link-base diff of an action with acceptinfo | `ValueError` before HTTP I/O |
 | IBS API credentials not configured: `IBS_USERNAME` or `IBS_SSH_PRIVATE_KEY` is empty or unset | `IBSCredentialsNotConfiguredError` before HTTP I/O, after method input validation |
 | Authentication rejected: HTTP 401 to the signed attempt, or an HTTP 401 without exactly one supported `Signature` challenge | `IBSAuthenticationError` with reason `signature_rejected` or `unsupported_challenge`; no further request for that operation |
 | Transport failure, timeout, rate limit, or HTTP error other than an authentication failure, an identified unavailable source-diff old revision, or an operation-specific incomplete-evidence response, after shared retry handling. This includes an HTTP 403 authorization failure and every other `get_diff_issues()` 400 or 404 | The corresponding `httpx` exception propagates with the response body excluded from application logs |

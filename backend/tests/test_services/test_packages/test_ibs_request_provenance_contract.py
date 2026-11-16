@@ -2,14 +2,14 @@
 request reconciliation.
 
 Contract under test: docs/features/packages/ibs-submission-tracking.md
-(Package and Codestream Identity, Required Roots, Effective SR, Release
-Discovery, Accepted RR Provenance) and
+(Package and Codestream Identity, Required Roots, Action-Scoped CVE
+Evidence, Effective SR, Release Discovery, Accepted RR Provenance) and
 docs/features/integrations/ibs-integration.md (Project Source Info, Source
 Diff with Issue Extraction, Request Point Detail, Request Action Diff,
 Package Source History, Request Contract Verification Status), verified
-against the sanitized live captures of 2026-10-14 and 2026-11-12 described
-in `tests/support/ibs_request_provenance.py` (docs/conventions.md, External
-Integration Contract Verification).
+against the sanitized live captures of 2026-10-14, 2026-11-12, and
+2026-11-16 described in `tests/support/ibs_request_provenance.py`
+(docs/conventions.md, External Integration Contract Verification).
 
 Every document is read through the production `IBSClient` over the fake
 IBS API, at the recorded method, path, and query, so each recorded
@@ -50,6 +50,9 @@ from tests.support.ibs_request_provenance import (
     C_SR_SECOND,
     CHAIN_D_FIXTURE_DATE,
     CHAIN_D_FIXTURES,
+    CHAIN_E_CONFLICTS,
+    CHAIN_E_FIXTURE_DATE,
+    CHAIN_E_FIXTURES,
     D_CVE,
     D_INCIDENT,
     D_INCIDENT_REVOKED,
@@ -57,8 +60,12 @@ from tests.support.ibs_request_provenance import (
     D_RR_REPLACING,
     D_RR_REVOKED,
     D_SCAN,
+    E_KRB5_SR,
+    E_PILLOW_CVE,
+    E_PILLOW_SR,
     PROVENANCE_FIXTURE_DATE,
     PROVENANCE_FIXTURES,
+    SLE12_SP5,
     SLE15,
     SP4,
     SP6,
@@ -67,6 +74,7 @@ from tests.support.ibs_request_provenance import (
     load_provenance_responses,
     provenance_fixture_date,
     provenance_fixture_paths,
+    provenance_fixture_query,
     provenance_fixture_record,
     serve_provenance_fixture,
 )
@@ -100,6 +108,7 @@ _ALLOWED: Final = {
     "sourceinfolist": set(),
     "sourceinfo": {"package", "srcmd5"},
     "error": set(),
+    "status": {"code", "origin"},
 }
 _PROJECT_ATTRIBUTES: Final = ("project", "releaseproject", "oproject")
 _FLAVORS: Final = (
@@ -230,7 +239,7 @@ async def _assert_proof(
 
 
 class TestCapture:
-    def test_every_fixture_is_listed_recorded_and_successful(self) -> None:
+    def test_every_fixture_is_listed_and_recorded_with_its_status(self) -> None:
         responses = load_provenance_responses()
         assert responses["captured_at"] == PROVENANCE_FIXTURE_DATE
         assert responses["api_url"] == "https://api.suse.de"
@@ -238,12 +247,16 @@ class TestCapture:
         assert stored == set(PROVENANCE_FIXTURES)
         assert set(responses["documents"]) == {f"{name}.xml" for name in stored}
         for name in PROVENANCE_FIXTURES:
-            assert provenance_fixture_record(name)["status"] == 200
-            assert provenance_fixture_date(name) == (
-                CHAIN_D_FIXTURE_DATE
-                if name in CHAIN_D_FIXTURES
-                else PROVENANCE_FIXTURE_DATE
+            assert provenance_fixture_record(name)["status"] == (
+                400 if name in CHAIN_E_CONFLICTS else 200
             )
+            if name in CHAIN_D_FIXTURES:
+                expected = CHAIN_D_FIXTURE_DATE
+            elif name in CHAIN_E_FIXTURES:
+                expected = CHAIN_E_FIXTURE_DATE
+            else:
+                expected = PROVENANCE_FIXTURE_DATE
+            assert provenance_fixture_date(name) == expected
 
     @pytest.mark.parametrize("name", PROVENANCE_FIXTURES)
     def test_only_consumed_elements_and_attributes_were_kept(self, name: str) -> None:
@@ -558,3 +571,105 @@ class TestRevertedReleases:
             assert action.source_project == f"SUSE:Maintenance:{D_INCIDENT}"
             await _assert_proof(client, action, SP4, D_RR)
             assert D_CVE in _cves(await _diff(client, action, "PackageKit"))
+
+
+_CHAIN_E: Final = [
+    pytest.param(E_PILLOW_SR, "python-Pillow", SP4, "pillow", id="python-Pillow"),
+    pytest.param(E_KRB5_SR, "krb5", SLE12_SP5, "krb5", id="krb5"),
+]
+
+
+class TestConflictingSourceLinks:
+    """Chain E: open submissions whose source link conflicts with the
+    current codestream package. The not-accepted form answers HTTP 400; the
+    link-base form, the same request followed by `linkrev=base`, answers a
+    complete diff."""
+
+    @pytest.mark.parametrize(("number", "package", "codestream", "name"), _CHAIN_E)
+    async def test_an_open_submission_from_its_staging_project(
+        self,
+        routes: QueryRoutes,
+        number: int,
+        package: str,
+        codestream: str,
+        name: str,
+    ) -> None:
+        raw = ET.fromstring(load_provenance_fixture(f"e_request_sr_{name}"))
+        assert [action.get("type") for action in raw.iter("action")] == [
+            "maintenance_incident",
+            "delete",
+        ]
+        async with ibs_client() as client:
+            detail = await _detail(client, number)
+        assert detail.state is IBSRequestState.NEW
+        [action] = detail.actions
+        assert action.action_type is IBSRequestActionType.MAINTENANCE_INCIDENT
+        assert action.source_project == f"SUSE:Maintenance:REQUEST:{number}"
+        assert action.source_package == f"{package}.{codestream.replace(':', '_')}"
+        assert action.target_release_project == codestream
+        assert action.acceptinfo is None
+
+    @pytest.mark.parametrize(("number", "package", "codestream", "name"), _CHAIN_E)
+    async def test_the_not_accepted_form_answers_400(
+        self,
+        routes: QueryRoutes,
+        number: int,
+        package: str,
+        codestream: str,
+        name: str,
+    ) -> None:
+        async with ibs_client() as client:
+            [action] = (await _detail(client, number)).actions
+            result = await client.get_request_action_diff(
+                action, codestream_package=package
+            )
+        assert result.incomplete_reason == "rejected"
+        assert ET.fromstring(load_provenance_fixture(f"e_diff_sr_{name}")).attrib == {
+            "code": "400",
+            "origin": "backend",
+        }
+
+    @pytest.mark.parametrize(("number", "package", "codestream", "name"), _CHAIN_E)
+    async def test_the_link_base_form_is_the_not_accepted_form_with_linkrev_base(
+        self,
+        routes: QueryRoutes,
+        number: int,
+        package: str,
+        codestream: str,
+        name: str,
+    ) -> None:
+        not_accepted = provenance_fixture_record(f"e_diff_sr_{name}")
+        link_base = provenance_fixture_record(f"e_diff_sr_{name}_link_base")
+        assert link_base["path"] == not_accepted["path"]
+        assert provenance_fixture_query(f"e_diff_sr_{name}_link_base") == [
+            *provenance_fixture_query(f"e_diff_sr_{name}"),
+            ("linkrev", "base"),
+        ]
+        async with ibs_client() as client:
+            [action] = (await _detail(client, number)).actions
+            result = await client.get_request_action_diff(
+                action, codestream_package=package, link_base=True
+            )
+        assert result.value is not None, result.incomplete_reason
+
+    async def test_the_link_base_diff_carries_the_cve_of_the_submission(
+        self, routes: QueryRoutes
+    ) -> None:
+        async with ibs_client() as client:
+            [pillow] = (await _detail(client, E_PILLOW_SR)).actions
+            [krb5] = (await _detail(client, E_KRB5_SR)).actions
+            pillow_cves = _cves(await _link_base_diff(client, pillow, "python-Pillow"))
+            krb5_diff = await _link_base_diff(client, krb5, "krb5")
+        assert pillow_cves == {E_PILLOW_CVE}
+        assert _cves(krb5_diff) == set()
+        assert {issue.tracker for issue in krb5_diff.issues} == {"bnc"}
+
+
+async def _link_base_diff(
+    client: IBSClient, action: IBSRequestActionDetail, codestream_package: str
+) -> RequestActionDiff:
+    result = await client.get_request_action_diff(
+        action, codestream_package=codestream_package, link_base=True
+    )
+    assert result.value is not None, result.incomplete_reason
+    return result.value

@@ -359,6 +359,11 @@ Discovery is bounded, with these accepted limitations:
 - The diff of an open SR whose source is outside the `SUSE:` namespace is never
   available (`../integrations/ibs-integration.md`, Request Action Diff), so the
   scopes that require it stay incomplete while the SR is open.
+- The diff of an open request whose source project the IBS account cannot
+  read, such as a project whose access is disabled, answers like the diff of a
+  missing project (`../integrations/ibs-integration.md`, Request Action Diff),
+  so the scopes that require it stay incomplete while the request is open and
+  its source project stays unreadable.
 - A release whose Ticket-CVE reference no longer appears in the current
   codestream sources is not discovered.
 - A release recorded without acceptinfo cannot be proven
@@ -414,7 +419,8 @@ reused by every scope that needs it:
 - request detail, per request number;
 - incident-package history, per incident package;
 - an exact history lookup, per package and revision;
-- an action diff, per action.
+- an action diff, per action, with its link-base form when it is requested
+  ([Action-Scoped CVE Evidence](#action-scoped-cve-evidence)).
 
 Reuse never merges scope outcomes. An incomplete or failed shared artifact makes
 every scope that requires it incomplete or failed.
@@ -455,6 +461,15 @@ observation is incomplete, and it never deletes retained history or proves a
 negative. The diff of an action that is not accepted can be unavailable,
 temporarily or permanently, for the reasons listed in
 `../integrations/ibs-integration.md` (Request Action Diff).
+
+An action that is not accepted is diffed in the not-accepted form. When that
+diff answers HTTP 400, as it does when the source link conflicts with the
+current codestream package, the action is diffed once more in the link-base
+form (`../integrations/ibs-integration.md`, Request Action Diff), and that
+result is the action's diff: positive evidence, a no-match, incomplete
+evidence, or a failed request ([Observation Outcomes](#observation-outcomes)).
+No link-base diff is requested after any other outcome of the not-accepted
+form, including HTTP 404, or for an accepted action.
 
 ### Effective SR
 
@@ -1007,7 +1022,9 @@ applies the delay, with the class `default_request_delay`. One IBS operation,
 including its unsigned and signed attempts
 ([ibs-integration.md, Request
 Authentication](../integrations/ibs-integration.md#request-authentication)), is
-one request. No IBS request occurs while a Ticket lock is held
+one request; the link-base diff of an action
+([Action-Scoped CVE Evidence](#action-scoped-cve-evidence)) is a request of its
+own. No IBS request occurs while a Ticket lock is held
 ([Algorithm](#algorithm)), so the fetcher never waits while holding one.
 Request wake-ups ([RabbitMQ Request Wake-Ups](#rabbitmq-request-wake-ups)) are
 not fetcher work and apply no delay.
@@ -1314,6 +1331,11 @@ Implementation coverage must include:
   not-accepted request action diff forms; valid no-match; malformed, HTTP 400,
   HTTP 404, and unrequested diffs (a missing form input or a project outside the
   `SUSE:` namespace); and unknown action/state handling;
+- the link-base form after an HTTP 400 of the not-accepted form, including the
+  observed conflicting source links, with positive, no-match, incomplete, and
+  failed results; no link-base request after an HTTP 404 or another outcome,
+  or for an accepted action; the request delay before it; and one link-base
+  request per action within an invocation;
 - package and codestream identity:
   - match, non-match, and unresolved actions;
   - dotted logical packages (`go1.27`), dotted and branch-origin suffixes

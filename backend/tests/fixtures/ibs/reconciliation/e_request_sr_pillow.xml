@@ -1,0 +1,10 @@
+<request id="960201">
+  <action type="maintenance_incident">
+    <source project="SUSE:Maintenance:REQUEST:960201" package="python-Pillow.SUSE_SLE-15-SP4_Update" rev="b5d89f1a430bef3853ae208f5b6cfa3c" />
+    <target project="SUSE:Maintenance" releaseproject="SUSE:SLE-15-SP4:Update" />
+  </action>
+  <action type="delete">
+    <target project="SUSE:Maintenance:REQUEST:960201" />
+  </action>
+  <state name="new" created="2026-10-19T15:15:03" when="2026-10-19T16:22:13" />
+</request>

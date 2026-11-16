@@ -12,7 +12,8 @@ the Ticket lock. Nothing here touches the database.
   artifact is obtained at most once per identity (searches per logical
   package, current release evidence and source histories per package,
   request detail per request number, exact lookups per package and
-  revision, action diffs per action) and reused by every scope; an
+  revision, action diffs per action, with the link-base form after an HTTP
+  400 of the not-accepted form) and reused by every scope; an
   incomplete or failed artifact stays incomplete or failed for every scope
   that needs it. The caller's request delay separates every two
   consecutive IBS requests of the invocation; none precedes the first.
@@ -84,6 +85,8 @@ _PROGRESSING_STATES: Final = frozenset(
     {IBSRequestState.NEW, IBSRequestState.REVIEW, IBSRequestState.ACCEPTED}
 )
 _EMPTY_SOURCE_TREE: Final = "0"
+_DIFF_REJECTED: Final = "rejected"
+"""The incomplete reason of a request action diff answered with HTTP 400."""
 
 
 class UnusableObservation(Exception):  # noqa: N818 — an outcome, not an error
@@ -430,14 +433,21 @@ class EvidenceCache:
     async def action_labels(
         self, action: IBSRequestActionDetail, package_name: str
     ) -> frozenset[str]:
-        """The qualifying CVE labels of `action`'s own diff."""
+        """The qualifying CVE labels of `action`'s own diff.
+
+        An action that is not accepted whose diff answers HTTP 400 (the
+        `rejected` result), as for a source link that conflicts with the
+        current codestream, is diffed once more in the link-base form, and
+        that result is the action's diff."""
         key = detail_action_key(action)
         if key not in self._diffs:
-            result = await self._request(
-                lambda: self._client.get_request_action_diff(
-                    action, codestream_package=package_name
-                )
-            )
+            result = await self._action_diff(action, package_name, link_base=False)
+            if (
+                action.acceptinfo is None
+                and not isinstance(result, _Unusable)
+                and result.incomplete_reason == _DIFF_REJECTED
+            ):
+                result = await self._action_diff(action, package_name, link_base=True)
             outcome: frozenset[str] | _Unusable
             if isinstance(result, _Unusable):
                 outcome = result
@@ -458,6 +468,15 @@ class EvidenceCache:
         if isinstance(value, _Unusable):
             _raise(value, action.request_number)
         return value
+
+    async def _action_diff(
+        self, action: IBSRequestActionDetail, package_name: str, *, link_base: bool
+    ) -> RequestEvidenceResult[RequestActionDiff] | _Unusable:
+        return await self._request(
+            lambda: self._client.get_request_action_diff(
+                action, codestream_package=package_name, link_base=link_base
+            )
+        )
 
     async def release_labels(
         self, codestream: str, package_name: str

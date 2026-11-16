@@ -574,7 +574,10 @@ class DiffForm:
 
 
 def request_action_diff_form(
-    action: IBSRequestActionDetail, codestream_package: str
+    action: IBSRequestActionDetail,
+    codestream_package: str,
+    *,
+    link_base: bool = False,
 ) -> DiffForm:
     """Derive the form of ibs-integration.md (Request Action Diff).
 
@@ -582,12 +585,18 @@ def request_action_diff_form(
     or `srcmd5`, `orev` = `oxsrcmd5`, `osrcmd5`, or `0`, plus `oproject`
     and `opackage` when present, without `expand`. Not accepted: the source
     package with `expand=1`, `rev` = `source/@rev`, `oproject` = the
-    codestream, and `opackage` = `codestream_package`. Raises
-    `IncompleteEvidenceError` with `missing_diff_input` for an absent form input
-    and `outside_suse_namespace` for a path project or `oproject` outside
+    codestream, and `opackage` = `codestream_package`. Link base
+    (`link_base`): the not-accepted form followed by `linkrev=base`, which
+    expands the source link against its `baserev`. Raises `ValueError` for
+    `link_base` with an accepted action, and `IncompleteEvidenceError` with
+    `missing_diff_input` for an absent form input and
+    `outside_suse_namespace` for a path project or `oproject` outside
     `SUSE:`, so that no request is made.
     """
     acceptinfo = action.acceptinfo
+    if link_base and acceptinfo is not None:
+        msg = "the link-base form applies only to an action that is not accepted"
+        raise ValueError(msg)
     if acceptinfo is not None:
         rev = acceptinfo.xsrcmd5 or acceptinfo.srcmd5
         if action.target_project is None or action.target_package is None or not rev:
@@ -613,6 +622,8 @@ def request_action_diff_form(
             ("oproject", codestream),
             ("opackage", codestream_package),
         ]
+        if link_base:
+            params.append(("linkrev", "base"))
         project, package = action.source_project, action.source_package
     projects = [project, *(value for key, value in params if key == "oproject")]
     if not all(value.startswith(SUSE_NAMESPACE) for value in projects):
