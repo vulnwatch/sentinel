@@ -867,7 +867,6 @@ class TestActionScopedEvidence:
             pytest.param(
                 xml_response(b"<status/>"), "invalid_document", id="other-root"
             ),
-            pytest.param(status_response(400), "rejected", id="http-400"),
             pytest.param(status_response(404), "not_found", id="http-404"),
         ],
     )
@@ -878,6 +877,9 @@ class TestActionScopedEvidence:
         responder: Responder,
         reason: str,
     ) -> None:
+        """Only an HTTP 400 is followed by the link-base form
+        (`TestLinkBaseDiff`); every other unusable diff is the action's
+        diff."""
         number = next_number()
         action = submission(package, number)
         fake.request(number, REVIEW, action)
@@ -893,6 +895,8 @@ class TestActionScopedEvidence:
             number,
             False,
         )
+        assert len(action_diff_paths(fake)) == 1
+        assert fake.unrouted == []
 
     async def test_valid_diff_without_issues_is_a_no_match(
         self, fake: FakeRequests, package: str
@@ -1093,6 +1097,205 @@ class TestActionScopedEvidence:
                 "reason_category": "invalid_cve_label",
             }
         ]
+
+
+LINK_BASE: Final = ("linkrev", "base")
+
+
+def conflicting_action(
+    fake: FakeRequests,
+    package: str,
+    *issues: str,
+    kind: IBSRequestActionType = MI,
+    link_base: Responder | None = None,
+) -> tuple[int, Action]:
+    """Route an open request with one matching action that is not accepted,
+    whose not-accepted diff answers HTTP 400 (a source link that conflicts
+    with the current codestream), and its link-base diff with `issues` or
+    `link_base`; the request is found by its open-request search."""
+    number = next_number()
+    action = (
+        submission(package, number) if kind is MI else release(package, next_incident())
+    )
+    fake.request(number, REVIEW, action)
+    fake.action_diff(
+        number, action, codestream_package=package, responder=status_response(400)
+    )
+    fake.action_diff(
+        number,
+        action,
+        *issues,
+        codestream_package=package,
+        link_base=True,
+        responder=link_base,
+    )
+    if kind is MI:
+        fake.quiet(package, open_submissions=[number])
+    else:
+        fake.quiet(package, open_releases=[number])
+    return number, action
+
+
+def action_diff_queries(fake: FakeRequests) -> list[tuple[tuple[str, str], ...]]:
+    """The queries of the request action diffs requested, in order."""
+    return [
+        query
+        for method, _, query in fake.served
+        if method == "POST" and ("withissues", "1") in query
+    ]
+
+
+class TestLinkBaseDiff:
+    """Action-Scoped CVE Evidence: an action that is not accepted whose
+    not-accepted diff answers HTTP 400 is diffed once more in the link-base
+    form (ibs-integration.md, Request Action Diff), and that result is the
+    action's diff."""
+
+    @pytest.mark.parametrize("kind", [MI, MR], ids=["submission", "release"])
+    async def test_link_base_diff_with_the_cve_establishes_progress(
+        self, fake: FakeRequests, package: str, kind: IBSRequestActionType
+    ) -> None:
+        number, action = conflicting_action(
+            fake, package, cve_issue(TICKET_CVE), kind=kind
+        )
+
+        observation = await observe(fake, scope(package=package))
+
+        assert observation == Observation(
+            DeliveryStatus.IN_PROGRESS,
+            (request_write(number, REVIEW),),
+            (action_write(number, action, package=package, state=REVIEW),),
+        )
+        not_accepted, link_base = action_diff_queries(fake)
+        assert LINK_BASE not in not_accepted
+        assert link_base == (*not_accepted, LINK_BASE)
+        assert fake.unrouted == []
+
+    async def test_link_base_diff_without_the_cve_is_a_no_match(
+        self, fake: FakeRequests, package: str
+    ) -> None:
+        conflicting_action(fake, package, issue("bsc#1234567", tracker="bnc"))
+
+        observation = await observe(fake, scope(package=package))
+
+        assert observation == NO_MATCH
+        assert len(action_diff_queries(fake)) == 2
+
+    @pytest.mark.parametrize(
+        ("responder", "reason"),
+        [
+            pytest.param(status_response(400), "rejected", id="http-400"),
+            pytest.param(status_response(404), "not_found", id="http-404"),
+            pytest.param(
+                xml_response(b"<sourcediff><issues>"), "malformed_xml", id="malformed"
+            ),
+        ],
+    )
+    async def test_unusable_link_base_diff_is_incomplete(
+        self, fake: FakeRequests, package: str, responder: Responder, reason: str
+    ) -> None:
+        number, _ = conflicting_action(fake, package, link_base=responder)
+
+        exc = await unusable(fake, scope(package=package))
+
+        assert (exc.reason_category, exc.request_number, exc.failed) == (
+            reason,
+            number,
+            False,
+        )
+        assert len(action_diff_queries(fake)) == 2
+
+    async def test_failed_link_base_request_fails_the_observation(
+        self, fake: FakeRequests, package: str
+    ) -> None:
+        number, _ = conflicting_action(fake, package, link_base=status_response(500))
+
+        exc = await unusable(fake, scope(package=package))
+
+        assert (
+            exc.reason_category,
+            exc.http_status,
+            exc.request_number,
+            exc.failed,
+        ) == ("http_status", 500, number, True)
+
+    async def test_failed_not_accepted_diff_requests_no_link_base_diff(
+        self, fake: FakeRequests, package: str
+    ) -> None:
+        number, action = open_submission(fake, package, diff=False)
+        fake.action_diff(
+            number, action, codestream_package=package, responder=status_response(500)
+        )
+        fake.quiet(package, open_submissions=[number])
+
+        exc = await unusable(fake, scope(package=package))
+
+        assert (exc.reason_category, exc.failed) == ("http_status", True)
+        assert fake.unrouted == []
+
+    async def test_accepted_action_is_never_diffed_in_the_link_base_form(
+        self, fake: FakeRequests, package: str
+    ) -> None:
+        sr = accepted_submission(package)
+        fake.request(sr.number, ACCEPTED, sr.action)
+        fake.action_diff(
+            sr.number,
+            sr.action,
+            codestream_package=package,
+            responder=status_response(400),
+        )
+        fake.quiet(package, open_submissions=[sr.number])
+
+        exc = await unusable(fake, scope(package=package))
+
+        assert (exc.reason_category, exc.request_number) == ("rejected", sr.number)
+        [query] = action_diff_queries(fake)
+        assert LINK_BASE not in query
+        assert fake.unrouted == []
+
+    async def test_the_request_delay_precedes_the_link_base_request(
+        self, fake: FakeRequests, package: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        waits: list[int] = []
+        recorder = AsyncMock(side_effect=lambda _: waits.append(len(fake.served)))
+        monkeypatch.setattr(
+            ibs_request_observation, "asyncio", SimpleNamespace(sleep=recorder)
+        )
+        conflicting_action(fake, package, cve_issue(TICKET_CVE))
+
+        await observe_together(fake, [(scope(package=package), snapshot())], delay=0.5)
+
+        link_base_position = next(
+            index
+            for index, (_, _, query) in enumerate(fake.served)
+            if LINK_BASE in query
+        )
+        assert link_base_position in waits
+        assert waits == list(range(1, len(fake.served)))
+        assert recorder.await_args_list == [call(0.5)] * (len(fake.served) - 1)
+
+    async def test_one_link_base_request_per_action_within_an_invocation(
+        self, fake: FakeRequests, package: str
+    ) -> None:
+        number, action = conflicting_action(fake, package, cve_issue(TICKET_CVE))
+
+        results = await observe_together(
+            fake,
+            [
+                (scope(package=package), snapshot()),
+                (scope(cve=OTHER_CVE, package=package), snapshot()),
+            ],
+        )
+
+        assert results == [
+            Observation(
+                DeliveryStatus.IN_PROGRESS,
+                (request_write(number, REVIEW),),
+                (action_write(number, action, package=package, state=REVIEW),),
+            ),
+            NO_MATCH,
+        ]
+        assert len(action_diff_queries(fake)) == 2
 
 
 class TestEffectiveSubmission:

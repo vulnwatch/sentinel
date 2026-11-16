@@ -487,21 +487,28 @@ class IBSClient:
         )
 
     async def get_request_action_diff(
-        self, action: IBSRequestActionDetail, *, codestream_package: str
+        self,
+        action: IBSRequestActionDetail,
+        *,
+        codestream_package: str,
+        link_base: bool = False,
     ) -> RequestEvidenceResult[RequestActionDiff]:
         """Diff one supported request action: `POST /source/{project}/
         {package}?cmd=diff&view=xml&withissues=1&onlyissues=1&{form}`.
 
         The accepted form applies when the action has acceptinfo, the
-        not-accepted form (always `expand=1`) otherwise; `codestream_package`
-        is the logical package of the action's codestream and is used only
-        by the not-accepted form (ibs-integration.md, Request Action Diff).
-        A complete result holds the issues as served, in document order,
-        including `changed` and duplicates; nothing is filtered or logged.
+        not-accepted form (always `expand=1`) otherwise, and the link-base
+        form (the not-accepted form with `linkrev=base`) with `link_base`;
+        `codestream_package` is the logical package of the action's
+        codestream and is used only by the not-accepted and link-base forms
+        (ibs-integration.md, Request Action Diff). A complete result holds
+        the issues as served, in document order, including `changed` and
+        duplicates; nothing is filtered or logged.
 
         Raises `ValueError` for an `action` that is not an
-        `IBSRequestActionDetail` with valid field values and for a
-        `codestream_package` that is not an IBS name. Then, without any
+        `IBSRequestActionDetail` with valid field values, for a
+        `codestream_package` that is not an IBS name, and for `link_base`
+        with an action that has acceptinfo. Then, without any
         request and without the credential check, a missing form input is
         an incomplete result (`missing_diff_input`), and so is a path
         project or `oproject` outside `SUSE:` (`outside_suse_namespace`).
@@ -518,7 +525,9 @@ class IBSClient:
         checked = _validate_diff_action(action)
         _validate_name(codestream_package, "codestream package")
         try:
-            form = request_action_diff_form(checked, codestream_package)
+            form = request_action_diff_form(
+                checked, codestream_package, link_base=link_base
+            )
         except IncompleteEvidenceError as exc:
             return RequestEvidenceResult(incomplete_reason=exc.reason)
         self._require_credentials()

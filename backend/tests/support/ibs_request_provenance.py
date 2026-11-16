@@ -2,17 +2,20 @@
 
 The documents under `backend/tests/fixtures/ibs/reconciliation/` were
 captured read-only from the IBS API (`https://api.suse.de`) on 2026-10-14
-(chains A to C) and on 2026-11-12 (chain D) with
-`secbox osc -A https://api.suse.de api [-X POST] ...`
+(chains A to C), on 2026-11-12 (chain D), and on 2026-11-16 (chain E) with
+`secbox osc -A https://api.suse.de api [-X POST] ...` (chain E through the
+`osc` library in the same container)
 (docs/conventions.md, External Integration Contract Verification;
 docs/features/packages/ibs-submission-tracking.md, Required Roots, Effective
-SR, Release Discovery, Accepted RR Provenance). Each call ran in a capture
-process that kept stdout and stderr in memory and wrote only an
-allow-listed rebuild of the document; nothing raw reached a terminal or a
-file. The diff requests were built with the production
-`request_action_diff_form()` from the captured point detail, and the
-current release evidence with the source-info and `orev=0` source-diff
-forms of `IBSClient`. Only consumed elements and attributes were written:
+SR, Release Discovery, Accepted RR Provenance, Action-Scoped CVE Evidence).
+Each call ran in a capture process that kept stdout and stderr in memory
+and wrote only an allow-listed rebuild of the document; nothing raw reached
+a terminal or a file. The diff requests were built with the production
+`request_action_diff_form()` from the captured point detail (chain E: the
+same not-accepted form, followed by `linkrev=base` for the link-base form),
+and the current release evidence with the source-info and `orev=0`
+source-diff forms of `IBSClient`. Only consumed elements and attributes
+were written:
 
 - point detail: `request/@id`; `state/@name`, `@created`, `@when`,
   `@superseded_by`; `action/@type`; `source/@project`, `@package`, `@rev`;
@@ -21,7 +24,8 @@ forms of `IBSClient`. Only consumed elements and attributes were written:
 - source history: `revision/@rev` with its `srcmd5`, `time`, and
   `requestid` children;
 - diffs: `sourcediff`, `issues`, `issue/@state`, `@tracker`, `@name`,
-  `@label`;
+  `@label`; an error response: `status/@code`, `@origin` (the body of an
+  HTTP 400 diff is not consumed);
 - source info: `sourceinfo/@package`, `@srcmd5`, and an `error` child.
 
 Everything else was discarded unread, notably the state `who`, the request
@@ -31,8 +35,8 @@ and cookies.
 
 Values: the real-to-fictional mapping of the earlier request capture
 (`tests/support/ibs_request_api.py`) no longer exists, so this group has
-its own fictional block. Request numbers start at 960001, and at 960101
-in chain D (one value per real number, also inside
+its own fictional block. Request numbers start at 960001, at 960101 in
+chain D, and at 960201 in chain E (one value per real number, also inside
 `SUSE:Maintenance:REQUEST:{n}` projects and history `requestid`), incident
 numbers at 81001, and at 81101 in chain D (also in `SUSE:Maintenance:{n}`
 projects and `.{n}` package suffixes), and every checksum is a fictional
@@ -43,9 +47,10 @@ The only personal identifiers present were the owners of the `gh` issue
 references of `d_diff_current`, GitHub accounts, which the allow-listed
 rebuild kept; before the document was committed, each was replaced by a
 fictional username (`jdoe`, `asmith`, `bwilson`), equal owners by equal
-names.
+names. The chain E capture replaced such owners before printing; its
+documents carry none.
 
-Four chains:
+Five chains:
 
 - **A — current release evidence of the `openvpn` chain of
   `tests/support/ibs_request_api.py`** in `SUSE:SLE-15-SP6:Update`:
@@ -95,18 +100,38 @@ Four chains:
   diff (960104, 960105, 960108 to 960111) or carry other CVEs (960112 to
   960114). The diffs of the revoked requests were not captured: the scan
   does not read them.
+- **E — open submissions whose source link conflicts with the current
+  codestream package**: `e_request_sr_pillow` (960201, `python-Pillow` in
+  `SUSE:SLE-15-SP4:Update`) and `e_request_sr_krb5` (960202, `krb5` in
+  `SUSE:SLE-12-SP5:Update`), each `new`, with a `maintenance_incident`
+  action from its staging project and a `delete` action for it. The
+  source package of each is a branch link to exactly its codestream and
+  logical package, whose expansion failed with `conflict in file
+  {package}.spec`: a release of the codestream package after the branch
+  touched the same lines. Their not-accepted diffs `e_diff_sr_pillow` and
+  `e_diff_sr_krb5` answered HTTP 400 with a backend status document whose
+  summary was `bad link: conflict in file {package}.spec`; the link-base
+  diffs `e_diff_sr_pillow_link_base` (CVE-2026-106443 and one bug) and
+  `e_diff_sr_krb5_link_base` (one bug, no CVE) are complete, and the old
+  side of each was the link's `baserev` (not stored: `old` is not
+  consumed). Only public issue references are kept: the bug of the krb5
+  diff is not public, so its number was replaced by the fictional
+  `bsc#1234567`. A third open submission without a conflict gave the same
+  issues in both forms; it was not stored, because whether its issue
+  references are public was not verified.
 
 The `orev=0` diff of the kernel codestream package was verified live (HTTP
 200, about 17,000 issues, 2.4 MB, 4 s) and is not stored because of its
 size; its shape is the one of `a_diff_current` and `b_diff_current`.
 
 `responses.json` records the method, decoded path, ordered query, and
-status of each request with the fictional values; each document of chain
-D also records its own `captured_at`, which overrides the date of the
-file. `ProvenanceServer`
-serves the documents at their recorded method, path, and query through the
-authenticating `IBSServer`, so the same path can serve an unpaged history
-and an exact lookup.
+status of each request with the fictional values; each document of chains
+D and E also records its own `captured_at`, which overrides the date of
+the file. Every status is 200 except the HTTP 400 of `CHAIN_E_CONFLICTS`.
+`serve_provenance_fixture()` serves the documents at their recorded method,
+path, query, and status through the authenticating `IBSServer`, so the
+same path can serve an unpaged history and an exact lookup, or the
+not-accepted and link-base diffs of one action.
 """
 
 from __future__ import annotations
@@ -118,15 +143,23 @@ from typing import Any, Final
 
 import httpx
 
-from tests.support.ibs_api import FIXTURE_DIR, IBSServer, Responder, xml_response
+from tests.support.ibs_api import (
+    FIXTURE_DIR,
+    IBSServer,
+    Responder,
+    status_response,
+    xml_response,
+)
 
 PROVENANCE_FIXTURE_DIR: Final = FIXTURE_DIR / "reconciliation"
 PROVENANCE_FIXTURE_DATE: Final = "2026-10-14"
 CHAIN_D_FIXTURE_DATE: Final = "2026-11-12"
+CHAIN_E_FIXTURE_DATE: Final = "2026-11-16"
 
 SP4: Final = "SUSE:SLE-15-SP4:Update"
 SP6: Final = "SUSE:SLE-15-SP6:Update"
 SLE15: Final = "SUSE:SLE-15:Update"
+SLE12_SP5: Final = "SUSE:SLE-12-SP5:Update"
 
 A_CVES: Final = ("CVE-2026-63650", "CVE-2026-84732")
 """The CVEs that release request 910051 of the request group released."""
@@ -160,6 +193,22 @@ CHAIN_D_FIXTURES: Final = (
     "d_history_lookup",
 )
 
+E_PILLOW_SR: Final = 960201
+E_PILLOW_CVE: Final = "CVE-2026-106443"
+"""The CVE in the link-base diff of `E_PILLOW_SR`."""
+E_KRB5_SR: Final = 960202
+CHAIN_E_CONFLICTS: Final = ("e_diff_sr_pillow", "e_diff_sr_krb5")
+"""The not-accepted diffs of chain E, which answered HTTP 400."""
+
+CHAIN_E_FIXTURES: Final = (
+    "e_request_sr_pillow",
+    "e_diff_sr_pillow",
+    "e_diff_sr_pillow_link_base",
+    "e_request_sr_krb5",
+    "e_diff_sr_krb5",
+    "e_diff_sr_krb5_link_base",
+)
+
 PROVENANCE_FIXTURES: Final = (
     "a_sourceinfo_current",
     "a_diff_current",
@@ -189,6 +238,7 @@ PROVENANCE_FIXTURES: Final = (
     "c_diff_sr_first",
     "c_diff_sr_second",
     *CHAIN_D_FIXTURES,
+    *CHAIN_E_FIXTURES,
 )
 
 
@@ -266,12 +316,22 @@ class QueryRoutes:
         return dispatch
 
 
+def provenance_fixture_responder(name: str) -> Responder:
+    """Serve fixture `name` with its recorded status."""
+    document = load_provenance_fixture(name)
+    status = provenance_fixture_record(name)["status"]
+    if status == 200:
+        return xml_response(document)
+    return status_response(status, document)
+
+
 def serve_provenance_fixture(routes: QueryRoutes, name: str) -> None:
-    """Route fixture `name` at its recorded method, path, and query."""
+    """Route fixture `name` at its recorded method, path, query, and
+    status."""
     record = provenance_fixture_record(name)
     routes.route(
         record["method"],
         record["path"],
         provenance_fixture_query(name),
-        xml_response(load_provenance_fixture(name)),
+        provenance_fixture_responder(name),
     )

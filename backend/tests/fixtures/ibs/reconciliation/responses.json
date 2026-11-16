@@ -1021,6 +1021,188 @@
         ]
       ],
       "status": 200
+    },
+    "e_request_sr_pillow.xml": {
+      "captured_at": "2026-11-16",
+      "method": "GET",
+      "path": "/request/960201",
+      "query": [],
+      "status": 200
+    },
+    "e_diff_sr_pillow.xml": {
+      "captured_at": "2026-11-16",
+      "method": "POST",
+      "path": "/source/SUSE:Maintenance:REQUEST:960201/python-Pillow.SUSE_SLE-15-SP4_Update",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "withissues",
+          "1"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "expand",
+          "1"
+        ],
+        [
+          "rev",
+          "b5d89f1a430bef3853ae208f5b6cfa3c"
+        ],
+        [
+          "oproject",
+          "SUSE:SLE-15-SP4:Update"
+        ],
+        [
+          "opackage",
+          "python-Pillow"
+        ]
+      ],
+      "status": 400
+    },
+    "e_diff_sr_pillow_link_base.xml": {
+      "captured_at": "2026-11-16",
+      "method": "POST",
+      "path": "/source/SUSE:Maintenance:REQUEST:960201/python-Pillow.SUSE_SLE-15-SP4_Update",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "withissues",
+          "1"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "expand",
+          "1"
+        ],
+        [
+          "rev",
+          "b5d89f1a430bef3853ae208f5b6cfa3c"
+        ],
+        [
+          "oproject",
+          "SUSE:SLE-15-SP4:Update"
+        ],
+        [
+          "opackage",
+          "python-Pillow"
+        ],
+        [
+          "linkrev",
+          "base"
+        ]
+      ],
+      "status": 200
+    },
+    "e_request_sr_krb5.xml": {
+      "captured_at": "2026-11-16",
+      "method": "GET",
+      "path": "/request/960202",
+      "query": [],
+      "status": 200
+    },
+    "e_diff_sr_krb5.xml": {
+      "captured_at": "2026-11-16",
+      "method": "POST",
+      "path": "/source/SUSE:Maintenance:REQUEST:960202/krb5.SUSE_SLE-12-SP5_Update",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "withissues",
+          "1"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "expand",
+          "1"
+        ],
+        [
+          "rev",
+          "4fd0a1a3c59e749a77efb76513b1fde9"
+        ],
+        [
+          "oproject",
+          "SUSE:SLE-12-SP5:Update"
+        ],
+        [
+          "opackage",
+          "krb5"
+        ]
+      ],
+      "status": 400
+    },
+    "e_diff_sr_krb5_link_base.xml": {
+      "captured_at": "2026-11-16",
+      "method": "POST",
+      "path": "/source/SUSE:Maintenance:REQUEST:960202/krb5.SUSE_SLE-12-SP5_Update",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "withissues",
+          "1"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "expand",
+          "1"
+        ],
+        [
+          "rev",
+          "4fd0a1a3c59e749a77efb76513b1fde9"
+        ],
+        [
+          "oproject",
+          "SUSE:SLE-12-SP5:Update"
+        ],
+        [
+          "opackage",
+          "krb5"
+        ],
+        [
+          "linkrev",
+          "base"
+        ]
+      ],
+      "status": 200
     }
   }
 }

@@ -125,12 +125,13 @@ async def _diff(
     *,
     codestream_package: str = "curl",
     path: str | None = None,
+    link_base: bool = False,
 ) -> RequestEvidenceResult[RequestActionDiff]:
     if responder is not None:
         server.route("POST", path or _path(action), responder)
     async with ibs_client() as client:
         return await client.get_request_action_diff(
-            action, codestream_package=codestream_package
+            action, codestream_package=codestream_package, link_base=link_base
         )
 
 
@@ -395,6 +396,75 @@ class TestForm:
             b"/source/SUSE:Maintenance:80001/libstdc++6.SUSE_X?"
         )
         assert b"opackage=libstdc%2B%2B6" in request.url.raw_path
+
+
+class TestLinkBaseForm:
+    """The link-base form: the not-accepted form followed by
+    `linkrev=base`, for an action that is not accepted only."""
+
+    @pytest.mark.parametrize(
+        "action", [_OPEN_SR, _OPEN_RR], ids=["submission", "release"]
+    )
+    async def test_link_base_form_appends_linkrev_base_to_the_not_accepted_form(
+        self, server: IBSServer, action: IBSRequestActionDetail
+    ) -> None:
+        result = await _diff(
+            server,
+            action,
+            _sourcediff(_issue(state="added", tracker="cve", label="CVE-2026-1")),
+            link_base=True,
+        )
+        assert result.value == RequestActionDiff(
+            (RequestActionIssue("cve", "added", None, "CVE-2026-1"),)
+        )
+        assert _sent(server) == (
+            f"/source/{action.source_project}/{action.source_package}",
+            [
+                *_BASE,
+                ("expand", "1"),
+                ("rev", _SUM_A),
+                ("oproject", "SUSE:SLE-15-SP6:Update"),
+                ("opackage", "curl"),
+                ("linkrev", "base"),
+            ],
+        )
+
+    @pytest.mark.parametrize(
+        "action", [_ACCEPTED_SR, _ACCEPTED_RR], ids=["submission", "release"]
+    )
+    async def test_link_base_with_an_accepted_action_raises_before_any_request(
+        self, server: IBSServer, action: IBSRequestActionDetail
+    ) -> None:
+        async with ibs_client(username="") as client:
+            with pytest.raises(ValueError, match="link-base"):
+                await client.get_request_action_diff(
+                    action, codestream_package="curl", link_base=True
+                )
+        assert server.requests == []
+
+    @pytest.mark.parametrize(
+        ("action", "reason"),
+        [
+            (dataclasses.replace(_OPEN_SR, source_revision=None), "missing_diff_input"),
+            (
+                dataclasses.replace(_OPEN_SR, source_project="_redacted_"),
+                "outside_suse_namespace",
+            ),
+        ],
+        ids=["without_source_revision", "from_personal_project"],
+    )
+    async def test_unrequestable_link_base_diff_is_incomplete_without_any_request(
+        self,
+        server: IBSServer,
+        action: IBSRequestActionDetail,
+        reason: IncompleteReason,
+    ) -> None:
+        async with ibs_client(username="") as client:
+            result = await client.get_request_action_diff(
+                action, codestream_package="curl", link_base=True
+            )
+        assert result == RequestEvidenceResult(incomplete_reason=reason)
+        assert server.requests == []
 
 
 class TestNoRequest:

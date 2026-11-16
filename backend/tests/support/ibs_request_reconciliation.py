@@ -89,9 +89,9 @@ from tests.support.ibs_request_api import (
 )
 from tests.support.ibs_request_provenance import (
     QueryRoutes,
-    load_provenance_fixture,
     provenance_fixture_query,
     provenance_fixture_record,
+    provenance_fixture_responder,
 )
 from tests.support.ibs_track_release import TrackWorld, issue
 from tests.support.ticket_mutations import ignore_reason_for
@@ -477,8 +477,13 @@ class FakeRequests:
         *issues: str,
         codestream_package: str,
         responder: Responder | None = None,
+        link_base: bool = False,
     ) -> None:
-        form = request_action_diff_form(action.detail(number), codestream_package)
+        """Route the diff of `action` in its form, or in the link-base form
+        with `link_base`."""
+        form = request_action_diff_form(
+            action.detail(number), codestream_package, link_base=link_base
+        )
         query = [
             ("cmd", "diff"),
             ("view", "xml"),
@@ -995,13 +1000,13 @@ def serve_request_group_fixture(fake: FakeRequests, name: str) -> None:
 
 def serve_provenance(fake: FakeRequests, name: str) -> None:
     """Route a fixture of `tests/support/ibs_request_provenance.py` at its
-    recorded method, path, and query."""
+    recorded method, path, query, and status."""
     record = provenance_fixture_record(name)
     fake.route(
         record["method"],
         record["path"],
         provenance_fixture_query(name),
-        xml_response(load_provenance_fixture(name)),
+        provenance_fixture_responder(name),
     )
 
 

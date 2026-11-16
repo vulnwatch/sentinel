@@ -484,9 +484,11 @@ repositories.
     unpaged source history with exact lookups;
   - on 2026-10-14, the request naming, incident identity, codestream-history
     composition, release provenance, and release actions without acceptinfo
-    used by submission tracking; and
+    used by submission tracking;
   - on 2026-11-12, codestream-history entries of release requests that are
-    not accepted, left by failed acceptances.
+    not accepted, left by failed acceptances; and
+  - on 2026-11-16, the link-base form of the request action diff for source
+    links that conflict with the current codestream.
 
   Verified shapes, fields verified only through OBS source inspection, and
   the remaining unverified details of the track-release, authentication, and

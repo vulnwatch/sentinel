@@ -44,6 +44,10 @@ from tests.support.ibs_request_provenance import (
     D_RR,
     D_RR_REVOKED,
     D_SCAN,
+    E_KRB5_SR,
+    E_PILLOW_CVE,
+    E_PILLOW_SR,
+    SLE12_SP5,
     SLE15,
     SP4,
     SP6,
@@ -106,6 +110,17 @@ def _fixture_action(name: str, target_package: str) -> Action:
 
 def _served_paths(fake: FakeRequests) -> list[str]:
     return [f"{method} {path}" for method, path, _ in fake.served]
+
+
+def _served_action_diffs(
+    fake: FakeRequests,
+) -> list[tuple[str, str, tuple[tuple[str, str], ...]]]:
+    """The request action diffs served, in order."""
+    return [
+        served
+        for served in fake.served
+        if served[0] == "POST" and ("withissues", "1") in served[2]
+    ]
 
 
 def _recorded(*names: str) -> list[tuple[str, str, tuple[tuple[str, str], ...]]]:
@@ -416,3 +431,84 @@ class TestReleaseBefore2023Submission:
         assert f"GET /request/{B_SR}" not in _served_paths(fake)
         probe = await world.probe()
         assert await delivery_of(probe, scope.track_id) == DeliveryStatus.IN_PROGRESS
+
+
+class TestConflictingSourceLinks:
+    """Chain E: open submissions whose source link conflicts with the
+    current codestream package. Their not-accepted diff answers HTTP 400 and
+    made every scope of their package and codestream fail with `rejected`;
+    the link-base diff is the evidence of the action."""
+
+    async def test_a_conflicting_submission_carrying_the_cve_establishes_progress(
+        self, world: RequestWorld, fake: FakeRequests
+    ) -> None:
+        seed = RequestSeed(world)
+        scope = await seed.track(
+            await seed.ticket(cve_id=E_PILLOW_CVE),
+            package="python-Pillow",
+            codestream=SP4,
+        )
+        await seed.commit()
+        world.numbers().add(E_PILLOW_SR)
+        fake.quiet("python-Pillow", SP4, open_submissions=[E_PILLOW_SR])
+        for name in (
+            "e_request_sr_pillow",
+            "e_diff_sr_pillow",
+            "e_diff_sr_pillow_link_base",
+        ):
+            serve_provenance(fake, name)
+
+        outcomes = await reconcile(fake, [scope])
+
+        assert kinds(outcomes) == {scope.track_id: "created"}
+        assert fake.unrouted == []
+        assert _served_action_diffs(fake) == _recorded(
+            "e_diff_sr_pillow", "e_diff_sr_pillow_link_base"
+        )
+        probe = await world.probe()
+        assert await delivery_of(probe, scope.track_id) == DeliveryStatus.IN_PROGRESS
+        assert await evidence_of(probe, scope.track_id) == [
+            EvidenceRow(
+                request_number=E_PILLOW_SR,
+                state=IBSRequestState.NEW.value,
+                superseded_by_request_number=None,
+                action_type=IBSRequestActionType.MAINTENANCE_INCIDENT.value,
+                logical_package="python-Pillow",
+                codestream_name=SP4,
+                incident_number=None,
+                accepted_revision=None,
+                accepted_srcmd5=None,
+                target_project="SUSE:Maintenance",
+                target_package=None,
+                source_project=f"SUSE:Maintenance:REQUEST:{E_PILLOW_SR}",
+            )
+        ]
+
+    async def test_scopes_whose_cve_the_conflicting_submission_lacks_complete(
+        self, world: RequestWorld, fake: FakeRequests
+    ) -> None:
+        """Tickets of the package and codestream whose CVE the request does
+        not carry become complete no-matches; the two diffs are requested
+        once for every scope."""
+        seed = RequestSeed(world)
+        scopes = [
+            await seed.track(await seed.ticket(), package="krb5", codestream=SLE12_SP5)
+            for _ in range(3)
+        ]
+        await seed.commit()
+        world.numbers().add(E_KRB5_SR)
+        fake.quiet("krb5", SLE12_SP5, open_submissions=[E_KRB5_SR])
+        for name in ("e_request_sr_krb5", "e_diff_sr_krb5", "e_diff_sr_krb5_link_base"):
+            serve_provenance(fake, name)
+
+        outcomes = await reconcile(fake, scopes)
+
+        assert kinds(outcomes) == {scope.track_id: "no_op" for scope in scopes}
+        assert fake.unrouted == []
+        assert _served_action_diffs(fake) == _recorded(
+            "e_diff_sr_krb5", "e_diff_sr_krb5_link_base"
+        )
+        probe = await world.probe()
+        for scope in scopes:
+            assert await delivery_of(probe, scope.track_id) == DeliveryStatus.PENDING
+            assert await evidence_of(probe, scope.track_id) == []
