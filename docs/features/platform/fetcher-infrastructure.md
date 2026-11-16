@@ -4087,8 +4087,8 @@ timestamp and `user_id`. If the same PATCH also changes `enabled` to
 ## Data Retention
 
 `FetcherRun` records are retained indefinitely. Each run adds one row; at the
-default schedules (one to eight runs per fetcher per day), the table grows by
-approximately 15,000 rows per year — negligible for PostgreSQL. No cleanup
+default schedules (one to 24 runs per fetcher per day), the table grows by
+approximately 24,000 rows per year — negligible for PostgreSQL. No cleanup
 task or retention policy is necessary. Orphaned runs (stuck in `queued` or
 `running` status due to an unpublished trigger, an unclean process
 termination, or a finalization that failed or did not run) are resolved by

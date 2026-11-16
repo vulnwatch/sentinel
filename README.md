@@ -35,7 +35,8 @@ services.
 ### What Sentinel does
 
 - Ingests CVE data from public sources (NVD, MITRE, Red Hat, GHSA, OSV,
-  CISA KEV, EPSS, Linux Kernel CNA)
+  CISA KEV, EPSS, Linux Kernel CNA) and links each CVE to its SUSE Bugzilla
+  bug
 - Creates and manages security tickets from CVE detections
 - Tracks which packages, codestreams, and products are affected
 - Synchronizes the product catalog, lifecycle dates, and CVSS thresholds
@@ -60,7 +61,7 @@ services.
 ```mermaid
 graph TB
     subgraph External Sources
-        CVE[CVE APIs and feeds<br/>NVD, Red Hat, GHSA, OSV,<br/>CISA KEV, EPSS]
+        CVE[CVE APIs and feeds<br/>NVD, Red Hat, GHSA, OSV,<br/>CISA KEV, EPSS, SUSE Bugzilla]
         GIT[CVE Git repositories<br/>MITRE cvelistV5, Linux Kernel CNA]
         IBS[IBS]
         RMQ[IBS RabbitMQ]
