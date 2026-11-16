@@ -699,9 +699,11 @@ class TestCursor:
         assert "cookie" not in request.headers
 
     async def test_window_start_is_twelve_hours_before_the_cursor_in_whole_seconds(
-        self, env: Env
+        self, env: Env, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         cursor = datetime(2026, 11, 16, 13, 45, 30, 987654, tzinfo=UTC)
+        # The next hourly run, so the fixed cursor never becomes stale.
+        _freeze(monkeypatch, cursor + timedelta(hours=1))
         await env.seed_run("success", cursor)
         batch = await env.batch(cursor=False)
 
@@ -1007,14 +1009,14 @@ class TestPagination:
 
     @pytest.mark.parametrize(
         "ids",
-        [[1], [0], [5, 4], [5, 5]],
+        [[10], [5], [15, 12], [15, 15]],
         ids=["equal_to_cursor", "below_cursor", "descending", "duplicate"],
     )
     async def test_non_ascending_later_page_aborts_before_any_cve(
         self, ids: list[int], env: Env, batch: Batch, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         cve = await env.cve()
-        env.server.page_responses[0] = json_body(envelope([bug(1, cve.cve_id)]))
+        env.server.page_responses[0] = json_body(envelope([bug(10, cve.cve_id)]))
         env.server.page_responses[1] = json_body(
             envelope([bug(bug_id, cve.cve_id, summary=FAILURE_TEXT) for bug_id in ids])
         )
@@ -1026,7 +1028,7 @@ class TestPagination:
         assert str(raised.value) == UNPARSEABLE_RESPONSE
         assert raised.value.__cause__ is None
         assert raised.value.__suppress_context__
-        assert env.server.requested_after_ids == [0, 1]
+        assert env.server.requested_after_ids == [0, 10]
         assert trace.processed == []
         assert counters(batch.fetcher) == Counters(0, 0, 0, 0)
         assert logs == []
@@ -1420,10 +1422,11 @@ class TestSelection:
         self, env: Env, batch: Batch, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """An alias that moved between bugs while the window was collected
-        makes both bugs name the CVE."""
+        makes both bugs name the CVE; each is linked from its own page."""
         cve = await env.cve()
         older, newer = _bug(cve.cve_id, summary="Old"), _bug(cve.cve_id, summary="New")
-        env.serve(newer, older)
+        env.serve(older, newer)
+        env.server.page_cap = 1
         candidates: list[list[str]] = []
         real = reference_service.upsert_references
 
