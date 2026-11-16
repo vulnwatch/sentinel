@@ -521,7 +521,7 @@ class TestHandoffLossRecovery:
         the package once; a second one duplicates nothing."""
         product = await current_product(world)
         smelt = Smelt(
-            {target.package: resolves(codestream(IBS_REF, "SLE_15", product.cpe))}
+            {target.package: resolves(codestream(IBS_REF, "IBS", product.cpe))}
         )
         smelt.install(monkeypatch)
         harness.published.errors.clear()

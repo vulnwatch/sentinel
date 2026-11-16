@@ -5,7 +5,7 @@
       "codestream": {
         "name": "SUSE:SLE-11-SP4:Update",
         "url": "https://build.example.invalid/fictional/1",
-        "type": "SLE_15"
+        "type": "IBS"
       },
       "binary_packages": [
         {
@@ -49,7 +49,7 @@
       "codestream": {
         "name": "SUSE:SLE-12-SP3:Update:Products:Teradata:Update",
         "url": "https://build.example.invalid/fictional/3",
-        "type": "SLE_15"
+        "type": "IBS"
       },
       "binary_packages": [
         {
@@ -93,7 +93,7 @@
       "codestream": {
         "name": "SUSE:SLE-12-SP5:Update",
         "url": "https://build.example.invalid/fictional/5",
-        "type": "SLE_15"
+        "type": "IBS"
       },
       "binary_packages": [
         {
@@ -179,7 +179,7 @@
       "codestream": {
         "name": "SUSE:SLE-15-SP1:Update",
         "url": "https://build.example.invalid/fictional/9",
-        "type": "SLE_15"
+        "type": "IBS"
       },
       "binary_packages": [
         {
@@ -226,7 +226,7 @@
       "codestream": {
         "name": "SUSE:SLE-15-SP2:Update",
         "url": "https://build.example.invalid/fictional/11",
-        "type": "SLE_15"
+        "type": "IBS"
       },
       "binary_packages": [
         {
@@ -273,7 +273,7 @@
       "codestream": {
         "name": "SUSE:SLE-15-SP3:Update",
         "url": "https://build.example.invalid/fictional/13",
-        "type": "SLE_15"
+        "type": "IBS"
       },
       "binary_packages": [
         {
@@ -320,7 +320,7 @@
       "codestream": {
         "name": "SUSE:SLE-15-SP4:Update",
         "url": "https://build.example.invalid/fictional/15",
-        "type": "SLE_15"
+        "type": "IBS"
       },
       "binary_packages": [
         {
@@ -390,20 +390,6 @@
         },
         {
           "product": {
-            "id": 785,
-            "friendly_name": "SUSE Linux Enterprise Micro 5.3",
-            "cpe": "cpe:/o:suse:sle-micro:5.3",
-            "support_status": "General Support"
-          },
-          "repository": "SUSE:Updates:SLE-Micro:5.3",
-          "product_definition": {
-            "name": "SLE-Micro_5.3",
-            "url": "https://build.example.invalid/fictional/19",
-            "type": "channel"
-          }
-        },
-        {
-          "product": {
             "id": 925,
             "friendly_name": "SUSE Linux Enterprise Micro 5.4",
             "cpe": "cpe:/o:suse:sle-micro:5.4",
@@ -412,7 +398,7 @@
           "repository": "SUSE:Updates:SLE-Micro:5.4",
           "product_definition": {
             "name": "SLE-Micro_5.4",
-            "url": "https://build.example.invalid/fictional/20",
+            "url": "https://build.example.invalid/fictional/19",
             "type": "channel"
           }
         },
@@ -426,7 +412,7 @@
           "repository": "SUSE:Updates:SLE-Micro:5.3",
           "product_definition": {
             "name": "SLE-Micro_5.3",
-            "url": "https://build.example.invalid/fictional/21",
+            "url": "https://build.example.invalid/fictional/20",
             "type": "channel"
           }
         },
@@ -440,7 +426,7 @@
           "repository": "SUSE:Updates:SLE-Micro:5.4",
           "product_definition": {
             "name": "SLE-Micro_5.4",
-            "url": "https://build.example.invalid/fictional/22",
+            "url": "https://build.example.invalid/fictional/21",
             "type": "channel"
           }
         },
@@ -454,7 +440,7 @@
           "repository": "SUSE:Updates:SLE-Product-SLES:15-SP4-LTSS",
           "product_definition": {
             "name": "SLE-Product-SLES_15-SP4-LTSS",
-            "url": "https://build.example.invalid/fictional/23",
+            "url": "https://build.example.invalid/fictional/22",
             "type": "channel"
           }
         },
@@ -468,7 +454,7 @@
           "repository": "SUSE:Updates:SLE-Product-SLES:15-SP4-TERADATA",
           "product_definition": {
             "name": "SLE-Product-SLES_15-SP4-TERADATA",
-            "url": "https://build.example.invalid/fictional/24",
+            "url": "https://build.example.invalid/fictional/23",
             "type": "channel"
           }
         },
@@ -482,7 +468,7 @@
           "repository": "SUSE:Updates:SLE-Product-SLES_SAP:15-SP4",
           "product_definition": {
             "name": "SLE-Product-SLES_SAP_15-SP4",
-            "url": "https://build.example.invalid/fictional/25",
+            "url": "https://build.example.invalid/fictional/24",
             "type": "channel"
           }
         }
@@ -492,8 +478,8 @@
     {
       "codestream": {
         "name": "SUSE:SLE-15-SP5:Update",
-        "url": "https://build.example.invalid/fictional/26",
-        "type": "SLE_15"
+        "url": "https://build.example.invalid/fictional/25",
+        "type": "IBS"
       },
       "binary_packages": [
         {
@@ -553,7 +539,7 @@
           "repository": "SUSE:Updates:SLE-Product-HPC:15-SP5-LTSS",
           "product_definition": {
             "name": "SLE-Product-HPC_15-SP5-LTSS",
-            "url": "https://build.example.invalid/fictional/27",
+            "url": "https://build.example.invalid/fictional/26",
             "type": "channel"
           }
         },
@@ -567,7 +553,7 @@
           "repository": "SUSE:Updates:SLE-Module-Live-Patching:15-SP5",
           "product_definition": {
             "name": "SLE-Module-Live-Patching_15-SP5",
-            "url": "https://build.example.invalid/fictional/28",
+            "url": "https://build.example.invalid/fictional/27",
             "type": "channel"
           }
         },
@@ -581,7 +567,7 @@
           "repository": "SUSE:Updates:SLE-Micro:5.5",
           "product_definition": {
             "name": "SLE-Micro_5.5",
-            "url": "https://build.example.invalid/fictional/29",
+            "url": "https://build.example.invalid/fictional/28",
             "type": "channel"
           }
         },
@@ -595,7 +581,7 @@
           "repository": "SUSE:Updates:SLE-Product-SLES:15-SP5-LTSS",
           "product_definition": {
             "name": "SLE-Product-SLES_15-SP5-LTSS",
-            "url": "https://build.example.invalid/fictional/30",
+            "url": "https://build.example.invalid/fictional/29",
             "type": "channel"
           }
         },
@@ -609,7 +595,7 @@
           "repository": "SUSE:Updates:SLE-Product-SLES_SAP:15-SP5",
           "product_definition": {
             "name": "SLE-Product-SLES_SAP_15-SP5",
-            "url": "https://build.example.invalid/fictional/31",
+            "url": "https://build.example.invalid/fictional/30",
             "type": "channel"
           }
         }
@@ -619,8 +605,8 @@
     {
       "codestream": {
         "name": "SUSE:SLE-15-SP6:Update",
-        "url": "https://build.example.invalid/fictional/32",
-        "type": "SLE_15"
+        "url": "https://build.example.invalid/fictional/31",
+        "type": "IBS"
       },
       "binary_packages": [
         {
@@ -668,7 +654,7 @@
           "repository": "SUSE:Updates:SLE-Product-SLES:15-SP6-LTSS",
           "product_definition": {
             "name": "SLE-Product-SLES_15-SP6-LTSS",
-            "url": "https://build.example.invalid/fictional/33",
+            "url": "https://build.example.invalid/fictional/32",
             "type": "channel"
           }
         },
@@ -682,7 +668,7 @@
           "repository": "SUSE:Updates:SLE-Product-SLES_SAP:15-SP6",
           "product_definition": {
             "name": "SLE-Product-SLES_SAP_15-SP6",
-            "url": "https://build.example.invalid/fictional/34",
+            "url": "https://build.example.invalid/fictional/33",
             "type": "channel"
           }
         }
@@ -692,8 +678,8 @@
     {
       "codestream": {
         "name": "SUSE:SLE-15-SP7:Update",
-        "url": "https://build.example.invalid/fictional/35",
-        "type": "SLE_15"
+        "url": "https://build.example.invalid/fictional/34",
+        "type": "IBS"
       },
       "binary_packages": [
         {
@@ -729,7 +715,7 @@
           "repository": "SUSE:Updates:SLE-Module-Basesystem:15-SP7",
           "product_definition": {
             "name": "SLE-Module-Basesystem_15-SP7",
-            "url": "https://build.example.invalid/fictional/36",
+            "url": "https://build.example.invalid/fictional/35",
             "type": "channel"
           }
         },
@@ -743,7 +729,7 @@
           "repository": "SUSE:Updates:SLE-Module-Legacy:15-SP7",
           "product_definition": {
             "name": "SLE-Module-Legacy_15-SP7",
-            "url": "https://build.example.invalid/fictional/37",
+            "url": "https://build.example.invalid/fictional/36",
             "type": "channel"
           }
         },
@@ -757,7 +743,7 @@
           "repository": "SUSE:Updates:SLE-Product-HA:15-SP7",
           "product_definition": {
             "name": "SLE-Product-HA_15-SP7",
-            "url": "https://build.example.invalid/fictional/38",
+            "url": "https://build.example.invalid/fictional/37",
             "type": "channel"
           }
         },
@@ -771,7 +757,7 @@
           "repository": "SUSE:Updates:SLE-Module-Live-Patching:15-SP7",
           "product_definition": {
             "name": "SLE-Module-Live-Patching_15-SP7",
-            "url": "https://build.example.invalid/fictional/39",
+            "url": "https://build.example.invalid/fictional/38",
             "type": "channel"
           }
         },
@@ -785,7 +771,7 @@
           "repository": "SUSE:Updates:SLE-Product-WE:15-SP7",
           "product_definition": {
             "name": "SLE-Product-WE_15-SP7",
-            "url": "https://build.example.invalid/fictional/40",
+            "url": "https://build.example.invalid/fictional/39",
             "type": "channel"
           }
         }

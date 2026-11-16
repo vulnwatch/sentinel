@@ -352,9 +352,9 @@ class TestSuccessfulUnits:
         await commit_package(world, ticket, c, tree=((IBS_REF, p3),))
         smelt = Smelt(
             {
-                a: resolves(codestream(IBS_REF, "SLE_15", p1.cpe)),
-                b: resolves(codestream(IBS_REF, "SLE_15", p2.cpe)),
-                c: resolves(codestream(IBS_REF, "SLE_15", p3.cpe), emails=(m.email,)),
+                a: resolves(codestream(IBS_REF, "IBS", p1.cpe)),
+                b: resolves(codestream(IBS_REF, "IBS", p2.cpe)),
+                c: resolves(codestream(IBS_REF, "IBS", p3.cpe), emails=(m.email,)),
             },
             sessions.events,
         )
@@ -429,7 +429,7 @@ class TestSuccessfulUnits:
         product = await current_product(world)
         (a,) = package_names("a")
         cpe = f"cpe:2.3:a:fictional_vendor:{a}:1.0:*:*:*:*:*:*:*"
-        smelt = Smelt({a: resolves(codestream(IBS_REF, "SLE_15", product.cpe))})
+        smelt = Smelt({a: resolves(codestream(IBS_REF, "IBS", product.cpe))})
         smelt.install(monkeypatch)
 
         with capture_logs() as logs:
@@ -471,7 +471,7 @@ class TestSuccessfulUnits:
             tree=((IBS_REF, p1),),
             status=PackageStatus.NOT_AFFECTED,
         )
-        smelt = Smelt({a: resolves(codestream(IBS_REF, "SLE_15", p2.cpe))})
+        smelt = Smelt({a: resolves(codestream(IBS_REF, "IBS", p2.cpe))})
         smelt.install(monkeypatch)
         registered: list[uuid.UUID] = []
         real_register = ticket_convergence_registry.register_ticket_convergence
@@ -544,23 +544,23 @@ class TestOutcomeTable:
                 products.append(await current_product(world))
                 return httpx.Response(
                     200,
-                    json=maintained(codestream(IBS_REF, "SLE_15", products[0].cpe)),
+                    json=maintained(codestream(IBS_REF, "IBS", products[0].cpe)),
                 )
 
             second = Answer(ready_then_resolve)
         else:
             products.append(await current_product(world))
-            second = resolves(codestream(IBS_REF, "SLE_15", products[0].cpe))
+            second = resolves(codestream(IBS_REF, "IBS", products[0].cpe))
         if outcome == "excluded":
             await commit_package(world, ticket, a, excluded=True)
         first = {
             "excluded": resolves(
-                codestream(IBS_REF, "SLE_15", products[0].cpe if products else ABSENT),
+                codestream(IBS_REF, "IBS", products[0].cpe if products else ABSENT),
                 emails=(m.email,),
             ),
             "no-match": Answer(reply(404, not_found(MARKER))),
-            "targets-unresolved": resolves(codestream(IBS_REF, "SLE_15", ABSENT)),
-            "catalog-not-ready": resolves(codestream(IBS_REF, "SLE_15", ABSENT)),
+            "targets-unresolved": resolves(codestream(IBS_REF, "IBS", ABSENT)),
+            "catalog-not-ready": resolves(codestream(IBS_REF, "IBS", ABSENT)),
             "smelt-unavailable-http": Answer(
                 reply(500, {"status": "error", "data": MARKER})
             ),
@@ -632,7 +632,7 @@ class TestOutcomeTable:
         a, b, c = package_names("a", "b", "c")
         await commit_package(world, ticket, b, excluded=True)
         await commit_package(world, ticket, c, tree=((IBS_REF, product),))
-        answer = resolves(codestream(IBS_REF, "SLE_15", product.cpe))
+        answer = resolves(codestream(IBS_REF, "IBS", product.cpe))
         smelt = Smelt({a: Answer(reply(404, not_found(a))), b: answer, c: answer})
         smelt.install(monkeypatch)
 
@@ -687,9 +687,9 @@ class TestTerminalFailures:
         a, b, c = package_names("a", "b", "c")
         smelt = Smelt(
             {
-                a: resolves(codestream(IBS_REF, "SLE_15", p1.cpe)),
-                b: resolves(codestream(IBS_REF, "SLE_15", p2.cpe)),
-                c: resolves(codestream(IBS_REF, "SLE_15", p3.cpe)),
+                a: resolves(codestream(IBS_REF, "IBS", p1.cpe)),
+                b: resolves(codestream(IBS_REF, "IBS", p2.cpe)),
+                c: resolves(codestream(IBS_REF, "IBS", p3.cpe)),
             },
             sessions.events,
         )
@@ -772,13 +772,11 @@ class TestTerminalFailures:
         if outcome == "excluded":
             await commit_package(world, ticket, a, excluded=True)
         first = {
-            "excluded": resolves(codestream(IBS_REF, "SLE_15", product.cpe)),
+            "excluded": resolves(codestream(IBS_REF, "IBS", product.cpe)),
             "no-match": Answer(reply(404, not_found(a))),
-            "targets-unresolved": resolves(codestream(IBS_REF, "SLE_15", ABSENT)),
+            "targets-unresolved": resolves(codestream(IBS_REF, "IBS", ABSENT)),
         }[outcome]
-        smelt = Smelt(
-            {a: first, b: resolves(codestream(IBS_REF, "SLE_15", product.cpe))}
-        )
+        smelt = Smelt({a: first, b: resolves(codestream(IBS_REF, "IBS", product.cpe))})
         smelt.install(monkeypatch)
         sessions.hooks[0] = rollback_raises(database_failure())
 
@@ -803,7 +801,7 @@ class TestTerminalFailures:
         ticket = await seed_ticket(world)
         product = await current_product(world)
         (a,) = package_names("a")
-        smelt = Smelt({a: resolves(codestream(IBS_REF, "SLE_15", product.cpe))})
+        smelt = Smelt({a: resolves(codestream(IBS_REF, "IBS", product.cpe))})
         smelt.install(monkeypatch)
         rollback_error = RuntimeError("fictional rollback failure")
 
@@ -857,7 +855,7 @@ class TestInactiveTermination:
         )
         product = await current_product(world)
         a, b = package_names("a", "b")
-        answer = resolves(codestream(IBS_REF, "SLE_15", product.cpe), emails=(m.email,))
+        answer = resolves(codestream(IBS_REF, "IBS", product.cpe), emails=(m.email,))
         smelt = Smelt({a: answer, b: answer})
         smelt.install(monkeypatch)
 
@@ -886,7 +884,7 @@ class TestInactiveTermination:
         smelt = Smelt(
             {
                 a: Answer(reply(500, {"status": "error", "data": MARKER})),
-                b: resolves(codestream(IBS_REF, "SLE_15", product.cpe)),
+                b: resolves(codestream(IBS_REF, "IBS", product.cpe)),
             }
         )
         smelt.install(monkeypatch)
@@ -934,9 +932,9 @@ class TestControlSignals:
         a, b, c = package_names("a", "b", "c")
         smelt = Smelt(
             {
-                a: resolves(codestream(IBS_REF, "SLE_15", p1.cpe)),
-                b: resolves(codestream(IBS_REF, "SLE_15", p2.cpe)),
-                c: resolves(codestream(IBS_REF, "SLE_15", p3.cpe)),
+                a: resolves(codestream(IBS_REF, "IBS", p1.cpe)),
+                b: resolves(codestream(IBS_REF, "IBS", p2.cpe)),
+                c: resolves(codestream(IBS_REF, "IBS", p3.cpe)),
             }
         )
         smelt.install(monkeypatch)
@@ -978,7 +976,7 @@ class TestControlSignals:
         smelt = Smelt(
             {
                 a: Answer(reply(404, not_found(a))),
-                b: resolves(codestream(IBS_REF, "SLE_15", product.cpe)),
+                b: resolves(codestream(IBS_REF, "IBS", product.cpe)),
             }
         )
         smelt.install(monkeypatch)
@@ -1057,8 +1055,8 @@ class TestControlSignals:
         a, b = package_names("a", "b")
         smelt = Smelt(
             {
-                a: resolves(codestream(IBS_REF, "SLE_15", p1.cpe)),
-                b: resolves(codestream(IBS_REF, "SLE_15", p2.cpe)),
+                a: resolves(codestream(IBS_REF, "IBS", p1.cpe)),
+                b: resolves(codestream(IBS_REF, "IBS", p2.cpe)),
             }
         )
         smelt.install(monkeypatch)
@@ -1097,7 +1095,7 @@ class TestControlSignals:
         ticket = await seed_ticket(world)
         product = await current_product(world)
         (a,) = package_names("a")
-        smelt = Smelt({a: resolves(codestream(IBS_REF, "SLE_15", product.cpe))})
+        smelt = Smelt({a: resolves(codestream(IBS_REF, "IBS", product.cpe))})
         smelt.install(monkeypatch)
         additions.after[a] = RuntimeError(MARKER)
         signal = SoftTimeLimitExceeded()
@@ -1152,7 +1150,7 @@ class TestRequestCatchUp:
         smelt = Smelt(
             {
                 a: resolves(
-                    codestream(IBS_REF, "SLE_15", p1.cpe),
+                    codestream(IBS_REF, "IBS", p1.cpe),
                     codestream(GIT_REF, "SLFO", p2.cpe),
                 )
             }
@@ -1247,9 +1245,9 @@ class TestRequestCatchUp:
         published.on_call = observe
         Smelt(
             {
-                a: resolves(codestream(IBS_REF, "SLE_15", p1.cpe)),
-                b: resolves(codestream(IBS_REF, "SLE_15", p2.cpe)),
-                c: resolves(codestream(IBS_REF, "SLE_15", p3.cpe)),
+                a: resolves(codestream(IBS_REF, "IBS", p1.cpe)),
+                b: resolves(codestream(IBS_REF, "IBS", p2.cpe)),
+                c: resolves(codestream(IBS_REF, "IBS", p3.cpe)),
             },
             sessions.events,
         ).install(monkeypatch)
@@ -1313,8 +1311,8 @@ class TestRequestCatchUp:
         published.error = error
         Smelt(
             {
-                a: resolves(codestream(IBS_REF, "SLE_15", p1.cpe)),
-                b: resolves(codestream(IBS_REF, "SLE_15", p2.cpe)),
+                a: resolves(codestream(IBS_REF, "IBS", p1.cpe)),
+                b: resolves(codestream(IBS_REF, "IBS", p2.cpe)),
             },
             sessions.events,
         ).install(monkeypatch)

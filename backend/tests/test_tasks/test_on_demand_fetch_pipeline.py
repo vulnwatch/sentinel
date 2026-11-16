@@ -20,7 +20,7 @@ Owning specifications:
   transactions, Audit and observability; `add_package_to_ticket()` steps
   2-9; `add_package_records()` steps 10-13; Record Creation Logic) and
   docs/features/packages/package-model.md (SMELT Query for Package
-  Resolution: `codestream.name` is the track reference, `SLE_15` maps to
+  Resolution: `codestream.name` is the track reference, `IBS` maps to
   `ibs`, exact CPE match against the current Product catalog snapshot;
   Ticket Events for Package Changes; Axis 2: Eligibility).
 - docs/features/packages/product-catalog.md (SMELT Integration > Product
@@ -44,7 +44,7 @@ alone is used by clients created on each loop.
 
 SMELT is the in-process `Smelt` fake of
 `tests/support/post_ingest_resolution.py` serving the sanitized live
-fixtures of #782 (`maintained_sle15_only.json`) and #775
+fixtures of #782 (`maintained_ibs_only.json`, re-captured in #1318) and #775
 (`maintainership_users_only.json`). The Product catalog is synchronized
 from the captured live listing pages (`products_page_*.json`) through the
 real Product Sync listing, validation, and publication. Expected rows are
@@ -160,13 +160,13 @@ T = TypeVar("T")
 
 NVD: Final = SOURCE.value
 
-MAINTAINED_FIXTURE: Final = "sle15_only"
-"""#782 `maintained_sle15_only.json`: two `SLE_15` codestreams."""
+MAINTAINED_FIXTURE: Final = "ibs_only"
+"""#782 `maintained_ibs_only.json`: two `IBS` codestreams."""
 
 MAINTAINERSHIP_FIXTURE: Final = "users_only"
 """#775 `maintainership_users_only.json`: one direct user, twice."""
 
-# Transcribed from `maintained_sle15_only.json`.
+# Transcribed from `maintained_ibs_only.json`.
 SLE_12_UPDATE: Final = "SUSE:SLE-12:Update"
 SLE_15_UPDATE: Final = "SUSE:SLE-15:Update"
 SLES_LTSS_12_SP5: Final = "cpe:/o:suse:sles-ltss:12:sp5"

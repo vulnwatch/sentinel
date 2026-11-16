@@ -603,9 +603,9 @@ class TestEnumerationAndResolution:
         await _package(world, ticket, b, excluded=True, tree=((IBS_REF, p2),))
         smelt = _Smelt(
             {
-                a: _resolves(codestream(IBS_REF, "SLE_15", p1.cpe), emails=(m1.email,)),
-                b: _resolves(codestream(IBS_REF, "SLE_15", p2.cpe), emails=(m2.email,)),
-                c: _resolves(codestream(IBS_REF, "SLE_15", p3.cpe), emails=(m3.email,)),
+                a: _resolves(codestream(IBS_REF, "IBS", p1.cpe), emails=(m1.email,)),
+                b: _resolves(codestream(IBS_REF, "IBS", p2.cpe), emails=(m2.email,)),
+                c: _resolves(codestream(IBS_REF, "IBS", p3.cpe), emails=(m3.email,)),
             }
         )
         names = smelt.install(monkeypatch)
@@ -665,7 +665,7 @@ class TestEnumerationAndResolution:
         smelt = _Smelt(
             {
                 name: _resolves(
-                    codestream(IBS_REF, "SLE_15", product.cpe), emails=(m.email,)
+                    codestream(IBS_REF, "IBS", product.cpe), emails=(m.email,)
                 )
             }
         )
@@ -828,20 +828,20 @@ class TestUnitIsolation:
                 products.append(await _current_product(world))
                 return httpx.Response(
                     200,
-                    json=maintained(codestream(IBS_REF, "SLE_15", products[0].cpe)),
+                    json=maintained(codestream(IBS_REF, "IBS", products[0].cpe)),
                 )
 
             second = _Answer(ready_then_resolve)
         else:
             products.append(await _current_product(world))
-            second = _resolves(codestream(IBS_REF, "SLE_15", products[0].cpe))
+            second = _resolves(codestream(IBS_REF, "IBS", products[0].cpe))
         first = {
             "smelt-unavailable": _Answer(
                 reply(500, {"status": "error", "data": "fictional-secret-detail"})
             ),
             "package-not-found": _Answer(reply(404, not_found(failing))),
-            "targets-unresolved": _resolves(codestream(IBS_REF, "SLE_15", ABSENT)),
-            "catalog-not-ready": _resolves(codestream(IBS_REF, "SLE_15", ABSENT)),
+            "targets-unresolved": _resolves(codestream(IBS_REF, "IBS", ABSENT)),
+            "catalog-not-ready": _resolves(codestream(IBS_REF, "IBS", ABSENT)),
             "invalid-package-name": _Answer(reply(500, {})),
         }[failure]
         cause = {
@@ -910,7 +910,7 @@ class TestUnitIsolation:
         smelt = _Smelt(
             {
                 invalid: _Answer(reply(500, {})),
-                valid: _resolves(codestream(IBS_REF, "SLE_15", product.cpe)),
+                valid: _resolves(codestream(IBS_REF, "IBS", product.cpe)),
             }
         )
         smelt.install(monkeypatch)
@@ -956,7 +956,7 @@ class TestUnitIsolation:
         await _package(world, ticket, a)
         await _package(world, ticket, b)
         pause = Pause()
-        body = maintained(codestream(IBS_REF, "SLE_15", product.cpe))
+        body = maintained(codestream(IBS_REF, "IBS", product.cpe))
 
         async def held(request: httpx.Request) -> httpx.Response:
             await pause.hold()
@@ -965,7 +965,7 @@ class TestUnitIsolation:
         smelt = _Smelt(
             {
                 a: _Answer(held, reply(200, maintainership(m.email))),
-                b: _resolves(codestream(IBS_REF, "SLE_15", product.cpe)),
+                b: _resolves(codestream(IBS_REF, "IBS", product.cpe)),
             }
         )
         smelt.install(monkeypatch)
@@ -1092,9 +1092,9 @@ class TestUnitIsolation:
             await _package(world, ticket, name)
         smelt = _Smelt(
             {
-                a: _resolves(codestream(IBS_REF, "SLE_15", p1.cpe)),
-                b: _resolves(codestream(IBS_REF, "SLE_15", p2.cpe)),
-                c: _resolves(codestream(IBS_REF, "SLE_15", p3.cpe)),
+                a: _resolves(codestream(IBS_REF, "IBS", p1.cpe)),
+                b: _resolves(codestream(IBS_REF, "IBS", p2.cpe)),
+                c: _resolves(codestream(IBS_REF, "IBS", p3.cpe)),
             }
         )
         smelt.install(monkeypatch)
@@ -1160,8 +1160,8 @@ async def _regressing_world(
         world, ticket, b, tree=((IBS_REF, p2),), status=PackageStatus.NOT_AFFECTED
     )
     answers = {
-        a: _resolves(codestream(IBS_REF, "SLE_15", p1.cpe)),
-        b: _resolves(codestream(IBS_REF, "SLE_15", p2.cpe)),
+        a: _resolves(codestream(IBS_REF, "IBS", p1.cpe)),
+        b: _resolves(codestream(IBS_REF, "IBS", p2.cpe)),
     }
     return ticket, a, b, answers, p1
 
@@ -1359,7 +1359,7 @@ class TestCatchUpRoster:
         _Smelt(
             {
                 failing: _Answer(reply(404, not_found(failing))),
-                succeeding: _resolves(codestream(IBS_REF, "SLE_15", product.cpe)),
+                succeeding: _resolves(codestream(IBS_REF, "IBS", product.cpe)),
             },
             events,
         ).install(monkeypatch)
@@ -1471,8 +1471,8 @@ class TestCatchUpRoster:
         published.events = events
         _Smelt(
             {
-                a: _resolves(codestream(IBS_REF, "SLE_15", p1.cpe)),
-                b: _resolves(codestream(IBS_REF, "SLE_15", p2.cpe)),
+                a: _resolves(codestream(IBS_REF, "IBS", p1.cpe)),
+                b: _resolves(codestream(IBS_REF, "IBS", p2.cpe)),
             },
             events,
         ).install(monkeypatch)
@@ -1546,10 +1546,10 @@ class TestConcurrency:
         smelt = _Smelt(
             {
                 a: _Answer(
-                    reply(200, maintained(codestream(IBS_REF, "SLE_15", p1.cpe))),
+                    reply(200, maintained(codestream(IBS_REF, "IBS", p1.cpe))),
                     barrier,
                 ),
-                b: _resolves(codestream(IBS_REF, "SLE_15", p2.cpe), emails=(m2.email,)),
+                b: _resolves(codestream(IBS_REF, "IBS", p2.cpe), emails=(m2.email,)),
             }
         )
         names = smelt.install(monkeypatch)
@@ -1624,9 +1624,7 @@ class TestConcurrency:
         smelt = _Smelt(
             {
                 pin.subject["package"]: _resolves(
-                    codestream(
-                        pin.subject["track"], "SLE_15", pin.subject["product_cpe"]
-                    )
+                    codestream(pin.subject["track"], "IBS", pin.subject["product_cpe"])
                 ),
                 target.subject["package"]: _Answer(
                     reply(
@@ -1634,7 +1632,7 @@ class TestConcurrency:
                         maintained(
                             codestream(
                                 reference,
-                                "SLE_15",
+                                "IBS",
                                 target.subject["product_cpe"],
                                 p2.cpe,
                             ),

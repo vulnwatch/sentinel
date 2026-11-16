@@ -551,7 +551,7 @@ class TestAuthenticationAndCapability:
         caller = await api.caller(*roles)
         ticket = await cveless(ticket_factory)
         hidden = await cveless(ticket_factory, is_confidential=True)
-        _serve(api.smelt, codestream(IBS_REF, "SLE_15", ABSENT))
+        _serve(api.smelt, codestream(IBS_REF, "IBS", ABSENT))
         before = await _state(api.db, ticket, hidden)
         loads = _record_role_loads(monkeypatch)
         spies = _forbid_lookups(monkeypatch)
@@ -591,7 +591,7 @@ class TestAuthenticationAndCapability:
         (product,) = await _current(api.db)
         _serve(
             api.smelt,
-            codestream(IBS_REF, "SLE_15", product.cpe),
+            codestream(IBS_REF, "IBS", product.cpe),
             emails=[caller.user.email],
         )
         before = await _state(api.db, ticket)
@@ -620,7 +620,7 @@ class TestAuthenticationAndCapability:
         caller = await api.caller(role)
         ticket = await cveless(ticket_factory, assignee_id=caller.user.id)
         (product,) = await _current(api.db)
-        _serve(api.smelt, codestream(IBS_REF, "SLE_15", product.cpe))
+        _serve(api.smelt, codestream(IBS_REF, "IBS", product.cpe))
 
         response = await api.post(ticket, caller=caller)
 
@@ -650,7 +650,7 @@ class TestAuthenticationAndCapability:
             package = await seed_package(api.db, ticket.id, "fictional-maintained")
             await seed_maintainer(api.db, package, caller.user)
         (product,) = await _current(api.db)
-        _serve(api.smelt, codestream(IBS_REF, "SLE_15", product.cpe))
+        _serve(api.smelt, codestream(IBS_REF, "IBS", product.cpe))
 
         response = await api.post(ticket, caller=caller)
 
@@ -690,7 +690,7 @@ class TestTicketNotFound:
         (product,) = await _current(api.db)
         _serve(
             api.smelt,
-            codestream(IBS_REF, "SLE_15", product.cpe),
+            codestream(IBS_REF, "IBS", product.cpe),
             emails=[caller.user.email],
         )
         before = await _state(api.db, visible, hidden, excluded)
@@ -777,7 +777,7 @@ class TestValidation:
         caller = await api.caller(Role.VULNERABILITY_ANALYST)
         ticket = await cveless(ticket_factory)
         await _current(api.db)
-        _serve(api.smelt, codestream(IBS_REF, "SLE_15", ABSENT))
+        _serve(api.smelt, codestream(IBS_REF, "IBS", ABSENT))
         before = await _state(api.db, ticket)
 
         response = await api.post(ticket, caller=caller, json=body)
@@ -838,7 +838,7 @@ class TestSuccess:
     async def test_first_addition_returns_exact_counts_and_one_package_added_event(
         self, api: _Api, ticket_factory: TicketFactory
     ) -> None:
-        """A new package with an `SLE_15` (`ibs`) codestream of two current
+        """A new package with an `IBS` (`ibs`) codestream of two current
         Products and an `SLFO` (`git`) codestream of one: the exact counts,
         the created tree, both SMELT requests for the requested name, and
         exactly one acting-user `package_added` with `comment = NULL` (the
@@ -849,7 +849,7 @@ class TestSuccess:
         p1, p2, p3 = await _current(api.db, 3)
         _serve(
             api.smelt,
-            codestream(IBS_REF, "SLE_15", p1.cpe, p2.cpe),
+            codestream(IBS_REF, "IBS", p1.cpe, p2.cpe),
             codestream(GIT_REF, "SLFO", p3.cpe),
         )
 
@@ -894,7 +894,7 @@ class TestSuccess:
         p1, p2, p3 = await _current(api.db, 3)
         _serve(
             api.smelt,
-            codestream(IBS_REF, "SLE_15", p1.cpe, p2.cpe),
+            codestream(IBS_REF, "IBS", p1.cpe, p2.cpe),
             codestream(GIT_REF, "SLFO", p3.cpe),
         )
         first = await api.post(ticket, caller=caller)
@@ -932,7 +932,7 @@ class TestSuccess:
         await seed_occurrence(api.db, track, product)
         _serve(
             api.smelt,
-            codestream(IBS_REF, "SLE_15", product.cpe),
+            codestream(IBS_REF, "IBS", product.cpe),
             emails=["Erin.Maintainer@Example.com"],
         )
         tree_before = await tree_rows(api.db, ticket.id)
@@ -971,7 +971,7 @@ class TestSuccess:
         (product,) = await _current(api.db)
         _serve(
             api.smelt,
-            codestream(IBS_REF, "SLE_15", product.cpe),
+            codestream(IBS_REF, "IBS", product.cpe),
             emails=["erin.maintainer@example.com", f"{MARKER}{character}@example.com"],
         )
 
@@ -1008,7 +1008,7 @@ class TestSuccess:
         caller = await api.caller(Role.VULNERABILITY_ANALYST)
         ticket = await cveless(ticket_factory, status=NEW)
         (product,) = await _current(api.db)
-        _serve(api.smelt, codestream(IBS_REF, "SLE_15", product.cpe))
+        _serve(api.smelt, codestream(IBS_REF, "IBS", product.cpe))
 
         response = await api.post(ticket, caller=caller)
 
@@ -1034,7 +1034,7 @@ class TestSuccess:
         caller = await api.caller(Role.VULNERABILITY_ANALYST)
         ticket = await cveless(ticket_factory, assignee_id=caller.user.id)
         (product,) = await _current(api.db)
-        _serve(api.smelt, codestream(IBS_REF, "SLE_15", product.cpe))
+        _serve(api.smelt, codestream(IBS_REF, "IBS", product.cpe))
         names: list[str] = []
 
         def _factory(name: str, **overrides: Any) -> httpx.AsyncClient:
@@ -1131,7 +1131,7 @@ class TestErrors:
         if smelt_outcome == "not-found":
             api.smelt.responses["maintained"] = reply(404, not_found(PKG))
         else:
-            _serve(api.smelt, codestream(IBS_REF, "SLE_15", ABSENT))
+            _serve(api.smelt, codestream(IBS_REF, "IBS", ABSENT))
         before = await _state(api.db, ticket)
 
         response = await api.post(ticket, caller=caller)
@@ -1178,8 +1178,8 @@ class TestErrors:
         (current,) = await _current(api.db)
         historical = await catalog_product(api.db)
         entry = {
-            "absent-cpe": codestream(IBS_REF, "SLE_15", ABSENT),
-            "historical-product": codestream(IBS_REF, "SLE_15", historical.cpe),
+            "absent-cpe": codestream(IBS_REF, "IBS", ABSENT),
+            "historical-product": codestream(IBS_REF, "IBS", historical.cpe),
             "unsupported-process": codestream(IBS_REF, "SLFO_IBS", current.cpe),
         }[case]
         _serve(api.smelt, entry)
@@ -1209,7 +1209,7 @@ class TestErrors:
         await seed_occurrence(api.db, track, p1)
         _serve(
             api.smelt,
-            codestream(IBS_REF, "SLE_15", p1.cpe, p2.cpe),
+            codestream(IBS_REF, "IBS", p1.cpe, p2.cpe),
             emails=[maintainer.email],
         )
         before = await _state(api.db, ticket)
@@ -1233,7 +1233,7 @@ class TestErrors:
         (product,) = await _current(api.db)
         _serve(
             api.smelt,
-            codestream(IBS_REF, "SLE_15", product.cpe),
+            codestream(IBS_REF, "IBS", product.cpe),
             emails=[maintainer.email],
         )
         before = await _state(api.db, ticket)
@@ -1256,7 +1256,7 @@ class TestErrors:
         package = await seed_package(api.db, ticket.id, PKG, excluded=True)
         track = await seed_track(api.db, package, IBS_REF)
         await seed_occurrence(api.db, track, product)
-        _serve(api.smelt, codestream(IBS_REF, "SLE_15", product.cpe))
+        _serve(api.smelt, codestream(IBS_REF, "IBS", product.cpe))
 
         response = await api.post(ticket, caller=caller)
 
@@ -1294,7 +1294,7 @@ class TestConvergence:
             ticket_factory, status=RESOLVED, assignee_id=caller.user.id
         )
         (product,) = await _current(api.db)
-        _serve(api.smelt, codestream(IBS_REF, "SLE_15", product.cpe))
+        _serve(api.smelt, codestream(IBS_REF, "IBS", product.cpe))
         return caller, ticket
 
     async def test_resolved_regression_publishes_one_root_task_after_commit(
@@ -1389,7 +1389,7 @@ class TestRequestCatchUp:
         pkg = _race_name()
         _serve(
             committed.smelt,
-            codestream(IBS_REF, "SLE_15", p1.cpe),
+            codestream(IBS_REF, "IBS", p1.cpe),
             codestream(GIT_REF, "SLFO", p2.cpe),
         )
         observed: list[tuple[bool, Tree | None]] = []
@@ -1455,7 +1455,7 @@ class TestRequestCatchUp:
         caller = await api.caller(Role.VULNERABILITY_ANALYST)
         ticket = await cveless(ticket_factory, assignee_id=caller.user.id)
         (product,) = await _current(api.db)
-        _serve(api.smelt, codestream(IBS_REF, "SLE_15", product.cpe))
+        _serve(api.smelt, codestream(IBS_REF, "IBS", product.cpe))
         error = RuntimeError(MARKER)
         broker.error = error
 
@@ -1624,7 +1624,7 @@ class TestAccessLostDuringExternalIO:
         pkg = _race_name()
         _serve(
             committed.smelt,
-            codestream(IBS_REF, "SLE_15", product.cpe),
+            codestream(IBS_REF, "IBS", product.cpe),
             emails=[user.email],
         )
         pause = committed.smelt.pause("maintainership")

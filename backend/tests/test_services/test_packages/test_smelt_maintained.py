@@ -97,8 +97,8 @@ NOT_FOUND_ENVELOPE: Final = {"status": "error", "data": f"Package {PACKAGE} not 
 
 Respond = Callable[[httpx.Request], httpx.Response]
 
-_DECLARED_TYPES = ("SLFO", "SLFO_IBS", "SLE_15", "UNKNOWN")
-_SUPPORTED_TYPES = ("SLFO", "SLE_15")
+_DECLARED_TYPES = ("SLFO", "SLFO_IBS", "IBS", "UNKNOWN")
+_SUPPORTED_TYPES = ("SLFO", "IBS")
 _SKIPPED_TYPES = ("SLFO_IBS", "UNKNOWN")
 
 
@@ -154,7 +154,7 @@ def _target(
 
 
 def _entry(
-    *, name: Any = SLE_CODESTREAM, process: Any = "SLE_15", **members: Any
+    *, name: Any = SLE_CODESTREAM, process: Any = "IBS", **members: Any
 ) -> dict[str, Any]:
     """One grouped entry with every upstream field (unconsumed ones
     included); `members` replaces a top-level member, and `MISSING` removes
@@ -179,7 +179,7 @@ def _success(*entries: Any) -> dict[str, Any]:
 
 
 def _sle_entry() -> dict[str, Any]:
-    return _entry(name=SLE_CODESTREAM, process="SLE_15", targets=[_target()])
+    return _entry(name=SLE_CODESTREAM, process="IBS", targets=[_target()])
 
 
 def _slfo_entry() -> dict[str, Any]:
@@ -190,7 +190,7 @@ def _slfo_entry() -> dict[str, Any]:
     )
 
 
-def _ibs_entry(**members: Any) -> dict[str, Any]:
+def _slfo_ibs_entry(**members: Any) -> dict[str, Any]:
     return _entry(name=SLFO_IBS_CODESTREAM, process="SLFO_IBS", **members)
 
 
@@ -901,10 +901,12 @@ def _rejected(broken: Any) -> dict[str, Any]:
     The skipped entries would each warn if the response were accepted, so
     a rejected response proves that no skip warning precedes validation.
     """
-    return _success(_sle_entry(), _ibs_entry(), _unknown_entry(), _slfo_entry(), broken)
+    return _success(
+        _sle_entry(), _slfo_ibs_entry(), _unknown_entry(), _slfo_entry(), broken
+    )
 
 
-def _broken(process: str = "SLE_15", **overrides: Any) -> dict[str, Any]:
+def _broken(process: str = "IBS", **overrides: Any) -> dict[str, Any]:
     return _entry(name=BROKEN_CODESTREAM, process=process, **overrides)
 
 
@@ -951,8 +953,10 @@ _BAD_TYPES: list[tuple[str, Any]] = [
     ("list", ["SLFO"]),
     ("empty", ""),
     ("lowercase-slfo", "slfo"),
-    ("lowercase-sle-15", "sle_15"),
+    ("lowercase-ibs", "ibs"),
     ("undeclared", "SLE_12"),
+    # Renamed to `IBS` upstream (tools/smelt#1499); no longer declared.
+    ("retired-sle-15", "SLE_15"),
     ("padded", " SLFO"),
 ]
 _BAD_TARGETS: list[tuple[str, Any]] = [
@@ -1034,7 +1038,7 @@ _SCHEMA_REJECTIONS: list[tuple[str, dict[str, Any]]] = [
     (
         "repeated-name-skipped-and-supported",
         _success(
-            _ibs_entry(),
+            _slfo_ibs_entry(),
             _unknown_entry(),
             _entry(name=SLFO_IBS_CODESTREAM, process="SLFO"),
         ),
@@ -1043,7 +1047,7 @@ _SCHEMA_REJECTIONS: list[tuple[str, dict[str, Any]]] = [
         "repeated-name-two-skipped",
         _success(
             _sle_entry(),
-            _ibs_entry(),
+            _slfo_ibs_entry(),
             _entry(name=SLFO_IBS_CODESTREAM, process="UNKNOWN"),
         ),
     ),
@@ -1126,7 +1130,7 @@ class TestSkippedCodestreams:
         self, targets: Any
     ) -> None:
         outcome = await _fetch(
-            _json(200, _success(_sle_entry(), _ibs_entry(targets=targets)))
+            _json(200, _success(_sle_entry(), _slfo_ibs_entry(targets=targets)))
         )
 
         assert _found(outcome) == MaintainedPackage(codestreams=(SLE_RECORD,))
@@ -1151,7 +1155,9 @@ class TestSkippedCodestreams:
         outcome = await _fetch(
             _json(
                 200,
-                _success(_ibs_entry(targets=None), _unknown_entry(targets=MISSING)),
+                _success(
+                    _slfo_ibs_entry(targets=None), _unknown_entry(targets=MISSING)
+                ),
             )
         )
 
@@ -1165,7 +1171,7 @@ class TestSkippedCodestreams:
     ) -> None:
         second_ibs = "Example:SLFO-IBS:2.0"
         body = _success(
-            _ibs_entry(targets="fictional"),
+            _slfo_ibs_entry(targets="fictional"),
             _slfo_entry(),
             _unknown_entry(),
             _entry(name=second_ibs, process="SLFO_IBS", targets=[None]),
@@ -1187,7 +1193,7 @@ class TestSkippedCodestreams:
         package_name = "Example Package/1"
 
         outcome = await _fetch(
-            _json(200, _success(_ibs_entry(), _unknown_entry())),
+            _json(200, _success(_slfo_ibs_entry(), _unknown_entry())),
             package_name=package_name,
         )
 
@@ -1198,7 +1204,9 @@ class TestSkippedCodestreams:
         ]
 
     async def test_warning_has_exactly_the_specified_fields(self) -> None:
-        outcome = await _fetch(_json(200, _success(_ibs_entry(), _unknown_entry())))
+        outcome = await _fetch(
+            _json(200, _success(_slfo_ibs_entry(), _unknown_entry()))
+        )
 
         unsupported, unknown = outcome.logs
         assert set(unsupported) == {
@@ -1225,7 +1233,7 @@ class TestSkippedCodestreams:
 
 def _expected_from_fixture(body: dict[str, Any]) -> MaintainedPackage:
     """The expected result, computed directly from the fixture JSON."""
-    workflow = {"SLFO": WorkflowType.GIT, "SLE_15": WorkflowType.IBS}
+    workflow = {"SLFO": WorkflowType.GIT, "IBS": WorkflowType.IBS}
     return MaintainedPackage(
         codestreams=tuple(
             MaintainedCodestream(
@@ -1265,7 +1273,7 @@ _UNCONSUMED_GARBAGE: list[tuple[str, dict[str, Any]]] = [
                 {
                     "codestream": {
                         "name": SLE_CODESTREAM,
-                        "type": "SLE_15",
+                        "type": "IBS",
                         "url": 42,
                         "extra": {"nested": [None]},
                     },
@@ -1296,7 +1304,7 @@ _UNCONSUMED_GARBAGE: list[tuple[str, dict[str, Any]]] = [
             "status": "success",
             "data": [
                 {
-                    "codestream": {"name": SLE_CODESTREAM, "type": "SLE_15"},
+                    "codestream": {"name": SLE_CODESTREAM, "type": "IBS"},
                     "targets": [
                         {"product": {"cpe": CPE_ONE, "friendly_name": FRIENDLY_ONE}}
                     ],
@@ -1308,7 +1316,7 @@ _UNCONSUMED_GARBAGE: list[tuple[str, dict[str, Any]]] = [
         "unconsumed-fields-null",
         _success(
             {
-                "codestream": {"name": SLE_CODESTREAM, "type": "SLE_15", "url": None},
+                "codestream": {"name": SLE_CODESTREAM, "type": "IBS", "url": None},
                 "binary_packages": None,
                 "support_status": None,
                 "targets": [
@@ -1333,7 +1341,7 @@ _UNCONSUMED_GARBAGE: list[tuple[str, dict[str, Any]]] = [
 class TestMapping:
     @pytest.mark.parametrize(
         ("process", "workflow_type"),
-        [("SLFO", WorkflowType.GIT), ("SLE_15", WorkflowType.IBS)],
+        [("SLFO", WorkflowType.GIT), ("IBS", WorkflowType.IBS)],
     )
     async def test_supported_type_maps_to_workflow_type(
         self, process: str, workflow_type: WorkflowType
@@ -1739,7 +1747,7 @@ class TestPrivacy:
         ]
         body = _success(
             _private_entry(),
-            _ibs_entry(targets=private_targets),
+            _slfo_ibs_entry(targets=private_targets),
             _unknown_entry(targets=private_targets),
         )
 

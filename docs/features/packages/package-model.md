@@ -83,7 +83,7 @@ human-readable. For git, the full repository URL is derivable from
 The SMELT v2 maintained-package endpoint provides the codestream-level
 maintenance process as `codestream.type`. Sentinel maps supported values
 directly to `workflow_type` at ingestion time: `SLFO` maps to `git` and
-`SLE_15` maps to `ibs`. Target-level Product-definition provenance is not
+`IBS` maps to `ibs`. Target-level Product-definition provenance is not
 workflow authority and is not consumed. Both supported workflows can coexist
 under the same package. See
 [SMELT Query for Package Resolution](#smelt-query-for-package-resolution)
@@ -1408,10 +1408,10 @@ non-paginated JSend envelope.
   non-null string `type`, the codestream maintenance process. Codestream names
   must be unique across the grouped response.
 - `codestream.type` must be one of the declared SMELT `MaintenanceProcessType`
-  values `SLFO`, `SLFO_IBS`, `SLE_15`, or `UNKNOWN`. A missing, null,
+  values `SLFO`, `SLFO_IBS`, `IBS`, or `UNKNOWN`. A missing, null,
   non-string, or undeclared value, or a repeated codestream name, rejects the
   complete response and raises `SmeltUnavailableError`.
-- A supported `SLFO` or `SLE_15` entry must have a non-empty `targets` array.
+- A supported `SLFO` or `IBS` entry must have a non-empty `targets` array.
   Each target must have `product.cpe` as a non-empty string. An invalid
   supported entry or target rejects the complete response and raises
   `SmeltUnavailableError`; targets are never individually skipped for
@@ -1445,7 +1445,7 @@ non-paginated JSend envelope.
 | Field | Purpose |
 |-------|---------|
 | `data[].codestream.name` | Track reference (`TicketPackageTrack.reference`). For an IBS codestream, the origin codestream that holds the package: a package that later codestreams inherit through a project link is reported in the codestream it is inherited from, which is the codestream its IBS maintenance requests name |
-| `data[].codestream.type` | Authoritative track workflow: `SLFO` → `git`, `SLE_15` → `ibs`; `SLFO_IBS` (unsupported) and `UNKNOWN` (unclassified) entries are skipped |
+| `data[].codestream.type` | Authoritative track workflow: `SLFO` → `git`, `IBS` → `ibs`; `SLFO_IBS` (unsupported) and `UNKNOWN` (unclassified) entries are skipped |
 | `data[].targets[].product.cpe` | Product match key against `Product.cpe` in the current catalog snapshot |
 | `data[].targets[].product.friendly_name` | Logging and warning messages |
 
@@ -1484,7 +1484,7 @@ as returned.
    raised `SmeltUnavailableError` in step 1, before the readiness check.
 4. Map each structurally validated supported codestream to one `workflow_type`:
    `SLFO` maps to `git`
-   and `SLE_15` maps to `ibs`.
+   and `IBS` maps to `ibs`.
 5. Collect all `(codestream.name, workflow_type, product.cpe)` records from
    supported entries.
 6. For each record:
@@ -2792,7 +2792,7 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
 - [ ] Real-time event source for git workflow (webhook? polling?)
 - [x] SMELT API evolution — the v2 `maintained` endpoint exposes
       `codestream.type` as the authoritative workflow discriminator
-- [x] Workflow type mapping — `SLFO` maps to `git`, `SLE_15` maps to `ibs`,
+- [x] Workflow type mapping — `SLFO` maps to `git`, `IBS` maps to `ibs`,
       and unsupported `SLFO_IBS` and unclassified `UNKNOWN` codestreams are
       skipped
 - [ ] Submission tracking (SR/RR) equivalent for git workflow, if any

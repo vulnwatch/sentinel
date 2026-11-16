@@ -52,7 +52,7 @@ Every racing operation commits while the call is still paused (its
 request arrived and has not been released); only the serialization case
 also proves a lock wait (`assert_lock_wait`). Unless a test states
 otherwise: `SMELT_API_URL` is the fictional test origin; SMELT returns an
-`SLE_15` (`ibs`) codestream for the expected CPEs and a valid
+`IBS` (`ibs`) codestream for the expected CPEs and a valid
 maintainership response; each Ticket is the pinned unassigned CVE-less
 `Analysis` Ticket of `tests/support/package_records_races.py` with
 `severity_manual = High`; every Product expected to match is published in
@@ -356,7 +356,7 @@ class TestNoLockDuringExternalIO:
         ticket = await pinned_ticket(world)
         product = await _current_product(world)
         pkg = _name()
-        smelt = PackageSmelt.ok(codestream(IBS_REF, "SLE_15", product.cpe))
+        smelt = PackageSmelt.ok(codestream(IBS_REF, "IBS", product.cpe))
         a = await world.open_session()
         b = await world.open_session()
 
@@ -420,7 +420,7 @@ FAILURES: dict[str, tuple[type[Exception], Callable[[str], Respond]]] = {
     ),
     "catalog-not-ready": (
         ProductCatalogNotReadyError,
-        lambda pkg: reply(200, maintained(codestream(IBS_REF, "SLE_15", ABSENT))),
+        lambda pkg: reply(200, maintained(codestream(IBS_REF, "IBS", ABSENT))),
     ),
     "package-not-found": (
         PackageNotFoundInSmeltError,
@@ -428,7 +428,7 @@ FAILURES: dict[str, tuple[type[Exception], Callable[[str], Respond]]] = {
     ),
     "targets-unresolved": (
         PackageTargetsUnresolvedError,
-        lambda pkg: reply(200, maintained(codestream(IBS_REF, "SLE_15", ABSENT))),
+        lambda pkg: reply(200, maintained(codestream(IBS_REF, "IBS", ABSENT))),
     ),
 }
 """The blocking failures after the maintained request, with its responder
@@ -535,12 +535,12 @@ class TestAccessLostDuringExternalIO:
             await _publish(world, await product_of(world, path))
             pkg = path.subject["package"]
             entry = codestream(
-                path.subject["track"], "SLE_15", path.subject["product_cpe"]
+                path.subject["track"], "IBS", path.subject["product_cpe"]
             )
         else:
             product = await _current_product(world)
             pkg = _name()
-            entry = codestream(IBS_REF, "SLE_15", product.cpe)
+            entry = codestream(IBS_REF, "IBS", product.cpe)
         emails = [] if request_kind == "existing-tree" else [user.email]
         smelt = PackageSmelt.ok(entry, emails=emails)
         before = await protected_state(world, ticket.id)
@@ -588,13 +588,13 @@ def _entries(kind: str, w: MarkerWorld) -> tuple[list[dict[str, Any]], list[str]
     if kind == "tree":
         return (
             [
-                codestream(reference, "SLE_15", p1_cpe, w.p2.cpe),
+                codestream(reference, "IBS", p1_cpe, w.p2.cpe),
                 codestream(GIT_REF, "SLFO", w.p3.cpe),
             ],
             [w.m.email],
         )
     return (
-        [codestream(reference, "SLE_15", p1_cpe)],
+        [codestream(reference, "IBS", p1_cpe)],
         [w.m.email] if kind == "maintainer-only" else [],
     )
 
@@ -842,17 +842,17 @@ class TestConcurrentAdditions:
         p1, p2, p3 = [await _current_product(world) for _ in range(3)]
         pkg = _name()
         first_smelt = PackageSmelt.ok(
-            codestream(IBS_REF, "SLE_15", p1.cpe), emails=[m1.email]
+            codestream(IBS_REF, "IBS", p1.cpe), emails=[m1.email]
         )
         second_smelt = {
             "no-op": PackageSmelt.ok(
-                codestream(IBS_REF, "SLE_15", p1.cpe), emails=[m1.email]
+                codestream(IBS_REF, "IBS", p1.cpe), emails=[m1.email]
             ),
             "maintainer-only": PackageSmelt.ok(
-                codestream(IBS_REF, "SLE_15", p1.cpe), emails=[m1.email, m2.email]
+                codestream(IBS_REF, "IBS", p1.cpe), emails=[m1.email, m2.email]
             ),
             "partial": PackageSmelt.ok(
-                codestream(IBS_REF, "SLE_15", p1.cpe, p2.cpe),
+                codestream(IBS_REF, "IBS", p1.cpe, p2.cpe),
                 codestream(GIT_REF, "SLFO", p3.cpe),
                 emails=[m1.email],
             ),

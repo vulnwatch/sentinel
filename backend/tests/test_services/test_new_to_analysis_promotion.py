@@ -334,7 +334,7 @@ async def test_assignment_of_a_new_ticket_is_followed_by_one_promotion(
                 ticket.id,
                 "fictional-libexample",
                 PackageSmelt.ok(
-                    codestream("Fictional:Product:15-SP7:Update", "SLE_15", product.cpe)
+                    codestream("Fictional:Product:15-SP7:Update", "IBS", product.cpe)
                 ),
                 actor=actor,
             )
