@@ -447,7 +447,7 @@ erDiagram
 ### CVE Ingestion
 
 How CVEs flow from all external sources into Sentinel, trigger ticket creation,
-and hand package candidates to post-commit resolution. The eight current CVE
+and hand package candidates to post-commit resolution. The nine current CVE
 sources share one source-neutral boundary, so the diagram represents the
 sources as a group rather than duplicating one pipeline per source. See
 [features/tickets/cve-tracking.md](features/tickets/cve-tracking.md),
@@ -457,8 +457,8 @@ sources as a group rather than duplicating one pipeline per source. See
 
 ```mermaid
 flowchart LR
-    subgraph sources["External CVE Sources (8)"]
-        SRC["NVD · MITRE cvelistV5 · Linux Kernel<br/>Red Hat · GHSA · OSV · CISA KEV · FIRST EPSS"]
+    subgraph sources["External CVE Sources (9)"]
+        SRC["NVD · MITRE cvelistV5 · Linux Kernel<br/>Red Hat · GHSA · OSV · CISA KEV · FIRST EPSS<br/>SUSE Bugzilla"]
     end
 
     subgraph dispatch["Scheduling and Dispatch"]

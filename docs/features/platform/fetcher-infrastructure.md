@@ -508,6 +508,7 @@ a natural English compound noun: "sync NVD CVEs", "detect IBS releases".
 | `osv` | OSV (osv.dev) |
 | `cisa` | CISA (KEV catalog) |
 | `epss` | FIRST.org EPSS |
+| `bugzilla` | SUSE Bugzilla |
 | `smelt` | SMELT |
 | `aimaas` | AIMAAS |
 | `ibs` | IBS (build.suse.de) |
@@ -527,6 +528,7 @@ Use the most general accurate term:
   is an advisory (not a CVE record). Use when the source publishes
   advisory objects that Sentinel maps to CVE records
 - `scores` — single-purpose numerical scores (e.g., EPSS)
+- `bugs` — bug-tracker entries linked to CVEs (e.g., SUSE Bugzilla)
 - `products` — product catalog records
 - `lifecycle` — product lifecycle dates
 - `thresholds` — CVSS thresholds
@@ -890,6 +892,7 @@ the root Ticket convergence wrapper after the complete roster is attempted.
 | `sync_kernel_cves` | All CVEs (global) — but has `fetch_single` | **Inherited from `BaseCVEFetcher`** | Same as NVD |
 | `sync_ghsa_advisories` | All advisories (global) — but has `fetch_single` | **Inherited from `BaseCVEFetcher`** | Same as NVD |
 | `sync_osv_advisories` | CVEs with active tickets | **Inherited from `BaseCVEFetcher`** | Extract `cve_id` → call OSV API → upsert affected versions/refs/packages |
+| `sync_bugzilla_bugs` | Existing CVEs whose bug changed (global) — but has `fetch_single` | **Inherited from `BaseCVEFetcher`** | Extract `cve_id` → query the bug by CVE alias → upsert the bug reference |
 | `detect_ibs_track_releases` | IBS tracks in active tickets | **Custom override** | Extract the Ticket's eligible IBS tracks and apply the same per-track checkpoint/current-state reconciliation as periodic execution |
 | `detect_ibs_product_releases` | Product occurrences below IBS tracks in active tickets | **Custom override** | Check current `updateinfo.xml` data, including valid advisories that predate Ticket convergence |
 | `sync_ibs_requests` | IBS tracks in active tickets | **Custom override** | Apply the same complete per-track request, correlation, provenance, and delivery reconciliation as periodic execution |
@@ -930,10 +933,10 @@ on every run — there is no gap to recover after Ticket convergence. The CISA
 KEV catalog is monolithic with no per-CVE API, so `fetch_single_cve` is never
 dispatched for this fetcher either. In contrast,
 `sync_nvd_cves`, `sync_mitre_cves`, `sync_kernel_cves`,
-`sync_ghsa_advisories`, `sync_osv_advisories`, `sync_redhat_cves`, and
-`sync_epss_scores` participate in catch-up because their `fetch_single()`
-provides immediate per-ticket recovery without waiting for the next
-periodic run.
+`sync_ghsa_advisories`, `sync_osv_advisories`, `sync_redhat_cves`,
+`sync_epss_scores`, and `sync_bugzilla_bugs` participate in catch-up because
+their `fetch_single()` provides immediate per-ticket recovery without waiting
+for the next periodic run.
 
 
 ### On-Demand Queue Routing
@@ -4084,8 +4087,8 @@ timestamp and `user_id`. If the same PATCH also changes `enabled` to
 ## Data Retention
 
 `FetcherRun` records are retained indefinitely. Each run adds one row; at the
-default schedules (one to eight runs per fetcher per day), the table grows by
-approximately 15,000 rows per year — negligible for PostgreSQL. No cleanup
+default schedules (one to 24 runs per fetcher per day), the table grows by
+approximately 24,000 rows per year — negligible for PostgreSQL. No cleanup
 task or retention policy is necessary. Orphaned runs (stuck in `queued` or
 `running` status due to an unpublished trigger, an unclean process
 termination, or a finalization that failed or did not run) are resolved by

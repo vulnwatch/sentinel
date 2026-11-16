@@ -640,6 +640,7 @@ representations) for the complete boundary-conversion contract.
 | `"osv"` | OSV (osv.dev) — aggregated ecosystem advisory data |
 | `"kev"` | CISA Known Exploited Vulnerabilities catalog |
 | `"epss"` | FIRST EPSS (Exploit Prediction Scoring System) |
+| `"bugzilla"` | SUSE Bugzilla REST API — the public bug of each CVE |
 
 **Format constraint**: values MUST match `^[a-z][a-z0-9_]*$` and not
 exceed 100 characters (matching the `CVESource.source` VARCHAR(100)
@@ -1906,7 +1907,7 @@ Beat, and API server).
 
 Records every execution of a fetcher. Primary data source for the fetcher run
 history and timeline. Records are retained indefinitely (no retention policy).
-Growth rate is approximately 15,000 rows per year. See
+Growth rate is approximately 24,000 rows per year. See
 `docs/features/platform/fetcher-infrastructure.md` for full specification,
 including the full lifecycle state machine and the timestamp semantics
 summarized below.

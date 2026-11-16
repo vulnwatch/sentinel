@@ -18,6 +18,7 @@ cve-sync-osv.md         OSV enrichment fetcher specification
 cve-sync-redhat.md      Red Hat Security Data fetcher specification
 cve-sync-kev.md         CISA KEV fetcher specification
 cve-sync-epss.md        EPSS fetcher specification
+cve-sync-bugzilla.md    SUSE Bugzilla bug-reference fetcher specification
 cna.md                  CNA of a CVE, CNA metadata sync, auto-ignore policy of new Tickets by CNA
 cvss-scoring.md         Multi-provider CVSS assessments, severity resolution
 ticket-priority.md      Ticket priority (P1–P4) from severity and exploitation evidence, manual override

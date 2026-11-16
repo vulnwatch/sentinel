@@ -117,6 +117,7 @@ Sentinel requires outbound access to:
 | GitHub raw content | `raw.githubusercontent.com` | 443 | CVE Program CNA list download (`sync_mitre_cnas`) |
 | git.kernel.org | `git.kernel.org` | 443 | Linux kernel vulnerability repo clone/fetch |
 | Slack Web API | `slack.com` | 443 | User picture lookup (`sync_slack_avatars`) |
+| SUSE Bugzilla | `bugzilla.suse.com` | 443 | Public bug of each CVE (`sync_bugzilla_bugs`) |
 
 ---
 

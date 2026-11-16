@@ -32,7 +32,7 @@ relevant feature specifications in `docs/features/`.
 | SUSE OpenLDAP | Internal | Employee identity, POSIX accounts | Not integrated |
 | SUSEID (Authentik) | Internal | Centralized identity provisioning via SCIM push | Planned |
 | Slack | Internal | Profile picture URLs of Sentinel users | Active |
-| SUSE Bugzilla | Internal | Bug tracking, security issues | Reference only |
+| SUSE Bugzilla | Public | Bug tracking, security issues, the bug of each CVE | Active |
 | CISA KEV | Public | Known exploited vulnerabilities catalog | Active |
 | EPSS | Public | Exploit probability scores | Active |
 | GHSA | Public | Security advisories, CVSS, CWE | Active |
@@ -374,6 +374,87 @@ additional metadata from ecosystem-specific advisory databases.
 
 > See [cve-sync-osv.md](features/tickets/cve-sync-osv.md) for the full
 > fetcher specification.
+
+### SUSE Bugzilla
+
+SUSE's Bugzilla instance is the primary bug tracking system for SUSE
+products. Two web interfaces exist — `bugzilla.suse.com` (primary, for SUSE
+products) and `bugzilla.opensuse.org` (for openSUSE) — but they share the
+same underlying database. Sentinel always references `bugzilla.suse.com`
+regardless of which interface was originally used.
+
+Bugzilla bugs frequently appear in the security update workflow: a Bugzilla
+bug is typically opened for each CVE that affects SUSE products, and IBS
+source commits reference these bugs via tracker annotations in the commit
+metadata.
+
+Multiple historical prefixes exist for Bugzilla IDs due to SUSE's corporate
+history:
+
+- `bnc#` — bugzilla.novell.com (legacy, from when SUSE was owned by Novell)
+- `bsc#` — bugzilla.suse.com (current canonical form)
+- `boo#` — bugzilla.opensuse.org
+
+All three prefixes refer to the same database and the same bug IDs. Sentinel
+normalizes all forms to the canonical `bsc#` prefix.
+
+- **Relevant data**: Bug reports, security issue tracking, embargo status,
+  CVE-to-bug associations. The SUSE security team sets the CVE ID as an alias
+  of the bug it opens for a CVE, and opens per-package bugs without an alias,
+  which the "Depends on" field of the aliased bug lists. IBS source diffs
+  include Bugzilla tracker references (with tracker type `bnc`) alongside CVE
+  references
+- **Access**: Web UI at `bugzilla.suse.com`, and the Bugzilla REST API at
+  `bugzilla.suse.com/rest/` (Bugzilla 5.0.6 on 2026-11-16). Public bugs are
+  readable anonymously; Sentinel sends no credential. Rate limits are not
+  published. SMASH integrates deeply with Bugzilla for issue creation, status
+  tracking, and embargo detection
+- **Observations** (anonymous requests, 2026-11-16):
+  - `GET /rest/bug?alias={cve_id}` returns the bug of a CVE, matching the
+    alias case-insensitively, and an empty `bugs` array for an alias without
+    a bug; `GET /rest/bug/{cve_id}` instead answers HTTP 400. A restricted
+    (embargoed or live-patch) bug is absent from search results and answers
+    HTTP 401 by ID
+  - The bugs with a CVE alias belong mostly to the product
+    `SUSE Security Incidents`, and also to `openSUSE Distribution` and
+    `openSUSE Tumbleweed`. One bug can carry several CVE IDs and other
+    identifiers, such as a GHSA ID, as aliases
+  - Filtering by `last_change_time` (UTC) with keyset pagination on the bug ID
+    (`f2=bug_id&o2=greaterthan`, `order=bug_id`) returned the same bugs as one
+    unpaginated request. One response holds at most 10000 bugs, whatever
+    `limit` requests
+  - 7263 bugs with a CVE alias changed in the 30 days before 2026-11-16,
+    returned in eight pages of at most 1000 bugs and the closing empty page;
+    the hours with a change had a median of 6 changed bugs, and a bulk change
+    reached 1455 bugs in one hour. The bugs of `SUSE Security Incidents` that
+    changed in that period name 7053 CVEs in their aliases or summaries; 6 of
+    these CVEs had bugs but no public bug with the CVE alias. Of the bugs with
+    a CVE alias created 20 to 30 days earlier, a quarter had not changed since
+    the first 6 hours after their creation
+  - The response contains the personal data of Bugzilla users (reporter,
+    assignee, CC list) unless `include_fields` selects other fields
+  - The status whiteboard carries the SUSE CVSS vectors of the bug, which
+    Sentinel does not ingest (`cvss-scoring.md`, Provider Identity and
+    Authority)
+- **Access note — Anubis bot protection**: the HTML and XML pages
+  (`show_bug.cgi`, including `ctype=xml`) answer a client that has not solved
+  the Anubis proof-of-work challenge with the challenge page, whatever the
+  User-Agent; a browser solves it. The REST API under `/rest/` is not
+  protected and answers JSON to a request with `Accept: application/json`;
+  with `Accept: text/html` it answers an HTML page. Automated access uses only
+  the REST API
+- **Integration status**: **Active**. `sync_bugzilla_bugs` links the public
+  bug that carries the CVE ID as alias to the Ticket of each known CVE. Further
+  Bugzilla IDs appear in IBS source diffs and can be manually linked to
+  tickets via the `TicketReference` system. SMASH's extensive Bugzilla
+  integration (fetchers for recent bugs, foreign bugs, CVE alias correction,
+  CVSS marking, and reopen detection) provides a reference for what a deeper
+  integration could look like
+- **Documentation**: https://bugzilla.suse.com,
+  https://bugzilla.readthedocs.io/en/5.0/api/
+
+> See [cve-sync-bugzilla.md](features/tickets/cve-sync-bugzilla.md) for the
+> full fetcher specification.
 
 ---
 
@@ -1321,47 +1402,6 @@ be consumed in real time.
 
 ---
 
-## Reference Sources
-
-### SUSE Bugzilla
-
-SUSE's Bugzilla instance is the primary bug tracking system for SUSE
-products. Two web interfaces exist — `bugzilla.suse.com` (primary, for SUSE
-products) and `bugzilla.opensuse.org` (for openSUSE) — but they share the
-same underlying database. Sentinel always references `bugzilla.suse.com`
-regardless of which interface was originally used.
-
-Bugzilla bugs frequently appear in the security update workflow: a Bugzilla
-bug is typically opened for each CVE that affects SUSE products, and IBS
-source commits reference these bugs via tracker annotations in the commit
-metadata.
-
-Multiple historical prefixes exist for Bugzilla IDs due to SUSE's corporate
-history:
-
-- `bnc#` — bugzilla.novell.com (legacy, from when SUSE was owned by Novell)
-- `bsc#` — bugzilla.suse.com (current canonical form)
-- `boo#` — bugzilla.opensuse.org
-
-All three prefixes refer to the same database and the same bug IDs. Sentinel
-normalizes all forms to the canonical `bsc#` prefix.
-
-- **Relevant data**: Bug reports, security issue tracking, embargo status,
-  CVE-to-bug associations. IBS source diffs include Bugzilla tracker
-  references (with tracker type `bnc`) alongside CVE references
-- **Access**: Web UI at `bugzilla.suse.com`. Bugzilla REST API and
-  XML-RPC API available. SMASH integrates deeply with Bugzilla for issue
-  creation, status tracking, and embargo detection
-- **Integration status**: **Reference only**. Bugzilla IDs appear in IBS
-  source diffs and can be manually linked to tickets via the
-  `TicketReference` system. There is no automated Bugzilla sync in Sentinel.
-  SMASH's extensive Bugzilla integration (fetchers for recent bugs,
-  foreign bugs, CVE alias correction, CVSS marking, and reopen detection)
-  provides a reference for what a deeper integration could look like
-- **Documentation**: https://bugzilla.suse.com
-
----
-
 ## Fetcher Registry
 
 All `BaseFetcher` subclasses are automatically registered in the fetcher
@@ -1401,6 +1441,7 @@ feature documentation (not its implementation status):
 | `sync_ghsa_advisories` | GitHub Advisory DB | Every 3 hours (`0 */3 * * *`) | GitHub token (free) | 5,000 req/hour with token | CVSS GitHub (v3.x + v4.0, `provider_name = "GitHub"`), GHSA-ID (as CVEExternalIdentifier), CWE, affected versions (multi-ecosystem, `source_container = "ghsa"`), package-name candidates, references | [cve-sync-ghsa.md](features/tickets/cve-sync-ghsa.md#fetcher-definition) | Complete |
 | `sync_kernel_cves` | Linux Kernel CNA | Every 3 hours (`0 */3 * * *`) | None | None (bare clone + fetch) | The Linux kernel CNA as owner of each record, CVSS kernel (`provider_name = "Linux"`), fix/introduce commits (as CVEAffectedVersion with version_type=git), affected kernel versions (semver), programFiles, references. Sets `resolved_packages = ["kernel-source"]` as a package-name candidate. `source_container = "cna"` | [cve-sync-kernel.md](features/tickets/cve-sync-kernel.md#fetcher-definition) | Complete |
 | `sync_osv_advisories` | OSV (osv.dev) | Daily at 05:00 UTC (`0 5 * * *`) | None | None (no rate limits) | GIT fix/introduce commits (CVEAffectedVersion), ecosystem affected versions (CVEAffectedVersion with ecosystem), references (TicketReference), external identifiers (GHSA/PYSEC/RUSTSEC), package-name candidates. `source_container = "osv"` | [cve-sync-osv.md](features/tickets/cve-sync-osv.md#fetcher-definition) | Complete |
+| `sync_bugzilla_bugs` | SUSE Bugzilla | Every hour (`0 * * * *`) | None (anonymous) | Undocumented; Sentinel sends one request per page of 1000 bugs with a 1s delay | Link to the public bug that carries the CVE ID as alias (TicketReference, title from the bug summary) for existing CVEs whose bug changed since 12 hours before the last successful run | [cve-sync-bugzilla.md](features/tickets/cve-sync-bugzilla.md#fetcher-definition) | Complete |
 | `evaluate_failed_cve_sources` | Local (no external source) | Daily at 06:00 UTC (`0 6 * * *`) | N/A | N/A | Dispatches retry for CVESource failure records with active tickets (within 30-day window) | [cve-source-failure-retry.md](features/platform/cve-source-failure-retry.md#fetcher-evaluate_failed_cve_sources) | Complete |
 | `sync_slack_avatars` | Slack Web API | Daily at 06:30 UTC (`30 6 * * *`) | Slack bot token (`SLACK_BOT_TOKEN`); without it, the run clears every stored URL | Tier 3 (at least 50 req/min); Sentinel uses a 1.2s delay between requests | Picture URL of each active user who is not a bot account, looked up by email (`users.lookupByEmail`); pictures uploaded to Slack only | [user-avatars.md](features/identity/user-avatars.md#fetcher-sync_slack_avatars) | Complete |
 
