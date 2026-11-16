@@ -2080,15 +2080,20 @@ Celery application and is outside this validation boundary. See
 (Celery Worker Configuration).
 
 **Result handling**: the Celery application is configured with
-`task_ignore_result = True` and **no result backend**. Task return
-values are never stored or read. All `BaseFetcher` task executions return
-`None`, and their execution state (status, terminal succeeded/failed counts,
-durable created/updated effect counts, error message, and timing) is persisted
-in the `FetcherRun` table only during finalization. Non-fetcher sub-operations also return
-`None`, but do not create `FetcherRun` records; their owning specifications
-define domain-state and structured-log observability. `celery-redbeat` stores
-its dynamic schedule under the broker URL (`redbeat:` key prefix) and has no
-dependency on a result backend.
+`task_ignore_result = True`, `result_expires = None`, and **no result
+backend**. Task return values are never stored or read. A configured
+result backend fails startup (see "Startup Validation" below).
+`result_expires = None` keeps Celery Beat from installing its
+`celery.backend_cleanup` entry, which would have no stored result to
+expire (see "Non-Fetcher Periodic Tasks", Mechanism). All `BaseFetcher`
+task executions return `None`, and their execution state (status,
+terminal succeeded/failed counts, durable created/updated effect counts,
+error message, and timing) is persisted in the `FetcherRun` table only
+during finalization. Non-fetcher sub-operations also return `None`, but
+do not create `FetcherRun` records; their owning specifications define
+domain-state and structured-log observability. `celery-redbeat` stores
+its dynamic schedule under the broker URL (`redbeat:` key prefix) and has
+no dependency on a result backend.
 
 The Celery application imports task modules explicitly after constructing the
 singleton app so decorators register against that instance. The
@@ -2385,6 +2390,7 @@ signal handler** registered in the Celery app module.
    → Celery app factory runs
    → Timezone validation (UTC check)
    → Lock sentinel validation (redbeat_lock_key, redbeat_lock_timeout)
+   → Result backend validation (no result backend)
    → import app.services.fetcher_discovery  (populates FETCHER_REGISTRY)
 
 2. RedBeatScheduler.__init__()
@@ -2538,9 +2544,8 @@ Steps:
    - **Pre-filter by task name**: if the entry's `task` attribute is NOT
      `"run_fetcher"`, skip it entirely — do not inspect its kwargs, do
      not delete it. These entries are owned by redbeat's native
-     static-entry handling (see "Non-Fetcher Periodic Tasks" below) or
-     by Celery framework internals, and are outside the scope of fetcher
-     reconciliation.
+     static-entry handling (see "Non-Fetcher Periodic Tasks" below) and
+     are outside the scope of fetcher reconciliation.
    - **For entries where `task == "run_fetcher"`**: extract
      `fetcher_name` from the entry's kwargs and classify the entry, in
      this order:
@@ -2994,6 +2999,15 @@ removes these entries automatically at every Beat startup, tracking them
 via its internal `redbeat::statics` bookkeeping. Sentinel code never
 directly creates, updates, or deletes these entries.
 
+`setup_schedule()` also installs Celery Beat's default entries, which
+`redbeat::statics` does not track, so no later Beat startup removes
+them. Celery's only default entry, `celery.backend_cleanup`, is
+installed when a result expiry is set and the result backend does not
+expire results by itself. The Celery application sets
+`result_expires = None` (see "Celery Integration", Result handling), so
+no default entry is installed: the RedBeat schedule holds only fetcher
+entries and the entries of "Current Inventory" below.
+
 The fetcher startup reconciliation is invoked via a `beat_init`
 signal handler that runs after `setup_schedule()` completes (see
 "Startup Reconciliation" above). The two mechanisms are independent:
@@ -3248,6 +3262,27 @@ This validation is satisfied by the default redbeat configuration (key =
 `redbeat::lock`, timeout derived from `max_interval * 5` = 300s). It
 fires only if an operator explicitly overrides the defaults.
 
+**Result backend enforcement**: the Celery app factory MUST also
+validate that no result backend is configured (see "Celery Integration",
+Result handling). The factory configures none, but Celery reads the
+`CELERY_RESULT_BACKEND` environment variable before the configured
+value, and the `celery` command's `--result-backend` option, given
+directly or through its `RESULT_BACKEND` environment variable, sets
+that variable before it loads the application. After app configuration
+is complete, the factory checks that `result_backend` is empty or
+`None`; any other value fails with a `RuntimeError`:
+
+```
+"FATAL: Celery result backend must be disabled. A result backend is
+configured through CELERY_RESULT_BACKEND, RESULT_BACKEND, or the celery
+--result-backend option; remove it. Task outcomes are persisted in
+PostgreSQL — see docs/architecture.md (Celery + Redis with no result
+backend)."
+```
+
+The message never contains the configured value, which is a URL that
+may embed credentials (`docs/conventions.md`, Secret Field Typing).
+
 Since every Celery-based process (worker and Beat) MUST import the Celery
 app object to function, the validation is inherited automatically — no
 per-process signal handlers (`worker_init`, `beat_init`) are needed for
@@ -3265,13 +3300,13 @@ Reconciliation" above) implicitly validates:
   Registry section)
 
 **Worker pool validation is a separate, per-worker check**: unlike the
-timezone and lock-sentinel validations above, the execution pool
-(`--pool`) is not part of the shared `Celery()` application object —
-it is resolved by each individual worker process from its own CLI
-invocation, and Beat has no pool to validate. For this reason, pool
-validation cannot live in the app factory; it is
-performed by the Worker Startup Handler below, which runs once per
-worker process before that worker's consumer starts accepting tasks.
+timezone, lock-sentinel, and result-backend validations above, the
+execution pool (`--pool`) is not part of the shared `Celery()`
+application object — it is resolved by each individual worker process
+from its own CLI invocation, and Beat has no pool to validate. For this
+reason, pool validation cannot live in the app factory; it is performed
+by the Worker Startup Handler below, which runs once per worker process
+before that worker's consumer starts accepting tasks.
 
 #### Worker Startup Handler
 

@@ -7,11 +7,11 @@ Celery role and never loads this module
 (`docs/features/integrations/ibs-rabbitmq-integration.md`, Runtime
 Independence). Validates the mandatory startup contracts defined in
 `docs/features/platform/fetcher-infrastructure.md` (Startup Validation):
-UTC timezone and RedBeat distributed lock enabled, both via
-`validate_celery_config()`. The no-result-backend contract is
-fixed by construction (`result_backend=None` is hard-coded, with no
-corresponding `Settings` field to misconfigure) rather than actively
-validated.
+UTC timezone, RedBeat distributed lock enabled, and no result backend,
+all via `validate_celery_config()`. The result backend needs the check
+even though `result_backend=None` is hard-coded: Celery reads
+`CELERY_RESULT_BACKEND` from the environment before the configured
+value.
 
 Also wires:
 - Structured logging (`app.core.logging.configure_logging`) into
@@ -92,12 +92,13 @@ _CORRELATION_KEYS = ("request_id", "celery_task_id", "fetcher_run_id")
 def validate_celery_config(app: Celery) -> None:
     """Validate the mandatory startup contracts on a constructed app.
 
-    Raises `RuntimeError` with a fatal, operator-facing message if
-    either the UTC timezone contract or the redbeat distributed lock
-    contract is violated. See
+    Raises `RuntimeError` with a fatal, operator-facing message if the
+    UTC timezone contract, the redbeat distributed lock contract, or the
+    no-result-backend contract is violated. See
     `docs/features/platform/fetcher-infrastructure.md` (Startup
     Validation) for the exact conditions and message text this
-    function implements verbatim.
+    function implements verbatim. The result backend message never
+    includes the configured value, which may embed credentials.
     """
     timezone = app.conf.timezone
     enable_utc = app.conf.enable_utc
@@ -119,6 +120,20 @@ def validate_celery_config(app: Celery) -> None:
             f"for automatic recovery from Redis data loss — see "
             f"docs/features/platform/fetcher-infrastructure.md (Runtime: "
             f"Redis Data Loss)."
+        )
+        raise RuntimeError(msg)
+
+    # Celery's `result_backend` property reads `CELERY_RESULT_BACKEND`
+    # before the configured `None`, and the `celery` command's
+    # `--result-backend` option (environment variable `RESULT_BACKEND`)
+    # sets that variable before loading the app.
+    if app.conf.result_backend:
+        msg = (
+            "FATAL: Celery result backend must be disabled. A result backend "
+            "is configured through CELERY_RESULT_BACKEND, RESULT_BACKEND, or "
+            "the celery --result-backend option; remove it. Task outcomes are "
+            "persisted in PostgreSQL — see docs/architecture.md (Celery + "
+            "Redis with no result backend)."
         )
         raise RuntimeError(msg)
 
@@ -145,6 +160,12 @@ def create_celery_app(app_settings: Settings) -> Celery:
         broker_url=app_settings.celery_broker_url,
         result_backend=None,
         task_ignore_result=True,
+        # With a result expiry set and no auto-expiring backend, Celery Beat
+        # installs a daily `celery.backend_cleanup` entry that RedBeat never
+        # removes and that has no stored result to expire — see
+        # docs/features/platform/fetcher-infrastructure.md (Non-Fetcher
+        # Periodic Tasks, Mechanism).
+        result_expires=None,
         timezone=app_settings.celery_timezone,
         enable_utc=app_settings.celery_enable_utc,
         worker_hijack_root_logger=False,
