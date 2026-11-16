@@ -1,8 +1,8 @@
-"""Cross-source concrete compliance of the eight production CVE fetchers.
+"""Cross-source concrete compliance of the nine production CVE fetchers.
 
 See `docs/features/platform/testing-strategy.md` (CVE Fetcher Infrastructure,
-Concrete compliance: "NVD and GHSA inline paths construct the token; MITRE and
-Kernel return it from `process_item`; Red Hat, OSV, and EPSS preserve
+Concrete compliance: "NVD, GHSA, and Bugzilla inline paths construct the
+token; MITRE and Kernel return it from `process_item`; Red Hat, OSV, and EPSS preserve
 `UpsertResult.action`; KEV remains non-refetchable and preserves its
 documented isolated-status deviation. `CompletenessGuardError` remains in the
 OSV module"; Parallel Execution), and
@@ -47,6 +47,7 @@ from app.services.base_cve_fetcher import (
 )
 from app.services.base_fetcher import get_catch_up_fetchers
 from app.services.base_git_fetcher import BaseGitFetcher
+from app.services.tickets.sync_bugzilla_bugs import SyncBugzillaBugs
 from app.services.tickets.sync_cisa_kev import SyncCisaKev
 from app.services.tickets.sync_epss_scores import SyncEpssScores
 from app.services.tickets.sync_ghsa_advisories import SyncGhsaAdvisories
@@ -185,6 +186,21 @@ _SOURCES: Final = {
         isolated_status="fetcher",
         compliance_tests=(
             (f"{_TESTS}/test_sync_epss_scores.py", "TestConcreteCompliance"),
+        ),
+    ),
+    CVESourceType.BUGZILLA: _Source(
+        SyncBugzillaBugs,
+        refetchable=True,
+        queue=None,
+        reference_url_pattern=None,
+        token_path="inline",
+        isolated_status="fetcher",
+        compliance_tests=(
+            (
+                f"{_TESTS}/test_sync_bugzilla_bugs_reachability.py",
+                "TestConcreteCompliance",
+            ),
+            (f"{_TESTS}/test_sync_bugzilla_bugs_execute.py", "TestFinalization"),
         ),
     ),
 }

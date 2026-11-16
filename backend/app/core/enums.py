@@ -615,6 +615,7 @@ class CVESourceType(StrEnum):
     OSV = "osv"
     KEV = "kev"
     EPSS = "epss"
+    BUGZILLA = "bugzilla"
 
 
 class CVEExternalIdentifierSource(StrEnum):

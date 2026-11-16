@@ -110,6 +110,7 @@ CVE_SOURCE_AUDIT_LABELS: Final[frozendict[CVESourceType, str]] = frozendict(
         CVESourceType.OSV: "OSV",
         CVESourceType.KEV: "CISA KEV",
         CVESourceType.EPSS: "FIRST.org EPSS",
+        CVESourceType.BUGZILLA: "SUSE Bugzilla",
     }
 )
 

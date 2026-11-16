@@ -101,6 +101,7 @@ _EXPECTED_SOURCE_LABELS = {
     CVESourceType.OSV: "OSV",
     CVESourceType.KEV: "CISA KEV",
     CVESourceType.EPSS: "FIRST.org EPSS",
+    CVESourceType.BUGZILLA: "SUSE Bugzilla",
 }
 
 # Every exact non-NULL comment of the canonical vocabulary, used to prove

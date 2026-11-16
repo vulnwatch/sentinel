@@ -37,6 +37,7 @@ INGESTION_LABELS: dict[CVESourceType, str] = {
     CVESourceType.OSV: "OSV",
     CVESourceType.KEV: "CISA KEV",
     CVESourceType.EPSS: "FIRST.org EPSS",
+    CVESourceType.BUGZILLA: "SUSE Bugzilla",
 }
 """The cve-service.md audit label of every `CVESourceType` member."""
 
