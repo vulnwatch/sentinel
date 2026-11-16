@@ -412,9 +412,9 @@ normalizes all forms to the canonical `bsc#` prefix.
 - **Observations** (anonymous requests, 2026-11-16):
   - `GET /rest/bug?alias={cve_id}` returns the bug of a CVE, matching the
     alias case-insensitively, and an empty `bugs` array for an alias without
-    a bug; `GET /rest/bug/{cve_id}` instead answers HTTP 400. A restricted
-    (embargoed or live-patch) bug is absent from search results and answers
-    HTTP 401 by ID
+    a bug; `GET /rest/bug/{cve_id}` also returns the bug, but answers HTTP
+    400 for an alias without a bug. A restricted (embargoed or live-patch)
+    bug is absent from search results and answers HTTP 401 by ID
   - The bugs with a CVE alias belong mostly to the product
     `SUSE Security Incidents`, and also to `openSUSE Distribution` and
     `openSUSE Tumbleweed`. One bug can carry several CVE IDs and other
@@ -431,6 +431,8 @@ normalizes all forms to the canonical `bsc#` prefix.
     these CVEs had bugs but no public bug with the CVE alias. Of the bugs with
     a CVE alias created 20 to 30 days earlier, a quarter had not changed since
     the first 6 hours after their creation
+  - In the seven days before 2026-11-16, a 13-hour window held a median of
+    about 100 bugs with a CVE alias
   - The response contains the personal data of Bugzilla users (reporter,
     assignee, CC list) unless `include_fields` selects other fields
   - The status whiteboard carries the SUSE CVSS vectors of the bug, which

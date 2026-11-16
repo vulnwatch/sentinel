@@ -407,7 +407,7 @@ _EXTERNAL_IDENTIFIER_SOURCE_MAX_LENGTH = 20
 
 @pytest.mark.unit
 class TestCVESourceTypeEnum:
-    """CVESourceType covers all eight CVE sources in data-model.md
+    """CVESourceType covers all nine CVE sources in data-model.md
     (CVESourceType Python Enum) and satisfies its format constraint."""
 
     def test_exact_members(self) -> None:
@@ -420,6 +420,7 @@ class TestCVESourceTypeEnum:
             "OSV": "osv",
             "KEV": "kev",
             "EPSS": "epss",
+            "BUGZILLA": "bugzilla",
         }
 
     @pytest.mark.parametrize("member", list(CVESourceType), ids=lambda m: m.name)
