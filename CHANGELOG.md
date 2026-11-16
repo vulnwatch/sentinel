@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.0](https://github.com/vulnwatch/sentinel/compare/v0.24.0...v0.25.0) (2026-11-16)
+
+
+### Features
+
+* add the SUSE Bugzilla bug-reference fetcher ([#1323](https://github.com/vulnwatch/sentinel/issues/1323)) ([360e8a6](https://github.com/vulnwatch/sentinel/commit/360e8a658ff6aa15ba38ed82011cddbca656a23d)), closes [#1322](https://github.com/vulnwatch/sentinel/issues/1322)
+
 ## [0.24.0](https://github.com/vulnwatch/sentinel/compare/v0.23.1...v0.24.0) (2026-11-16)
 
 
