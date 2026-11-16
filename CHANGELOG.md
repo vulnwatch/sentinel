@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.24.0](https://github.com/vulnwatch/sentinel/compare/v0.23.1...v0.24.0) (2026-11-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* reject a fetcher schedule that never fires ([#1312](https://github.com/vulnwatch/sentinel/issues/1312))
+
+### Bug Fixes
+
+* accept the SMELT IBS maintenance process type ([#1319](https://github.com/vulnwatch/sentinel/issues/1319)) ([f009ab1](https://github.com/vulnwatch/sentinel/commit/f009ab1a9dc9009188fc1524ec5e825a35ba3f64))
+* diff an IBS request whose source link conflicts at its base ([#1317](https://github.com/vulnwatch/sentinel/issues/1317)) ([45cba5f](https://github.com/vulnwatch/sentinel/commit/45cba5f79c6b7305d5f315cf4efa8b8cb6066192)), closes [#1307](https://github.com/vulnwatch/sentinel/issues/1307)
+* disable Celery result expiry and reject a result backend ([#1313](https://github.com/vulnwatch/sentinel/issues/1313)) ([6cfe2c5](https://github.com/vulnwatch/sentinel/commit/6cfe2c5b6342b8ec02dafe4a8e6e03fe30d3141c))
+* expire obsolete scheduled fetcher runs ([#1311](https://github.com/vulnwatch/sentinel/issues/1311)) ([6204d5a](https://github.com/vulnwatch/sentinel/commit/6204d5a7553131dfe09770f3eae5c769d41cf696))
+* reject a fetcher schedule that never fires ([#1312](https://github.com/vulnwatch/sentinel/issues/1312)) ([23ea914](https://github.com/vulnwatch/sentinel/commit/23ea9147b46b921f2e0530119d4ecf41907b6274))
+
+
+### Dependencies
+
+* **deps:** Lock file maintenance ([#1315](https://github.com/vulnwatch/sentinel/issues/1315)) ([3e796bc](https://github.com/vulnwatch/sentinel/commit/3e796bc32ed9b525020917a143899ca2bd20909c))
+* **deps:** Update dependency aio-pika to v10.2.3 ([#1314](https://github.com/vulnwatch/sentinel/issues/1314)) ([e80ac27](https://github.com/vulnwatch/sentinel/commit/e80ac2739efb69f3d1bb253a4b48c36926053ad8))
+* **deps:** Update dependency fastapi to v0.162.2 ([#1304](https://github.com/vulnwatch/sentinel/issues/1304)) ([ca5289d](https://github.com/vulnwatch/sentinel/commit/ca5289d603b611df590e27941f2cee50531decb2))
+
 ## [0.23.1](https://github.com/vulnwatch/sentinel/compare/v0.23.0...v0.23.1) (2026-11-14)
 
 
