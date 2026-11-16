@@ -23,11 +23,10 @@ properties established by #780 after `tools/smelt#1465`: every SLFO
 codestream is typed `SLFO` and resolved only through compose. Compared
 with the 2026-10-12 captures, `ibs_only` (formerly `sle15_only`) differs
 only in that rename, `not_found` and `case_variant` are identical, and the
-other captures also reflect upstream catalog changes. Every
-URL-valued string (`codestream.url`,
-`product_definition.url`) was replaced with a fictional
-`build.example.invalid` URL, and the unconsumed `binary_packages` array was
-trimmed to its first element per entry. Codestream names, Product CPEs,
+other captures also reflect upstream catalog changes. Every URL-valued
+string (`codestream.url`, `product_definition.url`) was replaced with a
+fictional `build.example.invalid` URL, and the unconsumed `binary_packages`
+array was trimmed to its first element per entry. Codestream names, Product CPEs,
 and Product friendly names are retained: they are consumed match keys and
 public Product identifiers. No personal identifier was present.
 
