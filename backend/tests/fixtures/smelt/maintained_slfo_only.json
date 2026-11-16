@@ -637,6 +637,50 @@
         }
       ],
       "support_status": "General Support"
+    },
+    {
+      "codestream": {
+        "name": "SUSE:SLFO:Products:SLES_NVIDIA:16.1",
+        "url": "https://build.example.invalid/fictional/33",
+        "type": "SLFO"
+      },
+      "binary_packages": [
+        {
+          "name": "SLES_NVIDIA-release",
+          "source_package_name": "000release-packages",
+          "support_status": "L3",
+          "divergence_by_product_id": {
+            "5218": {
+              "is_support_status_divergent": false,
+              "support_statuses_observed": [
+                "L3"
+              ],
+              "is_architecture_divergent": false,
+              "architectures_observed": [
+                "aarch64"
+              ],
+              "architectures_missing": []
+            }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "product": {
+            "id": 5218,
+            "friendly_name": "SUSE Linux Enterprise Server for NVIDIA 16.1",
+            "cpe": "cpe:/o:suse:sles:16:16.1:server-nvidia",
+            "support_status": "General Support"
+          },
+          "repository": "SUSE:Products:SLE-Product-SLES_NVIDIA:16.1",
+          "product_definition": {
+            "name": "sles_nvidia",
+            "url": "https://build.example.invalid/fictional/34",
+            "type": "compose"
+          }
+        }
+      ],
+      "support_status": "General Support"
     }
   ]
 }

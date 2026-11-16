@@ -164,14 +164,14 @@ class TestInactiveRace:
         pause = Pause()
         smelt = Smelt(
             {
-                a: resolves(codestream(IBS_REF, "SLE_15", p1.cpe)),
+                a: resolves(codestream(IBS_REF, "IBS", p1.cpe)),
                 b: Answer(
                     held_response(
-                        pause, maintained(codestream(IBS_REF, "SLE_15", p2.cpe))
+                        pause, maintained(codestream(IBS_REF, "IBS", p2.cpe))
                     ),
                     reply(200, maintainership(m.email)),
                 ),
-                c: resolves(codestream(IBS_REF, "SLE_15", p3.cpe)),
+                c: resolves(codestream(IBS_REF, "IBS", p3.cpe)),
             },
             sessions.events,
         )
@@ -228,7 +228,7 @@ class TestIdempotencyAndRecovery:
         product = await current_product(world)
         (a,) = package_names("a")
         smelt = Smelt(
-            {a: resolves(codestream(IBS_REF, "SLE_15", product.cpe), emails=(m.email,))}
+            {a: resolves(codestream(IBS_REF, "IBS", product.cpe), emails=(m.email,))}
         )
         smelt.install(monkeypatch)
 
@@ -270,9 +270,9 @@ class TestIdempotencyAndRecovery:
 
         smelt = Smelt(
             {
-                a: resolves(codestream(IBS_REF, "SLE_15", p1.cpe)),
-                b: resolves(codestream(IBS_REF, "SLE_15", p2.cpe)),
-                c: resolves(codestream(IBS_REF, "SLE_15", p3.cpe)),
+                a: resolves(codestream(IBS_REF, "IBS", p1.cpe)),
+                b: resolves(codestream(IBS_REF, "IBS", p2.cpe)),
+                c: resolves(codestream(IBS_REF, "IBS", p3.cpe)),
             }
         )
         smelt.install(monkeypatch)
@@ -343,10 +343,10 @@ class TestIdempotencyAndRecovery:
         smelt = Smelt(
             {
                 a: Answer(
-                    reply(200, maintained(codestream(IBS_REF, "SLE_15", p1.cpe))),
+                    reply(200, maintained(codestream(IBS_REF, "IBS", p1.cpe))),
                     barrier,
                 ),
-                b: resolves(codestream(IBS_REF, "SLE_15", p2.cpe), emails=(m2.email,)),
+                b: resolves(codestream(IBS_REF, "IBS", p2.cpe), emails=(m2.email,)),
             }
         )
         names = smelt.install(monkeypatch)
@@ -394,9 +394,9 @@ class TestIdempotencyAndRecovery:
         a, b, c = package_names("a", "b", "c")
         smelt = Smelt(
             {
-                a: resolves(codestream(IBS_REF, "SLE_15", p1.cpe)),
-                b: resolves(codestream(IBS_REF, "SLE_15", p2.cpe)),
-                c: resolves(codestream(IBS_REF, "SLE_15", p3.cpe)),
+                a: resolves(codestream(IBS_REF, "IBS", p1.cpe)),
+                b: resolves(codestream(IBS_REF, "IBS", p2.cpe)),
+                c: resolves(codestream(IBS_REF, "IBS", p3.cpe)),
             }
         )
         smelt.install(monkeypatch)
@@ -444,10 +444,10 @@ class TestIdempotencyAndRecovery:
         p1, p2 = await current_product(world), await current_product(world)
         a, b = package_names("a", "b")
         pause = Pause()
-        held = held_response(pause, maintained(codestream(IBS_REF, "SLE_15", p2.cpe)))
+        held = held_response(pause, maintained(codestream(IBS_REF, "IBS", p2.cpe)))
         smelt = Smelt(
             {
-                a: resolves(codestream(IBS_REF, "SLE_15", p1.cpe)),
+                a: resolves(codestream(IBS_REF, "IBS", p1.cpe)),
                 b: Answer(held),
             }
         )
@@ -463,7 +463,7 @@ class TestIdempotencyAndRecovery:
                 await asyncio.wait_for(task, timeout=WAIT)
             clients_after_loss = smelt.closed()
             lost = await committed(world, ticket.id, a, b)
-            smelt.answers[b] = resolves(codestream(IBS_REF, "SLE_15", p2.cpe))
+            smelt.answers[b] = resolves(codestream(IBS_REF, "IBS", p2.cpe))
             await resolve(Sessions(real_session_factory), ticket.id, a, b)
 
         assert task.cancelled()

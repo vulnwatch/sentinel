@@ -914,7 +914,7 @@ attribute it exposes.
     resolver that combines IBS channel records with Git/SLFO Product SBOM
     records. Returns codestream-grouped entries with direct Product CPE, the
     authoritative codestream maintenance process (`codestream.type`:
-    `SLFO`, `SLFO_IBS`, `SLE_15`, or `UNKNOWN`), and aggregated targets.
+    `SLFO`, `SLFO_IBS`, `IBS`, or `UNKNOWN`), and aggregated targets.
     Sentinel consumes only the fields required for package resolution (see
     `package-model.md`, SMELT Query for Package Resolution)
   - `experimental/v2/maintained/` relative to the API prefix (paginated) —

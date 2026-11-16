@@ -336,7 +336,7 @@ class TestInputValidation:
     async def _assert_rejected(
         db: AsyncSession, monkeypatch: pytest.MonkeyPatch, match: str, **kwargs: Any
     ) -> None:
-        smelt = PackageSmelt.ok(codestream(IBS_REF, "SLE_15", ABSENT_1))
+        smelt = PackageSmelt.ok(codestream(IBS_REF, "IBS", ABSENT_1))
         names = _patch_factory(monkeypatch, smelt)
         arguments: dict[str, Any] = {"ticket_id": uuid.uuid4(), "package_name": PKG}
         arguments.update(kwargs)
@@ -420,7 +420,7 @@ class TestPreliminaryAccessibility:
     ) -> None:
         actor = await va_user()
         (product,) = await _current(db_session)
-        smelt = PackageSmelt.ok(codestream(IBS_REF, "SLE_15", product.cpe))
+        smelt = PackageSmelt.ok(codestream(IBS_REF, "IBS", product.cpe))
         missing = uuid.uuid4()
 
         blocked = await _assert_blocked(
@@ -452,7 +452,7 @@ class TestPreliminaryAccessibility:
         ticket = await cveless(ticket_factory, status=NEW, is_confidential=True)
         (product,) = await _current(db_session)
         smelt = PackageSmelt.ok(
-            codestream(IBS_REF, "SLE_15", product.cpe),
+            codestream(IBS_REF, "IBS", product.cpe),
             emails=["fictional.caller@example.com"],
         )
 
@@ -502,7 +502,7 @@ class TestPreliminaryAccessibility:
                 ticket_id=ticket.id, user_id=caller.id, granted_by_id=assignee.id
             )
         (product,) = await _current(db_session)
-        smelt = PackageSmelt.ok(codestream(IBS_REF, "SLE_15", product.cpe))
+        smelt = PackageSmelt.ok(codestream(IBS_REF, "IBS", product.cpe))
 
         result = await add(
             db_session,
@@ -524,9 +524,7 @@ class TestPreliminaryAccessibility:
         ticket = await cveless(ticket_factory, status=ANALYSIS, is_confidential=True)
         (product,) = await _current(db_session)
         events: list[tuple[str, str]] = []
-        smelt = PackageSmelt.ok(
-            codestream(IBS_REF, "SLE_15", product.cpe), events=events
-        )
+        smelt = PackageSmelt.ok(codestream(IBS_REF, "IBS", product.cpe), events=events)
 
         with _Timeline(db_session, events):
             result = await add(db_session, ticket.id, PKG, smelt)
@@ -538,7 +536,7 @@ class TestPreliminaryAccessibility:
         self, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         (product,) = await _current(db_session)
-        smelt = PackageSmelt.ok(codestream(IBS_REF, "SLE_15", product.cpe))
+        smelt = PackageSmelt.ok(codestream(IBS_REF, "IBS", product.cpe))
 
         await _assert_blocked(
             db_session,
@@ -663,7 +661,7 @@ NOT_READY: dict[str, Respond] = {
     "http-404-not-found": reply(404, not_found(PKG)),
     "http-200-empty-data": reply(200, maintained()),
     "all-cpes-unmatched": reply(
-        200, maintained(codestream(IBS_REF, "SLE_15", ABSENT_1, ABSENT_2))
+        200, maintained(codestream(IBS_REF, "IBS", ABSENT_1, ABSENT_2))
     ),
     "all-codestreams-skipped": reply(
         200,
@@ -748,7 +746,7 @@ class TestPackageNotFound:
 
 UNRESOLVED: dict[str, Callable[[Product, Product], list[dict[str, Any]]]] = {
     "all-cpes-unmatched": lambda current, historical: [
-        codestream(IBS_REF, "SLE_15", ABSENT_1),
+        codestream(IBS_REF, "IBS", ABSENT_1),
         codestream(GIT_REF, "SLFO", ABSENT_2, ABSENT_3),
     ],
     "all-codestreams-skipped": lambda current, historical: [
@@ -756,10 +754,10 @@ UNRESOLVED: dict[str, Callable[[Product, Product], list[dict[str, Any]]]] = {
         codestream(UNKNOWN_REF, "UNKNOWN", current.cpe),
     ],
     "only-historical-products-match": lambda current, historical: [
-        codestream(IBS_REF, "SLE_15", historical.cpe),
+        codestream(IBS_REF, "IBS", historical.cpe),
     ],
     "cpe-differs-only-by-case": lambda current, historical: [
-        codestream(IBS_REF, "SLE_15", current.cpe.upper()),
+        codestream(IBS_REF, "IBS", current.cpe.upper()),
     ],
 }
 """Maintained entries built from a current and a historical Product. A
@@ -817,7 +815,7 @@ class TestLockedPhasePrecedence:
         actor = await va_user() if context == "user" else None
         ticket = await cveless(ticket_factory, status=status)
         (product,) = await _current(db_session)
-        smelt = PackageSmelt.ok(codestream(IBS_REF, "SLE_15", product.cpe))
+        smelt = PackageSmelt.ok(codestream(IBS_REF, "IBS", product.cpe))
 
         await _assert_blocked(
             db_session,
@@ -849,7 +847,7 @@ class TestLockedPhasePrecedence:
         )
         await seed_user(db_session, email="maint.excluded@example.com")
         smelt = PackageSmelt.ok(
-            codestream(IBS_REF, "SLE_15", p1.cpe, p2.cpe),
+            codestream(IBS_REF, "IBS", p1.cpe, p2.cpe),
             emails=["maint.excluded@example.com"],
         )
 
@@ -901,9 +899,9 @@ class TestTargetResolution:
         actor, ticket = await self._setup(ticket_factory, va_user)
         m1, m2, m3 = await _current(db_session, 3)
         smelt = PackageSmelt.ok(
-            codestream(IBS_REF, "SLE_15", m1.cpe, ABSENT_1, m2.cpe, ABSENT_2),
+            codestream(IBS_REF, "IBS", m1.cpe, ABSENT_1, m2.cpe, ABSENT_2),
             codestream(GIT_REF, "SLFO", ABSENT_2, ABSENT_3, m3.cpe),
-            codestream(IBS_REF_2, "SLE_15", ABSENT_1),
+            codestream(IBS_REF_2, "IBS", ABSENT_1),
         )
         records = Spy(monkeypatch, "add_package_records")
 
@@ -941,7 +939,7 @@ class TestTargetResolution:
     ) -> None:
         actor, ticket = await self._setup(ticket_factory, va_user)
         p1, p2 = await _current(db_session, 2)
-        smelt = PackageSmelt.ok(codestream(IBS_REF, "SLE_15", p1.cpe, p2.cpe))
+        smelt = PackageSmelt.ok(codestream(IBS_REF, "IBS", p1.cpe, p2.cpe))
 
         with capture_logs() as logs:
             result = await add(db_session, ticket.id, PKG, smelt, actor=actor)
@@ -959,8 +957,8 @@ class TestTargetResolution:
         (product,) = await _current(db_session)
         variant = product.cpe.upper()
         smelt = PackageSmelt.ok(
-            codestream(IBS_REF, "SLE_15", product.cpe),
-            codestream(IBS_REF_2, "SLE_15", variant),
+            codestream(IBS_REF, "IBS", product.cpe),
+            codestream(IBS_REF_2, "IBS", variant),
         )
 
         with capture_logs() as logs:
@@ -982,9 +980,7 @@ class TestTargetResolution:
     ) -> None:
         actor, ticket = await self._setup(ticket_factory, va_user)
         p, q = await _current(db_session, 2)
-        smelt = PackageSmelt.ok(
-            codestream(IBS_REF, "SLE_15", p.cpe, p.cpe, q.cpe, p.cpe)
-        )
+        smelt = PackageSmelt.ok(codestream(IBS_REF, "IBS", p.cpe, p.cpe, q.cpe, p.cpe))
         records = Spy(monkeypatch, "add_package_records")
 
         result = await add(db_session, ticket.id, PKG, smelt, actor=actor)
@@ -1000,12 +996,12 @@ class TestTargetResolution:
         ticket_factory: TicketFactory,
         va_user: VAUser,
     ) -> None:
-        """One track per codestream; `SLE_15` persists `ibs` and `SLFO`
+        """One track per codestream; `IBS` persists `ibs` and `SLFO`
         persists `git`."""
         actor, ticket = await self._setup(ticket_factory, va_user)
         (product,) = await _current(db_session)
         smelt = PackageSmelt.ok(
-            codestream(IBS_REF, "SLE_15", product.cpe),
+            codestream(IBS_REF, "IBS", product.cpe),
             codestream(GIT_REF, "SLFO", product.cpe),
         )
 
@@ -1037,7 +1033,7 @@ class TestTargetResolution:
         skipped, supported = await _current(db_session, 2)
         smelt = PackageSmelt.ok(
             codestream(SLFO_IBS_REF, "SLFO_IBS", skipped.cpe),
-            codestream(IBS_REF, "SLE_15", supported.cpe),
+            codestream(IBS_REF, "IBS", supported.cpe),
             codestream(UNKNOWN_REF, "UNKNOWN", skipped.cpe),
         )
 
@@ -1063,7 +1059,7 @@ class TestTargetResolution:
         wall_clock = await catalog_product(db_session)
         (current,) = await _current(db_session)
         smelt = PackageSmelt.ok(
-            codestream(IBS_REF, "SLE_15", historical.cpe, wall_clock.cpe, current.cpe)
+            codestream(IBS_REF, "IBS", historical.cpe, wall_clock.cpe, current.cpe)
         )
 
         with capture_logs() as logs:
@@ -1118,7 +1114,7 @@ class TestMaintainership:
         await seed_user(db_session, email="maint.dormant@example.com", active=False)
         (product,) = await _current(db_session)
         smelt = PackageSmelt.ok(
-            codestream(IBS_REF, "SLE_15", product.cpe),
+            codestream(IBS_REF, "IBS", product.cpe),
             emails=[
                 "Maint.Exact@Example.COM",
                 "maint.dormant@example.com",
@@ -1156,9 +1152,7 @@ class TestMaintainership:
         await seed_user(db_session, email="maint.failed@example.com")
         (product,) = await _current(db_session)
         smelt = PackageSmelt(
-            maintained=reply(
-                200, maintained(codestream(IBS_REF, "SLE_15", product.cpe))
-            ),
+            maintained=reply(200, maintained(codestream(IBS_REF, "IBS", product.cpe))),
             maintainership=respond,
         )
         records = Spy(monkeypatch, "add_package_records")
@@ -1196,13 +1190,13 @@ class TestMaintainership:
         p1, p2 = await _current(db_session, 2)
         maintainer = await seed_user(db_session, email="maint.once@example.com")
         entries = {
-            "ibs-only": [codestream(IBS_REF, "SLE_15", p1.cpe)],
+            "ibs-only": [codestream(IBS_REF, "IBS", p1.cpe)],
             "git-only": [codestream(GIT_REF, "SLFO", p1.cpe)],
             "mixed": [
-                codestream(IBS_REF, "SLE_15", p1.cpe),
+                codestream(IBS_REF, "IBS", p1.cpe),
                 codestream(GIT_REF, "SLFO", p2.cpe),
             ],
-            "no-op": [codestream(IBS_REF, "SLE_15", p1.cpe)],
+            "no-op": [codestream(IBS_REF, "IBS", p1.cpe)],
         }[shape]
         if shape == "no-op":
             package = await seed_package(db_session, ticket.id, PKG)
@@ -1239,7 +1233,7 @@ class TestMaintainership:
         )
         maintainer = await seed_user(db_session, email="maint.only@example.com")
         smelt = PackageSmelt.ok(
-            codestream(IBS_REF, "SLE_15", product.cpe),
+            codestream(IBS_REF, "IBS", product.cpe),
             emails=["maint.only@example.com"],
         )
         assign = Spy(monkeypatch, "auto_assign_actor")
@@ -1287,12 +1281,12 @@ each caller context (package-service.md, `add_package_to_ticket()`)."""
 
 SHAPES: dict[str, list[tuple[str, str, WorkflowType, int]]] = {
     "ibs-only": [
-        (IBS_REF, "SLE_15", WorkflowType.IBS, 2),
-        (IBS_REF_2, "SLE_15", WorkflowType.IBS, 1),
+        (IBS_REF, "IBS", WorkflowType.IBS, 2),
+        (IBS_REF_2, "IBS", WorkflowType.IBS, 1),
     ],
     "git-only": [(GIT_REF, "SLFO", WorkflowType.GIT, 1)],
     "mixed": [
-        (IBS_REF, "SLE_15", WorkflowType.IBS, 2),
+        (IBS_REF, "IBS", WorkflowType.IBS, 2),
         (GIT_REF, "SLFO", WorkflowType.GIT, 1),
     ],
 }
@@ -1316,7 +1310,7 @@ class TestDelegationAndResult:
         ticket = await cveless(ticket_factory, status=ANALYSIS, assignee_id=assignee.id)
         p1, p2, p3 = await _current(db_session, 3)
         smelt = PackageSmelt.ok(
-            codestream(IBS_REF, "SLE_15", p1.cpe, p2.cpe),
+            codestream(IBS_REF, "IBS", p1.cpe, p2.cpe),
             codestream(GIT_REF, "SLFO", p3.cpe),
             emails=[
                 "Maint.Delegate@Example.com",
@@ -1401,7 +1395,7 @@ class TestDelegationAndResult:
         await seed_occurrence(
             db_session, await seed_track(db_session, package, IBS_REF), p1
         )
-        smelt = PackageSmelt.ok(codestream(IBS_REF, "SLE_15", p1.cpe, p2.cpe))
+        smelt = PackageSmelt.ok(codestream(IBS_REF, "IBS", p1.cpe, p2.cpe))
 
         result = await add(db_session, ticket.id, PKG, smelt, actor=actor)
 
@@ -1422,7 +1416,7 @@ class TestDelegationAndResult:
         (product,) = await _current(db_session)
         await seed_user(db_session, email="maint.skipped@example.com")
         smelt = PackageSmelt.ok(
-            codestream(IBS_REF, "SLE_15", product.cpe),
+            codestream(IBS_REF, "IBS", product.cpe),
             emails=["maint.skipped@example.com"],
         )
 
@@ -1460,7 +1454,7 @@ class TestDelegationAndResult:
         )
         maintainer = await seed_user(db_session, email="maint.converge@example.com")
         smelt = PackageSmelt.ok(
-            codestream(IBS_REF, "SLE_15", p1.cpe, p2.cpe),
+            codestream(IBS_REF, "IBS", p1.cpe, p2.cpe),
             codestream(GIT_REF, "SLFO", p3.cpe),
             emails=["maint.converge@example.com"],
         )
@@ -1520,7 +1514,7 @@ class TestIdempotency:
         maintainer = await seed_user(db_session, email="maint.repeat@example.com")
         p1, p2, p3 = await _current(db_session, 3)
         smelt = PackageSmelt.ok(
-            codestream(IBS_REF, "SLE_15", p1.cpe, p2.cpe),
+            codestream(IBS_REF, "IBS", p1.cpe, p2.cpe),
             codestream(GIT_REF, "SLFO", p3.cpe),
             emails=["maint.repeat@example.com"],
         )
@@ -1565,7 +1559,7 @@ class TestIdempotency:
         actor = await va_user()
         ticket = await cveless(ticket_factory, status=ANALYSIS, assignee_id=actor.id)
         (product,) = await _current(db_session)
-        smelt = PackageSmelt.ok(codestream(IBS_REF, "SLE_15", product.cpe))
+        smelt = PackageSmelt.ok(codestream(IBS_REF, "IBS", product.cpe))
         first = await add(db_session, ticket.id, PKG, smelt, actor=actor)
         assert outcome(first) == changed(1, 0, 1, 0)
         if case == "smelt-unavailable":
@@ -1609,7 +1603,7 @@ class TestConvergenceRegistration:
         actor = await va_user()
         ticket = await cveless(ticket_factory, status=RESOLVED, assignee_id=actor.id)
         (product,) = await _current(db_session)
-        smelt = PackageSmelt.ok(codestream(IBS_REF, "SLE_15", product.cpe))
+        smelt = PackageSmelt.ok(codestream(IBS_REF, "IBS", product.cpe))
 
         result = await add(db_session, ticket.id, PKG, smelt, actor=actor)
 
@@ -1638,7 +1632,7 @@ class TestConvergenceRegistration:
             db_session, package, IBS_REF, status=PackageStatus.NOT_AFFECTED
         )
         await seed_occurrence(db_session, track, product)
-        smelt = PackageSmelt.ok(codestream(IBS_REF, "SLE_15", product.cpe))
+        smelt = PackageSmelt.ok(codestream(IBS_REF, "IBS", product.cpe))
 
         result = await assert_no_effects(
             db_session,
@@ -1659,7 +1653,7 @@ class TestAutoAssignment:
         actor = await va_user()
         ticket = await cveless(ticket_factory, status=ANALYSIS)
         (product,) = await _current(db_session)
-        smelt = PackageSmelt.ok(codestream(IBS_REF, "SLE_15", product.cpe))
+        smelt = PackageSmelt.ok(codestream(IBS_REF, "IBS", product.cpe))
 
         await add(db_session, ticket.id, PKG, smelt, actor=actor)
 
@@ -1674,7 +1668,7 @@ class TestAutoAssignment:
     ) -> None:
         ticket = await cveless(ticket_factory, status=ANALYSIS)
         (product,) = await _current(db_session)
-        smelt = PackageSmelt.ok(codestream(IBS_REF, "SLE_15", product.cpe))
+        smelt = PackageSmelt.ok(codestream(IBS_REF, "IBS", product.cpe))
 
         await add(db_session, ticket.id, PKG, smelt, comment="CVE package resolution")
 
@@ -1772,7 +1766,7 @@ class TestPrivacy:
         ]
         smelt = PackageSmelt.ok(
             codestream(SLFO_IBS_REF, "SLFO_IBS", product.cpe),
-            codestream(IBS_REF, "SLE_15", product.cpe, ABSENT_1),
+            codestream(IBS_REF, "IBS", product.cpe, ABSENT_1),
             emails=emails,
         )
 
@@ -1832,7 +1826,7 @@ class TestIOThenLock:
         p1, p2 = await _current(db_session, 2)
         events: list[tuple[str, str]] = []
         smelt = PackageSmelt.ok(
-            codestream(IBS_REF, "SLE_15", p1.cpe),
+            codestream(IBS_REF, "IBS", p1.cpe),
             codestream(GIT_REF, "SLFO", p2.cpe),
             emails=["maint.timeline@example.com"],
             events=events,
@@ -1886,7 +1880,7 @@ class TestHttpClientLifecycle:
         actor = await va_user()
         ticket = await cveless(ticket_factory, status=ANALYSIS, assignee_id=actor.id)
         (product,) = await _current(db_session)
-        smelt = PackageSmelt.ok(codestream(IBS_REF, "SLE_15", product.cpe))
+        smelt = PackageSmelt.ok(codestream(IBS_REF, "IBS", product.cpe))
         names = _patch_factory(monkeypatch, smelt)
         closed_at_entry: list[list[bool]] = []
         original = package_service.add_package_records
@@ -1953,7 +1947,7 @@ class TestHttpClientLifecycle:
     ) -> None:
         ticket = await cveless(ticket_factory, status=ANALYSIS)
         (product,) = await _current(db_session)
-        smelt = PackageSmelt.ok(codestream(IBS_REF, "SLE_15", product.cpe))
+        smelt = PackageSmelt.ok(codestream(IBS_REF, "IBS", product.cpe))
         names = _patch_factory(monkeypatch, smelt)
         client = smelt.client()
 

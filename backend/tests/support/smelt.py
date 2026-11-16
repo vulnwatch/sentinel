@@ -17,14 +17,16 @@ duplicate relationships are preserved.
 The `maintained_*.json` files are live
 `experimental/v2/maintained/{package_name}?include_reactive_ltss=true`
 responses captured anonymously from the default `SMELT_API_URL` on
-2026-10-12 (SMELT v3.94.1), after `tools/smelt#1465` was deployed and the
-fake `SUSE:Channels` records were reprocessed (#780): every SLFO codestream
-is typed `SLFO` and resolved only through compose. The `sle15_only`,
-`not_found`, and `case_variant` captures were identical to the earlier
-2026-10-03 captures. Every URL-valued string (`codestream.url`,
-`product_definition.url`) was replaced with a fictional
-`build.example.invalid` URL, and the unconsumed `binary_packages` array was
-trimmed to its first element per entry. Codestream names, Product CPEs,
+2026-11-16 (SMELT v3.98.0), after `tools/smelt#1499` renamed the
+maintenance process type `SLE_15` to `IBS` (#1318). They keep the
+properties established by #780 after `tools/smelt#1465`: every SLFO
+codestream is typed `SLFO` and resolved only through compose. Compared
+with the 2026-10-12 captures, `ibs_only` (formerly `sle15_only`) differs
+only in that rename, `not_found` and `case_variant` are identical, and the
+other captures also reflect upstream catalog changes. Every URL-valued
+string (`codestream.url`, `product_definition.url`) was replaced with a
+fictional `build.example.invalid` URL, and the unconsumed `binary_packages`
+array was trimmed to its first element per entry. Codestream names, Product CPEs,
 and Product friendly names are retained: they are consumed match keys and
 public Product identifiers. No personal identifier was present.
 
@@ -101,7 +103,7 @@ def load_maintainership_fixture(name: str) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-MAINTAINED_SUCCESS_FIXTURES = ("sle15_only", "slfo_only", "mixed", "reactive_ltss")
+MAINTAINED_SUCCESS_FIXTURES = ("ibs_only", "slfo_only", "mixed", "reactive_ltss")
 """Sanitized live HTTP 200 maintained-package responses, by fixture name."""
 
 MAINTAINED_NOT_FOUND_FIXTURES = ("not_found", "case_variant")

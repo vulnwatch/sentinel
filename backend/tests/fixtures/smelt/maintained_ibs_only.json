@@ -5,7 +5,7 @@
       "codestream": {
         "name": "SUSE:SLE-12:Update",
         "url": "https://build.example.invalid/fictional/1",
-        "type": "SLE_15"
+        "type": "IBS"
       },
       "binary_packages": [
         {
@@ -77,7 +77,7 @@
       "codestream": {
         "name": "SUSE:SLE-15:Update",
         "url": "https://build.example.invalid/fictional/4",
-        "type": "SLE_15"
+        "type": "IBS"
       },
       "binary_packages": [
         {

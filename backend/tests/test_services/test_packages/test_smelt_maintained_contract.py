@@ -5,12 +5,12 @@ for Package Resolution: Envelope and error handling, Entry validation,
 Consumed fields, Single authoritative representation) and
 docs/data-sources.md (SMELT, Contract characteristics, Source semantics),
 verified against sanitized live responses captured anonymously from the
-default `SMELT_API_URL` on 2026-10-12, after `tools/smelt#1465`
-(docs/conventions.md, External Integration Contract Verification). Every
-field the client validates or consumes is asserted for name, nesting,
-type, and nullability.
+default `SMELT_API_URL` on 2026-11-16, after `tools/smelt#1465` and the
+`tools/smelt#1499` rename of `SLE_15` to `IBS` (docs/conventions.md,
+External Integration Contract Verification). Every field the client
+validates or consumes is asserted for name, nesting, type, and nullability.
 
-The fixtures cover an SLE 15-only package, an SLFO-only package, a package
+The fixtures cover an IBS-only package, an SLFO-only package, a package
 with both maintenance processes, a package with Reactive LTSS targets
 (proving `include_reactive_ltss=true`), an unknown package, and a case
 variant of a known package (both HTTP 404). Not observable live, and
@@ -32,8 +32,8 @@ from tests.support.smelt import (
 )
 
 # `MaintenanceProcessType` in the live `/api/experimental/v2/openapi.json`.
-_DECLARED_TYPES = frozenset({"SLFO", "SLFO_IBS", "SLE_15", "UNKNOWN"})
-_SUPPORTED_TYPES = frozenset({"SLFO", "SLE_15"})
+_DECLARED_TYPES = frozenset({"SLFO", "SLFO_IBS", "IBS", "UNKNOWN"})
+_SUPPORTED_TYPES = frozenset({"SLFO", "IBS"})
 # `TicketPackageTrack.reference` column length (docs/data-model.md).
 _REFERENCE_LENGTH = 255
 _FICTIONAL_URL_PREFIX = "https://build.example.invalid/"
@@ -142,14 +142,14 @@ class TestTargetShape:
 class TestFixtureCoverage:
     """The captured set exercises every observable consumed variant."""
 
-    def test_sle15_only_package_has_only_sle15_codestreams(self) -> None:
-        assert _types("sle15_only") == {"SLE_15"}
+    def test_ibs_only_package_has_only_ibs_codestreams(self) -> None:
+        assert _types("ibs_only") == {"IBS"}
 
     def test_slfo_only_package_has_only_slfo_codestreams(self) -> None:
         assert _types("slfo_only") == {"SLFO"}
 
     def test_mixed_package_has_both_supported_processes(self) -> None:
-        assert _types("mixed") == {"SLFO", "SLE_15"}
+        assert _types("mixed") == {"SLFO", "IBS"}
 
     def test_reactive_ltss_targets_are_returned(self) -> None:
         statuses = {
@@ -169,14 +169,14 @@ class TestSingleAuthoritativeRepresentation:
     Sentinel does not consume `product_definition.type` and applies no
     channel/compose deduplication; these checks only keep a re-capture of
     pre-`tools/smelt#1465` data, where fake `SUSE:Channels` records typed
-    SLFO codestreams `SLE_15`, from passing unnoticed.
+    SLFO codestreams `SLE_15` (since renamed `IBS`), from passing unnoticed.
     """
 
     @pytest.mark.parametrize("name", MAINTAINED_SUCCESS_FIXTURES)
     def test_targets_resolve_through_the_source_of_their_process(
         self, name: str
     ) -> None:
-        expected = {"SLE_15": {"channel"}, "SLFO": {"compose"}}
+        expected = {"IBS": {"channel"}, "SLFO": {"compose"}}
         for entry in _entries(name):
             definitions = {
                 target["product_definition"]["type"] for target in entry["targets"]

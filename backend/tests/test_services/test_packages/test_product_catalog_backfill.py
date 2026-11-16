@@ -798,7 +798,7 @@ class TestPairOutcomes:
         smelt = _Smelt(
             {
                 a: _resolves(
-                    codestream(IBS_REF, "SLE_15", p1.cpe, p2.cpe),
+                    codestream(IBS_REF, "IBS", p1.cpe, p2.cpe),
                     codestream(GIT_REF, "SLFO", p3.cpe),
                 )
             }
@@ -855,7 +855,7 @@ class TestPairOutcomes:
         smelt = _Smelt(
             {
                 a: _resolves(
-                    codestream(IBS_REF, "SLE_15", p1.cpe),
+                    codestream(IBS_REF, "IBS", p1.cpe),
                     codestream(GIT_REF, "SLFO", p2.cpe),
                 )
             }
@@ -904,8 +904,8 @@ class TestPairOutcomes:
         await _package(world, ticket, b, tree=((IBS_REF, p2),))
         smelt = _Smelt(
             {
-                a: _resolves(codestream(IBS_REF, "SLE_15", p1.cpe), emails=(m.email,)),
-                b: _resolves(codestream(IBS_REF, "SLE_15", p2.cpe)),
+                a: _resolves(codestream(IBS_REF, "IBS", p1.cpe), emails=(m.email,)),
+                b: _resolves(codestream(IBS_REF, "IBS", p2.cpe)),
             }
         )
         smelt.install(monkeypatch)
@@ -939,11 +939,7 @@ class TestPairOutcomes:
         (a,) = _names("a")
         await _package(world, ticket, a)
         smelt = _Smelt(
-            {
-                a: _resolves(
-                    codestream(IBS_REF, "SLE_15", product.cpe), emails=(m.email,)
-                )
-            }
+            {a: _resolves(codestream(IBS_REF, "IBS", product.cpe), emails=(m.email,))}
         )
         smelt.install(monkeypatch)
 
@@ -987,9 +983,7 @@ class TestPairOutcomes:
         smelt = _Smelt(
             {
                 a: _Answer(
-                    _held(
-                        pause, maintained(codestream(IBS_REF, "SLE_15", product.cpe))
-                    ),
+                    _held(pause, maintained(codestream(IBS_REF, "IBS", product.cpe))),
                     reply(200, maintainership(m.email)),
                 )
             }
@@ -1037,10 +1031,10 @@ class TestPairOutcomes:
         smelt = _Smelt(
             {
                 a: _Answer(
-                    _held(pause, maintained(codestream(IBS_REF, "SLE_15", p1.cpe))),
+                    _held(pause, maintained(codestream(IBS_REF, "IBS", p1.cpe))),
                     reply(200, maintainership(m.email)),
                 ),
-                b: _resolves(codestream(IBS_REF, "SLE_15", p2.cpe)),
+                b: _resolves(codestream(IBS_REF, "IBS", p2.cpe)),
             }
         )
         smelt.install(monkeypatch)
@@ -1130,13 +1124,13 @@ class TestPairFailures:
                 products.append(await _current_product(world))
                 return httpx.Response(
                     200,
-                    json=maintained(codestream(IBS_REF, "SLE_15", products[0].cpe)),
+                    json=maintained(codestream(IBS_REF, "IBS", products[0].cpe)),
                 )
 
             second = _Answer(ready_then_resolve)
         else:
             products.append(await _current_product(world))
-            second = _resolves(codestream(IBS_REF, "SLE_15", products[0].cpe))
+            second = _resolves(codestream(IBS_REF, "IBS", products[0].cpe))
         own = (
             await _current_product(world) if failure in {"database", "commit"} else None
         )
@@ -1148,15 +1142,15 @@ class TestPairFailures:
                 fail(httpx.ConnectError(f"https://smelt.example.test/{MARKER}"))
             ),
             "package-not-found": _Answer(reply(404, not_found(MARKER))),
-            "targets-unresolved": _resolves(codestream(IBS_REF, "SLE_15", ABSENT)),
-            "catalog-not-ready": _resolves(codestream(IBS_REF, "SLE_15", ABSENT)),
+            "targets-unresolved": _resolves(codestream(IBS_REF, "IBS", ABSENT)),
+            "catalog-not-ready": _resolves(codestream(IBS_REF, "IBS", ABSENT)),
             "invalid-package-name": _Answer(reply(500, {})),
             "database": _resolves(
-                codestream(IBS_REF, "SLE_15", own.cpe if own else ABSENT),
+                codestream(IBS_REF, "IBS", own.cpe if own else ABSENT),
                 emails=(m.email,),
             ),
             "commit": _resolves(
-                codestream(IBS_REF, "SLE_15", own.cpe if own else ABSENT),
+                codestream(IBS_REF, "IBS", own.cpe if own else ABSENT),
                 emails=(m.email,),
             ),
         }[failure]
@@ -1228,9 +1222,9 @@ class TestPairFailures:
             await _package(world, ticket, name)
         smelt = _Smelt(
             {
-                a: _resolves(codestream(IBS_REF, "SLE_15", p1.cpe)),
-                b: _resolves(codestream(IBS_REF, "SLE_15", p2.cpe)),
-                c: _resolves(codestream(IBS_REF, "SLE_15", p3.cpe)),
+                a: _resolves(codestream(IBS_REF, "IBS", p1.cpe)),
+                b: _resolves(codestream(IBS_REF, "IBS", p2.cpe)),
+                c: _resolves(codestream(IBS_REF, "IBS", p3.cpe)),
             }
         )
         smelt.install(monkeypatch)
@@ -1291,9 +1285,9 @@ class TestControlSignals:
             await _package(world, ticket, name)
         smelt = _Smelt(
             {
-                a: _resolves(codestream(IBS_REF, "SLE_15", p1.cpe)),
-                b: _resolves(codestream(IBS_REF, "SLE_15", p2.cpe)),
-                c: _resolves(codestream(IBS_REF, "SLE_15", p3.cpe)),
+                a: _resolves(codestream(IBS_REF, "IBS", p1.cpe)),
+                b: _resolves(codestream(IBS_REF, "IBS", p2.cpe)),
+                c: _resolves(codestream(IBS_REF, "IBS", p3.cpe)),
             }
         )
         smelt.install(monkeypatch)
@@ -1345,9 +1339,9 @@ class TestControlSignals:
         pause = Pause()
         smelt = _Smelt(
             {
-                a: _resolves(codestream(IBS_REF, "SLE_15", p1.cpe)),
+                a: _resolves(codestream(IBS_REF, "IBS", p1.cpe)),
                 b: _Answer(
-                    _held(pause, maintained(codestream(IBS_REF, "SLE_15", p2.cpe)))
+                    _held(pause, maintained(codestream(IBS_REF, "IBS", p2.cpe)))
                 ),
             }
         )
@@ -1407,13 +1401,13 @@ class TestCompletionLine:
         pause = Pause()
         smelt = _Smelt(
             {
-                a: _resolves(codestream(IBS_REF, "SLE_15", p1.cpe)),
-                b: _resolves(codestream(IBS_REF, "SLE_15", p2.cpe)),
+                a: _resolves(codestream(IBS_REF, "IBS", p1.cpe)),
+                b: _resolves(codestream(IBS_REF, "IBS", p2.cpe)),
                 c: _Answer(reply(404, not_found(c))),
                 d: _Answer(
-                    _held(pause, maintained(codestream(IBS_REF, "SLE_15", p3.cpe)))
+                    _held(pause, maintained(codestream(IBS_REF, "IBS", p3.cpe)))
                 ),
-                e: _resolves(codestream(IBS_REF, "SLE_15", p4.cpe)),
+                e: _resolves(codestream(IBS_REF, "IBS", p4.cpe)),
             }
         )
         smelt.install(monkeypatch)
@@ -1497,11 +1491,11 @@ class TestRequestCatchUp:
         await _package(world, second, e)
         smelt = _Smelt(
             {
-                a: _resolves(codestream(IBS_REF, "SLE_15", p1.cpe)),
-                b: _resolves(codestream(IBS_REF, "SLE_15", p2.cpe), emails=(m.email,)),
-                c: _resolves(codestream(IBS_REF, "SLE_15", p3.cpe, p4.cpe)),
+                a: _resolves(codestream(IBS_REF, "IBS", p1.cpe)),
+                b: _resolves(codestream(IBS_REF, "IBS", p2.cpe), emails=(m.email,)),
+                c: _resolves(codestream(IBS_REF, "IBS", p3.cpe, p4.cpe)),
                 d: _resolves(codestream(GIT_REF, "SLFO", p5.cpe)),
-                e: _resolves(codestream(IBS_REF, "SLE_15", p6.cpe)),
+                e: _resolves(codestream(IBS_REF, "IBS", p6.cpe)),
             }
         )
         smelt.install(monkeypatch)
@@ -1596,8 +1590,8 @@ class TestRequestCatchUp:
         published.error = error
         _Smelt(
             {
-                a: _resolves(codestream(IBS_REF, "SLE_15", p1.cpe)),
-                b: _resolves(codestream(IBS_REF, "SLE_15", p2.cpe)),
+                a: _resolves(codestream(IBS_REF, "IBS", p1.cpe)),
+                b: _resolves(codestream(IBS_REF, "IBS", p2.cpe)),
             }
         ).install(monkeypatch)
 
@@ -1672,10 +1666,10 @@ class TestOverlappingInvocations:
         smelt = _Smelt(
             {
                 a: _Answer(
-                    reply(200, maintained(codestream(IBS_REF, "SLE_15", p1.cpe))),
+                    reply(200, maintained(codestream(IBS_REF, "IBS", p1.cpe))),
                     barrier,
                 ),
-                b: _resolves(codestream(IBS_REF, "SLE_15", p2.cpe), emails=(m2.email,)),
+                b: _resolves(codestream(IBS_REF, "IBS", p2.cpe), emails=(m2.email,)),
             }
         )
         names = smelt.install(monkeypatch)
@@ -1753,7 +1747,7 @@ class TestFailedPairRollback:
         smelt = _Smelt(
             {
                 a: _Answer(reply(404, not_found(a))),
-                b: _resolves(codestream(IBS_REF, "SLE_15", product.cpe)),
+                b: _resolves(codestream(IBS_REF, "IBS", product.cpe)),
             }
         )
         smelt.install(monkeypatch)
@@ -1800,7 +1794,7 @@ class TestFailedPairRollback:
         smelt = _Smelt(
             {
                 a: _Answer(reply(404, not_found(a))),
-                b: _resolves(codestream(IBS_REF, "SLE_15", product.cpe)),
+                b: _resolves(codestream(IBS_REF, "IBS", product.cpe)),
             }
         )
         smelt.install(monkeypatch)

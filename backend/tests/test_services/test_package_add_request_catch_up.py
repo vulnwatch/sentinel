@@ -198,7 +198,7 @@ async def _ibs_addition(
     """Add `PKG` with one new IBS track holding one current Product."""
     ticket = await cveless(ticket_factory)
     (product,) = await _current(db)
-    smelt = PackageSmelt.ok(codestream(IBS_REF, "SLE_15", product.cpe))
+    smelt = PackageSmelt.ok(codestream(IBS_REF, "IBS", product.cpe))
     result = await add(db, ticket.id, PKG, smelt)
     return ticket.id, product, result
 
@@ -233,7 +233,7 @@ class TestRegistration:
         ibs_refs = [IBS_REF, IBS_REF_2][:ibs_tracks]
         smelt = PackageSmelt.ok(
             *[
-                codestream(ref, "SLE_15", product.cpe)
+                codestream(ref, "IBS", product.cpe)
                 for ref, product in zip(ibs_refs, products[:ibs_tracks], strict=True)
             ],
             codestream(GIT_REF, "SLFO", products[2].cpe),
@@ -304,11 +304,11 @@ class TestRegistration:
             await seed_user(db_session, email="maint.catchup@example.com")
             emails.append("maint.catchup@example.com")
         entry = {
-            "product-only": codestream(IBS_REF, "SLE_15", p1.cpe, p2.cpe),
+            "product-only": codestream(IBS_REF, "IBS", p1.cpe, p2.cpe),
             "git-only": codestream(GIT_REF, "SLFO", p1.cpe),
-            "maintainer-only": codestream(IBS_REF, "SLE_15", p1.cpe),
-            "no-op": codestream(IBS_REF, "SLE_15", p1.cpe),
-            "inactive": codestream(IBS_REF, "SLE_15", p1.cpe),
+            "maintainer-only": codestream(IBS_REF, "IBS", p1.cpe),
+            "no-op": codestream(IBS_REF, "IBS", p1.cpe),
+            "inactive": codestream(IBS_REF, "IBS", p1.cpe),
         }[case]
         smelt = PackageSmelt.ok(entry, emails=emails)
 
@@ -350,7 +350,7 @@ class TestRegistration:
         (product,) = await _current(db_session)
         if case == "already-excluded":
             await seed_package(db_session, ticket.id, PKG, excluded=True)
-        smelt = PackageSmelt.ok(codestream(IBS_REF, "SLE_15", product.cpe))
+        smelt = PackageSmelt.ok(codestream(IBS_REF, "IBS", product.cpe))
         error = TicketNotMutableError if not_mutable else PackageAlreadyExcludedError
 
         with pytest.raises(error):

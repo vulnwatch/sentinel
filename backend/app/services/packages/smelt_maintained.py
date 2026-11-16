@@ -20,7 +20,7 @@ response is validated before any result is returned:
   *package not found*;
 - every entry of a non-empty `data` needs a `codestream` object with a
   non-empty `name` of at most 255 characters, unique across the response,
-  and a declared `type`; every `SLFO` and `SLE_15` entry needs a non-empty
+  and a declared `type`; every `SLFO` and `IBS` entry needs a non-empty
   `targets` array whose `product.cpe` values are non-empty strings; neither
   `name` nor `product.cpe` may contain U+0000 or a surrogate code point
   (External String Admissibility);
@@ -69,7 +69,7 @@ MaintainedUnavailableCategory = Literal[
 ]
 
 _WORKFLOW_TYPES: Final[frozendict[str, WorkflowType]] = frozendict(
-    {"SLFO": WorkflowType.GIT, "SLE_15": WorkflowType.IBS}
+    {"SLFO": WorkflowType.GIT, "IBS": WorkflowType.IBS}
 )
 _NOT_A_PATH_SEGMENT = frozenset({"", ".", ".."})
 _CREDENTIAL_HEADERS = ("authorization", "cookie")
@@ -140,7 +140,7 @@ class _Codestream(BaseModel):
     model_config = ConfigDict(strict=True, extra="ignore", frozen=True)
 
     name: AdmissibleStr = Field(min_length=1, max_length=REFERENCE_MAX_LENGTH)
-    type: Literal["SLFO", "SLFO_IBS", "SLE_15", "UNKNOWN"]
+    type: Literal["SLFO", "SLFO_IBS", "IBS", "UNKNOWN"]
 
 
 class _Entry(BaseModel):

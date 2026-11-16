@@ -120,7 +120,7 @@ def target(cpe: str, friendly_name: str | None = None) -> dict[str, Any]:
 
 def codestream(name: str, process: str, *cpes: str) -> dict[str, Any]:
     """One grouped maintained entry of maintenance process `process`
-    (`SLFO`, `SLE_15`, `SLFO_IBS`, or `UNKNOWN`) with one target per CPE."""
+    (`SLFO`, `IBS`, `SLFO_IBS`, or `UNKNOWN`) with one target per CPE."""
     return {
         "codestream": {
             "name": name,
