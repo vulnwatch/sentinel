@@ -424,8 +424,9 @@ Before the first production deployment:
       `reader` role on every access-disabled request staging project and on
       `SUSE:Maintenance`, which IBS copies into each incident project that it
       creates afterwards (`docs/features/integrations/ibs-integration.md`,
-      Request Action Diff). The key pair is Ed25519, generated without a passphrase for this
-      account only, and not used elsewhere. `IBS_USERNAME` and
+      Request Action Diff). The key pair is Ed25519, generated without a
+      passphrase for this account only, and not used elsewhere. `IBS_USERNAME`
+      and
       `IBS_SSH_PRIVATE_KEY` supplied securely
       (`docs/features/integrations/ibs-integration.md`, IBS API Credentials
       and Security)
