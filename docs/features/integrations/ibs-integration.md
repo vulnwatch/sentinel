@@ -733,9 +733,13 @@ that no longer expands against the current codestream (400 with a backend
 status document; the link-base form above remains available), and, with 404, a
 removed request staging project, a source project that the IBS account cannot
 read, and a codestream without the old package. OBS answers a project that the
-account cannot read, such as a project whose access is disabled, like an
-unknown project, so the two cannot be told apart. A malformed, interrupted, or
-partially parsed diff is also incomplete. The consuming reconciliation decides
+account cannot read like an unknown project, so the two cannot be told apart.
+A project whose access is disabled, as IBS does for embargoed updates, is
+readable only by an account with a role in that project itself. A role in
+`SUSE:Maintenance` does not reach an existing project: IBS copies it only into
+the incident projects that it creates afterwards (`docs/deployment.md`,
+Pre-Production Checklist). A malformed, interrupted, or partially parsed diff
+is also incomplete. The consuming reconciliation decides
 whether an action's diff is required; an incomplete diff never proves a
 negative and never deletes or invalidates retained request/action history. The
 diff of a not-accepted action can become permanently unavailable once its
@@ -817,9 +821,9 @@ with a new release request.
 #### Request Contract Verification Status
 
 Sanitized read-only verification against the IBS API on 2026-09-08,
-2026-10-13, 2026-10-14, 2026-11-12, and 2026-11-16, and inspection of the OBS
-source, established the request operations above. Request numbers, checksums,
-and personal fields were never recorded in the repository.
+2026-10-13, 2026-10-14, 2026-11-12, 2026-11-16, and 2026-11-17, and inspection
+of the OBS source, established the request operations above. Request numbers,
+checksums, and personal fields were never recorded in the repository.
 
 Verified live:
 
@@ -894,6 +898,14 @@ Verified live:
     request answered 200 (a deployment's request logs, 2026-11-15 and
     2026-11-16). For the same diff, an operator account with a role in that
     project received HTTP 400 for a conflicting link instead.
+  - On 2026-11-17, after Sentinel's account received the `reader` role on
+    `SUSE:Maintenance`: for an open submission request whose access-disabled
+    staging project names the account as `reader`, `IBSClient` with that
+    account received source info and a complete not-accepted action diff. For
+    an access-disabled staging project that existed before that role was
+    granted and does not name the account, both answered HTTP 404. The
+    incident projects created after the grant named the account as `reader`,
+    and the earlier ones checked did not.
   - Without `expand=1`, a not-accepted action reports its entire changelog as
     added.
   - Issues carry `state`, `tracker`, `name`, `label`, and `url`, including the
@@ -964,6 +976,12 @@ whose source is a local link carried by another action of the same request, or
 that updates its link; a not-accepted action for a package that does not yet
 exist in the codestream; and a link-base diff of an action whose source link
 targets a package other than its codestream package.
+
+Not verified: whether a request staging project created with disabled access
+receives the roles of `SUSE:Maintenance`, as incident projects do. The
+access-disabled staging project that named Sentinel's account existed before
+the account held the role on `SUSE:Maintenance`, so it received the account
+from the maintenance team's tooling rather than from IBS.
 
 IBS does not guarantee indefinite retention of detail, diff, or source history.
 The resulting unavailable-evidence outcomes are part of the contract, not an
