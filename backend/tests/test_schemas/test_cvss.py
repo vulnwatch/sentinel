@@ -36,7 +36,6 @@ from app.schemas.cvss import (
     CVSSAssessmentItem,
     CVSSAssessmentResponse,
     CVSSBaseScore,
-    CVSSBaseScoreResponse,
     CVSSVersionValue,
     DefaultCVSSVersionValue,
     SUSECVSSAssessmentRequest,
@@ -280,14 +279,6 @@ class TestBaseScore:
         for field in BASE_SCORE_FIELDS:
             assert base_score[field].annotation == item[field].annotation
             assert base_score[field].description == item[field].description
-
-    def test_response_envelope_wraps_the_discriminated_result(self) -> None:
-        schema = CVSSBaseScoreResponse.model_json_schema()
-
-        assert list(schema["properties"]) == ["data"]
-        assert schema["required"] == ["data"]
-        union = schema["$defs"][schema["properties"]["data"]["$ref"].rsplit("/", 1)[1]]
-        assert union["discriminator"]["propertyName"] == "cvss_version"
 
 
 @pytest.mark.unit

@@ -4,9 +4,8 @@
 See docs/features/tickets/cvss-scoring.md (Calculate CVSS Base Score; Input
 Rules; Stable Parsed Result; Shared Assessment Item; Required Tests >
 Persistence and API Tests), docs/api-spec.md (Query Parameter Length Limit;
-Published Input Constraints; Inadmissible Characters in Request Input;
-Response Applicability Derivation), and docs/features/identity/rbac.md
-(Endpoint Permission Map).
+Published Input Constraints; Response Applicability Derivation), and
+docs/features/identity/rbac.md (Endpoint Permission Map).
 
 The parser matrix is proven by tests/test_services/test_cvss.py. These
 tests cover the HTTP contract: the parity of the calculation with the SUSE
@@ -14,7 +13,9 @@ upsert for representative strings that each exercise a step of the
 operation, the absence of side effects, the read-only profile, the missing
 parameter, the route inventory, and OpenAPI. The `401` of a request without
 a credential is proven for this route by the route-wide test of
-tests/test_api/test_route_authentication.py.
+tests/test_api/test_route_authentication.py, and the rejection of an
+inadmissible character by the shared check's tests in
+tests/test_api/test_request_admissibility.py.
 """
 
 from __future__ import annotations
@@ -136,12 +137,11 @@ class TestParityWithTheSUSEUpsert:
                 V31.removeprefix("CVSS:3.1/"), "CVSS_INVALID_VECTOR", id="no-prefix"
             ),
             pytest.param(f"{V40}/E:P", "CVSS_INVALID_VECTOR", id="non-base-metric"),
-            # Rule 1 at the query parameter, and the shared constraint.
+            # Rule 1 at the query parameter.
             pytest.param(_padded(V31_REORDERED, 200), None, id="200-characters"),
             pytest.param(
                 _padded(V31_REORDERED, 201), "VALIDATION_ERROR", id="201-characters"
             ),
-            pytest.param(f"{V31}\x00", "VALIDATION_ERROR", id="inadmissible-character"),
         ],
     )
     async def test_calculation_matches_the_upsert(
