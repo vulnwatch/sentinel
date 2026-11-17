@@ -2,8 +2,9 @@
 
 See `docs/features/tickets/cvss-scoring.md` (API Endpoints: Shared
 Assessment Item, Get CVSS Assessments for a CVE, Set or Update SUSE CVSS
-Assessment; Input Rules; Accepted Base Vectors: per-version Base metrics
-and API wire values) for the authoritative contracts.
+Assessment, Calculate CVSS Base Score; Input Rules; Accepted Base Vectors:
+per-version Base metrics and API wire values) for the authoritative
+contracts.
 
 `CVSSAssessmentItem` is the one shared assessment item schema: the GET
 composite and the SUSE upsert response serialize exactly this schema. It
@@ -11,7 +12,9 @@ is a union discriminated by `cvss_version`, so each version carries only
 its own `metrics` shape and never fields of another version or an untyped
 abbreviation map. Metric and severity values are the lowercase wire values
 of the Category B enums in `app.core.enums`, which the pure parser also
-produces, so the wire vocabulary has one definition.
+produces, so the wire vocabulary has one definition. `CVSSBaseScore`, the
+result of the Base score calculation, is the same union restricted to the
+fields that the vector determines.
 """
 
 from __future__ import annotations
@@ -141,6 +144,67 @@ type CVSSAssessmentItem = Annotated[
 """The shared assessment item, discriminated by `cvss_version`."""
 
 
+class _CVSSBaseScoreBase(BaseModel):
+    """The vector-derived fields of the shared item, in its field order;
+    subclasses narrow the version pair."""
+
+    cvss_version: CVSSVersionValue = Field(description="Exact vector version.")
+    score: float = Field(description="Calculated Base score (0.0-10.0).")
+    severity: CVSSAssessmentSeverity = Field(
+        description=(
+            "Version-specific assessment severity (v2.0: low, medium, high; "
+            "v3.0, v3.1, v4.0: none through critical). Not the unified CVE "
+            "severity."
+        )
+    )
+    vector_string: str = Field(description="Canonical complete Base vector.")
+    metrics: CVSS2Metrics | CVSS3Metrics | CVSS4Metrics = Field(
+        description="Base metrics expanded from the vector for its version."
+    )
+
+
+class CVSS20BaseScore(_CVSSBaseScoreBase):
+    """The Base score of a CVSS v2.0 vector."""
+
+    cvss_version: Literal["2.0"]
+    metrics: CVSS2Metrics
+
+
+class CVSS30BaseScore(_CVSSBaseScoreBase):
+    """The Base score of a CVSS v3.0 vector."""
+
+    cvss_version: Literal["3.0"]
+    metrics: CVSS3Metrics
+
+
+class CVSS31BaseScore(_CVSSBaseScoreBase):
+    """The Base score of a CVSS v3.1 vector."""
+
+    cvss_version: Literal["3.1"]
+    metrics: CVSS3Metrics
+
+
+class CVSS40BaseScore(_CVSSBaseScoreBase):
+    """The Base score of a CVSS v4.0 vector."""
+
+    cvss_version: Literal["4.0"]
+    metrics: CVSS4Metrics
+
+
+type CVSSBaseScore = Annotated[
+    CVSS20BaseScore | CVSS30BaseScore | CVSS31BaseScore | CVSS40BaseScore,
+    Field(discriminator="cvss_version"),
+]
+"""The result of the Base score calculation, discriminated by
+`cvss_version`."""
+
+
+class CVSSBaseScoreResponse(BaseModel):
+    """`GET /api/v1/cvss/base-score` response envelope."""
+
+    data: CVSSBaseScore
+
+
 class CVSSSeverityResult(BaseModel):
     """The Severity Resolution Cascade winner of a CVE."""
 
@@ -193,9 +257,10 @@ class CVSSAssessmentResponse(BaseModel):
     data: CVSSAssessmentItem
 
 
-SUSE_CVSS_VECTOR_MAX_LENGTH = 200
+CVSS_VECTOR_MAX_LENGTH = 200
 """Maximum received length of a submitted vector, checked before trimming
-(cvss-scoring.md, Input Rules rule 1)."""
+(cvss-scoring.md, Input Rules rule 1), by the request body of the SUSE
+upsert and by the query parameter of the Base score calculation."""
 
 
 class SUSECVSSAssessmentRequest(BaseModel):
@@ -211,7 +276,7 @@ class SUSECVSSAssessmentRequest(BaseModel):
     """
 
     vector_string: str = Field(
-        max_length=SUSE_CVSS_VECTOR_MAX_LENGTH,
+        max_length=CVSS_VECTOR_MAX_LENGTH,
         description=(
             "Complete CVSS Base vector (v2.0, v3.0, v3.1, or v4.0), at most "
             "200 characters as received. Leading and trailing whitespace is "
