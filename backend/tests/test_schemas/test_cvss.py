@@ -2,9 +2,10 @@
 (`backend/app/schemas/cvss.py`).
 
 See docs/features/tickets/cvss-scoring.md (API Endpoints > Shared
-Assessment Item, Get CVSS Assessments for a CVE, and Set or Update SUSE
-CVSS Assessment; Input Rules; Accepted Base Vectors > per-version Base
-metrics and API wire values) for the authoritative contract under test.
+Assessment Item, Get CVSS Assessments for a CVE, Set or Update SUSE CVSS
+Assessment, and Calculate CVSS Base Score; Input Rules; Accepted Base
+Vectors > per-version Base metrics and API wire values) for the
+authoritative contract under test.
 """
 
 from __future__ import annotations
@@ -25,17 +26,23 @@ from app.schemas.cvss import (
     CVSS3Metrics,
     CVSS4Metrics,
     CVSS20Assessment,
+    CVSS20BaseScore,
     CVSS30Assessment,
+    CVSS30BaseScore,
     CVSS31Assessment,
+    CVSS31BaseScore,
     CVSS40Assessment,
+    CVSS40BaseScore,
     CVSSAssessmentItem,
     CVSSAssessmentResponse,
+    CVSSBaseScore,
     CVSSVersionValue,
     DefaultCVSSVersionValue,
     SUSECVSSAssessmentRequest,
 )
 
 ITEM: TypeAdapter[CVSSAssessmentItem] = TypeAdapter(CVSSAssessmentItem)
+BASE_SCORE: TypeAdapter[CVSSBaseScore] = TypeAdapter(CVSSBaseScore)
 ASSESSMENT_ID = UUID("01994c20-7c00-7000-8000-000000000001")
 CREATED_AT = datetime(2026, 9, 10, 10, 30, tzinfo=UTC)
 UPDATED_AT = datetime(2026, 9, 10, 10, 31, tzinfo=UTC)
@@ -51,6 +58,15 @@ ITEM_FIELDS = [
     "created_at",
     "updated_at",
 ]
+BASE_SCORE_FIELDS = ["cvss_version", "score", "severity", "vector_string", "metrics"]
+"""The fields of the shared item that the vector determines (cvss-scoring.md,
+Calculate CVSS Base Score)."""
+BASE_SCORE_MODELS: dict[str, type[Any]] = {
+    "2.0": CVSS20BaseScore,
+    "3.0": CVSS30BaseScore,
+    "3.1": CVSS31BaseScore,
+    "4.0": CVSS40BaseScore,
+}
 
 V2_METRICS = {
     "access_vector": "network",
@@ -223,6 +239,46 @@ class TestAssessmentItem:
     def test_item_has_no_cve_identifier_field(self) -> None:
         for model, *_ in BY_VERSION.values():
             assert not {"cve_id", "cve_uuid"} & set(model.model_fields)
+
+
+@pytest.mark.unit
+class TestBaseScore:
+    @pytest.mark.parametrize("version", list(BY_VERSION))
+    def test_each_version_dumps_its_own_member_in_item_order(
+        self, version: str
+    ) -> None:
+        payload = {field: _item(version)[field] for field in BASE_SCORE_FIELDS}
+
+        result = BASE_SCORE.validate_python(payload)
+        dumped = json.loads(BASE_SCORE.dump_json(result))
+
+        assert type(result) is BASE_SCORE_MODELS[version]
+        assert list(dumped) == BASE_SCORE_FIELDS
+        assert dumped == payload
+
+    @pytest.mark.parametrize(
+        ("version", "foreign_metrics"),
+        [("2.0", V3_METRICS), ("3.1", V4_METRICS), ("4.0", V3_METRICS)],
+    )
+    def test_metrics_of_another_version_are_rejected(
+        self, version: str, foreign_metrics: dict[str, str]
+    ) -> None:
+        payload = {field: _item(version)[field] for field in BASE_SCORE_FIELDS}
+
+        with pytest.raises(ValidationError):
+            BASE_SCORE.validate_python({**payload, "metrics": foreign_metrics})
+
+    @pytest.mark.parametrize("version", list(BY_VERSION))
+    def test_fields_are_those_of_the_shared_item(self, version: str) -> None:
+        """Same types and descriptions as the shared item, so the two
+        schemas cannot drift apart (Calculate CVSS Base Score)."""
+        base_score = BASE_SCORE_MODELS[version].model_fields
+        item = BY_VERSION[version][0].model_fields
+
+        assert list(base_score) == BASE_SCORE_FIELDS
+        for field in BASE_SCORE_FIELDS:
+            assert base_score[field].annotation == item[field].annotation
+            assert base_score[field].description == item[field].description
 
 
 @pytest.mark.unit

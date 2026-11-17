@@ -47,6 +47,7 @@ from app.api.dependencies import (
     AuthenticatedTicketCaller,
     CVEIdPath,
     cve_not_found_error,
+    cvss_invalid_vector_error,
     require_accessible_cve,
     require_capability,
     ticket_not_mutable_error,
@@ -1014,11 +1015,7 @@ async def upsert_suse_cvss_assessment(
     except TicketNotMutableError:
         raise ticket_not_mutable_error() from None
     except InvalidCVSSVectorError:
-        raise AppError(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            code=ErrorCode.CVSS_INVALID_VECTOR,
-            detail="Invalid CVSS vector.",
-        ) from None
+        raise cvss_invalid_vector_error() from None
     if result.action is CVSSAssessmentAction.CREATED:
         response.status_code = status.HTTP_201_CREATED
     assert result.assessment is not None  # created, updated, or unchanged

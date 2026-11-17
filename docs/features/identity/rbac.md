@@ -214,6 +214,7 @@ Confidential Ticket Visibility). Authenticated access covers:
   `manage_users`)
 - View tickets, CVEs, CNAs, products, packages, and ticket package trees
 - View ticket references, CVSS assessments, and submission/release requests
+- Calculate the Base score of a CVSS vector without storing it
 - View ticket audit logs and the users who acted on a ticket
 - View the access grants of a confidential ticket
 - View fetchers (list, run history, run detail, timeline, error messages, and
@@ -328,6 +329,7 @@ no response to a caller that the operation does not already admit.
 | View products | Authenticated |
 | View ticket references | Authenticated |
 | View CVSS assessments | Authenticated |
+| Calculate the Base score of a CVSS vector | Authenticated |
 | View submission/release requests | Authenticated |
 | View fetchers | Authenticated |
 | View IBS consumer status | Authenticated |
@@ -640,6 +642,12 @@ here with the required authorization level and a link to the owning spec.
 | DELETE | `/api/v1/cves/{cve_id}/cvss/suse/{cvss_version}` | `manage_cvss` | [cvss-scoring](../tickets/cvss-scoring.md#delete-suse-cvss-assessment) |
 | POST | `/api/v1/cves/{cve_id}/refetch` | `triage_ticket` | [cve-tracking](../tickets/cve-tracking.md#re-fetch-cve-data) |
 | GET | `/api/v1/cve-sources` | Authenticated | [cve-service](../tickets/cve-service.md#global-cve-source-listing) |
+
+### CVSS
+
+| Method | Endpoint | Authorization | Owning Spec |
+|--------|----------|---------------|-------------|
+| GET | `/api/v1/cvss/base-score` | Authenticated | [cvss-scoring](../tickets/cvss-scoring.md#calculate-cvss-base-score) |
 
 ### CNAs
 

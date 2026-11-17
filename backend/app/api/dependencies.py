@@ -201,6 +201,22 @@ def ticket_not_mutable_error() -> AppError:
     )
 
 
+def cvss_invalid_vector_error() -> AppError:
+    """Create the 422 for a vector that the accepted Base-vector contract
+    rejects.
+
+    See `docs/features/tickets/cvss-scoring.md` (Input Rules; Set or
+    Update SUSE CVSS Assessment; Calculate CVSS Base Score): both
+    operations that catch `InvalidCVSSVectorError` raise this one identical
+    response, so they reject every vector alike.
+    """
+    return AppError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code=ErrorCode.CVSS_INVALID_VECTOR,
+        detail="Invalid CVSS vector.",
+    )
+
+
 def resource_not_found_error() -> AppError:
     """Create the 404 for a missing or mismatched nested resource.
 
