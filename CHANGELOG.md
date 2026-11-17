@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.0](https://github.com/vulnwatch/sentinel/compare/v0.25.0...v0.26.0) (2026-11-17)
+
+
+### Features
+
+* calculate the Base score of a CVSS vector without storing it ([#1328](https://github.com/vulnwatch/sentinel/issues/1328)) ([a20385b](https://github.com/vulnwatch/sentinel/commit/a20385b31ac066ed8eaea0804ebd51ed7e512a31)), closes [#1327](https://github.com/vulnwatch/sentinel/issues/1327)
+
 ## [0.25.0](https://github.com/vulnwatch/sentinel/compare/v0.24.0...v0.25.0) (2026-11-16)
 
 
