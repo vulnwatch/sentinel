@@ -360,7 +360,8 @@ Discovery is bounded, with these accepted limitations:
   available (`../integrations/ibs-integration.md`, Request Action Diff), so the
   scopes that require it stay incomplete while the SR is open.
 - The diff of an open request whose source project the IBS account cannot
-  read, such as a project whose access is disabled, answers like the diff of a
+  read, such as an access-disabled project in which the account holds no role
+  (`docs/deployment.md`, Pre-Production Checklist), answers like the diff of a
   missing project (`../integrations/ibs-integration.md`, Request Action Diff),
   so the scopes that require it stay incomplete while the request is open and
   its source project stays unreadable.
@@ -1454,6 +1455,17 @@ Implementation coverage must include:
   (`../integrations/ibs-integration.md`, Request Point Detail and Request Action
   Diff). Request action diffs carry issue references only, never file diff
   text.
+- Evidence of an embargoed update, whose staging or incident project IBS
+  makes access-disabled, follows the visibility of its parent Ticket like all
+  other request evidence: a correlated action of a non-confidential Ticket is
+  returned to every caller who can see that Ticket. Sentinel does not record
+  whether a project is access-disabled and persists no diff issue, only the
+  correlations it establishes, and the read endpoints return no correlation to
+  another Ticket. Such an item therefore discloses only that a request of that
+  package and codestream carries the Ticket's own CVE, with the request's
+  number, successor, state, incident, and timestamps, and the track's delivery
+  derived from them. This can reveal that an update of the package is in
+  progress, or close to its release, before it is published.
 - RabbitMQ event action arrays and personal fields are ignored. Only the public
   positive request number is consumed as the request wake-up identity.
 

@@ -418,9 +418,16 @@ Before the first production deployment:
 - [ ] Redis provisioned and accessible
 - [ ] Dedicated, non-personal IBS service account created, with read access to
       the IBS projects Sentinel queries and an SSH public key registered for
-      it. The key pair is Ed25519, generated without a passphrase for this
-      account only, and not used elsewhere. `IBS_USERNAME` and
-      `IBS_SSH_PRIVATE_KEY` supplied securely
+      it. Read access includes the maintenance projects whose access is
+      disabled, as IBS does for embargoed updates: such a project is readable
+      only through a role in the project itself, so the account holds the
+      `reader` role on every access-disabled request staging project and on
+      `SUSE:Maintenance`, which IBS copies into the incident projects that it
+      creates afterwards (`docs/features/integrations/ibs-integration.md`,
+      Request Action Diff). It holds no IBS role other than `reader`. The key
+      pair is Ed25519, generated without a passphrase for this account only,
+      and not used elsewhere. `IBS_USERNAME` and `IBS_SSH_PRIVATE_KEY`
+      supplied securely
       (`docs/features/integrations/ibs-integration.md`, IBS API Credentials
       and Security)
 - [ ] IBS RabbitMQ credential-bearing URL supplied securely
