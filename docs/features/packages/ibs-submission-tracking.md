@@ -1463,8 +1463,9 @@ Implementation coverage must include:
   correlations it establishes, and the read endpoints return no correlation to
   another Ticket. Such an item therefore discloses only that a request of that
   package and codestream carries the Ticket's own CVE, with the request's
-  number, state, incident, and timestamps, which can reveal that an update of
-  the package is in progress before its release.
+  number, successor, state, incident, and timestamps, and the track's delivery
+  derived from them. This can reveal that an update of the package is in
+  progress, or close to its release, before it is published.
 - RabbitMQ event action arrays and personal fields are ignored. Only the public
   positive request number is consumed as the request wake-up identity.
 
