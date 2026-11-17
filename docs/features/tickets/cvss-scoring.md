@@ -826,20 +826,19 @@ GET /api/v1/cvss/base-score
 |---|---|---|---|
 | `vector_string` | string | -- (required) | CVSS Base vector, at most 200 characters as received |
 
-The value of the parameter, after the percent-decoding of the query string,
-is the received string of the Input Rules. Its maximum length is the 200
-characters of rule 1, measured before trimming, instead of the 500 of the
-Query Parameter Length Limit in `docs/api-spec.md`; the OpenAPI document
-publishes it as the `maxLength` of the parameter and states the rules that
-apply after trimming in its description (`docs/api-spec.md`, Published Input
-Constraints). A missing parameter and a value over 200 characters produce the
+The value of the parameter, as decoded from the query string, is the received
+string of the Input Rules. Its maximum length is the 200 characters of rule
+1, measured before trimming, instead of the 500 of the Query Parameter Length
+Limit in `docs/api-spec.md`; the OpenAPI document publishes it as the
+`maxLength` of the parameter and states the rules that apply after trimming
+in its description (`docs/api-spec.md`, Published Input Constraints). A missing parameter and a value over 200 characters produce the
 global `422 VALIDATION_ERROR` response.
 
 **Behavior**: the operation applies `validate_cvss_vector()` to the received
 string and returns its Stable Parsed Result. It never applies the External
 Base Reduction: a vector with any non-Base metric is rejected. The result
 depends only on the received string: it is the same for every caller and
-every repetition, it is independent of every CVE, whose path names none, and
+every repetition, it is independent of every CVE (the path names none), and
 it is never stored. The operation reads and writes no CVE, assessment,
 `CVE.severity`, Ticket, Product, setting, or other application state, creates
 no audit event, and propagates nothing; a request changes only what the
@@ -847,18 +846,19 @@ authentication of every request changes
 (`docs/features/identity/authentication.md`).
 
 **Parity with the SUSE upsert**: Set or Update SUSE CVSS Assessment parses
-its `vector_string` with the same `validate_cvss_vector()` before any
-database access, and its request schema applies the same rule 1. For every
-received string, therefore:
+its `vector_string` with the same `validate_cvss_vector()`, whose result
+depends only on the received string, and its request schema applies the same
+rule 1. For every received string, therefore:
 
 - a string that the upsert accepts is accepted here, with the canonical
   vector, version, score, assessment severity, and metrics that the upsert
   stores and returns;
 - a string that the upsert rejects with `422 CVSS_INVALID_VECTOR` is rejected
   here with `422 CVSS_INVALID_VECTOR`; and
-- a string over 200 received characters produces `422 VALIDATION_ERROR` in
-  both, whose `errors` entry is located at `["query", "vector_string"]` here
-  and at `["body", "vector_string"]` there.
+- a string over 200 received characters, or with an inadmissible character
+  (`docs/api-spec.md`, Inadmissible Characters in Request Input), produces
+  `422 VALIDATION_ERROR` in both, whose `errors` entry is located at
+  `["query", "vector_string"]` here and at `["body", "vector_string"]` there.
 
 The outcomes of the upsert that depend on its JSON body, its capability, or
 its CVE and Ticket, such as a `vector_string` that is not a JSON string, `403
@@ -1038,10 +1038,10 @@ testing strategy.
 ### Persistence and API Tests
 
 - Received lengths of exactly 200 and 201 characters, proving length is checked
-  before trimming, at the request schemas of the SUSE upsert and of the Base
-  score calculation (`422 VALIDATION_ERROR`) and at the External Base
-  Reduction bound applied by `cve-service.md` (skip as `invalid_vector`
-  without invoking the parser).
+  before trimming, at the request schema of the SUSE upsert (`422
+  VALIDATION_ERROR`; the Base score calculation parity below covers its query
+  parameter) and at the External Base Reduction bound applied by
+  `cve-service.md` (skip as `invalid_vector` without invoking the parser).
 - External ingestion of a vector with non-Base metrics persists the canonical
   Base vector and its Base score with no candidate warning; a vector the
   reduction rejects still produces exactly one bounded `invalid_vector`
@@ -1123,21 +1123,20 @@ testing strategy.
   applies for that CVE; the projection uses the proposed version for both pure
   resolutions, reads the observed setting once, evaluates the complete
   unfiltered set, and leaves assessments and `CVE.severity` unmodified.
-- Base score calculation: the result of a vector of every accepted version,
-  including the canonical order of input in another order and trimmed outer
-  whitespace; a missing parameter as `422 VALIDATION_ERROR`;
-  `422 CVSS_INVALID_VECTOR` without reduction for representative v3.1
-  Temporal and v4.0 Threat and Supplemental vectors; the success of a
-  role-less caller; and, after an accepted and a rejected vector, unchanged
-  assessments, `CVE.severity`, Ticket, and Ticket audit events.
-- Base score calculation parity: for one table of received strings, which
-  includes a vector of every accepted version, input in another order and
-  with outer whitespace, empty and whitespace-only input, embedded
-  whitespace, case variants, missing and mismatched prefixes, missing,
-  duplicate, unknown, and non-Base metrics, and 200 and 201 received
-  characters, the calculation returns the canonical vector, version, score,
-  assessment severity, and metrics that the SUSE upsert on a ticketless CVE
-  returns, or the status and code with which the upsert rejects the string.
+- Base score calculation: a missing parameter as `422 VALIDATION_ERROR`; the
+  success of a role-less caller; and, after an accepted and a rejected
+  vector, unchanged assessments, `CVE.severity`, Ticket, and Ticket audit
+  events.
+- Base score calculation parity, for representative received strings that
+  each exercise a step of the operation rather than the parser matrix above:
+  a vector of every accepted version (the response discriminator), input in
+  another order with outer whitespace (query decoding and trimming), empty
+  input (no minimum length), a case variant (no case folding), a missing
+  prefix and a non-Base metric (the strict parser, never the reduction), and
+  200 and 201 received characters (rule 1 at the query parameter). For each,
+  the calculation returns the canonical vector, version, score, assessment
+  severity, and metrics that the SUSE upsert on a ticketless CVE returns, or
+  the status and code with which the upsert rejects the string.
 - The OpenAPI operation of the Base score calculation publishes the required
   `vector_string` with a `maxLength` of 200 and documents `200`, `401`, `422`
   with both codes, and `500`, and no `403`, `404`, or `409`.
