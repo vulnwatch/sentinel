@@ -3039,8 +3039,8 @@ class TestPackages:
     def test_a_suse_score_at_the_threshold_reopens_only_the_ticket_without_override(
         self, loaded: Loaded
     ) -> None:
-        """Packages, Tracks, and Maintainers: a SUSE assessment of `7.1`, at
-        least the threshold `7.0`, makes `Server LTSS 15 SP5` of `SNTL-15`
+        """Packages, Tracks, and Maintainers: a SUSE assessment of `7.0`, the
+        threshold of the Product, makes `Server LTSS 15 SP5` of `SNTL-15`
         eligible and moves the Ticket from `Resolved` back to `Analyzed`
         (tickets.md, Gate: Analyzed → Resolved, clause (c)); on `SNTL-16` the
         override keeps the Product not eligible and the Ticket `Resolved`.
@@ -3064,7 +3064,7 @@ class TestPackages:
                     db,
                     cve_id=cve,
                     provider="SUSE",
-                    vector_string="CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N",
+                    vector_string="CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:H/I:H/A:H",  # 7.0
                     caller=ticket_mutations.CVSSMutationCaller.MANUAL_SUSE,
                     acting_user_id=asmith,
                     ticket_caller=await _caller(db, "asmith"),
@@ -3101,7 +3101,50 @@ class TestPackages:
             15: (ANALYZED, True, False, True),
             16: (RESOLVED, False, True, False),
         }
-        assert read(loaded.url, ticket_statuses)[15] == RESOLVED
+        assert read(loaded.url, ticket_statuses) == {
+            n: status.value for n, (_, status, _, _, _) in TICKETS.items()
+        }
+
+    def test_sntl_15_product_below_the_threshold_without_override(
+        self, loaded: Loaded
+    ) -> None:
+        """Packages, Tracks, and Maintainers: the SUSE assessment of
+        `CVE-2099-0015` makes `Server LTSS 15 SP5` of `SNTL-15`, eligible
+        through the fallback score until then, not eligible with one
+        automatic `cvss` event, and no override follows."""
+
+        async def reader(db: AsyncSession) -> list[tuple[Any, ...]]:
+            actor = aliased(User)
+            rows = await db.execute(
+                select(
+                    actor.username,
+                    TicketAuditEvent.old_value,
+                    TicketAuditEvent.new_value,
+                    TicketAuditEvent.detail,
+                )
+                .join(Ticket, Ticket.id == TicketAuditEvent.ticket_id)
+                .outerjoin(actor, actor.id == TicketAuditEvent.user_id)
+                .where(
+                    Ticket.sequence_id == 15,
+                    TicketAuditEvent.event_type == "product_eligibility_changed",
+                )
+            )
+            return [tuple(row) for row in rows]
+
+        assert read(loaded.url, reader) == [
+            (
+                None,
+                "true",
+                "false",
+                {
+                    "track": SP5_UPDATE,
+                    "package": "fictional-sudo",
+                    "product_name": "Fictional Linux Enterprise Server LTSS 15 SP5",
+                    "product_cpe": LTSS_15_SP5,
+                    "reason": "cvss",
+                },
+            )
+        ]
 
     def test_track_states_of_the_ticket_screen(self, loaded: Loaded) -> None:
         """Packages, Tracks, and Maintainers: the track of the `Duplicated`
