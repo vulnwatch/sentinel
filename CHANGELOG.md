@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.0](https://github.com/vulnwatch/sentinel/compare/v0.26.0...v0.27.0) (2026-11-18)
+
+
+### Features
+
+* add a reader and a Product below its threshold to the dataset ([#1333](https://github.com/vulnwatch/sentinel/issues/1333)) ([ded1efc](https://github.com/vulnwatch/sentinel/commit/ded1efc089953aa2ece275e55c68ad3de58226d6))
+
 ## [0.26.0](https://github.com/vulnwatch/sentinel/compare/v0.25.0...v0.26.0) (2026-11-17)
 
 
