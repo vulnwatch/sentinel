@@ -5104,7 +5104,11 @@ and the dedicated database starts its Ticket identifiers at `SNTL-1`.
   current phases of the Tickets with a coordinated release date and the
   Tickets that the Embargo filters list; the packages, tracks, Products,
   direct exclusion markers, eligibility with the eligibility override and its
-  provenance, release, and maintainers; the affected-version scopes of
+  provenance, release, and maintainers; that a SUSE assessment of at least the
+  threshold of `Server LTSS 15 SP5`, applied in a transaction that the test
+  rolls back, makes that Product eligible and moves `SNTL-15` back to
+  `Analyzed` while the override keeps `SNTL-16` `Resolved`; the
+  affected-version scopes of
   `CVE-2099-0009` and `CVE-2099-0013`; the `actionable` and
   `non_actionable_reason` of every level of the package tree of the Ticket
   that holds the excluded records; the IBS requests, actions,

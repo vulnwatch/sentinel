@@ -804,6 +804,7 @@ _PACKAGES: Final[frozendict[str, _Package]] = frozendict(
                 (
                     _Track(_GIT_16, _GIT, (_SERVER_16, _MICRO_6_2)),
                     _Track(_SP4_UPDATE, _IBS, (_LTSS_15_SP4,)),
+                    _Track(_SP5_UPDATE, _IBS, (_LTSS_15_SP5,)),
                 ),
                 (),
             ),
@@ -2153,7 +2154,9 @@ class _Load:
         await self.ibs_observations("fictional-libxml")
         await self.track_status("fictional-libxml", _SP7_UPDATE, fixed, None)
         await self.product_release("fictional-libxml", _SERVER_15_SP7)
-        # SNTL-15
+        # SNTL-15: the SUSE assessment, below the threshold of `Server LTSS
+        # 15 SP5`, makes that Product not eligible without an override and
+        # resolves the Ticket.
         await self.add_package("fictional-sudo")
         await self.track_status(
             "fictional-sudo", _GIT_16, PackageStatus.NOT_AFFECTED, "bwilson"
@@ -2161,6 +2164,7 @@ class _Load:
         await self.track_status(
             "fictional-sudo", _SP4_UPDATE, PackageStatus.WONT_FIX, "bwilson"
         )
+        await self.track_status("fictional-sudo", _SP5_UPDATE, affected, "bwilson")
         await self.suse_assessment("CVE-2099-0015")
         # SNTL-16: the exclusions and restorations precede the SUSE
         # assessment, while the Ticket is in Analysis, and the restorations

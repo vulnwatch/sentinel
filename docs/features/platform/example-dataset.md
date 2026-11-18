@@ -730,7 +730,7 @@ named user is a system operation (Attribution).
 | `SNTL-12` | `bwilson` assigns the Ticket to `asmith`. `bwilson` sets the priority override `P1`. `asmith` adds, edits, and deletes the manual references of `SNTL-12` (References). `asmith` adds `fictional-openssl` and `fictional-zlib`, sets the track of each to `AFFECTED`, and adds the SUSE assessment |
 | `SNTL-13` | `asmith` adds `fictional-httpd`, sets its track to `AFFECTED`, adds the SUSE assessment, and sets the priority override `P3`. The IBS observations of `SNTL-13` are applied in order (IBS Requests) |
 | `SNTL-14` | `asmith` adds `fictional-libxml`, sets its track to `AFFECTED`, and adds the SUSE assessment. The IBS observations of `SNTL-14` are applied in order. Track release detection sets the track to `FIXED`. Product release detection confirms the release of `Server 15 SP7` at `T − 2d` with the advisory `SUSE-SU-2099:0001-1` |
-| `SNTL-15` | `bwilson` adds `fictional-sudo`, sets the `fles-16.0` track to `NOT_AFFECTED` and the `SUSE:FLES-15-SP4:Update` track to `WONT_FIX`, and adds the SUSE assessment |
+| `SNTL-15` | `bwilson` adds `fictional-sudo`, sets the `fles-16.0` track to `NOT_AFFECTED`, the `SUSE:FLES-15-SP4:Update` track to `WONT_FIX`, and the `SUSE:FLES-15-SP5:Update` track to `AFFECTED`, and adds the SUSE assessment |
 | `SNTL-16` | `asmith` adds `fictional-kernel`, sets the `SUSE:FLES-15-SP5:Update` track to `AFFECTED`, excludes the `SUSE:FLES-15-SP4:Update` track, and excludes `Server 15 SP7` from the `SUSE:FLES-15-SP5:Update` track. `asmith` adds `fictional-kernel-firmware` and excludes it, then adds `fictional-kernel-compat`. `asmith` excludes and restores `fictional-kernel-compat`, then excludes and restores the `SUSE:FLES-15-SP3:Update` track of `fictional-kernel`, then excludes and restores `Server 15 SP3` on that track. `asmith` adds the SUSE assessment, then sets the eligibility override `eligible = false` on `Server LTSS 15 SP5` of the `SUSE:FLES-15-SP5:Update` track |
 | `SNTL-17` | `bwilson` ignores the Ticket with the reason `not_shipped` |
 | `SNTL-18` | `asmith` adds `fictional-openssh` and sets its track to `AFFECTED`. The IBS observations of `SNTL-18` are applied in order. `asmith` grants access to `cwhite`, then grants access to `security-scanner` and revokes it |
@@ -771,7 +771,11 @@ The resulting states follow the gates of `docs/features/tickets/tickets.md`:
   `AFFECTED` track with the eligible, unreleased Product `Server 15 SP7`.
 - `SNTL-14` is `Resolved` through a `FIXED` track whose only eligible Product
   is released.
-- `SNTL-15` is `Resolved` through `NOT_AFFECTED` and `WONT_FIX` tracks.
+- `SNTL-15` is `Resolved` through `NOT_AFFECTED` and `WONT_FIX` tracks and an
+  `AFFECTED` track without an eligible actionable Product: its SUSE score
+  `5.5` is below the threshold `7.0` of `Server LTSS 15 SP5`, which no
+  override holds. The SUSE assessment resolves the Ticket from `Analysis`, so
+  no operation regresses it (Isolation).
 - `SNTL-16` is `Resolved` through an `AFFECTED` track without an eligible
   actionable Product: its SUSE score `5.5` is below the threshold `7.0` of
   `Server LTSS 15 SP5`, and `Server 15 SP7` is excluded from the track. Its
@@ -954,6 +958,7 @@ status is `PENDING` unless IBS Requests changes it.
 | `SNTL-14` | `fictional-libxml` | `ibs` | `SUSE:FLES-15-SP7:Update` | `Server 15 SP7`, released | `FIXED` | `RELEASED` | `dbrown` |
 | `SNTL-15` | `fictional-sudo` | `git` | `fles-16.0` | `Server 16.0`, `Micro 6.2` | `NOT_AFFECTED` | `PENDING` | — |
 | | | `ibs` | `SUSE:FLES-15-SP4:Update` | `Server LTSS 15 SP4`, not eligible | `WONT_FIX` | `PENDING` | |
+| | | `ibs` | `SUSE:FLES-15-SP5:Update` | `Server LTSS 15 SP5`, not eligible | `AFFECTED` | `PENDING` | |
 | `SNTL-16` | `fictional-kernel` | `ibs` | `SUSE:FLES-15-SP5:Update` | `Server LTSS 15 SP5`, not eligible, set by hand; `Server 15 SP7`, excluded | `AFFECTED` | `PENDING` | — |
 | | | `ibs` | `SUSE:FLES-15-SP3:Update` | `Server 15 SP3`, EOL | `ANALYSIS` | `PENDING` | |
 | | | `ibs` | `SUSE:FLES-15-SP4:Update`, excluded | `Server LTSS 15 SP4`, not eligible | `ANALYSIS` | `PENDING` | |
@@ -968,9 +973,17 @@ status is `PENDING` unless IBS Requests changes it.
 
 A Product is eligible unless the table states otherwise
 (`docs/features/packages/package-model.md`, Axis 2: Eligibility): `Server LTSS
-15 SP4` is in Reactive Support, and the SUSE score of `CVE-2099-0016` is below
-the threshold of `Server LTSS 15 SP5`. The eligibility of `Server LTSS 15 SP5`
-is also set by hand: `asmith` sets the override `eligible = false` after the
+15 SP4` is in Reactive Support, and the SUSE scores `5.5` of `CVE-2099-0015`
+and `CVE-2099-0016` are below the threshold `7.0` of `Server LTSS 15 SP5`. Each
+assessment makes its `Server LTSS 15 SP5` not eligible with an automatic
+`product_eligibility_changed` event with the reason `cvss`; until then the
+Ticket has no SUSE assessment and the Product is eligible through the fallback
+score `10.0`. On `SNTL-15` the eligibility stays automatic, so a SUSE
+assessment of at least `7.0` makes the Product eligible again and moves the
+Ticket from `Resolved` back to `Analyzed` (`docs/features/tickets/tickets.md`,
+Gate: Analyzed → Resolved). On `SNTL-16` the eligibility of `Server LTSS 15
+SP5` is also set by hand, and the override keeps it when the score changes:
+`asmith` sets the override `eligible = false` after the
 SUSE assessment, so `is_eligible_override` is `true`,
 `eligibility_override_by` names `asmith`, and `eligibility_override_at` is the
 time of that operation, the `created_at` of its `product_eligibility_changed`

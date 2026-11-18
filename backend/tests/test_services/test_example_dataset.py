@@ -101,6 +101,7 @@ from app.services import (
     cve_service,
     example_dataset,
     package_service,
+    ticket_mutations,
     ticket_service,
     user_service,
 )
@@ -782,6 +783,12 @@ TRACKS: Final[
         P_PENDING,
         {LTSS_15_SP4: (False, "")},
     ),
+    (15, "fictional-sudo", SP5_UPDATE): (
+        IBS,
+        AFFECTED,
+        P_PENDING,
+        {LTSS_15_SP5: (False, "")},
+    ),
     (16, "fictional-kernel", SP5_UPDATE): (
         IBS,
         AFFECTED,
@@ -1161,6 +1168,7 @@ ATTRIBUTED_TICKET_EVENTS: Final = frozenset(
         (15, "package_added", "bwilson"),
         (15, "track_status_changed", "bwilson"),
         (15, "cvss_assessment_changed", "bwilson"),
+        (15, "product_eligibility_changed", None),  # the CVSS chain
         (16, "package_added", "asmith"),
         (16, "track_status_changed", "asmith"),
         (16, "track_excluded", "asmith"),
@@ -3027,6 +3035,73 @@ class TestPackages:
         ]
         assert overrides == [(LTSS_15_SP5, False, "asmith", manual[3])]
         assert automatic[3] < manual[3]
+
+    def test_a_suse_score_at_the_threshold_reopens_only_the_ticket_without_override(
+        self, loaded: Loaded
+    ) -> None:
+        """Packages, Tracks, and Maintainers: a SUSE assessment of `7.1`, at
+        least the threshold `7.0`, makes `Server LTSS 15 SP5` of `SNTL-15`
+        eligible and moves the Ticket from `Resolved` back to `Analyzed`
+        (tickets.md, Gate: Analyzed → Resolved, clause (c)); on `SNTL-16` the
+        override keeps the Product not eligible and the Ticket `Resolved`.
+        The session discards the assessments."""
+
+        async def reader(
+            db: AsyncSession,
+        ) -> dict[int, tuple[str, bool, bool, bool]]:
+            raised: dict[int, tuple[str, bool, bool, bool]] = {}
+            asmith = await db.scalar(select(User.id).where(User.username == "asmith"))
+            assert asmith is not None
+            for n, cve_id, package in (
+                (15, "CVE-2099-0015", "fictional-sudo"),
+                (16, "CVE-2099-0016", "fictional-kernel"),
+            ):
+                ticket = await db.scalar(select(Ticket).where(Ticket.sequence_id == n))
+                cve = await db.scalar(select(CVE.id).where(CVE.cve_id == cve_id))
+                assert ticket is not None
+                assert cve is not None
+                await ticket_mutations.upsert_cvss_assessment(
+                    db,
+                    cve_id=cve,
+                    provider="SUSE",
+                    vector_string="CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N",
+                    caller=ticket_mutations.CVSSMutationCaller.MANUAL_SUSE,
+                    acting_user_id=asmith,
+                    ticket_caller=await _caller(db, "asmith"),
+                )
+                eligible, override = (
+                    await db.execute(
+                        select(
+                            TicketPackageProduct.eligible,
+                            TicketPackageProduct.is_eligible_override,
+                        )
+                        .join(TicketPackageTrack)
+                        .join(TicketPackage)
+                        .join(Product)
+                        .where(
+                            TicketPackage.ticket_id == ticket.id,
+                            TicketPackage.package_name == package,
+                            TicketPackageTrack.reference == SP5_UPDATE,
+                            Product.cpe == LTSS_15_SP5,
+                        )
+                    )
+                ).one()
+                status = await db.scalar(
+                    select(Ticket.status).where(Ticket.id == ticket.id)
+                )
+                assert status is not None
+                reopened = any(
+                    effect.ticket_id == ticket.id
+                    for effect in pending_ticket_convergence_effects(db)
+                )
+                raised[n] = (status, eligible, override, reopened)
+            return raised
+
+        assert read(loaded.url, reader) == {
+            15: (ANALYZED, True, False, True),
+            16: (RESOLVED, False, True, False),
+        }
+        assert read(loaded.url, ticket_statuses)[15] == RESOLVED
 
     def test_track_states_of_the_ticket_screen(self, loaded: Loaded) -> None:
         """Packages, Tracks, and Maintainers: the track of the `Duplicated`
