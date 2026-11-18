@@ -5104,13 +5104,19 @@ and the dedicated database starts its Ticket identifiers at `SNTL-1`.
   current phases of the Tickets with a coordinated release date and the
   Tickets that the Embargo filters list; the packages, tracks, Products,
   direct exclusion markers, eligibility with the eligibility override and its
-  provenance, release, and maintainers; the affected-version scopes of
+  provenance, release, and maintainers; that a SUSE assessment of at least the
+  threshold of `Server LTSS 15 SP5`, applied in a transaction that the test
+  rolls back, makes that Product eligible and moves `SNTL-15` back to
+  `Analyzed` while the override keeps `SNTL-16` `Resolved`; the
+  affected-version scopes of
   `CVE-2099-0009` and `CVE-2099-0013`; the `actionable` and
   `non_actionable_reason` of every level of the package tree of the Ticket
   that holds the excluded records; the IBS requests, actions,
   correlations, and delivery statuses; the references; the maintainer
-  workbenches of `dbrown` and `ghill`; at least one `confidentiality_changed`
-  event; and at least one event in every audit trail of the Audit Trail Index.
+  workbenches of `dbrown` and `ghill`; the reader `hgray`, who sees no
+  confidential Ticket and whose maintainer workbenches are empty; at least one
+  `confidentiality_changed` event; and at least one event in every audit trail
+  of the Audit Trail Index.
 - **Isolation**: during the load, no Celery task is published, no Redis
   command is issued, no outbound HTTP request is made, and no transaction
   commits with a registered post-commit effect.

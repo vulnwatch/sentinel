@@ -101,6 +101,7 @@ from app.services import (
     cve_service,
     example_dataset,
     package_service,
+    ticket_mutations,
     ticket_service,
     user_service,
 )
@@ -189,6 +190,7 @@ USERS: Final[dict[str, tuple[str, str, bool, bool, tuple[Role, ...]]]] = {
         (Role.RESTRICTED_ANALYST,),
     ),
     "ghill": ("Grace Hill", "grace.hill@example.com", True, False, ()),
+    "hgray": ("Hannah Gray", "hannah.gray@example.com", True, False, ()),
 }
 """Users: username -> (full name, email, active, bot, roles), in creation
 order. `eblack` is active until the Ticket work deactivates it."""
@@ -781,6 +783,12 @@ TRACKS: Final[
         P_PENDING,
         {LTSS_15_SP4: (False, "")},
     ),
+    (15, "fictional-sudo", SP5_UPDATE): (
+        IBS,
+        AFFECTED,
+        P_PENDING,
+        {LTSS_15_SP5: (False, "")},
+    ),
     (16, "fictional-kernel", SP5_UPDATE): (
         IBS,
         AFFECTED,
@@ -1160,6 +1168,7 @@ ATTRIBUTED_TICKET_EVENTS: Final = frozenset(
         (15, "package_added", "bwilson"),
         (15, "track_status_changed", "bwilson"),
         (15, "cvss_assessment_changed", "bwilson"),
+        (15, "product_eligibility_changed", None),  # the CVSS chain
         (16, "package_added", "asmith"),
         (16, "track_status_changed", "asmith"),
         (16, "track_excluded", "asmith"),
@@ -1467,7 +1476,7 @@ class TestUsers:
             for name, (_, _, _, _, user_roles) in USERS.items()
             for role in user_roles
         }
-        assert not any(name in {"dbrown", "ghill"} for name, *_ in roles)
+        assert not any(name in {"dbrown", "ghill", "hgray"} for name, *_ in roles)
         assert pictures == dict.fromkeys(USERS)
         for name, (_, _, _, _, password_hash, external_id) in users.items():
             assert external_id is None, name
@@ -2138,6 +2147,27 @@ class TestTickets:
         }
         assert (
             sum(not confidential for _, _, _, confidential, _ in tickets.values()) == 29
+        )
+
+    def test_the_reader_sees_every_non_confidential_ticket_and_no_other(
+        self, loaded: Loaded
+    ) -> None:
+        """Users: `hgray`, without roles, maintainership, or access grant,
+        sees the 29 Tickets that are not confidential and no other."""
+
+        async def reader(db: AsyncSession) -> tuple[set[str], int]:
+            page = await ticket_service.list_tickets(
+                db, caller=await _caller(db, "hgray"), per_page=100
+            )
+            return {item.ticket_id for item in page.items}, page.total
+
+        assert read(loaded.url, reader) == (
+            {
+                f"SNTL-{n}"
+                for n, (_, _, _, confidential, _) in TICKETS.items()
+                if not confidential
+            },
+            29,
         )
 
     def test_ignore_reasons_and_their_events(self, loaded: Loaded) -> None:
@@ -3006,6 +3036,116 @@ class TestPackages:
         assert overrides == [(LTSS_15_SP5, False, "asmith", manual[3])]
         assert automatic[3] < manual[3]
 
+    def test_a_suse_score_at_the_threshold_reopens_only_the_ticket_without_override(
+        self, loaded: Loaded
+    ) -> None:
+        """Packages, Tracks, and Maintainers: a SUSE assessment of `7.0`, the
+        threshold of the Product, makes `Server LTSS 15 SP5` of `SNTL-15`
+        eligible and moves the Ticket from `Resolved` back to `Analyzed`
+        (tickets.md, Gate: Analyzed → Resolved, clause (c)); on `SNTL-16` the
+        override keeps the Product not eligible and the Ticket `Resolved`.
+        The session discards the assessments."""
+
+        async def reader(
+            db: AsyncSession,
+        ) -> dict[int, tuple[str, bool, bool, bool]]:
+            raised: dict[int, tuple[str, bool, bool, bool]] = {}
+            asmith = await db.scalar(select(User.id).where(User.username == "asmith"))
+            assert asmith is not None
+            for n, cve_id, package in (
+                (15, "CVE-2099-0015", "fictional-sudo"),
+                (16, "CVE-2099-0016", "fictional-kernel"),
+            ):
+                ticket = await db.scalar(select(Ticket).where(Ticket.sequence_id == n))
+                cve = await db.scalar(select(CVE.id).where(CVE.cve_id == cve_id))
+                assert ticket is not None
+                assert cve is not None
+                await ticket_mutations.upsert_cvss_assessment(
+                    db,
+                    cve_id=cve,
+                    provider="SUSE",
+                    vector_string="CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:H/I:H/A:H",  # 7.0
+                    caller=ticket_mutations.CVSSMutationCaller.MANUAL_SUSE,
+                    acting_user_id=asmith,
+                    ticket_caller=await _caller(db, "asmith"),
+                )
+                eligible, override = (
+                    await db.execute(
+                        select(
+                            TicketPackageProduct.eligible,
+                            TicketPackageProduct.is_eligible_override,
+                        )
+                        .join(TicketPackageTrack)
+                        .join(TicketPackage)
+                        .join(Product)
+                        .where(
+                            TicketPackage.ticket_id == ticket.id,
+                            TicketPackage.package_name == package,
+                            TicketPackageTrack.reference == SP5_UPDATE,
+                            Product.cpe == LTSS_15_SP5,
+                        )
+                    )
+                ).one()
+                status = await db.scalar(
+                    select(Ticket.status).where(Ticket.id == ticket.id)
+                )
+                assert status is not None
+                reopened = any(
+                    effect.ticket_id == ticket.id
+                    for effect in pending_ticket_convergence_effects(db)
+                )
+                raised[n] = (status, eligible, override, reopened)
+            return raised
+
+        assert read(loaded.url, reader) == {
+            15: (ANALYZED, True, False, True),
+            16: (RESOLVED, False, True, False),
+        }
+        assert read(loaded.url, ticket_statuses) == {
+            n: status.value for n, (_, status, _, _, _) in TICKETS.items()
+        }
+
+    def test_sntl_15_product_below_the_threshold_without_override(
+        self, loaded: Loaded
+    ) -> None:
+        """Packages, Tracks, and Maintainers: the SUSE assessment of
+        `CVE-2099-0015` makes `Server LTSS 15 SP5` of `SNTL-15`, eligible
+        through the fallback score until then, not eligible with one
+        automatic `cvss` event, and no override follows."""
+
+        async def reader(db: AsyncSession) -> list[tuple[Any, ...]]:
+            actor = aliased(User)
+            rows = await db.execute(
+                select(
+                    actor.username,
+                    TicketAuditEvent.old_value,
+                    TicketAuditEvent.new_value,
+                    TicketAuditEvent.detail,
+                )
+                .join(Ticket, Ticket.id == TicketAuditEvent.ticket_id)
+                .outerjoin(actor, actor.id == TicketAuditEvent.user_id)
+                .where(
+                    Ticket.sequence_id == 15,
+                    TicketAuditEvent.event_type == "product_eligibility_changed",
+                )
+            )
+            return [tuple(row) for row in rows]
+
+        assert read(loaded.url, reader) == [
+            (
+                None,
+                "true",
+                "false",
+                {
+                    "track": SP5_UPDATE,
+                    "package": "fictional-sudo",
+                    "product_name": "Fictional Linux Enterprise Server LTSS 15 SP5",
+                    "product_cpe": LTSS_15_SP5,
+                    "reason": "cvss",
+                },
+            )
+        ]
+
     def test_track_states_of_the_ticket_screen(self, loaded: Loaded) -> None:
         """Packages, Tracks, and Maintainers: the track of the `Duplicated`
         `SNTL-22` has every
@@ -3169,6 +3309,8 @@ class TestPackages:
                 ),
                 id="ghill",
             ),
+            # The reader maintains no package (Users).
+            pytest.param("hgray", (set(), set(), set()), id="hgray"),
         ],
     )
     def test_maintainer_workbenches(
@@ -3707,9 +3849,9 @@ def test_failure_keeps_the_operations_committed_before_it(
         users, events, value, counts = read(url, identity_state)
 
     assert raised.value is error
-    # The eight user creations committed; the failing step started and did
+    # The nine user creations committed; the failing step started and did
     # not complete. `eblack` is deactivated only by the Ticket work.
-    assert progress.events == [*users_step(8), ("started", "System settings")]
+    assert progress.events == [*users_step(9), ("started", "System settings")]
     assert users == dict.fromkeys(USERS, True)
     assert events.count("user_deactivated") == 0
     # Nothing of the failed or later steps exists.
@@ -3784,10 +3926,10 @@ def test_interruption_before_commit_rolls_back_that_operation_only(
         users, events, value, counts = read(url, identity_state)
 
     assert raised.value.code == 143
-    # The creation of the last user rolled back; the seven before it remain.
-    assert progress.events == [("started", "Users"), *[("committed",)] * 7]
+    # The creation of the last user rolled back; the eight before it remain.
+    assert progress.events == [("started", "Users"), *[("committed",)] * 8]
     assert users == dict.fromkeys(list(USERS)[:-1], True)
-    assert sorted(events) == sorted(["user_created"] * 7 + ["role_added"] * 6)
+    assert sorted(events) == sorted(["user_created"] * 8 + ["role_added"] * 6)
     assert value == "3.1"
     assert populated(counts) == IDENTITY_TABLES
 
@@ -3818,7 +3960,7 @@ def test_registered_post_commit_callback_rolls_back_the_operation(
             load(url, progress)
         users, _, value, counts = read(url, identity_state)
 
-    assert progress.events == [*users_step(8), ("started", "System settings")]
+    assert progress.events == [*users_step(9), ("started", "System settings")]
     # The first setting change rolled back: no change and no setting event.
     assert value == "3.1"
     assert counts["setting_audit_event"] == 0
