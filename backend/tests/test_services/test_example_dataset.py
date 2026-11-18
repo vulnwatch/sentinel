@@ -189,6 +189,7 @@ USERS: Final[dict[str, tuple[str, str, bool, bool, tuple[Role, ...]]]] = {
         (Role.RESTRICTED_ANALYST,),
     ),
     "ghill": ("Grace Hill", "grace.hill@example.com", True, False, ()),
+    "hgray": ("Hannah Gray", "hannah.gray@example.com", True, False, ()),
 }
 """Users: username -> (full name, email, active, bot, roles), in creation
 order. `eblack` is active until the Ticket work deactivates it."""
@@ -1467,7 +1468,7 @@ class TestUsers:
             for name, (_, _, _, _, user_roles) in USERS.items()
             for role in user_roles
         }
-        assert not any(name in {"dbrown", "ghill"} for name, *_ in roles)
+        assert not any(name in {"dbrown", "ghill", "hgray"} for name, *_ in roles)
         assert pictures == dict.fromkeys(USERS)
         for name, (_, _, _, _, password_hash, external_id) in users.items():
             assert external_id is None, name
@@ -2138,6 +2139,27 @@ class TestTickets:
         }
         assert (
             sum(not confidential for _, _, _, confidential, _ in tickets.values()) == 29
+        )
+
+    def test_the_reader_sees_every_non_confidential_ticket_and_no_other(
+        self, loaded: Loaded
+    ) -> None:
+        """Users: `hgray`, without roles, maintainership, or access grant,
+        sees the 29 Tickets that are not confidential and no other."""
+
+        async def reader(db: AsyncSession) -> tuple[set[str], int]:
+            page = await ticket_service.list_tickets(
+                db, caller=await _caller(db, "hgray"), per_page=100
+            )
+            return {item.ticket_id for item in page.items}, page.total
+
+        assert read(loaded.url, reader) == (
+            {
+                f"SNTL-{n}"
+                for n, (_, _, _, confidential, _) in TICKETS.items()
+                if not confidential
+            },
+            29,
         )
 
     def test_ignore_reasons_and_their_events(self, loaded: Loaded) -> None:
@@ -3169,6 +3191,8 @@ class TestPackages:
                 ),
                 id="ghill",
             ),
+            # The reader maintains no package (Users).
+            pytest.param("hgray", (set(), set(), set()), id="hgray"),
         ],
     )
     def test_maintainer_workbenches(
@@ -3707,9 +3731,9 @@ def test_failure_keeps_the_operations_committed_before_it(
         users, events, value, counts = read(url, identity_state)
 
     assert raised.value is error
-    # The eight user creations committed; the failing step started and did
+    # The nine user creations committed; the failing step started and did
     # not complete. `eblack` is deactivated only by the Ticket work.
-    assert progress.events == [*users_step(8), ("started", "System settings")]
+    assert progress.events == [*users_step(9), ("started", "System settings")]
     assert users == dict.fromkeys(USERS, True)
     assert events.count("user_deactivated") == 0
     # Nothing of the failed or later steps exists.
@@ -3784,10 +3808,10 @@ def test_interruption_before_commit_rolls_back_that_operation_only(
         users, events, value, counts = read(url, identity_state)
 
     assert raised.value.code == 143
-    # The creation of the last user rolled back; the seven before it remain.
-    assert progress.events == [("started", "Users"), *[("committed",)] * 7]
+    # The creation of the last user rolled back; the eight before it remain.
+    assert progress.events == [("started", "Users"), *[("committed",)] * 8]
     assert users == dict.fromkeys(list(USERS)[:-1], True)
-    assert sorted(events) == sorted(["user_created"] * 7 + ["role_added"] * 6)
+    assert sorted(events) == sorted(["user_created"] * 8 + ["role_added"] * 6)
     assert value == "3.1"
     assert populated(counts) == IDENTITY_TABLES
 
@@ -3818,7 +3842,7 @@ def test_registered_post_commit_callback_rolls_back_the_operation(
             load(url, progress)
         users, _, value, counts = read(url, identity_state)
 
-    assert progress.events == [*users_step(8), ("started", "System settings")]
+    assert progress.events == [*users_step(9), ("started", "System settings")]
     # The first setting change rolled back: no change and no setting event.
     assert value == "3.1"
     assert counts["setting_audit_event"] == 0

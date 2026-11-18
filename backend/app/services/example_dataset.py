@@ -262,6 +262,7 @@ _USERS: Final = (
         bot=True,
     ),
     _User("ghill", "Grace Hill", "grace.hill@example.com", ()),
+    _User("hgray", "Hannah Gray", "hannah.gray@example.com", ()),
 )
 _EMAILS: Final[frozendict[str, str]] = frozendict(
     {user.username: user.email for user in _USERS}

@@ -390,23 +390,29 @@ dataset user is a local user.
 | `eblack` | Eve Black | `eve.black@example.com` | `vulnerability_analyst` | No | No |
 | `security-scanner` | Security Scanner | `security-scanner@example.com` | `restricted_analyst` | Yes | Yes |
 | `ghill` | Grace Hill | `grace.hill@example.com` | none | Yes | No |
+| `hgray` | Hannah Gray | `hannah.gray@example.com` | none | Yes | No |
 
 Operations of the `Users` step, in this order:
 
 1. `create_user()` for `jdoe`, without an acting user.
 2. `create_user()` for `asmith`, `bwilson`, `cwhite`, `dbrown`, `eblack`,
-   `security-scanner`, and `ghill`, in this order, by `jdoe`. Every role has
-   the `_manual` origin, and `security-scanner` is created with `bot = true`.
+   `security-scanner`, `ghill`, and `hgray`, in this order, by `jdoe`. Every
+   role has the `_manual` origin, and `security-scanner` is created with
+   `bot = true`.
 
 The Ticket work deactivates `eblack` after `eblack` takes `SNTL-9` (Tickets).
 `dbrown` and `ghill` hold no role: users without roles who maintain packages
-(Packages, Tracks, and Maintainers). `security-scanner` is a bot account
-(`docs/features/identity/user-management.md`, Bot Accounts) whose Ticket work
-lets a client show an automated action in a Ticket audit log. No dataset user
-has a picture URL (`avatar_url` is `null`,
+(Packages, Tracks, and Maintainers). `hgray` is the reader of the dataset, the
+read-only profile of `docs/features/identity/rbac.md` (Authenticated): a user
+without roles who maintains no package, holds no access grant, and has no
+Ticket work, so `hgray` sees the 29 Tickets that are not confidential, no
+confidential Ticket, and empty maintainer workbenches. `security-scanner` is a
+bot account (`docs/features/identity/user-management.md`, Bot Accounts) whose
+Ticket work lets a client show an automated action in a Ticket audit log. No
+dataset user has a picture URL (`avatar_url` is `null`,
 `docs/features/identity/user-avatars.md`): a fictional URL on Slack's image
-host would load no picture, which a client treats like `null`, and the load
-is not one of the writers of the field.
+host would load no picture, which a client treats like `null`, and the load is
+not one of the writers of the field.
 
 ### System Settings
 
