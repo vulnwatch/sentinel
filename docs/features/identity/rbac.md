@@ -620,6 +620,12 @@ here with the required authorization level and a link to the owning spec.
 |--------|----------|---------------|-------------|
 | GET | `/api/v1/products` | Authenticated | [product-catalog](../packages/product-catalog.md#list-products) |
 
+### Maintained Packages
+
+| Method | Endpoint | Authorization | Owning Spec |
+|--------|----------|---------------|-------------|
+| GET | `/api/v1/maintained-packages` | Authenticated | [maintained-package-names](../packages/maintained-package-names.md#search-maintained-packages) |
+
 ### Ticket References
 
 | Method | Endpoint | Authorization | Owning Spec |

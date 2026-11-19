@@ -926,6 +926,7 @@ other feature:
 | [ibs-track-release-detection](features/packages/ibs-track-release-detection.md) | Integration | Existing-track reconciliation via expanded IBS source state and per-track checkpoints |
 | [ibs-product-release-detection](features/packages/ibs-product-release-detection.md) | Integration | Product release reconciliation via validated stable security advisories and exact source-package matches |
 | [package-maintainership](features/packages/package-maintainership.md) | Integration | SMELT package maintainer acquisition and durable package associations |
+| [maintained-package-names](features/packages/maintained-package-names.md) | Integration | Daily snapshot of the source package names that SMELT maintains and their case-insensitive search |
 | [identity-provisioning](features/identity/identity-provisioning.md) | Identity | External identity provisioning (not yet active) |
 | [rbac](features/identity/rbac.md) | Identity | Role-based access control and permissions |
 | [user-avatars](features/identity/user-avatars.md) | Identity | User picture URLs from Slack profile pictures |

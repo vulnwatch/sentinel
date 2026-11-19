@@ -77,7 +77,7 @@ network access.
    applies the Empty-Database Guard. If the database is not empty, prints to
    stderr `Error: The database is not empty. The example dataset loads only
    into a newly created database.` and exits with code 1. Nothing is written.
-2. Loads the dataset in the six steps of Steps and Transactions and reports
+2. Loads the dataset in the seven steps of Steps and Transactions and reports
    each step on stdout with the fail-fast step report of `docs/conventions.md`
    (Multi-Step Reporting): `✓ {step}` after a step completes.
 3. If a step fails, prints `✗ {step}: {reason}` for it and
@@ -100,6 +100,7 @@ Example output of a successful load:
 ✓ System settings
 ✓ Fetchers
 ✓ Product catalog
+✓ Package names
 ✓ CVEs and tickets
 ✓ Ticket work
 Loaded the example dataset.
@@ -156,6 +157,7 @@ A load runs these steps in this order:
 | `System settings` | System Settings |
 | `Fetchers` | Fetchers, with the earlier runs of Fetcher Runs and CVE Source Records |
 | `Product catalog` | Product Catalog |
+| `Package names` | Maintained Package Names |
 | `CVEs and tickets` | CVEs, the last run of `sync_nvd_cves` and the CVE source records of Fetcher Runs and CVE Source Records, the metadata and policy of CNAs, and the creation of every Ticket (Tickets) |
 | `Ticket work` | The Ticket work of Tickets, Packages, Tracks, and Maintainers, IBS Requests, and References, then the aging and the coordinated release date of Aged Tickets |
 
@@ -171,7 +173,9 @@ creation time of a Ticket; these writes stand for the time that a real
 installation spends before the state of the dataset, and change nothing else.
 The three catalog publications commit their own transactions
 (`docs/features/packages/product-catalog.md`, Catalog Publication
-Boundaries). One transaction per operation is the granularity of the API
+Boundaries), and so does the package name publication
+(`docs/features/packages/maintained-package-names.md`, Publication
+Boundary). One transaction per operation is the granularity of the API
 request or fetcher work unit that each operation stands for: each transaction
 follows the ordinary lock order of its operation, and the operations receive
 distinct, increasing timestamps. This is an explicit exception to the rule
@@ -207,7 +211,8 @@ use:
   caller context. It stands for the system process that performs it in real
   use: CVE ingestion by the fetcher of the source that the data represents,
   a single-CVE fetch of a CVE source, CNA metadata synchronization, Product
-  catalog synchronization, IBS request reconciliation, and IBS track and
+  catalog synchronization, maintained package name synchronization, IBS
+  request reconciliation, and IBS track and
   Product release detection.
 - A run record of Fetcher Runs and CVE Source Records stands for the record
   that a scheduled run of its fetcher writes
@@ -224,7 +229,8 @@ example dataset load.
 
 The loader also stands in for the external sources and system processes of a
 real installation. Where a specification names a source or process as the
-origin of a fact or event — SMELT for package trees and maintainers, an
+origin of a fact or event — SMELT for package trees, maintainers, and the
+names of maintained packages, an
 advisory in `updateinfo.xml` for a Product release, a fetcher for an external
 identifier, the CVE Program CNA list for the name, types, and scope of a CNA,
 or IBS for request evidence — a dataset backend holds the same
@@ -236,8 +242,9 @@ A load performs no network I/O, uses no Redis or Celery broker, and runs no
 post-commit effect:
 
 - Every operation is a database operation of its service. Before committing an
-  operation whose transaction it owns — every operation except the three
-  catalog publications, which register none — the load verifies that the
+  operation whose   transaction it owns — every operation except the three
+  catalog publications and the package name publication, which register
+  none — the load verifies that the
   transaction registered no post-commit effect (`docs/conventions.md`,
   Caller-Owned Service Transactions), including no Ticket convergence effect
   (`docs/features/tickets/ticket-mutations.md`, Transaction-Local Ticket
@@ -461,6 +468,27 @@ for its synchronization fetcher:
 
 The rest of this document names each Product by its display name without the
 `Fictional Linux Enterprise` prefix, for example `Server 15 SP7`.
+
+### Maintained Package Names
+
+The operation of the `Package names` step is one system operation that stands
+for `sync_smelt_packages`: the package name publication
+(`docs/features/packages/maintained-package-names.md`, Publication Boundary)
+of these 29 names as one snapshot:
+
+- the name of every package of Packages, Tracks, and Maintainers, the 26
+  names from `fictional-bind` to `fictional-zlib`; and
+- three names that no Ticket holds: `fictional-openssl-3`,
+  `libfictional-openssl`, and `Fictional-ImageTool`.
+
+A client can therefore exercise the search of maintained packages on a
+dataset backend: the term `fictional-openssl` returns `fictional-openssl` and
+`fictional-openssl-3`, which start with it, before `libfictional-openssl`,
+which only contains it; the term `imagetool` returns `Fictional-ImageTool`,
+whose letter case differs from the term; and `fictional-openssl-3` is a
+maintained name that no Ticket holds. Adding any of these names to a Ticket
+still queries SMELT and fails on a dataset backend (Operating a Dataset
+Backend).
 
 ### CVEs
 
@@ -1157,7 +1185,9 @@ through local authentication with the Credentials above.
 Operations that need an external source do not complete on a dataset backend:
 
 - adding a package through the API queries SMELT and fails
-  (`docs/features/packages/package-service.md`, `add_package_to_ticket()`);
+  (`docs/features/packages/package-service.md`, `add_package_to_ticket()`),
+  while the search of maintained packages answers from the names of
+  Maintained Package Names;
 - an on-demand CVE refetch reports every source as disabled;
 - a manual fetcher trigger is rejected, because the fetcher is disabled; and
 - enabling a fetcher would contact its external source, and is not done on a

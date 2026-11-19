@@ -25,7 +25,7 @@ relevant feature specifications in `docs/features/`.
 | OBS | Public | Source packages, builds, repos (openSUSE) | Not planned |
 | IBS RabbitMQ | Internal | Package and request wake-up events | Active |
 | OBS RabbitMQ | Public | Real-time build and publish events | Not planned |
-| SMELT | Internal | Aggregated Product catalog, package-target resolution, and maintainership | Active |
+| SMELT | Internal | Aggregated Product catalog, maintained package names, package-target resolution, and maintainership | Active |
 | SCC | Internal | Product registration catalog, architectures, extensions, migrations | Reference only |
 | AIMAAS | Internal | Product lifecycle dates, CVSS thresholds | Active |
 | SUSE Active Directory | Internal | Employee identity, line manager, groups | Not integrated |
@@ -987,8 +987,9 @@ attribute it exposes.
 - **Relevant data**: Product catalog (name, version, CPE identifier,
   associated repository project names) and per-package maintenance
   information (which codestreams contain a given package and which
-  Products it is shipped to, with direct CPE identification), plus package
-  maintainership aggregated across IBS roles and Git/SLFO declarations
+  Products it is shipped to, with direct CPE identification), the complete
+  set of maintained source packages, plus package maintainership aggregated
+  across IBS roles and Git/SLFO declarations
 - **Access**: REST API at `smelt.suse.de/api`. Key endpoints:
   - `v1/basic/products/` relative to the API prefix (paginated) — product
     listing
@@ -1002,15 +1003,28 @@ attribute it exposes.
     `package-model.md`, SMELT Query for Package Resolution)
   - `experimental/v2/maintained/` relative to the API prefix (paginated) —
     sweep operation with optional source-package, binary, and codestream
-    filters. It is not used for Sentinel's per-package resolution
+    filters. It is not used for Sentinel's per-package resolution. Sentinel
+    reads the complete sweep, without filters and with
+    `include_reactive_ltss=true`, only to synchronize the names of the
+    maintained source packages (`sync_smelt_packages`, see
+    `docs/features/packages/maintained-package-names.md`); it consumes only
+    `results[].package`
+  - `experimental/v2/packages/search` relative to the API prefix — partial,
+    case-insensitive name search over every package name that SMELT knows.
+    Not used: it searches beyond the maintained set, including maintenance
+    incidents and names that no codestream maintains, and it truncates each
+    of its candidate sets to 20 names before ordering them, so it can omit a
+    maintained name that matches (verified live on 2026-11-19)
   - `experimental/v2/packages/{package_name}/maintainership` relative to the
     API prefix (non-paginated) - package maintainership across IBS and
     Git/SLFO sources. Sentinel consumes only non-null individual emails from
     direct users and group members; it ignores username, group name,
     collective group email, and codestream for persistence and identity
 - **Integration status**: **Active**. Sentinel periodically syncs the product
-  catalog (`sync_smelt_products` fetcher) and queries package maintenance
-  information on demand when adding packages to tickets. CPE identifiers
+  catalog (`sync_smelt_products` fetcher) and the names of the maintained
+  source packages (`sync_smelt_packages` fetcher), and queries package
+  maintenance information on demand when adding packages to tickets. CPE
+  identifiers
   from SMELT are the primary join key between Sentinel's product records and
   AIMAAS lifecycle data
 - **Contract characteristics**: The Product listing endpoint (`v1/basic/products/`)
@@ -1021,7 +1035,26 @@ attribute it exposes.
   metadata. The package-scoped maintained endpoint
   (`experimental/v2/maintained/{package_name}`) uses a JSend envelope
   `{status, data}` and returns all results in a single non-paginated response.
-  The maintained sweep operation is paginated within the JSend `data` object.
+  The maintained sweep operation is paginated within the JSend `data` object:
+  `data` carries `results`, `page`, `page_size`, `has_next`, and
+  `has_previous`, and no total count. `page_size` is at most 200; a larger
+  value returns HTTP 400 with a JSend `fail` envelope. Each result is one
+  source `package` shipped from one codestream to one Product through one
+  Product definition, so a package appears in many results. SMELT orders the
+  results by source package name and then by codestream, Product, and Product
+  definition, slices them by offset, and derives `has_next` from one
+  additional result; a page beyond the last returns no result with
+  `has_next = false`. The sweep and the package-scoped operation read the
+  same pre-computed read model, and the codestreams that the sweep reports
+  for a package equal those of the package-scoped operation (verified for
+  sampled packages). The source-package filter of the sweep matches the whole
+  name with its letter case: `openss` and `OpenSSL` match nothing. Live
+  verification on 2026-11-19 with `include_reactive_ltss=true` found 1201
+  pages of 200 results, 240,159 results, and 7,154 distinct source package
+  names, the longest of 60 characters; no name ends in a dot and four or more
+  digits, the form of a maintenance incident, while 27 maintained names end in
+  a dot and digits, such as `go1.25`; 1,088 names contain an uppercase letter,
+  and two maintained names differ only in letter case.
   The maintainership endpoint also uses JSend, is non-paginated, and exposes
   no freshness marker. These endpoints require no authentication.
 - **Source semantics**:
@@ -1056,7 +1089,9 @@ attribute it exposes.
 - **Documentation**: https://smelt.suse.de (internal)
 - **See also**: `docs/features/packages/product-catalog.md` (product
   sync), `docs/features/packages/package-model.md` (package query),
-  `docs/features/packages/package-maintainership.md` (maintainer acquisition)
+  `docs/features/packages/package-maintainership.md` (maintainer acquisition),
+  `docs/features/packages/maintained-package-names.md` (maintained package
+  names)
 
 ### SCC (SUSE Customer Center)
 
@@ -1432,6 +1467,7 @@ feature documentation (not its implementation status):
 | `sync_mitre_cnas` | CVE Program CNA List | Daily at 07:00 UTC (`0 7 * * *`) | None | Unpublished GitHub limits for unauthenticated requests; one request per run | Organization names, CNA types, and plain-text scopes of the existing CNA rows, matched by short name | [cna.md](features/tickets/cna.md#fetcher-sync_mitre_cnas) | Complete |
 | `sync_redhat_cves` | Red Hat Security Data | Daily at 03:00 UTC | None | Undocumented; Sentinel uses 2s delay between requests | CVSS Red Hat, CWE, references, package-name candidates | [cve-sync-redhat.md](features/tickets/cve-sync-redhat.md#fetcher-definition) | Complete |
 | `sync_smelt_products` | SMELT | Daily at 01:00 UTC | None | N/A (internal) | Product catalog and repository mappings; dispatches active-ticket Product catalog backfill when Products become newly current | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_smelt_products) | Complete |
+| `sync_smelt_packages` | SMELT | Daily at 00:00 UTC (`0 0 * * *`) | None | N/A (internal); sequential pages | The names of the source packages that SMELT maintains, as one complete snapshot from the maintained sweep | [maintained-package-names.md](features/packages/maintained-package-names.md#fetcher-sync_smelt_packages) | Complete |
 | `sync_aimaas_lifecycle` | AIMAAS | Daily at 02:15 UTC | None | N/A (internal) | Product lifecycle dates via paginated list with `all_fields=true`; field-level clearing on null change; lifecycle dates retained on product disappearance | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_aimaas_lifecycle) | Complete |
 | `sync_aimaas_thresholds` | AIMAAS | Daily at 02:45 UTC | None | N/A (internal) | CVSS thresholds per product via in-memory join (product list + threshold list); threshold clearing to NULL on disappearance with eligibility re-evaluation | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_aimaas_thresholds) | Complete |
 | `detect_ibs_track_releases` | IBS | Daily at 02:00 UTC | SSH signature (dedicated IBS account) | N/A (internal) | Reconciles existing active-Ticket IBS tracks from targeted expanded source state; one successfully examined checkpoint per track | [ibs-track-release-detection.md](features/packages/ibs-track-release-detection.md#fetcher-detect_ibs_track_releases) | Complete |
