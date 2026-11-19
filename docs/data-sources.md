@@ -1063,8 +1063,9 @@ attribute it exposes.
   digit, and holds only letters, digits, `.`, `_`, `+`, and `-`; two names end
   with a plus sign, `libxml++` and `libdbus-c++`, and the shortest have two
   characters. The package-scoped and maintainership operations decode a
-  percent-encoded `%2B` in the name segment to `+`: both return HTTP 200 for
-  `libxml%2B%2B` (verified live on 2026-11-19).
+  percent-encoded `%2B` in the name segment to `+`: for `libxml%2B%2B`, the
+  package-scoped operation returns the codestreams of `libxml++` and the
+  maintainership operation returns HTTP 200 (verified live on 2026-11-19).
   The maintainership endpoint also uses JSend, is non-paginated, and exposes
   no freshness marker. These endpoints require no authentication.
 - **Source semantics**:
