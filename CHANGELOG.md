@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.28.0](https://github.com/vulnwatch/sentinel/compare/v0.27.0...v0.28.0) (2026-11-19)
+
+
+### Features
+
+* search the source package names that SMELT maintains ([#1339](https://github.com/vulnwatch/sentinel/issues/1339)) ([cf6f840](https://github.com/vulnwatch/sentinel/commit/cf6f84074f591380c3e985f63db8b9a044816ed9))
+
+
+### Bug Fixes
+
+* accept the package names that end with a plus sign ([#1341](https://github.com/vulnwatch/sentinel/issues/1341)) ([09f68e6](https://github.com/vulnwatch/sentinel/commit/09f68e63a5010abe14013444cc19b5a82efb95e0))
+
 ## [0.27.0](https://github.com/vulnwatch/sentinel/compare/v0.26.0...v0.27.0) (2026-11-18)
 
 
