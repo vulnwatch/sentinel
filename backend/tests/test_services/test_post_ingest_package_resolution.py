@@ -199,7 +199,7 @@ def additions(monkeypatch: pytest.MonkeyPatch) -> Additions:
 EMPTY_PAYLOADS: list[Any] = [
     pytest.param({}, id="every-list-empty"),
     pytest.param(
-        {"names": ("x", "-fictional", "fictional-", "pkgé", "..")},
+        {"names": ("-fictional", ".fictional", "+fictional", "pkgé", "..")},
         id="only-invalid-names",
     ),
     pytest.param(

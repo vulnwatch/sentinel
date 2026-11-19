@@ -3717,10 +3717,8 @@ POST_INGEST_CPE_MAX_LENGTH: Final = 2048
 POST_INGEST_VENDOR_MAX_LENGTH: Final = 512
 """Producer bound of a transported vendor (`AffectedVersionEntry.vendor`)."""
 
-PACKAGE_NAME_GRAMMAR: Final = re.compile(
-    r"[a-zA-Z0-9][a-zA-Z0-9._+\-]{0,253}[a-zA-Z0-9]"
-)
-"""The public package-name grammar, matched with `fullmatch()` (2 to 255
+PACKAGE_NAME_GRAMMAR: Final = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._+\-]{0,254}")
+"""The public package-name grammar, matched with `fullmatch()` (1 to 255
 ASCII characters); the same pattern as the API request schema."""
 
 RESOLUTION_EMPTY_EVENT: Final = "ticket_package_resolution_empty"

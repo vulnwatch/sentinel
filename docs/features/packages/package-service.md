@@ -1326,10 +1326,11 @@ transaction:
    `resolve_vendor_product()` once per pair.
 3. Combine every resolver result with `resolved_packages`. Treat all values as
    candidates, preserve case, and exact-deduplicate across every source.
-4. Retain only names matching the existing public package-name grammar
-   `^[a-zA-Z0-9][a-zA-Z0-9._+\-]{0,253}[a-zA-Z0-9]$`. This accepts 2 through
-   255 ASCII characters. Invalid final names are skipped before any SMELT
-   request. Process the final set in ascending Unicode code-point order.
+4. Retain only names matching the public package-name grammar
+   `^[a-zA-Z0-9][a-zA-Z0-9._+\-]{0,254}$` (`package-model.md`, Add Package
+   to Ticket). This accepts 1 through 255 ASCII characters. Invalid final
+   names are skipped before any SMELT request. Process the final set in
+   ascending Unicode code-point order.
 
 The resolvers' existing per-value CPE parse-error behavior is unchanged: an
 invalid CPE logs its sanitized warning and contributes an empty result. A

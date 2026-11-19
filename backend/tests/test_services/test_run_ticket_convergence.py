@@ -882,8 +882,8 @@ class TestUnitIsolation:
 
     @pytest.mark.parametrize(
         "invalid",
-        ["x", "-fictional", "fictional.", "fictional pkg", "fictional-é"],
-        ids=["one-character", "leading-hyphen", "trailing-dot", "space", "non-ascii"],
+        ["-fictional", ".fictional", "+fictional", "fictional pkg", "fictional-é"],
+        ids=["leading-hyphen", "leading-dot", "leading-plus", "space", "non-ascii"],
     )
     async def test_persisted_name_outside_the_grammar_fails_before_its_unit(
         self,
@@ -931,6 +931,43 @@ class TestUnitIsolation:
             (ANALYSIS, None),
             [package_added_event(valid, None, CONVERGENCE)],
             {invalid: EMPTY_TREE, valid: _created(product)},
+            [],
+        )
+
+    async def test_persisted_name_ending_with_plus_signs_converges(
+        self,
+        world: CommittedWorld,
+        sessions: _Sessions,
+        published: _Publish,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Issue #1337: a persisted maintained name that ends with a plus
+        sign is inside the public package-name grammar, so its unit is
+        re-resolved and commits its missing descendants rather than failing
+        before the unit."""
+        (fetcher,) = _roster_names("only")
+        _participant(fetcher, "git")
+        ticket = await _ticket(world)
+        name = "libdbus-c++"
+        await _package(world, ticket, name)
+        product = await _current_product(world)
+        smelt = _Smelt({name: _resolves(codestream(IBS_REF, "IBS", product.cpe))})
+        smelt.install(monkeypatch)
+
+        with capture_logs() as logs:
+            await run_ticket_convergence(
+                ticket_id=ticket.id, session_factory=sessions.maker()
+            )
+
+        assert smelt.requests == _both(name)
+        assert _convergence_logs(logs) == [
+            _completed(ticket.id, packages=1, converged=1, catch_ups=1)
+        ]
+        assert published.calls == [_catch_up(fetcher, ticket.id, "git")]
+        assert await _committed(world, ticket.id, name) == _Committed(
+            (ANALYSIS, None),
+            [package_added_event(name, None, CONVERGENCE)],
+            {name: _created(product)},
             [],
         )
 

@@ -451,20 +451,24 @@ class TestInadmissibleCharacters:
 # ---------------------------------------------------------------------------
 
 GRAMMAR_NAMES = [
-    pytest.param("ab", True, id="two-characters"),
+    pytest.param("a", True, id="one-character"),
+    pytest.param("7", True, id="one-digit"),
     pytest.param("a" * 255, True, id="255-characters"),
     pytest.param("openssl-3", True, id="hyphen"),
     pytest.param("Fictional.Pkg_1+2-3", True, id="every-punctuation"),
     pytest.param("a..b", True, id="inner-dots"),
-    pytest.param("a", False, id="one-character"),
+    pytest.param("libxml++", True, id="trailing-plus-signs"),
+    pytest.param("libdbus-c++", True, id="hyphen-and-trailing-plus-signs"),
+    pytest.param("ab-", True, id="trailing-hyphen"),
+    pytest.param("ab.", True, id="trailing-dot"),
+    pytest.param("ab_", True, id="trailing-underscore"),
     pytest.param("a" * 256, False, id="256-characters"),
     pytest.param("", False, id="empty"),
     pytest.param("-ab", False, id="leading-hyphen"),
-    pytest.param("ab-", False, id="trailing-hyphen"),
     pytest.param(".ab", False, id="leading-dot"),
-    pytest.param("ab.", False, id="trailing-dot"),
     pytest.param("_ab", False, id="leading-underscore"),
-    pytest.param("ab+", False, id="trailing-plus"),
+    pytest.param("+ab", False, id="leading-plus"),
+    pytest.param(".", False, id="dot"),
     pytest.param("..", False, id="dot-dot"),
     pytest.param("pkgé", False, id="non-ascii"),
     pytest.param("ab\n", False, id="trailing-newline"),
@@ -480,9 +484,7 @@ class TestPackageNameGrammar:
         assert PACKAGE_NAME_GRAMMAR.pattern == PACKAGE_NAME_PATTERN.removeprefix(
             "^"
         ).removesuffix("$")
-        assert PACKAGE_NAME_PATTERN == (
-            r"^[a-zA-Z0-9][a-zA-Z0-9._+\-]{0,253}[a-zA-Z0-9]$"
-        )
+        assert PACKAGE_NAME_PATTERN == r"^[a-zA-Z0-9][a-zA-Z0-9._+\-]{0,254}$"
 
     @pytest.mark.parametrize(("name", "valid"), GRAMMAR_NAMES)
     def test_grammar_matches_the_api_request_validation(
@@ -662,7 +664,7 @@ class TestCandidateResolution:
 
     def test_names_outside_the_grammar_are_skipped(self, resolvers: _Resolvers) -> None:
         resolvers.cpe_results = {
-            CPE_A: {"a", "a" * 256, "a" * 255, "-ab", "ab-", ".ab", "ab."},
+            CPE_A: {"a" * 256, "a" * 255, "-ab", "ab-", ".ab", "+ab", "libxml++"},
         }
         resolvers.pair_results = {
             ("example", "alpha"): {"_ab", "..", "pkgé", "ab\n", "a b", "", "a..b"}
@@ -671,10 +673,18 @@ class TestCandidateResolution:
         names = _candidates(
             affected_cpes=(CPE_A,),
             vendor_products=(("example", "alpha"),),
-            resolved_packages=("ab", "x"),
+            resolved_packages=("ab", "x", "libdbus-c++"),
         )
 
-        assert names == ["a..b", "a" * 255, "ab"]
+        assert names == [
+            "a..b",
+            "a" * 255,
+            "ab",
+            "ab-",
+            "libdbus-c++",
+            "libxml++",
+            "x",
+        ]
 
     def test_final_names_are_in_unicode_code_point_order(
         self, resolvers: _Resolvers
