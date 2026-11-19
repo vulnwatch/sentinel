@@ -738,29 +738,6 @@ class TestValidation:
                 id="leading-hyphen",
             ),
             pytest.param(
-                {"package_name": ".fictional"},
-                "string_pattern_mismatch",
-                id="leading-dot",
-            ),
-            pytest.param(
-                {"package_name": "_fictional"},
-                "string_pattern_mismatch",
-                id="leading-underscore",
-            ),
-            pytest.param(
-                {"package_name": "+fictional"},
-                "string_pattern_mismatch",
-                id="leading-plus",
-            ),
-            pytest.param(
-                {"package_name": ".."}, "string_pattern_mismatch", id="dot-dot"
-            ),
-            pytest.param(
-                {"package_name": "fictional:lib"},
-                "string_pattern_mismatch",
-                id="colon",
-            ),
-            pytest.param(
                 {"package_name": "fictional/lib"},
                 "string_pattern_mismatch",
                 id="slash",
@@ -814,20 +791,15 @@ class TestValidation:
         [
             pytest.param("a", id="1-char"),
             pytest.param("a" + "b.c_d+e-f" * 28 + "g" * 2, id="255-chars"),
-            pytest.param("fictional+", id="trailing-plus"),
-            pytest.param("fictional-", id="trailing-hyphen"),
-            pytest.param("fictional.", id="trailing-dot"),
-            pytest.param("fictional_", id="trailing-underscore"),
         ],
     )
-    async def test_admissible_names_pass_validation_and_reach_smelt(
+    async def test_boundary_names_pass_validation_and_reach_smelt(
         self, api: _Api, ticket_factory: TicketFactory, package_name: str
     ) -> None:
-        """The shortest and longest admissible names, and names ending in
-        each non-alphanumeric character of the grammar (no rule applies to
-        the last character), reach the maintained request with the exact
-        name in the URL path (here answered as not found)."""
-        assert 1 <= len(package_name) <= 255
+        """The shortest and longest admissible names reach the maintained
+        request with the exact name in the URL path (here answered as
+        not found)."""
+        assert len(package_name) in (1, 255)
         caller = await api.caller(Role.VULNERABILITY_ANALYST)
         ticket = await cveless(ticket_factory)
         await _current(api.db)

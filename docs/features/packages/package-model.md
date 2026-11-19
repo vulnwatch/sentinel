@@ -1953,10 +1953,11 @@ behavior.
 |-------|------|----------|-------------|-------------|
 | `package_name` | string | Yes | Max 255 chars. Pattern: `^[a-zA-Z0-9][a-zA-Z0-9._+\-]{0,254}$` (min 1 char). Starts with an ASCII letter or digit; only alphanumeric, dots, underscores, hyphens, and plus signs allowed. | Source package name |
 
-This is the package-name rule of the Open Build Service, within the
-255-character bound: the first character is a letter or a digit, and no rule
-applies to the last one. Maintained source packages end with a plus sign,
-such as `libxml++` (`docs/data-sources.md`, SMELT).
+The pattern follows the character rule of the Open Build Service package
+names: the first character is a letter or a digit, and no rule applies to the
+last one. Sentinel bounds the length at 255. Some maintained source package
+names end with a plus sign, such as `libxml++` (`docs/data-sources.md`,
+SMELT).
 
 The `package_name` value is URL-encoded before interpolation in the SMELT
 package-scoped path

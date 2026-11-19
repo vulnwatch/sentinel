@@ -591,7 +591,8 @@ class ProductExclusionResponse(BaseModel):
 
 PACKAGE_NAME_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9._+\-]{0,254}$"
 """The public source-package-name grammar (1 to 255 ASCII characters): the
-Open Build Service package-name rule, which constrains no last character."""
+character rule of Open Build Service package names, which constrains no last
+character."""
 
 
 class PackageAdditionRequest(BaseModel):
