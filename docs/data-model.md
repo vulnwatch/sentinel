@@ -24,7 +24,7 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`, except
 
 ## Entity Relationship Overview
 
-The data model comprises 36 entities organized into five domains. The
+The data model comprises 37 entities organized into five domains. The
 overview below shows the core entities and their cross-domain
 relationships. Domain-specific diagrams follow with key columns (primary
 keys, foreign keys, and discriminant fields). Full column definitions
@@ -64,6 +64,7 @@ flowchart TB
         TicketPackageProduct
         Product
         ProductRepository
+        MaintainedPackage
     end
 
     subgraph identity["Identity"]
@@ -319,6 +320,11 @@ erDiagram
         UUID product_id FK "NOT NULL"
         VARCHAR_255 repo_name "NOT NULL"
         TIMESTAMPTZ catalog_last_seen_at "NOT NULL"
+    }
+    MaintainedPackage {
+        UUID id PK
+        VARCHAR_255 name UK "NOT NULL"
+        TIMESTAMPTZ created_at "NOT NULL"
     }
     User {
         UUID id PK
@@ -1603,6 +1609,26 @@ table.
 globally unique. An association omitted from a later complete snapshot is
 retained with its prior `catalog_last_seen_at`.
 
+#### MaintainedPackage
+
+One name of the latest published snapshot of the source package names that
+SMELT maintains. Synced daily from the SMELT maintained sweep by
+`sync_smelt_packages` and read by the search of maintained package names. See
+`docs/features/packages/maintained-package-names.md` for full details.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| id | UUID | PK | Internal UUIDv7 identifier |
+| name | VARCHAR(255) | UNIQUE, NOT NULL | Source package name exactly as SMELT returns it, including letter case |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | When the name last entered the snapshot |
+
+The rows are exactly the names of the latest published snapshot: a
+publication inserts the new names and deletes the names that left the
+snapshot, and never updates a row. The table has no foreign key in either
+direction. The unique constraint on `name` compares exactly, so two names
+that differ only in letter case are two rows. The search scans the table,
+which holds a bounded set of names, so it needs no further index.
+
 ### Identity
 #### User
 
@@ -2242,7 +2268,7 @@ retained provenance.
   `TicketAuditEvent`, `IdentityAuditEvent`, `SettingAuditEvent`,
   `CNAAuditEvent`, `UserRole`,
   `TicketPackageMaintainer`, `FetcherRun`, `FetcherAuditEvent`,
-  `IBSRequestActionTrack`, `RoleMapping`, `ApiKey`,
+  `IBSRequestActionTrack`, `RoleMapping`, `ApiKey`, `MaintainedPackage`,
   and `CVEAffectedVersion`
   only have `created_at`; most are immutable write-once records or are
   replaced rather than updated in place. `TicketAccessGrant` uses

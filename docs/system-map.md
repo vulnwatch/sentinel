@@ -264,6 +264,12 @@ erDiagram
         TIMESTAMPTZ catalog_last_seen_at
     }
 
+    MaintainedPackage {
+        UUID id PK
+        VARCHAR name UK
+        TIMESTAMPTZ created_at
+    }
+
     User {
         UUID id PK
         VARCHAR username UK
@@ -434,7 +440,7 @@ erDiagram
 | **CVE Core** | CVE, CVESource, CVECVSSAssessment, CVEExternalIdentifier, CNA, CNAAuditEvent | Vulnerability data from external sources — drives ticket creation and severity; the CNA that owns each record, its auto-ignore policy, and that policy's audit trail |
 | **CVE Enrichment** | CVEAffectedVersion, CVECWE, CVESSVCAssessment, CVEKEVEntry, CVEEPSSScore | Supplementary CVE intelligence from secondary sources (CISA, FIRST) |
 | **Ticket Domain** | Ticket, TicketAuditEvent, TicketAccessGrant, TicketReference, TicketPackage, TicketPackageMaintainer, TicketPackageTrack, TicketPackageProduct | Security workflow, audit trail, and access control |
-| **Product Domain** | Product, ProductRepository | SUSE distribution products and update repositories |
+| **Product Domain** | Product, ProductRepository, MaintainedPackage | SUSE distribution products and update repositories, and the names of the source packages that SMELT maintains |
 | **Identity Domain** | User, UserRole, RoleMapping (deferred), Session, ApiKey, IdentityAuditEvent | Users, roles, sessions, API keys, and identity audit trail |
 | **IBS Integration** | IBSRequest, IBSRequestAction, IBSRequestActionTrack | Current IBS request parents, normalized submission/release actions, and exact track correlations |
 | **Platform** | FetcherConfig, FetcherRun, FetcherAuditEvent, SystemSetting, SettingAuditEvent | Background task monitoring and system configuration |
@@ -926,6 +932,7 @@ other feature:
 | [ibs-track-release-detection](features/packages/ibs-track-release-detection.md) | Integration | Existing-track reconciliation via expanded IBS source state and per-track checkpoints |
 | [ibs-product-release-detection](features/packages/ibs-product-release-detection.md) | Integration | Product release reconciliation via validated stable security advisories and exact source-package matches |
 | [package-maintainership](features/packages/package-maintainership.md) | Integration | SMELT package maintainer acquisition and durable package associations |
+| [maintained-package-names](features/packages/maintained-package-names.md) | Integration | Daily snapshot of the source package names that SMELT maintains and their case-insensitive search |
 | [identity-provisioning](features/identity/identity-provisioning.md) | Identity | External identity provisioning (not yet active) |
 | [rbac](features/identity/rbac.md) | Identity | Role-based access control and permissions |
 | [user-avatars](features/identity/user-avatars.md) | Identity | User picture URLs from Slack profile pictures |

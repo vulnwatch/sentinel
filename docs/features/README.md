@@ -43,6 +43,7 @@ Index of all feature specification domains.
 - [git-product-release-detection.md](packages/git-product-release-detection.md) — Git product-level release detection
 - [product-lifecycle-transitions.md](packages/product-lifecycle-transitions.md) — Reactive Support and EOL reconciliation
 - [product-catalog.md](packages/product-catalog.md) — Product/ProductRepository, SMELT/AIMAAS sync
+- [maintained-package-names.md](packages/maintained-package-names.md) — Daily snapshot of the source package names that SMELT maintains and their search
 - [ibs-submission-tracking.md](packages/ibs-submission-tracking.md) — IBS request-action evidence and authoritative track delivery reconciliation
 - [package-maintainership.md](packages/package-maintainership.md) — Package-wide maintainer acquisition, authorization, and work routing
 - [maintainer.md](packages/maintainer.md) — Maintainer operations (pending fixes, in-progress, completed)

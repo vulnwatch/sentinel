@@ -254,6 +254,11 @@ that provides:
    configured API prefix): returns direct users and groups with members.
    Sentinel extracts only individual emails and applies them package-wide; see
    `docs/features/packages/package-maintainership.md`.
+4. **Maintained sweep** (paginated `experimental/v2/maintained/` relative to
+   the configured API prefix): pages through every maintained package.
+   Sentinel reads only the source package names, which it keeps as a local
+   snapshot so that a caller can find the exact name to add; see
+   `docs/features/packages/maintained-package-names.md`.
 
 SMELT reads from IBS, Git Product catalogs, Product build SBOM snapshots,
 and other sources internally.
@@ -1884,6 +1889,8 @@ periodic full-tree reconciler is introduced.
   above
 - **SMELT maintainership query** (on-demand): see
   `docs/features/packages/package-maintainership.md`
+- **SMELT maintained package name sync** (periodic): see
+  `docs/features/packages/maintained-package-names.md`
 - **AIMAAS lifecycle and threshold sync** (periodic): see
   `docs/features/packages/product-catalog.md` (AIMAAS Integration)
 
@@ -1950,6 +1957,13 @@ The `package_name` value is URL-encoded before interpolation in the SMELT
 package-scoped path
 (`experimental/v2/maintained/{url_encode(name)}?include_reactive_ltss=true`).
 This prevents injection of URL control characters regardless of validation.
+
+The name is resolved exactly, with its letter case. A caller finds the exact
+name of a maintained source package from part of it, without regard to case,
+through Search Maintained Packages, `GET /api/v1/maintained-packages`
+(`docs/features/packages/maintained-package-names.md`). That search reads a
+local snapshot and decides nothing: this endpoint still resolves every name in
+SMELT, and its outcomes do not depend on the snapshot.
 
 **Response** (201 Created):
 
@@ -2717,7 +2731,9 @@ aggregate query paths all retain the same Ticket visibility constraint:
 
 Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
 `sync_aimaas_thresholds`) are specified in
-`docs/features/packages/product-catalog.md` (Background Tasks).
+`docs/features/packages/product-catalog.md` (Background Tasks). The
+maintained package name sync (`sync_smelt_packages`) is specified in
+`docs/features/packages/maintained-package-names.md`.
 
 - `sync_ibs_requests`: complete daily state-based fetcher (02:30 UTC) that
   reconciles current IBS request actions and track delivery for all IBS tracks
@@ -2807,6 +2823,9 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
   mutations, orchestration, and query operations
 - `docs/features/packages/product-catalog.md` — product catalog, SMELT
   product sync, AIMAAS lifecycle/threshold sync, `GET /api/v1/products`
+- `docs/features/packages/maintained-package-names.md` — snapshot of the
+  source package names that SMELT maintains, `GET
+  /api/v1/maintained-packages`
 - `docs/features/tickets/tickets.md` — ticket lifecycle, status gates, and
   confidentiality filtering
 - `docs/features/identity/rbac.md` — canonical Ticket visibility predicate and

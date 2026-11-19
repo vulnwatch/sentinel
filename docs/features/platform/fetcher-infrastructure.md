@@ -530,6 +530,8 @@ Use the most general accurate term:
 - `scores` — single-purpose numerical scores (e.g., EPSS)
 - `bugs` — bug-tracker entries linked to CVEs (e.g., SUSE Bugzilla)
 - `products` — product catalog records
+- `packages` — package catalog records (e.g., the names of the source
+  packages that SMELT maintains)
 - `lifecycle` — product lifecycle dates
 - `thresholds` — CVSS thresholds
 - `kev` — CISA Known Exploited Vulnerabilities catalog entries
@@ -918,6 +920,7 @@ on-demand discovery. The default `catch_up()` inherited from
 | Fetcher | Why no catch-up needed |
 |---|---|
 | `sync_smelt_products` | Syncs entire product catalog regardless of ticket state |
+| `sync_smelt_packages` | Syncs the names of every maintained source package and writes no Ticket-scoped data (`docs/features/packages/maintained-package-names.md`) |
 | `sync_aimaas_lifecycle` | Syncs all product lifecycle dates |
 | `sync_aimaas_thresholds` | Syncs all CVSS thresholds |
 | `sync_mitre_cnas` | Syncs the metadata of every CNA from the complete CNA list and writes no Ticket-scoped data (`docs/features/tickets/cna.md`) |

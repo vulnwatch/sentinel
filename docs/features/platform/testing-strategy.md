@@ -2183,9 +2183,10 @@ contract is mandatory:
   field-level visibility, and authorization remain unchanged.
 - **Concrete mappings**: tests cover the selected unit, all successful
   terminal outcomes, all failed terminal outcomes, pre-scope exclusions, and
-  durable create/update effects documented by the owning specs for all 19
+  durable create/update effects documented by the owning specs for all 20
   registered fetchers: `sync_nvd_cves`, `sync_mitre_cves`,
-  `sync_mitre_cnas`, `sync_redhat_cves`, `sync_smelt_products`, `sync_aimaas_lifecycle`,
+  `sync_mitre_cnas`, `sync_redhat_cves`, `sync_smelt_products`,
+  `sync_smelt_packages`, `sync_aimaas_lifecycle`,
   `sync_aimaas_thresholds`, `detect_ibs_track_releases`,
   `detect_ibs_product_releases`, `evaluate_lifecycle_transitions`,
   `sync_ibs_requests`, `sync_cisa_kev`, `sync_epss_scores`,
@@ -5089,7 +5090,8 @@ and the dedicated database starts its Ticket identifiers at `SNTL-1`.
   setting value and both setting events; every fetcher disabled with its
   `disabled` event; the fetcher runs with their times, statuses, counters,
   and errors; the
-  Products with their lifecycle phases and thresholds; the CVEs with their
+  Products with their lifecycle phases and thresholds; the maintained package
+  names and the order in which their search returns them; the CVEs with their
   source data and CVE source records, and the failure drill-down of the last
   NVD run; the CNAs with their short names, metadata, display names,
   auto-ignore flags, and CNA audit events, and the CNA of every CVE; the

@@ -57,6 +57,7 @@ For architectural decisions and design constraints, see
   - [CLI Operational Access](#cli-operational-access)
   - [Health Checks](#health-checks)
   - [Product Catalog Initialization](#product-catalog-initialization)
+  - [Package Name Initialization](#package-name-initialization)
   - [Redis Durability, Memory, and Persistence](#redis-durability-memory-and-persistence)
   - [CVSS Recalculation Recovery](#cvss-recalculation-recovery)
   - [Log Aggregation](#log-aggregation)
@@ -365,6 +366,9 @@ database that holds data, including a partially loaded dataset.
    host reports `sso` as `true`, then complete a test SSO login in the UI
 8. **Initialize the Product catalog** (first deployment only): see
    [Product Catalog Initialization](#product-catalog-initialization)
+9. **Initialize the maintained package names** (recommended, while no
+   `sync_smelt_packages` run has succeeded): see
+   [Package Name Initialization](#package-name-initialization)
 
 #### Staging-Specific Notes
 
@@ -407,6 +411,9 @@ Same as staging, with these differences:
 5. **Verify**: confirm all services are healthy, check logs for errors
 6. **Initialize the Product catalog** (first deployment only): see
    [Product Catalog Initialization](#product-catalog-initialization)
+7. **Initialize the maintained package names** (recommended, while no
+   `sync_smelt_packages` run has succeeded): see
+   [Package Name Initialization](#package-name-initialization)
 
 #### Pre-Production Checklist
 
@@ -2494,6 +2501,35 @@ are not added when the catalog becomes ready either; recover them with the
 operator recovery in `docs/features/packages/package-service.md` (Post-ingest
 CVE package resolution, Idempotency, delivery, and recovery), which requires
 the `triage_ticket` capability.
+
+### Package Name Initialization
+
+The search of maintained packages, `GET /api/v1/maintained-packages`, returns
+names only after the first `sync_smelt_packages` run publishes a snapshot
+(`docs/features/packages/maintained-package-names.md`). This step is
+recommended, not required: until that run, the search returns an empty list
+and Add Package to Ticket still accepts an exact package name, so nothing is
+lost. A published snapshot is never removed by a failed run, so the step
+applies only while no `sync_smelt_packages` run has succeeded in an
+environment: after its first deployment, or after the first deployment of a
+release that introduces the fetcher into an environment that already runs.
+
+After Product Catalog Initialization, as a user with the `manage_fetchers`
+capability:
+
+1. Trigger `sync_smelt_packages`:
+   `POST /api/v1/fetchers/sync_smelt_packages/trigger` returns the `run_id`
+   of the queued run.
+2. Poll `GET /api/v1/fetchers/sync_smelt_packages/runs/{run_id}` until
+   `status` is no longer `queued` or `running`; a complete sweep took about
+   32 minutes when measured. A run with `status = success` has published the names. After
+   any other outcome, read the run's `error_message` and `error_detail`,
+   resolve the cause, and repeat from step 1. A run that reaches the soft time
+   limit needs a larger `run_timeout` in the fetcher's configuration.
+
+If the step is skipped or fails, the first `sync_smelt_packages` run that
+publishes a snapshot, scheduled (by default daily at 00:00 UTC) or triggered
+again, makes the names available.
 
 ### Redis Durability, Memory, and Persistence
 

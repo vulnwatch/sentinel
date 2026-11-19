@@ -259,6 +259,12 @@ results in a single JSend response. This is distinct from the paginated
 maintained sweep operation. Its envelope and processing contract are defined in
 `package-model.md` (SMELT Query for Package Resolution).
 
+The origin and authentication rules above apply to every SMELT request. The
+maintained sweep (`experimental/v2/maintained/`) has its own pagination,
+which `maintained-package-names.md` (Fetcher: `sync_smelt_packages`) defines
+for its only consumer; the Product listing pagination contract above does not
+apply to it.
+
 ### Product Sync
 
 Product data is synced from SMELT's product listing endpoint. See
@@ -1242,8 +1248,9 @@ with exact outcome and effect counters.
 
 ## Configuration
 
-- `SMELT_API_URL`: SMELT HTTPS API prefix for product catalog sync and
-  package resolution (default: `https://smelt.suse.de/api`). It must contain
+- `SMELT_API_URL`: SMELT HTTPS API prefix for product catalog sync,
+  maintained package name sync, and package resolution (default:
+  `https://smelt.suse.de/api`). It must contain
   no user information, query, or fragment; a non-default port is permitted.
   Invalid values fail application startup with an error naming the setting.
 - `AIMAAS_API_URL`: AIMAAS HTTPS API prefix for product lifecycle and CVSS
