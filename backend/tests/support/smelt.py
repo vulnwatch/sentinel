@@ -30,6 +30,19 @@ array was trimmed to its first element per entry. Codestream names, Product CPEs
 and Product friendly names are retained: they are consumed match keys and
 public Product identifiers. No personal identifier was present.
 
+The `maintained_sweep_page_*.json` files are live pages of the maintained
+sweep `experimental/v2/maintained/?include_reactive_ltss=true&page_size=200`
+captured anonymously from the default `SMELT_API_URL` on 2026-11-19: page 1,
+page 883 (a middle page that holds both `python-PrettyTable` and
+`python-prettytable`), page 1201 (the last page, 159 results,
+`has_next = false`), and page 1202 (beyond the last: no result,
+`has_next = false`). They were sanitized as the `maintained_*.json` files:
+every URL-valued string was replaced with a fictional
+`build.example.invalid` URL and the unconsumed `binary_packages` array was
+trimmed to its first element per result. Package names, codestream names,
+Product CPEs, and Product friendly names are retained; no personal
+identifier was present. They are stored in the served serialization.
+
 `SmeltServer` is an in-process `httpx.MockTransport` handler that serves
 a paginated `v1/basic/products/` listing in the verified live
 serialization (docs/features/packages/product-catalog.md, SMELT
@@ -37,12 +50,16 @@ Integration > Origin, Authentication, and Pagination): fixed page size
 100, constant `count` and `total_pages`, continuation metadata with the
 known `http` scheme defect, and `previous` on page 2 omitting `page`. Tests
 mutate `pages` to build negative cases, register raw `responses` (status
-codes, undecodable bodies, transport errors), and inspect `requests`.
+codes, undecodable bodies, transport errors), and inspect `requests`. It
+serves any page-keyed endpoint, so `sweep_pages()` builds the pages of the
+maintained sweep for it.
 
 Consumers: `tests/test_services/test_packages/test_smelt_product_listing.py`,
 `test_smelt_product_listing_contract.py`, `test_sync_smelt_products.py`,
 `test_smelt_maintainership.py`, `test_smelt_maintainership_contract.py`,
-`test_smelt_maintained.py`, and `test_smelt_maintained_contract.py`.
+`test_smelt_maintained.py`, `test_smelt_maintained_contract.py`,
+`test_smelt_maintained_sweep.py`, `test_smelt_maintained_sweep_contract.py`,
+and `test_sync_smelt_packages.py`.
 All values are fictional (`smelt.example.test`, `cpe:/o:example:...`).
 """
 
@@ -115,6 +132,84 @@ def load_maintained_fixture(name: str) -> Any:
     """Return one sanitized live maintained-package response as parsed JSON."""
     path = FIXTURE_DIR / f"maintained_{name}.json"
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+SWEEP_FIXTURE_PAGES = (1, 883, 1201, 1202)
+"""Page numbers of the captured live maintained sweep pages."""
+
+SWEEP_PAGE_SIZE = 200
+
+
+def load_sweep_page(page: int) -> dict[str, Any]:
+    """Return one captured live maintained sweep page as parsed JSON."""
+    path = FIXTURE_DIR / f"maintained_sweep_page_{page}.json"
+    data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return data
+
+
+def sweep_row(package: str) -> dict[str, Any]:
+    """One fictional maintained sweep result of `package` with every
+    upstream field of the live shape."""
+    return {
+        "codestream": {
+            "name": "EXAMPLE:SLE-15-SP7:Update",
+            "url": "https://build.example.invalid/fictional/1",
+            "type": "IBS",
+        },
+        "binary_packages": [
+            {
+                "name": package,
+                "source_package_name": package,
+                "support_status": "L3",
+            }
+        ],
+        "targets": [
+            {
+                "product": {
+                    "id": 1001,
+                    "friendly_name": "Example Server 15 SP7",
+                    "cpe": "cpe:/o:example:server:15:sp7",
+                    "support_status": "General Support",
+                },
+                "repository": "EXAMPLE:Updates:Server:15-SP7:x86_64",
+                "product_definition": {
+                    "name": "EXAMPLE-SERVER-15-SP7-x86_64",
+                    "url": "https://build.example.invalid/fictional/2",
+                    "type": "channel",
+                },
+            }
+        ],
+        "package": package,
+        "support_status": "General Support",
+    }
+
+
+def sweep_page(page: int, results: list[Any], *, has_next: bool) -> dict[str, Any]:
+    """One maintained sweep page envelope in the live serialization."""
+    return {
+        "status": "success",
+        "data": {
+            "results": results,
+            "page": page,
+            "page_size": SWEEP_PAGE_SIZE,
+            "has_next": has_next,
+            "has_previous": page > 1,
+        },
+    }
+
+
+def sweep_pages(packages: list[str]) -> dict[int, dict[str, Any]]:
+    """Split one result per entry of `packages` into a valid sweep page
+    sequence keyed by page number. A multiple of the page size ends with a
+    full page followed by no further page, as SMELT derives `has_next`
+    from one additional result."""
+    pages: dict[int, dict[str, Any]] = {}
+    total_pages = max(1, math.ceil(len(packages) / SWEEP_PAGE_SIZE))
+    for page in range(1, total_pages + 1):
+        start = (page - 1) * SWEEP_PAGE_SIZE
+        rows = [sweep_row(name) for name in packages[start : start + SWEEP_PAGE_SIZE]]
+        pages[page] = sweep_page(page, rows, has_next=page < total_pages)
+    return pages
 
 
 def product_row(index: int, **overrides: Any) -> dict[str, Any]:
