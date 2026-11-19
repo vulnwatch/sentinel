@@ -589,8 +589,9 @@ class ProductExclusionResponse(BaseModel):
 
 # Package addition (package-model.md, Add Package to Ticket).
 
-PACKAGE_NAME_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9._+\-]{0,253}[a-zA-Z0-9]$"
-"""The public source-package-name grammar (2 to 255 ASCII characters)."""
+PACKAGE_NAME_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9._+\-]{0,254}$"
+"""The public source-package-name grammar (1 to 255 ASCII characters): the
+Open Build Service package-name rule, which constrains no last character."""
 
 
 class PackageAdditionRequest(BaseModel):
@@ -605,9 +606,9 @@ class PackageAdditionRequest(BaseModel):
         max_length=255,
         pattern=PACKAGE_NAME_PATTERN,
         description=(
-            "Source package name: 2 to 255 characters, starting and ending "
-            "with an ASCII letter or digit; only letters, digits, `.`, `_`, "
-            "`+`, and `-` are allowed. Required."
+            "Source package name: 1 to 255 characters, starting with an "
+            "ASCII letter or digit; only letters, digits, `.`, `_`, `+`, and "
+            "`-` are allowed. Required."
         ),
         examples=["openssl-3"],
     )

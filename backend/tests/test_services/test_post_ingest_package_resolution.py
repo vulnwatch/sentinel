@@ -199,7 +199,7 @@ def additions(monkeypatch: pytest.MonkeyPatch) -> Additions:
 EMPTY_PAYLOADS: list[Any] = [
     pytest.param({}, id="every-list-empty"),
     pytest.param(
-        {"names": ("x", "-fictional", "fictional-", "pkgé", "..")},
+        {"names": ("-fictional", ".fictional", "+fictional", "pkgé", "..")},
         id="only-invalid-names",
     ),
     pytest.param(
@@ -449,6 +449,41 @@ class TestSuccessfulUnits:
             a: created_tree(product)
         }
         assert_private(logs, a)
+
+    async def test_candidate_ending_with_plus_signs_reaches_its_unit(
+        self,
+        world: CommittedWorld,
+        sessions: Sessions,
+        additions: Additions,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Issue #1337: a maintained name that ends with a plus sign passes
+        the package-name grammar (Deterministic candidate resolution, step
+        4), reaches its own unit, and commits its tree."""
+        ticket = await seed_ticket(world)
+        product = await current_product(world)
+        name = "libxml++"
+        smelt = Smelt({name: resolves(codestream(GIT_REF, "SLFO", product.cpe))})
+        smelt.install(monkeypatch)
+
+        with capture_logs() as logs:
+            await resolve(sessions, ticket.id, name)
+
+        assert smelt.requests == both(name)
+        assert [call["package_name"] for call in additions.calls] == [name]
+        assert workflow_logs(logs) == [completed(ticket.id, 1, package_tree_changed=1)]
+        assert await committed(world, ticket.id, name) == Committed(
+            (ANALYSIS, None),
+            [added(name)],
+            {
+                name: Tree(
+                    None,
+                    {GIT_REF: NEW_TRACK[WorkflowType.GIT]},
+                    {(GIT_REF, product.id): new_occurrence(True)},
+                )
+            },
+            [],
+        )
 
     async def test_analyzed_regression_registers_and_publishes_no_convergence(
         self,

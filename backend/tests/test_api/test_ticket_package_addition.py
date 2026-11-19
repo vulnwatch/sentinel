@@ -197,7 +197,7 @@ BROKER_URL = "amqp://sentinel-user:fictional-secret@broker.example.test:5672//"
 BOTH = ["maintained", "maintainership"]
 """The two SMELT requests of a request whose package targets resolved."""
 
-PACKAGE_NAME_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9._+\-]{0,253}[a-zA-Z0-9]$"
+PACKAGE_NAME_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9._+\-]{0,254}$"
 """package-model.md, Add Package to Ticket, request body table."""
 
 RESULT_FIELDS = {
@@ -730,9 +730,6 @@ class TestValidation:
             pytest.param({"package_name": 42}, "string_type", id="not-a-string"),
             pytest.param({"package_name": ""}, "string_pattern_mismatch", id="empty"),
             pytest.param(
-                {"package_name": "a"}, "string_pattern_mismatch", id="one-character"
-            ),
-            pytest.param(
                 {"package_name": "a" * 256}, "string_too_long", id="256-chars"
             ),
             pytest.param(
@@ -741,9 +738,27 @@ class TestValidation:
                 id="leading-hyphen",
             ),
             pytest.param(
-                {"package_name": "fictional."},
+                {"package_name": ".fictional"},
                 "string_pattern_mismatch",
-                id="trailing-dot",
+                id="leading-dot",
+            ),
+            pytest.param(
+                {"package_name": "_fictional"},
+                "string_pattern_mismatch",
+                id="leading-underscore",
+            ),
+            pytest.param(
+                {"package_name": "+fictional"},
+                "string_pattern_mismatch",
+                id="leading-plus",
+            ),
+            pytest.param(
+                {"package_name": ".."}, "string_pattern_mismatch", id="dot-dot"
+            ),
+            pytest.param(
+                {"package_name": "fictional:lib"},
+                "string_pattern_mismatch",
+                id="colon",
             ),
             pytest.param(
                 {"package_name": "fictional/lib"},
@@ -797,17 +812,22 @@ class TestValidation:
     @pytest.mark.parametrize(
         "package_name",
         [
-            pytest.param("ab", id="2-chars"),
+            pytest.param("a", id="1-char"),
             pytest.param("a" + "b.c_d+e-f" * 28 + "g" * 2, id="255-chars"),
+            pytest.param("fictional+", id="trailing-plus"),
+            pytest.param("fictional-", id="trailing-hyphen"),
+            pytest.param("fictional.", id="trailing-dot"),
+            pytest.param("fictional_", id="trailing-underscore"),
         ],
     )
-    async def test_boundary_names_pass_validation_and_reach_smelt(
+    async def test_admissible_names_pass_validation_and_reach_smelt(
         self, api: _Api, ticket_factory: TicketFactory, package_name: str
     ) -> None:
-        """The shortest and longest admissible names reach the maintained
-        request with the exact name in the URL path (here answered as
-        not found)."""
-        assert len(package_name) in (2, 255)
+        """The shortest and longest admissible names, and names ending in
+        each non-alphanumeric character of the grammar (no rule applies to
+        the last character), reach the maintained request with the exact
+        name in the URL path (here answered as not found)."""
+        assert 1 <= len(package_name) <= 255
         caller = await api.caller(Role.VULNERABILITY_ANALYST)
         ticket = await cveless(ticket_factory)
         await _current(api.db)
@@ -880,6 +900,47 @@ class TestSuccess:
         assert await ticket_row(api.db, ticket.id) == (ANALYSIS, caller.user.id)
         assert api.sessions.sessions
         assert not api.sessions.any_in_transaction()
+
+    @pytest.mark.parametrize(
+        ("package_name", "encoded"),
+        [
+            pytest.param("libxml++", "libxml%2B%2B", id="libxml++"),
+            pytest.param("libdbus-c++", "libdbus-c%2B%2B", id="libdbus-c++"),
+        ],
+    )
+    async def test_maintained_name_ending_with_plus_signs_is_added(
+        self,
+        api: _Api,
+        ticket_factory: TicketFactory,
+        package_name: str,
+        encoded: str,
+    ) -> None:
+        """Issue #1337: SMELT maintains source packages whose names end with
+        a plus sign (data-sources.md, SMELT). The name is accepted, sent to
+        both SMELT requests with `+` percent-encoded, and persisted and
+        audited exactly as requested."""
+        caller = await api.caller(Role.VULNERABILITY_ANALYST)
+        ticket = await cveless(ticket_factory, assignee_id=caller.user.id)
+        (product,) = await _current(api.db)
+        _serve(api.smelt, codestream(GIT_REF, "SLFO", product.cpe))
+
+        response = await api.post(ticket, caller=caller, package_name=package_name)
+
+        assert response.status_code == 201, response.text
+        assert response.json() == _data(1, 0, 1, 0, package_name=package_name)
+        assert [str(request.url) for _kind, request in api.smelt.requests] == [
+            f"{SMELT_TEST_API_URL}/experimental/v2/maintained/{encoded}"
+            "?include_reactive_ltss=true",
+            f"{SMELT_TEST_API_URL}/experimental/v2/packages/{encoded}/maintainership",
+        ]
+        assert await package_tree(api.db, ticket.id, package_name) == Tree(
+            None,
+            {GIT_REF: NEW_TRACK[WorkflowType.GIT]},
+            {(GIT_REF, product.id): new_occurrence(True)},
+        )
+        assert await ticket_events_by_id(api.db, ticket.id) == [
+            package_added_event(package_name, caller.user)
+        ]
 
     async def test_repeated_addition_creates_nothing_and_records_no_event(
         self, api: _Api, ticket_factory: TicketFactory, broker: _Publish

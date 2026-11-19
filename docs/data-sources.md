@@ -1059,7 +1059,12 @@ attribute it exposes.
   dot and four or more digits, the form of a maintenance incident, while 27
   maintained names end in a dot and digits, such as `go1.25`; 1,088 names
   contain an uppercase letter, and at least one pair of maintained names
-  differs only in letter case.
+  differs only in letter case. Every name is ASCII, starts with a letter or a
+  digit, and holds only letters, digits, `.`, `_`, `+`, and `-`; two names end
+  with a plus sign, `libxml++` and `libdbus-c++`, and the shortest have two
+  characters. The package-scoped and maintainership operations decode a
+  percent-encoded `%2B` in the name segment to `+`: both return HTTP 200 for
+  `libxml%2B%2B` (verified live on 2026-11-19).
   The maintainership endpoint also uses JSend, is non-paginated, and exposes
   no freshness marker. These endpoints require no authentication.
 - **Source semantics**:
