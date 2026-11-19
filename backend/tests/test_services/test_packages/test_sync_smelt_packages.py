@@ -282,20 +282,24 @@ class TestFailures:
 
         async def failing_execute(*args: Any, **kwargs: Any) -> Any:
             calls[0] += 1
-            if calls[0] == 3:  # the lock, the DELETE, then the INSERT
+            # `scalars()` runs through `execute()`: the lock, the read of the
+            # published names, then the DELETE, which fails.
+            if calls[0] == 3:
                 raise failure
             return await original(*args, **kwargs)
 
         monkeypatch.setattr(db_session, "execute", failing_execute)
 
-        error, _ = await _execute_failing(
+        error, fetcher = await _execute_failing(
             db_session, SmeltServer(sweep_pages(["fictional-new"]))
         )
         monkeypatch.setattr(db_session, "execute", original)
         await db_session.rollback()
 
+        assert calls == [3]
         assert str(error) == PUBLICATION_FAILED
         assert error.__cause__ is failure
+        assert _metrics(fetcher) == (0, 0, 0, 0)
         assert await _table(db_session) == {"fictional-old"}
 
 

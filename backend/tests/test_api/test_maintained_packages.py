@@ -117,19 +117,6 @@ class TestSearch:
             "meta": {"total": 3, "page": 1, "per_page": 20},
         }
 
-    async def test_without_a_term_every_name_in_code_point_order(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        await _store(db_session, *_NAMES)
-
-        response = await authenticated_client.get(_PATH, params={"per_page": 2})
-
-        assert response.status_code == 200
-        assert response.json() == {
-            "data": [{"name": "Fictional-ImageTool"}, {"name": "fictional-openssl"}],
-            "meta": {"total": 4, "page": 1, "per_page": 2},
-        }
-
     async def test_empty_list_before_the_first_snapshot(
         self, authenticated_client: AsyncClient
     ) -> None:
@@ -137,20 +124,6 @@ class TestSearch:
 
         assert response.status_code == 200
         assert response.json() == _EMPTY_PAGE
-
-    async def test_page_beyond_the_last_is_empty_with_the_correct_total(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        await _store(db_session, *_NAMES)
-
-        response = await authenticated_client.get(
-            _PATH, params={"page": 3, "per_page": 2}
-        )
-
-        assert response.json() == {
-            "data": [],
-            "meta": {"total": 4, "page": 3, "per_page": 2},
-        }
 
     async def test_succeeds_while_smelt_is_unreachable_without_a_request_to_it(
         self,

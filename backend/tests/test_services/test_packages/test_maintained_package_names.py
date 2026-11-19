@@ -10,19 +10,21 @@ Observation).
 Every `db_session` test starts from an empty table (per-test rollback); a
 publication through `db_session` commits a savepoint only. The
 independent-session tests commit real snapshots and empty the table at
-teardown: the publication replaces the whole table, and no other test of
-the worker database commits rows into it.
+teardown: the publication replaces the whole table, and every test that
+commits rows into it (here and the `run()` tests of
+`test_sync_smelt_packages.py`) starts from an empty table and empties it.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+import contextlib
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from typing import Any, Final
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import delete, event, insert, select
+from sqlalchemy import delete, event, insert, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -176,6 +178,9 @@ class TestSearchOrder:
     ) -> None:
         """Code-point order puts uppercase before lowercase and `É` after
         every ASCII letter, which a linguistic collation orders otherwise."""
+        # The check is meaningful only where the default collation is not
+        # code-point order, whatever its provider.
+        assert await db_session.scalar(text("SELECT 'alpha-x' < 'Zeta-x'"))
         await _store(
             db_session, "beta-x", "Zeta-x", "Éclair-x", "alpha-x", "x-Beta", "x-alpha"
         )
@@ -361,7 +366,9 @@ class TestPublication:
 
         assert result == MaintainedPackagePublication(created=1, removed=0, unchanged=1)
 
-    async def test_re_publication_is_idempotent(self, db_session: AsyncSession) -> None:
+    async def test_re_publication_is_idempotent_and_commits_once(
+        self, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         names = frozenset({"fictional-a", "fictional-b", "fictional-c"})
         await publish_maintained_packages(db_session, names)
         rows_before = (
@@ -370,9 +377,20 @@ class TestPublication:
             )
         ).all()
 
+        commits = [0]
+        original_commit = db_session.commit
+
+        async def counted_commit() -> None:
+            commits[0] += 1
+            await original_commit()
+
+        monkeypatch.setattr(db_session, "commit", counted_commit)
+
         result = await publish_maintained_packages(db_session, names)
 
         assert result == MaintainedPackagePublication(created=0, removed=0, unchanged=3)
+        # Q3: the publication commits once also when nothing changes.
+        assert commits == [1]
         rows_after = (
             await db_session.execute(
                 select(MaintainedPackage.id, MaintainedPackage.name)
@@ -395,6 +413,9 @@ class TestPublication:
         ) == MaintainedPackagePublication(created=2100, removed=2500, unchanged=0)
         assert await _table(db_session) == set(second)
 
+
+@pytest.mark.unit
+class TestPublicationGuards:
     async def test_empty_set_is_rejected_before_any_write(self) -> None:
         db = AsyncMock(spec=AsyncSession)
 
@@ -411,21 +432,54 @@ class TestPublication:
 # ---------------------------------------------------------------------------
 
 
+class _Committed:
+    """Independent sessions over an initially empty table, and the tasks
+    that run on them (testing-strategy.md, Concurrency Testing).
+
+    Cleanup first cancels every unfinished task and rolls back every
+    session, so a test that fails while a publication holds the table lock
+    still releases it, then empties the table."""
+
+    def __init__(self, factory: SessionFactory, cleaner: AsyncSession) -> None:
+        self._factory = factory
+        self._cleaner = cleaner
+        self._sessions: list[AsyncSession] = []
+        self._tasks: list[asyncio.Task[Any]] = []
+
+    async def session(self) -> AsyncSession:
+        session = await self._factory()
+        self._sessions.append(session)
+        return session
+
+    def start[R](self, coroutine: Coroutine[Any, Any, R]) -> asyncio.Task[R]:
+        task = asyncio.create_task(coroutine)
+        self._tasks.append(task)
+        return task
+
+    async def cleanup(self) -> None:
+        for task in self._tasks:
+            if not task.done():
+                task.cancel()
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                await task
+        for session in self._sessions:
+            with contextlib.suppress(Exception):
+                await session.rollback()
+        await self._cleaner.rollback()
+        await self._cleaner.execute(delete(MaintainedPackage))
+        await self._cleaner.commit()
+
+
 @pytest.fixture
-async def committed_table(
-    db_session_factory: SessionFactory,
-) -> AsyncIterator[SessionFactory]:
-    """Independent sessions over an initially empty table, emptied again at
-    teardown (testing-strategy.md, Concurrency Testing)."""
+async def committed(db_session_factory: SessionFactory) -> AsyncIterator[_Committed]:
     cleaner = await db_session_factory()
     assert await _table(cleaner) == set()
     await cleaner.rollback()
+    state = _Committed(db_session_factory, cleaner)
     try:
-        yield db_session_factory
+        yield state
     finally:
-        await cleaner.rollback()
-        await cleaner.execute(delete(MaintainedPackage))
-        await cleaner.commit()
+        await state.cleanup()
 
 
 def _pause_before_commit(
@@ -449,11 +503,11 @@ def _pause_before_commit(
 @pytest.mark.integration
 class TestPublicationRollback:
     async def test_failed_publication_leaves_the_previous_snapshot(
-        self, committed_table: SessionFactory, monkeypatch: pytest.MonkeyPatch
+        self, committed: _Committed, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        setup = await committed_table()
+        setup = await committed.session()
         await publish_maintained_packages(setup, frozenset({"fictional-a"}))
-        publisher = await committed_table()
+        publisher = await committed.session()
         failure = OperationalError("COMMIT", {}, Exception("connection lost"))
 
         async def _fail() -> None:
@@ -468,27 +522,27 @@ class TestPublicationRollback:
         await publisher.rollback()
 
         assert excinfo.value is failure
-        assert await _table(await committed_table()) == {"fictional-a"}
+        assert await _table(await committed.session()) == {"fictional-a"}
 
 
 @pytest.mark.integration
 class TestOverlappingPublications:
     async def test_later_commit_leaves_its_own_snapshot(
-        self, committed_table: SessionFactory, monkeypatch: pytest.MonkeyPatch
+        self, committed: _Committed, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        setup = await committed_table()
+        setup = await committed.session()
         await publish_maintained_packages(setup, frozenset({"fictional-x"}))
-        first = await committed_table()
-        second = await committed_table()
+        first = await committed.session()
+        second = await committed.session()
         reached, release = _pause_before_commit(monkeypatch, first)
 
-        first_task = asyncio.create_task(
+        first_task = committed.start(
             publish_maintained_packages(
                 first, frozenset({"fictional-a", "fictional-b"})
             )
         )
         await asyncio.wait_for(reached.wait(), timeout=5)
-        second_task = asyncio.create_task(
+        second_task = committed.start(
             publish_maintained_packages(
                 second, frozenset({"fictional-b", "fictional-c"})
             )
@@ -503,23 +557,33 @@ class TestOverlappingPublications:
         assert await asyncio.wait_for(
             second_task, timeout=5
         ) == MaintainedPackagePublication(created=1, removed=1, unchanged=1)
-        assert await _table(await committed_table()) == {"fictional-b", "fictional-c"}
+        assert await _table(await committed.session()) == {
+            "fictional-b",
+            "fictional-c",
+        }
 
 
 @pytest.mark.integration
 class TestConsistentSearch:
+    """A search never reads part of a publication and never waits for one.
+
+    The single-statement assertion of `TestSearchIsReadOnly` proves that the
+    page and the total come from one observation; this test proves that the
+    observation is the previous snapshot whole while a publication is
+    uncommitted, without waiting on its lock."""
+
     async def test_search_during_a_publication_sees_the_previous_snapshot_whole(
-        self, committed_table: SessionFactory, monkeypatch: pytest.MonkeyPatch
+        self, committed: _Committed, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        setup = await committed_table()
+        setup = await committed.session()
         await publish_maintained_packages(
             setup, frozenset({"fictional-old-1", "fictional-old-2"})
         )
-        publisher = await committed_table()
-        reader = await committed_table()
+        publisher = await committed.session()
+        reader = await committed.session()
         reached, release = _pause_before_commit(monkeypatch, publisher)
 
-        task = asyncio.create_task(
+        task = committed.start(
             publish_maintained_packages(
                 publisher,
                 frozenset({"fictional-new-1", "fictional-new-2", "fictional-new-3"}),
