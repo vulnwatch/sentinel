@@ -1053,7 +1053,9 @@ attribute it exposes.
   pages of 200 results, 240,159 results, and 7,154 distinct source package
   names, the longest of 60 characters. Read one page after the other, the
   complete sweep took 31.5 minutes: a median of 1.87 seconds per page, 2.08
-  seconds at the 95th percentile, and at most 5.91 seconds. No name ends in a
+  seconds at the 95th percentile, and at most 5.91 seconds. The latency grows
+  with the offset, from about 0.3 seconds on the first pages, so the mean is
+  below the median. No name ends in a
   dot and four or more digits, the form of a maintenance incident, while 27
   maintained names end in a dot and digits, such as `go1.25`; 1,088 names
   contain an uppercase letter, and at least one pair of maintained names
