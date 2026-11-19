@@ -57,6 +57,7 @@ STEPS: Final = (
     "System settings",
     "Fetchers",
     "Product catalog",
+    "Package names",
     "CVEs and tickets",
     "Ticket work",
 )

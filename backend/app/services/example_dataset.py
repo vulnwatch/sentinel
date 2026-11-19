@@ -5,8 +5,9 @@ Service, Dataset Content). `load_example_dataset()` is a service-owned
 orchestration boundary: it receives the session factory, applies the
 Empty-Database Guard in its own read session, and runs every dataset
 operation in its own session and transaction, which it commits before the
-next one begins. The three catalog publications commit their own
-transactions (product-catalog.md, Catalog Publication Boundaries).
+next one begins. The three catalog publications and the package name
+publication commit their own transactions (product-catalog.md, Catalog
+Publication Boundaries; maintained-package-names.md, Publication Boundary).
 
 Every operation is an existing service operation, called as the actor of
 Dataset Content reaches it in real use: a user-attributed operation passes
@@ -108,6 +109,9 @@ from app.services.packages.ibs_request_observation import (
 from app.services.packages.ibs_request_reconciliation import (
     apply_ibs_request_observation,
 )
+from app.services.packages.maintained_package_names import (
+    publish_maintained_packages,
+)
 from app.services.packages.sync_aimaas_lifecycle import (
     LifecycleDates,
     publish_lifecycle_dates,
@@ -197,6 +201,7 @@ USERS_STEP: Final = "Users"
 SETTINGS_STEP: Final = "System settings"
 FETCHERS_STEP: Final = "Fetchers"
 CATALOG_STEP: Final = "Product catalog"
+PACKAGE_NAMES_STEP: Final = "Package names"
 TICKETS_STEP: Final = "CVEs and tickets"
 WORK_STEP: Final = "Ticket work"
 STEPS: Final = (
@@ -204,6 +209,7 @@ STEPS: Final = (
     SETTINGS_STEP,
     FETCHERS_STEP,
     CATALOG_STEP,
+    PACKAGE_NAMES_STEP,
     TICKETS_STEP,
     WORK_STEP,
 )
@@ -879,6 +885,17 @@ _PACKAGES: Final[frozendict[str, _Package]] = frozendict(
     }
 )
 
+_MAINTAINED_PACKAGE_NAMES: Final = frozenset(
+    {
+        *_PACKAGES,
+        "fictional-openssl-3",
+        "libfictional-openssl",
+        "Fictional-ImageTool",
+    }
+)
+"""Maintained Package Names: every package name of Packages, Tracks, and
+Maintainers and three names that no Ticket holds."""
+
 _SUSE_ASSESSMENTS: Final[frozendict[str, tuple[str, str]]] = frozendict(
     {
         "CVE-2099-0013": ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H", "asmith"),
@@ -1231,7 +1248,7 @@ async def load_example_dataset(
     `CVE`, or `Product` row raises `ExampleDatasetNotEmptyError`.
 
     Q3: captures `T` and `D`, applies the guard, imports the production
-    fetcher registry, then performs the six steps of `STEPS` with the
+    fetcher registry, then performs the seven steps of `STEPS` with the
     operations, attribution, and values of Dataset Content, each operation
     committed in its own transaction, under Isolation. A failure stops the
     load at the failing operation, which rolls back; the operations
@@ -1257,6 +1274,7 @@ async def load_example_dataset(
         (SETTINGS_STEP, load.system_settings),
         (FETCHERS_STEP, load.fetchers),
         (CATALOG_STEP, load.product_catalog),
+        (PACKAGE_NAMES_STEP, load.package_names),
         (TICKETS_STEP, load.cves_and_tickets),
         (WORK_STEP, load.ticket_work),
     ):
@@ -1306,8 +1324,8 @@ class _Load:
     async def publish(
         self, publication: Callable[[AsyncSession], Awaitable[object]]
     ) -> None:
-        """Run one catalog publication, which commits its own transaction
-        in a session with no open transaction."""
+        """Run one catalog or package name publication, which commits its
+        own transaction in a session with no open transaction."""
         async with self.session_factory() as session:
             try:
                 await publication(session)
@@ -1507,6 +1525,15 @@ class _Load:
             if product.cvss_threshold is not None
         }
         await self.publish(lambda db: publish_thresholds(db, thresholds))
+
+    # -- package names --------------------------------------------------------
+
+    async def package_names(self) -> None:
+        """The package name publication of Maintained Package Names, which
+        stands for `sync_smelt_packages`."""
+        await self.publish(
+            lambda db: publish_maintained_packages(db, _MAINTAINED_PACKAGE_NAMES)
+        )
 
     # -- CVEs and tickets -----------------------------------------------------
 

@@ -29,6 +29,7 @@ from app.api.v1 import (
     fetchers,
     ibs_consumer,
     identity_audit,
+    maintained_packages,
     maintainer,
     platform,
     products,
@@ -320,6 +321,7 @@ for _router in (
     cvss.router,
     cnas.router,
     products.router,
+    maintained_packages.router,
     maintainer.router,
     platform.router,
 ):

@@ -81,6 +81,7 @@ from app.models.ibs_request import IBSRequest
 from app.models.ibs_request_action import IBSRequestAction
 from app.models.ibs_request_action_track import IBSRequestActionTrack
 from app.models.identity_audit_event import IdentityAuditEvent
+from app.models.maintained_package import MaintainedPackage
 from app.models.mixins import AuditEventMixin
 from app.models.product import Product
 from app.models.product_repository import ProductRepository
@@ -114,6 +115,9 @@ from app.services.example_dataset import (
     ExampleDatasetProgress,
     load_example_dataset,
 )
+from app.services.packages.maintained_package_names import (
+    search_maintained_packages,
+)
 from app.services.packages.maintainer_workbench import MaintainerWorkItem
 from app.services.product_lifecycle import evaluate_product_lifecycle_phase
 from app.services.ticket_convergence_registry import (
@@ -146,6 +150,7 @@ STEP_NAMES: Final = (
     "System settings",
     "Fetchers",
     "Product catalog",
+    "Package names",
     "CVEs and tickets",
     "Ticket work",
 )
@@ -285,6 +290,42 @@ PRODUCTS: Final[
 """Product Catalog: CPE -> (name, version, display name, repository,
 lifecycle offsets from `D` for FCS, GS end, ES end, and RS end, phase at
 `D` (`None` is unavailable), CVSS threshold)."""
+
+MAINTAINED_PACKAGE_NAMES: Final = frozenset(
+    {
+        "fictional-bind",
+        "fictional-curl",
+        "fictional-expat",
+        "fictional-glibc",
+        "fictional-gzip",
+        "fictional-httpd",
+        "fictional-jq",
+        "fictional-kernel",
+        "fictional-kernel-compat",
+        "fictional-kernel-firmware",
+        "fictional-libarchive",
+        "fictional-libidn",
+        "fictional-libpng",
+        "fictional-libssh",
+        "fictional-libtiff",
+        "fictional-libxml",
+        "fictional-lz4",
+        "fictional-ncurses",
+        "fictional-openssh",
+        "fictional-openssl",
+        "fictional-pcre",
+        "fictional-rsync",
+        "fictional-sqlite",
+        "fictional-sudo",
+        "fictional-xz",
+        "fictional-zlib",
+        "fictional-openssl-3",
+        "libfictional-openssl",
+        "Fictional-ImageTool",
+    }
+)
+"""Maintained Package Names: the 26 Ticket package names and three names
+that no Ticket holds."""
 
 NVD_VECTORS: Final = {
     "CVE-2099-0001": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
@@ -1846,6 +1887,36 @@ def test_products_lifecycle_and_thresholds(loaded: Loaded) -> None:
     assert sorted(repositories) == sorted(
         (cpe, values[3], loaded.now) for cpe, values in PRODUCTS.items()
     )
+
+
+def test_maintained_package_names_and_their_search(loaded: Loaded) -> None:
+    """Maintained Package Names: the 29 names of one snapshot, and the
+    order in which the search returns the documented terms."""
+
+    async def reader(
+        db: AsyncSession,
+    ) -> tuple[set[str], set[str], tuple[str, ...], tuple[str, ...]]:
+        names = set((await db.scalars(select(MaintainedPackage.name))).all())
+        ticket_names = set((await db.scalars(select(TicketPackage.package_name))).all())
+        openssl = await search_maintained_packages(db, search="fictional-openssl")
+        imagetool = await search_maintained_packages(db, search="imagetool")
+        return names, ticket_names, openssl.names, imagetool.names
+
+    names, ticket_names, openssl, imagetool = read(loaded.url, reader)
+
+    assert names == MAINTAINED_PACKAGE_NAMES
+    assert len(names) == 29
+    assert names - ticket_names == {
+        "fictional-openssl-3",
+        "libfictional-openssl",
+        "Fictional-ImageTool",
+    }
+    assert openssl == (
+        "fictional-openssl",
+        "fictional-openssl-3",
+        "libfictional-openssl",
+    )
+    assert imagetool == ("Fictional-ImageTool",)
 
 
 class TestCNAs:
@@ -3904,6 +3975,31 @@ def test_failed_catalog_publication_propagates_and_publishes_nothing(
     assert counts["product_repository"] == 0
     assert counts["user"] == len(USERS)
     assert counts["fetcher_config"] > 0
+
+
+def test_failed_package_name_publication_propagates_and_publishes_nothing(
+    server: URL, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The package name publication owns its transaction; its failure
+    propagates unchanged and leaves no name, while the catalog remains."""
+    error = InjectedFailureError("fictional failure")
+
+    async def fail(*args: Any, **kwargs: Any) -> Any:
+        raise error
+
+    monkeypatch.setattr(example_dataset, "publish_maintained_packages", fail)
+    progress = Progress()
+    with production_registries(), dataset_database(server) as url:
+        with pytest.raises(InjectedFailureError) as raised:
+            load(url, progress)
+        counts = read(url, table_counts)
+
+    assert raised.value is error
+    assert progress.steps[-1] == ("started", "Package names")
+    assert progress.events[-1] != ("committed",)
+    assert counts["maintained_package"] == 0
+    assert counts["product"] == len(PRODUCTS)
+    assert counts["ticket"] == 0
 
 
 def test_interruption_before_commit_rolls_back_that_operation_only(

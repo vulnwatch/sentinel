@@ -19,6 +19,7 @@ from app.models.ibs_request import IBSRequest
 from app.models.ibs_request_action import IBSRequestAction
 from app.models.ibs_request_action_track import IBSRequestActionTrack
 from app.models.identity_audit_event import IdentityAuditEvent
+from app.models.maintained_package import MaintainedPackage
 from app.models.mixins import AuditEventMixin
 from app.models.product import Product
 from app.models.product_repository import ProductRepository
@@ -58,6 +59,7 @@ __all__ = [
     "IBSRequestAction",
     "IBSRequestActionTrack",
     "IdentityAuditEvent",
+    "MaintainedPackage",
     "Product",
     "ProductRepository",
     "Session",
