@@ -1620,7 +1620,7 @@ SMELT maintains. Synced daily from the SMELT maintained sweep by
 |---|---|---|---|
 | id | UUID | PK | Internal UUIDv7 identifier |
 | name | VARCHAR(255) | UNIQUE, NOT NULL | Source package name exactly as SMELT returns it, including letter case |
-| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | When the name entered the snapshots |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | When the name last entered the snapshot |
 
 The rows are exactly the names of the latest published snapshot: a
 publication inserts the new names and deletes the names that left the

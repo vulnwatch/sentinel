@@ -88,7 +88,7 @@ See `docs/data-model.md` (MaintainedPackage) for the column listing.
 |---|---|
 | `id` | Internal UUIDv7 primary key, never serialized |
 | `name` | The source package name exactly as SMELT returns it; unique, compared exactly, including letter case |
-| `created_at` | When the name entered the snapshots; a name that stays in consecutive snapshots keeps its row |
+| `created_at` | When the name last entered the snapshot; a name that stays in consecutive snapshots keeps its row, and a name that leaves and returns gets a new one |
 
 Rows are inserted and deleted only by the publication boundary and are never
 updated in place, so the table has no `updated_at`. No other table references
@@ -137,7 +137,7 @@ is an implementation choice.
 The result reports the number of names created (inserted), removed (deleted),
 and unchanged (present before and after).
 
-This boundary is an explicit exception to `docs/conventions.md`
+This boundary is one of the named exceptions of `docs/conventions.md`
 (Caller-Owned Service Transactions), like the catalog publication boundaries.
 A database error propagates before the commit succeeds; the caller rolls the
 session back and no partial publication persists.
@@ -223,7 +223,7 @@ sorting (`sort_by`/`sort_order`) is not supported, because the order that
 places the names starting with the term first is the one that finding a name
 needs, and without a term the code-point order is the only meaningful one.
 
-**Response** (200 OK):
+**Response** (200 OK), for `?search=openssl`:
 
 ```json
 {
@@ -250,9 +250,7 @@ Before the first snapshot is published, the endpoint returns `200 OK` with an
 empty `data` array and `meta.total = 0`, as List Products does before its
 catalog is ready (`docs/features/packages/product-catalog.md`, List Products).
 
-The endpoint has no endpoint-specific error responses; it returns only the
-responses that `docs/api-spec.md` (Response Applicability Derivation) derives
-for an authenticated `GET`.
+The endpoint has no endpoint-specific error responses.
 
 ## Background Tasks
 
@@ -343,7 +341,7 @@ Sanitization):
 | Request timeout | `"SMELT request timed out"` |
 | Non-200 HTTP response | `"SMELT returned HTTP {status_code}"` |
 | Undecodable body, invalid envelope, or invalid pagination | `"SMELT returned invalid maintained package response"` |
-| Invalid name or empty sweep | `"SMELT maintained package validation failed"` |
+| Invalid result (not an object, or without a valid `package`) or empty sweep | `"SMELT maintained package validation failed"` |
 | Publication database failure | `"Failed to publish SMELT maintained package names"` |
 
 Logs identify the failed page or validation category without a response
@@ -402,8 +400,9 @@ Implementation tests MUST cover:
   two overlapping publications leaving the snapshot of the later commit.
 - **Fetcher**: contract tests on a sanitized fixture of real sweep pages
   (`docs/conventions.md`, External Integration Contract Verification); the
-  request URL, parameters, anonymity, no redirect following, and the request
-  delay between pages; the stop at the first page with `has_next = false`,
+  request URL, parameters, anonymity, and no redirect following; the run's
+  `request_delay` between consecutive pages, zero and non-zero, with no wait
+  before page 1; the stop at the first page with `has_next = false`,
   including an empty final page after page 1; every invalid-page case of
   Algorithm step 2, including a non-final page with fewer than 200 results, a
   mismatched `page` or `page_size`, a wrong `has_previous`, a boolean given as

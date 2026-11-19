@@ -242,10 +242,10 @@ A load performs no network I/O, uses no Redis or Celery broker, and runs no
 post-commit effect:
 
 - Every operation is a database operation of its service. Before committing an
-  operation whose   transaction it owns — every operation except the three
+  operation whose transaction it owns — every operation except the three
   catalog publications and the package name publication, which register
-  none — the load verifies that the
-  transaction registered no post-commit effect (`docs/conventions.md`,
+  none — the load verifies that the transaction registered no post-commit
+  effect (`docs/conventions.md`,
   Caller-Owned Service Transactions), including no Ticket convergence effect
   (`docs/features/tickets/ticket-mutations.md`, Transaction-Local Ticket
   Convergence Registration). A registered effect is a defect of the dataset:
