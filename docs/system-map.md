@@ -264,6 +264,12 @@ erDiagram
         TIMESTAMPTZ catalog_last_seen_at
     }
 
+    MaintainedPackage {
+        UUID id PK
+        VARCHAR name UK
+        TIMESTAMPTZ created_at
+    }
+
     User {
         UUID id PK
         VARCHAR username UK
@@ -434,7 +440,7 @@ erDiagram
 | **CVE Core** | CVE, CVESource, CVECVSSAssessment, CVEExternalIdentifier, CNA, CNAAuditEvent | Vulnerability data from external sources — drives ticket creation and severity; the CNA that owns each record, its auto-ignore policy, and that policy's audit trail |
 | **CVE Enrichment** | CVEAffectedVersion, CVECWE, CVESSVCAssessment, CVEKEVEntry, CVEEPSSScore | Supplementary CVE intelligence from secondary sources (CISA, FIRST) |
 | **Ticket Domain** | Ticket, TicketAuditEvent, TicketAccessGrant, TicketReference, TicketPackage, TicketPackageMaintainer, TicketPackageTrack, TicketPackageProduct | Security workflow, audit trail, and access control |
-| **Product Domain** | Product, ProductRepository | SUSE distribution products and update repositories |
+| **Product Domain** | Product, ProductRepository, MaintainedPackage | SUSE distribution products and update repositories, and the names of the source packages that SMELT maintains |
 | **Identity Domain** | User, UserRole, RoleMapping (deferred), Session, ApiKey, IdentityAuditEvent | Users, roles, sessions, API keys, and identity audit trail |
 | **IBS Integration** | IBSRequest, IBSRequestAction, IBSRequestActionTrack | Current IBS request parents, normalized submission/release actions, and exact track correlations |
 | **Platform** | FetcherConfig, FetcherRun, FetcherAuditEvent, SystemSetting, SettingAuditEvent | Background task monitoring and system configuration |

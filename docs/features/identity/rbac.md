@@ -213,6 +213,7 @@ Confidential Ticket Visibility). Authenticated access covers:
 - View the user directory (list and detail; the complete user profile requires
   `manage_users`)
 - View tickets, CVEs, CNAs, products, packages, and ticket package trees
+- Search the names of the source packages that SMELT maintains
 - View ticket references, CVSS assessments, and submission/release requests
 - Calculate the Base score of a CVSS vector without storing it
 - View ticket audit logs and the users who acted on a ticket
@@ -327,6 +328,7 @@ no response to a caller that the operation does not already admit.
 | View CNAs | Authenticated |
 | View packages and ticket package trees | Authenticated |
 | View products | Authenticated |
+| Search maintained package names | Authenticated |
 | View ticket references | Authenticated |
 | View CVSS assessments | Authenticated |
 | Calculate the Base score of a CVSS vector | Authenticated |

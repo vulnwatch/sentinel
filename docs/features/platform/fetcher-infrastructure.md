@@ -530,7 +530,8 @@ Use the most general accurate term:
 - `scores` — single-purpose numerical scores (e.g., EPSS)
 - `bugs` — bug-tracker entries linked to CVEs (e.g., SUSE Bugzilla)
 - `products` — product catalog records
-- `packages` — the names of the source packages that the source maintains
+- `packages` — package catalog records (e.g., the names of the source
+  packages that SMELT maintains)
 - `lifecycle` — product lifecycle dates
 - `thresholds` — CVSS thresholds
 - `kev` — CISA Known Exploited Vulnerabilities catalog entries

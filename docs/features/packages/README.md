@@ -15,6 +15,7 @@ package-model.md                      Status, eligibility, delivery, exclusion, 
 
 package-service.md                       package_service module contract (mutations, orchestration, queries)
 product-catalog.md                       Product/ProductRepository, SMELT/AIMAAS sync, lifecycle phases
+maintained-package-names.md              Snapshot of the source package names that SMELT maintains and their search
 cpe-package-mapping.md                   Static CPE-to-package mapping and resolve_cpe_packages()
 ibs-submission-tracking.md               IBS request-action evidence and authoritative track delivery reconciliation
 package-maintainership.md                Package-wide maintainer acquisition and associations
@@ -31,6 +32,11 @@ maintainer.md                            Maintainer operations (pending fixes, i
   SMELT product sync, AIMAAS lifecycle/threshold sync, and the
   `GET /api/v1/products` endpoint. `package-model.md` consumes
   product data for eligibility evaluation and track-to-product mapping.
+- `maintained-package-names.md` owns the MaintainedPackage entity, the SMELT
+  maintained package name sync, and the `GET /api/v1/maintained-packages`
+  endpoint, with which a caller finds the exact name to pass to Add Package
+  to Ticket in `package-model.md`. It decides nothing about package
+  resolution.
 - `package-service.md` is the service-layer companion to
   `package-model.md` — it centralizes all package-centric mutations
   (track status, delivery, product eligibility, soft-delete/restore),

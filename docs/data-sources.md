@@ -985,11 +985,11 @@ package-target resolution, but it is not the upstream authority for every
 attribute it exposes.
 
 - **Relevant data**: Product catalog (name, version, CPE identifier,
-  associated repository project names) and per-package maintenance
-  information (which codestreams contain a given package and which
-  Products it is shipped to, with direct CPE identification), the complete
-  set of maintained source packages, plus package maintainership aggregated
-  across IBS roles and Git/SLFO declarations
+  associated repository project names), per-package maintenance information
+  (which codestreams contain a given package and which Products it is shipped
+  to, with direct CPE identification), the names of the maintained source
+  packages, and package maintainership aggregated across IBS roles and
+  Git/SLFO declarations
 - **Access**: REST API at `smelt.suse.de/api`. Key endpoints:
   - `v1/basic/products/` relative to the API prefix (paginated) — product
     listing
@@ -1024,9 +1024,8 @@ attribute it exposes.
   catalog (`sync_smelt_products` fetcher) and the names of the maintained
   source packages (`sync_smelt_packages` fetcher), and queries package
   maintenance information on demand when adding packages to tickets. CPE
-  identifiers
-  from SMELT are the primary join key between Sentinel's product records and
-  AIMAAS lifecycle data
+  identifiers from SMELT are the primary join key between Sentinel's product
+  records and AIMAAS lifecycle data
 - **Contract characteristics**: The Product listing endpoint (`v1/basic/products/`)
   uses the paginated envelope `count`, `total_pages`, `next`, `previous`, and
   `results`; SMELT currently serializes continuation metadata with an HTTP URL
@@ -1040,21 +1039,25 @@ attribute it exposes.
   `has_previous`, and no total count. `page_size` is at most 200; a larger
   value returns HTTP 400 with a JSend `fail` envelope. Each result is one
   source `package` shipped from one codestream to one Product through one
-  Product definition, so a package appears in many results. SMELT orders the
-  results by source package name and then by codestream, Product, and Product
+  Product definition, so a package appears in many results. According to the
+  SMELT source (`tools/smelt`, read on 2026-11-19), SMELT orders the results
+  by source package name and then by codestream, Product, and Product
   definition, slices them by offset, and derives `has_next` from one
-  additional result; a page beyond the last returns no result with
-  `has_next = false`. The sweep and the package-scoped operation read the
-  same pre-computed read model, and the codestreams that the sweep reports
-  for a package equal those of the package-scoped operation (verified for
-  sampled packages). The source-package filter of the sweep matches the whole
-  name with its letter case: `openss` and `OpenSSL` match nothing. Live
+  additional result, and the sweep and the package-scoped operation read the
+  same pre-computed read model. A page beyond the last returns no result with
+  `has_next = false`, and the codestreams that the sweep reports for a package
+  equal those of the package-scoped operation (verified live for sampled
+  packages). The source-package filter of the sweep matches the whole name
+  with its letter case: `openss` and `OpenSSL` match nothing. Live
   verification on 2026-11-19 with `include_reactive_ltss=true` found 1201
   pages of 200 results, 240,159 results, and 7,154 distinct source package
-  names, the longest of 60 characters; no name ends in a dot and four or more
-  digits, the form of a maintenance incident, while 27 maintained names end in
-  a dot and digits, such as `go1.25`; 1,088 names contain an uppercase letter,
-  and two maintained names differ only in letter case.
+  names, the longest of 60 characters. Read one page after the other, the
+  complete sweep took 31.5 minutes: a median of 1.87 seconds per page, 2.08
+  seconds at the 95th percentile, and at most 5.91 seconds. No name ends in a
+  dot and four or more digits, the form of a maintenance incident, while 27
+  maintained names end in a dot and digits, such as `go1.25`; 1,088 names
+  contain an uppercase letter, and at least one pair of maintained names
+  differs only in letter case.
   The maintainership endpoint also uses JSend, is non-paginated, and exposes
   no freshness marker. These endpoints require no authentication.
 - **Source semantics**:

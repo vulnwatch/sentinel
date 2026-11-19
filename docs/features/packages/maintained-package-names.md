@@ -31,7 +31,7 @@ This specification defines:
 Out of scope:
 
 - binary package names: the snapshot holds source package names only, the
-  names that Add Package to Ticket accepts;
+  kind of name that Add Package to Ticket takes;
 - whether a name resolves to a Product of Sentinel's catalog or to a
   supported codestream, which Add Package to Ticket decides when it resolves
   the name;
@@ -61,9 +61,10 @@ Product. It is the same maintained set that the package-scoped operation of
 Add Package to Ticket reads, with the same `include_reactive_ltss=true`
 parameter (`docs/data-sources.md`, SMELT).
 
-A name is kept exactly as SMELT returns it, with its letter case. Two names
+A name is kept exactly as SMELT returns it, with its letter case
+(`docs/data-sources.md`, SMELT, for the observed names). Two names
 that differ only in letter case are two maintained packages; SMELT maintains
-pairs of this kind. No name is removed as a maintenance incident or for its
+at least one pair of this kind. No name is removed as a maintenance incident or for its
 shape: the maintained sweep returns no incident package, and maintained names
 can end in a dot and digits, such as `go1.25`.
 
@@ -244,7 +245,7 @@ needs, and without a term the code-point order is the only meaningful one.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | string | The source package name exactly as SMELT maintains it, which Add Package to Ticket sends to SMELT unchanged |
+| `name` | string | The source package name exactly as SMELT maintains it, with its letter case |
 
 Before the first snapshot is published, the endpoint returns `200 OK` with an
 empty `data` array and `meta.total = 0`, as List Products does before its
@@ -273,9 +274,9 @@ Documentation Requirements).
 
 The fetcher declares no `default_request_delay` (its initial `request_delay`
 is `0`), participates in no catch-up, and declares no queue. A complete sweep
-is about 1,200 pages (`docs/data-sources.md`, SMELT) and is estimated, from
-the measured page latency, to take about half an hour, within the default
-`run_timeout` of 3600 seconds. An operator who sees runs reach the soft time
+is about 1,200 pages and took about 32 minutes when read sequentially
+(`docs/data-sources.md`, SMELT), within the soft time limit of 3420 seconds
+that the default `run_timeout` of 3600 seconds gives. An operator who sees runs reach the soft time
 limit raises `run_timeout` through the fetcher configuration
 (`docs/features/platform/fetcher-operations.md`).
 
@@ -313,9 +314,9 @@ limit raises `run_timeout` through the fetcher configuration
 6. Call `publish_maintained_packages()` with the names, in a session with no
    open transaction. No network I/O occurs while its transaction is open.
 
-The sweep pages a live upstream read model by offset (`docs/data-sources.md`,
-SMELT), so it is not a consistent upstream snapshot: a change in SMELT during
-the run can repeat or omit rows. A repeated row adds no name. A name whose
+The sweep is paged by offset (`docs/data-sources.md`, SMELT), and Sentinel does
+not assume that its pages form one consistent upstream snapshot: a change in
+SMELT during the run can repeat or omit rows. A repeated row adds no name. A name whose
 every row is omitted is missing from this snapshot and returns with a later
 run. This is accepted: the snapshot only helps a caller find a name, and Add
 Package to Ticket resolves every name in SMELT. A snapshot whose name count
@@ -374,8 +375,8 @@ An unchanged name records neither effect. No unit records both effects.
 - The fetcher uses the anonymous SMELT contract of
   `docs/features/packages/product-catalog.md` (Security). It reads
   `SMELT_API_URL` and no other setting or credential.
-- The search term is matched literally; `%`, `_`, and backslash are escaped,
-  so a term cannot alter the matching or the query.
+- The search term is matched literally (`search_maintained_packages()`,
+  step 2), so a term cannot alter the matching or the query.
 - SMELT values are validated before they reach PostgreSQL (`docs/conventions.md`,
   External String Admissibility), and no response payload or raw upstream
   value is logged or stored in a public error message.
@@ -390,7 +391,8 @@ Implementation tests MUST cover:
   no filter; the order of names that start with the term before the others and
   code-point order within each group and without a term, independent of the
   database collation; pagination, `meta.total`, and a page beyond the last;
-  the 500-character limit; the empty result before the first publication; one
+  the 500-character limit; the empty result before the first publication; a
+  successful search while SMELT is unreachable, with no request to SMELT; one
   consistent snapshot when a publication commits during a request; and `401
   AUTH_NOT_AUTHENTICATED` without a valid credential and success with each
   valid credential kind.
