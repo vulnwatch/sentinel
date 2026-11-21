@@ -17,7 +17,7 @@ from fastapi import Request
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse
 
-SWAGGER_UI_DIST: Final = "https://unpkg.com/swagger-ui-dist@5.34.1/"
+SWAGGER_UI_DIST: Final = "https://unpkg.com/swagger-ui-dist@5.35.0/"
 """The Swagger UI release the page loads. Renovate's unpkg custom manager
 (`renovate.jsonc`) matches this literal URL and updates it together with
 the copy of the GitHub Pages site (`.github/workflows/deploy-api-docs.yml`);
