@@ -29,7 +29,7 @@ FROM python:${PYTHON_VERSION}-slim@${PYTHON_BASE_DIGEST} AS builder
 # The binary also provides the uv_build backend that builds the project;
 # the uv_build range in pyproject.toml must stay compatible with it.
 # Renovate updates tag, digest, and that range together.
-COPY --from=astral/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 /uv /bin/uv
+COPY --from=astral/uv:0.13.8@sha256:5cc1805e2426484abca4ad46ea783bab281fdb225fd82d8ce6d66a81254bac85 /uv /bin/uv
 
 # Use the Python interpreter already present in this base image instead
 # of letting uv download its own managed interpreter
