@@ -1,0 +1,26 @@
+<request id="960302">
+  <action type="maintenance_incident">
+    <source project="SUSE:Maintenance:REQUEST:960302" package="SLE-Module-Live-Patching_15-SP7_ppc64le.SUSE_Channels" rev="8ffe415fdefab3f189b11a4e9c6efcae" />
+    <target project="SUSE:Maintenance:81202" package="SLE-Module-Live-Patching_15-SP7_ppc64le.SUSE_Channels" releaseproject="SUSE:SLE-15-SP7:Update" />
+    <acceptinfo rev="2" srcmd5="8ffe415fdefab3f189b11a4e9c6efcae" xsrcmd5="eda8997b677f3744d8734064860f419e" osrcmd5="6994bb564f061886d426749f341dde5d" oxsrcmd5="da347983c9a414727c848c798186fba8" />
+  </action>
+  <action type="maintenance_incident">
+    <source project="SUSE:Maintenance:REQUEST:960302" package="SLE-Module-Live-Patching_15-SP7_s390x.SUSE_Channels" rev="3750f008440cbf556e1950365389df94" />
+    <target project="SUSE:Maintenance:81202" package="SLE-Module-Live-Patching_15-SP7_s390x.SUSE_Channels" releaseproject="SUSE:SLE-15-SP7:Update" />
+    <acceptinfo rev="2" srcmd5="3750f008440cbf556e1950365389df94" xsrcmd5="be13b1566afeebdbb02ec68f05dfa6b1" osrcmd5="ffa0019ea33eb955793d72b0669dd508" oxsrcmd5="37cb77d9c58dd99ff423a85e0418a91a" />
+  </action>
+  <action type="maintenance_incident">
+    <source project="SUSE:Maintenance:REQUEST:960302" package="SLE-Module-Live-Patching_15-SP7_x86_64.SUSE_Channels" rev="49f943420704ec9d454e012c21969da6" />
+    <target project="SUSE:Maintenance:81202" package="SLE-Module-Live-Patching_15-SP7_x86_64.SUSE_Channels" releaseproject="SUSE:SLE-15-SP7:Update" />
+    <acceptinfo rev="2" srcmd5="3fe6b5a97cf1ee239fd4be4f9e9f8995" xsrcmd5="c40e940befd8ab8f8de9945b2a699390" osrcmd5="7bd56a2c7a51e93ca6048cd1b5a396e5" oxsrcmd5="058042043df46ab9a84100942f4d4179" />
+  </action>
+  <action type="maintenance_incident">
+    <source project="SUSE:Maintenance:REQUEST:960302" package="kernel-livepatch-SLE15-SP7_Update_0.SUSE_SLE-15-SP7_GA" rev="93818035dec5447c128656be41f0dfa4" />
+    <target project="SUSE:Maintenance:81202" package="kernel-livepatch-SLE15-SP7_Update_0.SUSE_SLE-15-SP7_GA" releaseproject="SUSE:SLE-15-SP7:Update" />
+    <acceptinfo rev="2" srcmd5="93818035dec5447c128656be41f0dfa4" xsrcmd5="c5215b5cb8b153962e89cffed0db3043" osrcmd5="2d0013d9fffe9c12cb615701845f680b" oxsrcmd5="9a3c57a2b528ea20381e74fb36a6c422" />
+  </action>
+  <action type="delete">
+    <target project="SUSE:Maintenance:REQUEST:960302" />
+  </action>
+  <state name="accepted" created="2026-03-19T10:24:30" when="2026-03-19T17:45:16" />
+</request>

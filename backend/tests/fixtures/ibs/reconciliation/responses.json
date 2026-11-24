@@ -1203,6 +1203,106 @@
         ]
       ],
       "status": 200
+    },
+    "f_request_sr_deleted.xml": {
+      "captured_at": "2026-11-24",
+      "method": "GET",
+      "path": "/request/960301",
+      "query": [],
+      "status": 200
+    },
+    "f_history_incident_deleted.xml": {
+      "captured_at": "2026-11-24",
+      "method": "GET",
+      "path": "/source/SUSE:Maintenance:81201/kernel-source.SUSE_SLE-12-SP5_Update/_history",
+      "query": [],
+      "status": 404
+    },
+    "f_deleted_incident_package.xml": {
+      "captured_at": "2026-11-24",
+      "method": "GET",
+      "path": "/source/SUSE:Maintenance:81201/kernel-source.SUSE_SLE-12-SP5_Update",
+      "query": [
+        [
+          "deleted",
+          "1"
+        ]
+      ],
+      "status": 200
+    },
+    "f_request_sr_package_deleted.xml": {
+      "captured_at": "2026-11-24",
+      "method": "GET",
+      "path": "/request/960302",
+      "query": [],
+      "status": 200
+    },
+    "f_history_package_deleted.xml": {
+      "captured_at": "2026-11-24",
+      "method": "GET",
+      "path": "/source/SUSE:Maintenance:81202/kernel-livepatch-SLE15-SP7_Update_0.SUSE_SLE-15-SP7_GA/_history",
+      "query": [],
+      "status": 404
+    },
+    "f_deleted_package.xml": {
+      "captured_at": "2026-11-24",
+      "method": "GET",
+      "path": "/source/SUSE:Maintenance:81202/kernel-livepatch-SLE15-SP7_Update_0.SUSE_SLE-15-SP7_GA",
+      "query": [
+        [
+          "deleted",
+          "1"
+        ]
+      ],
+      "status": 200
+    },
+    "f_deleted_error_exists.xml": {
+      "captured_at": "2026-11-24",
+      "method": "GET",
+      "path": "/source/SUSE:SLE-12-SP5:Update/kernel-source",
+      "query": [
+        [
+          "deleted",
+          "1"
+        ]
+      ],
+      "status": 400
+    },
+    "f_deleted_error_unknown_package.xml": {
+      "captured_at": "2026-11-24",
+      "method": "GET",
+      "path": "/source/SUSE:SLE-12-SP5:Update/sentinel-nonexistent-pkg",
+      "query": [
+        [
+          "deleted",
+          "1"
+        ]
+      ],
+      "status": 404
+    },
+    "f_deleted_error_unknown_package_deleted_project.xml": {
+      "captured_at": "2026-11-24",
+      "method": "GET",
+      "path": "/source/SUSE:Maintenance:81201/sentinel-nonexistent-pkg.SUSE_SLE-12-SP5_Update",
+      "query": [
+        [
+          "deleted",
+          "1"
+        ]
+      ],
+      "status": 404
+    },
+    "f_deleted_error_unknown_project.xml": {
+      "captured_at": "2026-11-24",
+      "method": "GET",
+      "path": "/source/SUSE:Sentinel-Nonexistent:Update/openvpn",
+      "query": [
+        [
+          "deleted",
+          "1"
+        ]
+      ],
+      "status": 404
     }
   }
 }

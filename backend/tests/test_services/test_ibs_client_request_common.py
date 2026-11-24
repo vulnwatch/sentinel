@@ -1,4 +1,4 @@
-"""Cross-operation tests of the four `IBSClient` request operations.
+"""Cross-operation tests of the five `IBSClient` request operations.
 
 Contract under test: docs/features/integrations/ibs-integration.md (Request
 Authentication and Session Reuse as applied to the request operations;
@@ -78,6 +78,7 @@ _HISTORY_DOC: Final = (
     b'<revisionlist><revision rev="1"><srcmd5>' + _SUM.encode() + b"</srcmd5>"
     b"<time>1700000000</time><requestid>920001</requestid></revision></revisionlist>"
 )
+_DELETED_DOC: Final = b'<directory name="curl.SUSE_SLE-15-SP6_Update"/>'
 
 Operation = Callable[[IBSClient], Awaitable[RequestEvidenceResult[Any]]]
 
@@ -115,6 +116,14 @@ _OPERATIONS: Final = {
         f"/source/{_PROJECT}/curl/_history",
         _HISTORY_DOC,
         lambda c: c.get_source_history(_PROJECT, "curl"),
+    ),
+    "deleted": _Op(
+        "GET",
+        "/source/SUSE:Maintenance:80001/curl.SUSE_SLE-15-SP6_Update",
+        _DELETED_DOC,
+        lambda c: c.get_deleted_package(
+            "SUSE:Maintenance:80001", "curl.SUSE_SLE-15-SP6_Update"
+        ),
     ),
 }
 _NAMES: Final = list(_OPERATIONS)
@@ -190,7 +199,7 @@ class TestCredentialsAndAuthentication:
         assert raised.value.reason == reason
         assert len(signed_requests(server)) == (1 if setup == "reject" else 0)
 
-    async def test_session_is_reused_across_the_four_operations(
+    async def test_session_is_reused_across_every_operation(
         self, server: IBSServer
     ) -> None:
         for name in _NAMES:
@@ -311,15 +320,24 @@ class TestXmlSafety:
                 f'<issue state="added" tracker="bnc" name="{n}"/>' for n in range(count)
             )
             body = f"<sourcediff><issues>{issues}</issues></sourcediff>"
-        else:
+        elif name == "history":
             entries = "".join(
                 f'<revision rev="{n}"><srcmd5>{_SUM}</srcmd5><time>{n}</time>'
                 "</revision>"
                 for n in range(1, count + 1)
             )
             body = f"<revisionlist>{entries}</revisionlist>"
+        else:
+            entries = "".join(
+                f'<entry name="f{n}" md5="{_SUM}"/>' for n in range(count)
+            )
+            body = _DELETED_DOC.decode().replace("/>", f">{entries}</directory>")
         result = await _run(server, name, xml_response(body.encode()))
         assert result.value is not None
+        if name == "deleted":
+            # The lookup consumes only the root name; its entries are skipped.
+            assert result.value.package == "curl.SUSE_SLE-15-SP6_Update"
+            return
         sizes = {
             "search": lambda v: len(v.request_numbers),
             "detail": lambda v: len(v.actions) - 1,
@@ -371,6 +389,7 @@ _FIELDS: Final = {
         "time": b"<time>1700000000",
         "requestid": b"<requestid>920001",
     },
+    "deleted": {"name": b'name="curl.SUSE_SLE-15-SP6_Update"'},
 }
 
 
@@ -486,6 +505,12 @@ def _noisy(name: str) -> bytes:
         return document.replace(
             b"</revision>",
             f"<user>{_MARKER}</user><comment>{_MARKER}</comment></revision>".encode(),
+        )
+    if name == "deleted":
+        return document.replace(
+            b"/>",
+            f' rev="{_MARKER}"><linkinfo project="{_PERSONAL}"/>'
+            f'<entry name="{_MARKER}"/></directory>'.encode(),
         )
     return document.replace(b"<request ", f'<request creator="{_MARKER}" '.encode())
 

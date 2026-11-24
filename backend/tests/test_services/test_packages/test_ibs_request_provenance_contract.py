@@ -6,9 +6,10 @@ Contract under test: docs/features/packages/ibs-submission-tracking.md
 Evidence, Effective SR, Release Discovery, Accepted RR Provenance) and
 docs/features/integrations/ibs-integration.md (Project Source Info, Source
 Diff with Issue Extraction, Request Point Detail, Request Action Diff,
-Package Source History, Request Contract Verification Status), verified
-against the sanitized live captures of 2026-10-14, 2026-11-12, and
-2026-11-16 described in `tests/support/ibs_request_provenance.py`
+Package Source History, Deleted Package Lookup, Request Contract
+Verification Status), verified
+against the sanitized live captures of 2026-10-14, 2026-11-12, 2026-11-16,
+and 2026-11-24 described in `tests/support/ibs_request_provenance.py`
 (docs/conventions.md, External Integration Contract Verification).
 
 Every document is read through the production `IBSClient` over the fake
@@ -50,9 +51,10 @@ from tests.support.ibs_request_provenance import (
     C_SR_SECOND,
     CHAIN_D_FIXTURE_DATE,
     CHAIN_D_FIXTURES,
-    CHAIN_E_CONFLICTS,
     CHAIN_E_FIXTURE_DATE,
     CHAIN_E_FIXTURES,
+    CHAIN_F_FIXTURE_DATE,
+    CHAIN_F_FIXTURES,
     D_CVE,
     D_INCIDENT,
     D_INCIDENT_REVOKED,
@@ -63,12 +65,20 @@ from tests.support.ibs_request_provenance import (
     E_KRB5_SR,
     E_PILLOW_CVE,
     E_PILLOW_SR,
+    ERROR_STATUSES,
+    F_INCIDENT_DELETED,
+    F_INCIDENT_EXISTING,
+    F_KERNEL_PACKAGE,
+    F_LIVEPATCH_PACKAGE,
+    F_SR_DELETED,
+    F_SR_PACKAGE_DELETED,
     PROVENANCE_FIXTURE_DATE,
     PROVENANCE_FIXTURES,
     SLE12_SP5,
     SLE15,
     SP4,
     SP6,
+    SP7,
     QueryRoutes,
     load_provenance_fixture,
     load_provenance_responses,
@@ -109,6 +119,7 @@ _ALLOWED: Final = {
     "sourceinfo": {"package", "srcmd5"},
     "error": set(),
     "status": {"code", "origin"},
+    "directory": {"name"},
 }
 _PROJECT_ATTRIBUTES: Final = ("project", "releaseproject", "oproject")
 _FLAVORS: Final = (
@@ -247,13 +258,15 @@ class TestCapture:
         assert stored == set(PROVENANCE_FIXTURES)
         assert set(responses["documents"]) == {f"{name}.xml" for name in stored}
         for name in PROVENANCE_FIXTURES:
-            assert provenance_fixture_record(name)["status"] == (
-                400 if name in CHAIN_E_CONFLICTS else 200
+            assert provenance_fixture_record(name)["status"] == ERROR_STATUSES.get(
+                name, 200
             )
             if name in CHAIN_D_FIXTURES:
                 expected = CHAIN_D_FIXTURE_DATE
             elif name in CHAIN_E_FIXTURES:
                 expected = CHAIN_E_FIXTURE_DATE
+            elif name in CHAIN_F_FIXTURES:
+                expected = CHAIN_F_FIXTURE_DATE
             else:
                 expected = PROVENANCE_FIXTURE_DATE
             assert provenance_fixture_date(name) == expected
@@ -673,3 +686,93 @@ async def _link_base_diff(
     )
     assert result.value is not None, result.incomplete_reason
     return result.value
+
+
+class TestDeletedIncidentPackages:
+    """Chain F: accepted submissions whose incident package IBS deleted,
+    with its incident project (960301) and alone (960302). The incident
+    history answers HTTP 404, and only the deleted package lookup tells
+    the deletion from a package that never existed."""
+
+    @pytest.mark.parametrize(
+        ("number", "incident", "package", "codestream", "name"),
+        [
+            pytest.param(
+                F_SR_DELETED,
+                F_INCIDENT_DELETED,
+                F_KERNEL_PACKAGE,
+                SLE12_SP5,
+                "incident_deleted",
+                id="with-its-project",
+            ),
+            pytest.param(
+                F_SR_PACKAGE_DELETED,
+                F_INCIDENT_EXISTING,
+                F_LIVEPATCH_PACKAGE,
+                SP7,
+                "package_deleted",
+                id="alone",
+            ),
+        ],
+    )
+    async def test_the_accepted_sr_names_a_deleted_incident_package(
+        self,
+        routes: QueryRoutes,
+        number: int,
+        incident: int,
+        package: str,
+        codestream: str,
+        name: str,
+    ) -> None:
+        project = f"SUSE:Maintenance:{incident}"
+        async with ibs_client() as client:
+            detail = await _detail(client, number)
+            history = await client.get_source_history(project, package)
+            deleted = await client.get_deleted_package(project, package)
+        assert detail.state is IBSRequestState.ACCEPTED
+        action = _incident_action(detail, package)
+        assert action.target_project == project
+        assert action.target_release_project == codestream
+        assert action.acceptinfo is not None
+        assert action.acceptinfo.srcmd5 is not None
+        assert history.incomplete_reason == "not_found"
+        code = "unknown_project" if name == "incident_deleted" else "unknown_package"
+        root = ET.fromstring(load_provenance_fixture(f"f_history_{name}"))
+        assert root.attrib == {"code": code}
+        assert deleted.value is not None, deleted.incomplete_reason
+        assert (deleted.value.project, deleted.value.package) == (project, package)
+
+    def test_the_submission_pairs_its_incident_actions_with_a_delete(self) -> None:
+        raw = ET.fromstring(load_provenance_fixture("f_request_sr_deleted"))
+        types = [action.get("type") for action in raw.iter("action")]
+        assert types == [*(["maintenance_incident"] * 5), "delete"]
+
+    @pytest.mark.parametrize(
+        ("name", "reason", "code"),
+        [
+            pytest.param("exists", "rejected", "package_exists", id="exists"),
+            pytest.param(
+                "unknown_package", "not_found", "unknown_package", id="unknown"
+            ),
+            pytest.param(
+                "unknown_package_deleted_project",
+                "not_found",
+                "unknown_package",
+                id="unknown-in-deleted-project",
+            ),
+            pytest.param(
+                "unknown_project", "not_found", "unknown_project", id="unknown-project"
+            ),
+        ],
+    )
+    async def test_every_other_lookup_reports_no_deleted_package(
+        self, routes: QueryRoutes, name: str, reason: str, code: str
+    ) -> None:
+        record = provenance_fixture_record(f"f_deleted_error_{name}")
+        project, _, package = record["path"].removeprefix("/source/").partition("/")
+        assert provenance_fixture_query(f"f_deleted_error_{name}") == [("deleted", "1")]
+        async with ibs_client() as client:
+            result = await client.get_deleted_package(project, package)
+        assert result.incomplete_reason == reason
+        root = ET.fromstring(load_provenance_fixture(f"f_deleted_error_{name}"))
+        assert root.attrib == {"code": code}
