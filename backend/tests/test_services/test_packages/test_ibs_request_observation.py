@@ -1835,6 +1835,7 @@ class TestDeletedIncidentPackage:
         sr = accepted_submission(package)
         fake.request(sr.number, ACCEPTED, sr.action)
         fake.history(sr.project, sr.physical, responder=history)
+        fake.deleted_package(sr.project, sr.physical)
         fake.quiet(package)
 
         exc = await unusable(
@@ -1843,7 +1844,6 @@ class TestDeletedIncidentPackage:
 
         assert exc.reason_category == reason
         assert deleted_lookups(fake) == []
-        assert fake.unrouted == []
 
     async def test_no_lookup_for_an_available_history(
         self, fake: FakeRequests, package: str
@@ -1855,10 +1855,14 @@ class TestDeletedIncidentPackage:
             sr.physical,
             incident_history((checksum("branch"), None), (sr.srcmd5, sr.number)),
         )
+        fake.deleted_package(sr.project, sr.physical)
         fake.quiet(package)
 
-        await observe(fake, scope(package=package), correlated_open_form(package, sr))
+        observation = await observe(
+            fake, scope(package=package), correlated_open_form(package, sr)
+        )
 
+        assert observation.derived is DeliveryStatus.IN_PROGRESS
         assert deleted_lookups(fake) == []
 
     async def test_the_request_delay_precedes_the_lookup(
@@ -1889,12 +1893,24 @@ class TestDeletedIncidentPackage:
         assert waits == list(range(1, len(fake.served)))
         assert recorder.await_args_list == [call(0.5)] * (len(fake.served) - 1)
 
+    @pytest.mark.parametrize(
+        ("lookup", "outcome"),
+        [
+            pytest.param(None, DeliveryStatus.PENDING, id="deleted"),
+            pytest.param(status_response(404), "not_found", id="not-deleted"),
+            pytest.param(status_response(403), "http_status", id="failed"),
+        ],
+    )
     async def test_one_lookup_per_incident_package_within_an_invocation(
-        self, fake: FakeRequests, package: str
+        self,
+        fake: FakeRequests,
+        package: str,
+        lookup: Responder | None,
+        outcome: DeliveryStatus | str,
     ) -> None:
         sr = accepted_submission(package)
         fake.request(sr.number, ACCEPTED, sr.action)
-        deleted_incident_package(fake, sr)
+        deleted_incident_package(fake, sr, lookup=lookup)
         fake.quiet(package)
 
         results = await observe_together(
@@ -1909,11 +1925,11 @@ class TestDeletedIncidentPackage:
         )
 
         assert [
-            result.derived for result in results if isinstance(result, Observation)
-        ] == [
-            DeliveryStatus.PENDING,
-            DeliveryStatus.PENDING,
-        ]
+            result.derived
+            if isinstance(result, Observation)
+            else result.reason_category
+            for result in results
+        ] == [outcome, outcome]
         assert len(history_requests(fake)) == 1
         assert len(deleted_lookups(fake)) == 1
 

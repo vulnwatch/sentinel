@@ -4,9 +4,10 @@ Contract under test: docs/features/integrations/ibs-integration.md (Deleted
 Package Lookup: the request, the consumed `directory/@name`, and the
 outcome of each response; Service Layer > IBSClient, the lookup method and
 its escaping outcomes); docs/features/packages/ibs-submission-tracking.md
-(Effective SR, the lookup after an incident-package history 404). Live
-documents are the sanitized chain F captures of 2026-11-24 described in
-`tests/support/ibs_request_provenance.py`; the cross-operation behaviour
+(Effective SR, the lookup after an incident-package history 404). The live
+documents, the sanitized chain F captures of 2026-11-24, are read through
+this client in `test_packages/test_ibs_request_provenance_contract.py`
+(TestDeletedIncidentPackages); the cross-operation behaviour
 (credentials, authentication, XML safety, privacy) is covered in
 `test_ibs_client_request_common.py`.
 """
@@ -31,13 +32,7 @@ from tests.support.ibs_api import (
     status_response,
     xml_response,
 )
-from tests.support.ibs_request_provenance import (
-    QueryRoutes,
-    load_provenance_fixture,
-    provenance_fixture_query,
-    provenance_fixture_record,
-    serve_provenance_fixture,
-)
+from tests.support.ibs_request_provenance import load_provenance_fixture
 
 pytestmark = pytest.mark.unit
 pytest_plugins = ["tests.support.ibs_client_fixtures"]
@@ -68,63 +63,6 @@ async def _read(
 def _sent(server: IBSServer) -> tuple[str, str, list[tuple[str, str]]]:
     [request] = [r for r in server.requests if "authorization" in r.headers]
     return request.method, request.url.path, list(request.url.params.multi_items())
-
-
-async def _live(server: IBSServer, name: str) -> RequestEvidenceResult[DeletedPackage]:
-    record = provenance_fixture_record(name)
-    project, _, package = record["path"].removeprefix("/source/").partition("/")
-    serve_provenance_fixture(QueryRoutes(server), name)
-    result = await _read(server, None, project=project, package=package)
-    assert _sent(server) == ("GET", record["path"], provenance_fixture_query(name))
-    return result
-
-
-class TestLiveLookups:
-    @pytest.mark.parametrize(
-        ("name", "project", "package"),
-        [
-            pytest.param(
-                "f_deleted_incident_package",
-                "SUSE:Maintenance:81201",
-                "kernel-source.SUSE_SLE-12-SP5_Update",
-                id="deleted-with-its-project",
-            ),
-            pytest.param(
-                "f_deleted_package",
-                "SUSE:Maintenance:81202",
-                "kernel-livepatch-SLE15-SP7_Update_0.SUSE_SLE-15-SP7_GA",
-                id="deleted-alone",
-            ),
-        ],
-    )
-    async def test_deleted_package_is_requested_as_recorded_and_complete(
-        self, server: IBSServer, name: str, project: str, package: str
-    ) -> None:
-        result = await _live(server, name)
-        assert result == RequestEvidenceResult(
-            value=DeletedPackage(project=project, package=package)
-        )
-
-    @pytest.mark.parametrize(
-        ("name", "reason"),
-        [
-            pytest.param("f_deleted_error_exists", "rejected", id="exists"),
-            pytest.param("f_deleted_error_unknown_package", "not_found", id="unknown"),
-            pytest.param(
-                "f_deleted_error_unknown_package_deleted_project",
-                "not_found",
-                id="unknown-in-deleted-project",
-            ),
-            pytest.param(
-                "f_deleted_error_unknown_project", "not_found", id="unknown-project"
-            ),
-        ],
-    )
-    async def test_every_other_live_lookup_is_incomplete(
-        self, server: IBSServer, name: str, reason: IncompleteReason
-    ) -> None:
-        result = await _live(server, name)
-        assert result == RequestEvidenceResult(incomplete_reason=reason)
 
 
 class TestRequest:
