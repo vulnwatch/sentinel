@@ -371,15 +371,18 @@ Discovery is bounded, with these accepted limitations:
 - A release recorded without acceptinfo cannot be proven
   ([Accepted RR Provenance](#accepted-rr-provenance)).
 - A deleted incident package whose project the IBS account cannot read, such
-  as a deleted incident whose access was disabled, answers the deleted-package
+  as a deleted incident whose access was disabled, and an incident package
+  that IBS deleted before it deleted the incident answer the deleted-package
   lookup like a package that never existed
   (`../integrations/ibs-integration.md`, Deleted Package Lookup), so the scopes
-  that require its incident history stay incomplete.
-- Contents of a deleted incident package that IBS carries on in another
-  package of the same incident without a submission request are not followed:
-  the SR is no longer effective ([Effective SR](#effective-sr)), so the
-  delivery can be `PENDING` until the incident's release request is opened or
-  accepted.
+  that require its incident history stay incomplete. A deleted incident
+  package whose incident's source access is disabled answers the lookup with
+  HTTP 403, so those scopes fail.
+- Contents of a deleted incident package that are committed to another package
+  of the same incident without a submission request are not followed: the SR
+  is no longer effective ([Effective SR](#effective-sr)), so the delivery can
+  be `PENDING` until the incident's release request is opened, or accepted and
+  its release proven.
 
 None of them produces a false `RELEASED`.
 
@@ -519,12 +522,13 @@ When IBS answers the incident-package history with HTTP 404, Sentinel requests
 the deleted-package lookup of the incident package once
 (`../integrations/ibs-integration.md`, Deleted Package Lookup). When the lookup
 reports the package deleted, as after the Maintenance Team deleted the incident
-or the package, the incident no longer carries the action's contents: the
-action is not effective and establishes no progress, and its evaluation is
+or the package, the incident package no longer carries the action's contents:
+the action is not effective and establishes no progress, and its evaluation is
 complete. A later observation evaluates the action again; if IBS restores the
 package, its history decides as above. Any other result of the lookup leaves
-the history unavailable, and a failed lookup request fails the scope
-([Observation Outcomes](#observation-outcomes)).
+the history unavailable, and the scope reports the history's `not_found` as
+its reason category ([Structured Logs](#structured-logs)); a failed lookup
+request fails the scope ([Observation Outcomes](#observation-outcomes)).
 
 An otherwise unavailable or incomplete incident history, a missing acceptinfo
 `srcmd5`, or a history that contains no revision for the action makes the

@@ -826,9 +826,11 @@ GET /source/{project}/{package}?deleted=1
 This lookup establishes that IBS deleted a package, which the source history
 alone cannot: its 404 also answers a package that never existed and a project
 that the account cannot read. `project` is a `SUSE:` project and `package` is
-an IBS name (see [Request Point Detail](#request-point-detail)). A package is
-deleted when it does not exist now but IBS keeps its sources, whether IBS
-deleted it alone or with its whole project.
+an IBS name (see [Request Point Detail](#request-point-detail)). The lookup
+reports a package deleted when it does not exist now but IBS keeps its sources,
+because IBS deleted the package from an existing project or deleted the
+project that contained it. A package that IBS deleted from a project that it
+later deleted as well is not reported deleted.
 
 The response for a deleted package is the source directory of its last
 revision, one `<directory>` element. Sentinel consumes only its `name`
@@ -841,16 +843,16 @@ equals the requested package.
 | Response | Meaning | Outcome |
 |---|---|---|
 | HTTP 200 with the directory of the requested package | IBS deleted the package | Complete: deleted |
-| HTTP 400 | The package exists | Incomplete (`rejected`) |
-| HTTP 404 | The package or its project never existed, or the account cannot read the project | Incomplete (`not_found`) |
+| HTTP 400 | IBS reports that the package exists | Incomplete |
+| HTTP 404 | The package or its project never existed, the account cannot read the project, or IBS deleted the package before its project | Incomplete |
 | HTTP 200 with another root, a missing or different `name`, or a malformed or interrupted body | Unusable | Incomplete |
 
 A project that the account cannot read, including a deleted project whose
 access was disabled, answers 404 like a project that never existed, so an
 unreadable package is never reported deleted. The body of a 400 or 404 is not
 consumed. The lookup does not establish what the package contained or why IBS
-deleted it, and a package that was later created again under the same name
-exists. Like every operation, an HTTP 401 follows
+deleted it. A package created again under the same name exists and answers
+HTTP 400. Like every operation, an HTTP 401 follows
 [Request Authentication](#request-authentication); an HTTP 403, such as a
 project whose source access is disabled, and every other final non-2xx response
 propagate.
@@ -989,16 +991,17 @@ Verified live:
     acceptinfo `rev` and `srcmd5`.
   - A package deleted from an existing incident answered the lookup with HTTP
     200 and its `<directory name>` as well. In one such incident, the deleted
-    package was the incident package of an accepted submission request, and
-    the incident's other packages and a later release request carried on its
-    contents in a package created without a request.
+    package was the incident package of an accepted submission request; its
+    contents were committed without a request to another package of the
+    incident, which a later release request released.
   - An existing package answered HTTP 400 (`the package is not deleted`). A
     package that never existed, in an existing or a deleted project, and a
     package of a project that never existed answered HTTP 404.
   - Of 134 sampled incident projects, 4 were deleted and 2 existing ones had
     deleted packages. The project listing with `deleted=1` also lists the
-    deleted packages of an existing project, and `_history` with `deleted=1`
-    does not return a deleted package's source history.
+    deleted packages of an existing project. For a package of a deleted
+    project, `_history` with `deleted=1` returns the package's meta history,
+    not its source history.
 
 Established only by OBS source inspection:
 
@@ -1029,7 +1032,10 @@ Established only by OBS source inspection:
   for an account without the admin role, HTTP 404 for a package whose existing
   project the account cannot read and for a deleted project whose access was
   disabled; a deleted package of a readable project whose source access is
-  disabled answers HTTP 403.
+  disabled answers HTTP 403; and a package that IBS deleted before it deleted
+  its project answers HTTP 404, because deleting a project keeps the files of
+  its earlier deleted packages under names that the lookup does not read
+  (`delete_project` of the source server, `BSRevision`).
 
 Documentation-only, not verified: HTTP 403 outcomes; `deleted` on a maintenance
 request; an action of an unknown type; a supported action missing a required
@@ -1040,7 +1046,7 @@ that updates its link; a not-accepted action for a package that does not yet
 exist in the codestream; a link-base diff of an action whose source link
 targets a package other than its codestream package; and a deleted package
 lookup in a project that the account cannot read, or whose access or source
-access is disabled.
+access is disabled, and of a package that IBS deleted before its project.
 
 Not verified: whether a project created with disabled access, a request
 staging project or an incident project, receives the roles of
@@ -1193,7 +1199,7 @@ The methods have these escaping outcomes:
 | Request detail contains only actions of the six ignored types | Complete typed parent with an empty supported-action collection |
 | Request action diff cannot be requested (missing form input, or a project outside the `SUSE:` namespace), returns HTTP 400 or 404, or is malformed, interrupted, or partial, including an issue without a non-empty `tracker` or `state` | Incomplete `RequestEvidenceResult`; retained correlation and delivery evidence is not invalidated |
 | Source history is 404, an exact lookup returns no entry, an unpaged history is not complete under [Package Source History](#package-source-history), or an entry is malformed, duplicated, conflicting, or does not match the lookup | Incomplete `RequestEvidenceResult` |
-| Deleted package lookup returns HTTP 400 or 404, another root, a missing or different `name`, or a malformed or interrupted body | Incomplete `RequestEvidenceResult`; it never proves that the package exists or never existed |
+| Deleted package lookup returns HTTP 400 or 404, another root, a missing or different `name`, or a malformed or interrupted body | Incomplete `RequestEvidenceResult`; it is never evidence that the package exists or never existed |
 | Request action diff is complete and has no positive `added` or `changed` canonical CVE issue for an action | A valid typed action diff with no qualifying issue; the owning reconciler treats it as that action's successful no-match |
 
 `IBSResponseDataError` and `IBSHistoricalRevisionUnavailable` are internal
