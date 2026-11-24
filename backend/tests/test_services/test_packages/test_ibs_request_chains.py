@@ -2,8 +2,9 @@
 sanitized live provenance chains.
 
 Owning specifications: docs/features/packages/ibs-submission-tracking.md
-(Required Roots, Effective SR, Release Discovery, Accepted RR Provenance,
-Delivery Derivation, Shared Authoritative Reconciliation) and
+(Required Roots, Effective SR including a deleted incident package, Release
+Discovery, Accepted RR Provenance, Delivery Derivation, Shared Authoritative
+Reconciliation) and
 docs/features/packages/package-model.md (Automatic Transitions: delivery
 transitions, `PENDING -> IN_PROGRESS -> RELEASED` in one transaction).
 
@@ -20,6 +21,7 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Final
 
 import pytest
@@ -47,6 +49,9 @@ from tests.support.ibs_request_provenance import (
     E_KRB5_SR,
     E_PILLOW_CVE,
     E_PILLOW_SR,
+    F_INCIDENT_DELETED,
+    F_KERNEL_PACKAGE,
+    F_SR_DELETED,
     SLE12_SP5,
     SLE15,
     SP4,
@@ -512,3 +517,74 @@ class TestConflictingSourceLinks:
         for scope in scopes:
             assert await delivery_of(probe, scope.track_id) == DeliveryStatus.PENDING
             assert await evidence_of(probe, scope.track_id) == []
+
+
+class TestDeletedIncidentPackage:
+    """Chain F: the observed case of #1348. An SR correlated to the track
+    while it was in review was then accepted into an incident whose project
+    IBS deleted; its incident history answers HTTP 404, and the deleted
+    package lookup reports the incident package deleted."""
+
+    async def test_the_sr_ends_its_progress_and_the_delivery_returns_to_pending(
+        self, world: RequestWorld, fake: FakeRequests
+    ) -> None:
+        accepted = _fixture_action("f_request_sr_deleted", F_KERNEL_PACKAGE)
+        open_form = Action(
+            type=accepted.type,
+            source_project=accepted.source_project,
+            source_package=accepted.source_package,
+            rev=accepted.rev,
+            target_project="SUSE:Maintenance",
+            release_project=SLE12_SP5,
+        )
+        seed = RequestSeed(world)
+        scope = await seed.track(
+            await seed.ticket(),
+            package="kernel-source",
+            codestream=SLE12_SP5,
+            delivery=DeliveryStatus.IN_PROGRESS,
+        )
+        await seed.evidence(
+            F_SR_DELETED,
+            IBSRequestState.REVIEW,
+            open_form,
+            tracks=[scope],
+            upstream_updated_at=datetime(2026, 11, 24, 2, 30, tzinfo=UTC),
+        )
+        await seed.commit()
+        fake.quiet("kernel-source", SLE12_SP5)
+        for name in (
+            "f_request_sr_deleted",
+            "f_history_incident_deleted",
+            "f_deleted_incident_package",
+        ):
+            serve_provenance(fake, name)
+
+        outcomes = await reconcile(fake, [scope])
+
+        assert kinds(outcomes) == {scope.track_id: "updated"}
+        assert fake.unrouted == []
+        assert [
+            served
+            for served in fake.served
+            if served[1].startswith(f"/source/SUSE:Maintenance:{F_INCIDENT_DELETED}/")
+        ] == _recorded("f_history_incident_deleted", "f_deleted_incident_package")
+        probe = await world.probe()
+        assert await delivery_of(probe, scope.track_id) == DeliveryStatus.PENDING
+        assert accepted.accept is not None
+        assert await evidence_of(probe, scope.track_id) == [
+            EvidenceRow(
+                request_number=F_SR_DELETED,
+                state=IBSRequestState.ACCEPTED.value,
+                superseded_by_request_number=None,
+                action_type=IBSRequestActionType.MAINTENANCE_INCIDENT.value,
+                logical_package="kernel-source",
+                codestream_name=SLE12_SP5,
+                incident_number=F_INCIDENT_DELETED,
+                accepted_revision="2",
+                accepted_srcmd5=accepted.accept.srcmd5,
+                target_project=f"SUSE:Maintenance:{F_INCIDENT_DELETED}",
+                target_package=F_KERNEL_PACKAGE,
+                source_project=f"SUSE:Maintenance:REQUEST:{F_SR_DELETED}",
+            )
+        ]

@@ -3,9 +3,10 @@
 Implements docs/features/integrations/ibs-integration.md (Service Layer >
 IBSClient) for the targeted source-info and expanded source-diff operations
 used by track release detection, and for the request ID search, request
-point detail, request action diff, and package source history operations
-used by submission tracking, with the SSH-signature authentication of
-Request Authentication and the in-memory cookies of Session Reuse
+point detail, request action diff, package source history, and deleted
+package lookup operations used by submission tracking, with the
+SSH-signature authentication of Request Authentication and the in-memory
+cookies of Session Reuse
 (`app.services.ibs_signature_auth`). The source-info and source-diff
 parsing outcomes follow docs/features/packages/ibs-track-release-detection.md
 (Source-Info Validation, Source-Diff Validation, XML and Response Safety);
@@ -37,11 +38,12 @@ content.
 The request operations return `RequestEvidenceResult` values instead of
 raising for unusable evidence: the operation-specific HTTP statuses (every
 search 4xx except 401 and 403; a detail or history 404; a request action
-diff 400 or 404) become incomplete results without reading the body, and a
-parser failure, interrupted body, or invalid document becomes an incomplete
-result with one bounded reason. Every other final non-2xx response raises
-the original `httpx.HTTPStatusError`. No request URL ever contains a project
-outside the `SUSE:` namespace.
+diff or deleted package lookup 400 or 404) become incomplete results
+without reading the body, and a parser failure, interrupted body, or
+invalid document becomes an incomplete result with one bounded reason.
+Every other final non-2xx response raises the original
+`httpx.HTTPStatusError`. No request URL ever contains a project outside the
+`SUSE:` namespace.
 """
 
 from __future__ import annotations
@@ -68,6 +70,8 @@ from app.services.http_client import create_http_client
 from app.services.ibs_request_evidence import (
     SUSE_NAMESPACE,
     AcceptInfo,
+    DeletedPackage,
+    DeletedPackageHandler,
     EvidenceHandler,
     IBSRequestActionDetail,
     IBSRequestDetail,
@@ -98,6 +102,7 @@ __all__ = [
     "HTTP_CLIENT_NAME",
     "AcceptInfo",
     "AuthenticationFailureReason",
+    "DeletedPackage",
     "DiffIssue",
     "DiffIssueState",
     "IBSAuthenticationError",
@@ -545,7 +550,7 @@ class IBSClient:
             path,
             params,
             _DiffHandler(_request_action_issue),
-            incomplete_status=_diff_incomplete_status,
+            incomplete_status=_rejected_or_not_found_status,
         )
         if result.value is None:
             return RequestEvidenceResult(incomplete_reason=result.incomplete_reason)
@@ -596,6 +601,41 @@ class IBSClient:
             params,
             SourceHistoryHandler(revision),
             incomplete_status=_not_found_status,
+        )
+
+    async def get_deleted_package(
+        self, project: str, package: str
+    ) -> RequestEvidenceResult[DeletedPackage]:
+        """Look up a deleted package: `GET /source/{project}/{package}
+        ?deleted=1` (ibs-integration.md, Deleted Package Lookup).
+
+        A complete result means that IBS deleted the package: the response
+        is a `<directory>` whose `name` is `package`; nothing else of it is
+        consumed.
+
+        Raises `ValueError` before any HTTP request for a `project` or
+        `package` that is not an IBS name and a `project` outside `SUSE:`;
+        then `IBSCredentialsNotConfiguredError`; `IBSAuthenticationError`;
+        and the `httpx` exception of a transport failure and of every final
+        non-2xx response except 400 and 404, which are incomplete results
+        (`rejected` for a package that exists, `not_found`) whose body is
+        not read. Another root or a missing or different `name`
+        (`invalid_document`) and a malformed or interrupted document
+        (`malformed_xml`, `interrupted_response`) are incomplete results.
+        """
+        _validate_name(project, "project")
+        _validate_name(package, "package")
+        if not project.startswith(SUSE_NAMESPACE):
+            msg = "deleted package project must be in the SUSE: namespace"
+            raise ValueError(msg)
+        self._require_credentials()
+
+        return await self._read_evidence(
+            "GET",
+            f"source/{_segment(project)}/{_segment(package)}",
+            [("deleted", "1")],
+            DeletedPackageHandler(project, package),
+            incomplete_status=_rejected_or_not_found_status,
         )
 
     def _require_credentials(self) -> None:
@@ -727,9 +767,9 @@ def _not_found_status(status: int) -> IncompleteReason | None:
     return "not_found" if status == httpx.codes.NOT_FOUND else None
 
 
-def _diff_incomplete_status(status: int) -> IncompleteReason | None:
-    """Request action diff: a 400 or 404 is incomplete evidence for that
-    action, and its body is not read."""
+def _rejected_or_not_found_status(status: int) -> IncompleteReason | None:
+    """Request action diff and deleted package lookup: a 400 or 404 is
+    incomplete evidence, and its body is not read."""
     if status == httpx.codes.NOT_FOUND:
         return "not_found"
     if status == httpx.codes.BAD_REQUEST:

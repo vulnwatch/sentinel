@@ -1,0 +1,31 @@
+<request id="960301">
+  <action type="maintenance_incident">
+    <source project="SUSE:Maintenance:REQUEST:960301" package="kernel-source.SUSE_SLE-12-SP5_Update" rev="5982cc4ed8fd9f0c275ff6ed01f321b1" />
+    <target project="SUSE:Maintenance:81201" package="kernel-source.SUSE_SLE-12-SP5_Update" releaseproject="SUSE:SLE-12-SP5:Update" />
+    <acceptinfo rev="2" srcmd5="5982cc4ed8fd9f0c275ff6ed01f321b1" xsrcmd5="1f1ba6728360f9a73361bd88d2784841" osrcmd5="0fdc997b36dc7b6f0c672a2aaec9b661" oxsrcmd5="aaf175fb9d2a5e665f645abafca9dcce" />
+  </action>
+  <action type="maintenance_incident">
+    <source project="SUSE:Maintenance:REQUEST:960301" package="kgraft-patch-SLE12-SP5_Update_91.SUSE_SLE-12-SP5_Update" rev="76916b3a429bc291722282dacf97e40d" />
+    <target project="SUSE:Maintenance:81201" package="kgraft-patch-SLE12-SP5_Update_91.SUSE_SLE-12-SP5_Update" releaseproject="SUSE:SLE-12-SP5:Update" />
+    <acceptinfo rev="2" srcmd5="76916b3a429bc291722282dacf97e40d" xsrcmd5="238ce835eab57ddb387fe9abfb0e852f" osrcmd5="0ff6e280f18d6cc95fd031b0d6f8fe6f" oxsrcmd5="35d904c9cdc924de9faa89e8340b1520" />
+  </action>
+  <action type="maintenance_incident">
+    <source project="SUSE:Maintenance:REQUEST:960301" package="SLE-Live-Patching_12-SP5_ppc64le.SUSE_Channels" rev="5d03fc72874110cf28b561c4393fffdd" />
+    <target project="SUSE:Maintenance:81201" package="SLE-Live-Patching_12-SP5_ppc64le.SUSE_Channels" releaseproject="SUSE:SLE-12-SP5:Update" />
+    <acceptinfo rev="3" srcmd5="5d03fc72874110cf28b561c4393fffdd" xsrcmd5="4791ac69d7f128b91c89caa9b3bb0675" osrcmd5="1c0520b3d1a7a22a98351b79138f6ad9" oxsrcmd5="7a05f1f7baa5a5d71add8e4c3799715d" />
+  </action>
+  <action type="maintenance_incident">
+    <source project="SUSE:Maintenance:REQUEST:960301" package="SLE-Live-Patching_12-SP5_s390x.SUSE_Channels" rev="c47c94fc7163f9e2b45be6c0eecee9a5" />
+    <target project="SUSE:Maintenance:81201" package="SLE-Live-Patching_12-SP5_s390x.SUSE_Channels" releaseproject="SUSE:SLE-12-SP5:Update" />
+    <acceptinfo rev="3" srcmd5="c47c94fc7163f9e2b45be6c0eecee9a5" xsrcmd5="4f497166aaa96e199004cad93e0dc6dc" osrcmd5="d17a52d5af0e1ba0a811b7aa8217a8e4" oxsrcmd5="7a6db1fa05412df7d47399dc57c41688" />
+  </action>
+  <action type="maintenance_incident">
+    <source project="SUSE:Maintenance:REQUEST:960301" package="SLE-Live-Patching_12-SP5_x86_64.SUSE_Channels" rev="0fd1e018f21bb057e9e1859f578ec26f" />
+    <target project="SUSE:Maintenance:81201" package="SLE-Live-Patching_12-SP5_x86_64.SUSE_Channels" releaseproject="SUSE:SLE-12-SP5:Update" />
+    <acceptinfo rev="3" srcmd5="0fd1e018f21bb057e9e1859f578ec26f" xsrcmd5="ad6f91e23d8967f3cc49d5cda4c5fbb0" osrcmd5="6ffb3071801dd1788731dbf83d2bdb3f" oxsrcmd5="703931d3b18a8f13c0bcb5807c1467c3" />
+  </action>
+  <action type="delete">
+    <target project="SUSE:Maintenance:REQUEST:960301" />
+  </action>
+  <state name="accepted" created="2026-11-23T21:19:23" when="2026-11-24T08:28:12" />
+</request>

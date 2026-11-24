@@ -316,8 +316,9 @@ first (below):
    the current release evidence has positive evidence for `X`
    ([Release Discovery](#release-discovery)).
 7. **Incident histories.** The incident-package history of every matching
-   accepted `maintenance_incident` action with positive evidence for `X`
-   ([Effective SR](#effective-sr)).
+   accepted `maintenance_incident` action with positive evidence for `X`, and
+   the deleted-package lookup of that incident package when IBS answers its
+   history with HTTP 404 ([Effective SR](#effective-sr)).
 
 The release proof of [Accepted RR Provenance](#accepted-rr-provenance) is
 applied first: to every matching `accepted` release action correlated to the
@@ -369,6 +370,20 @@ Discovery is bounded, with these accepted limitations:
   codestream sources is not discovered.
 - A release recorded without acceptinfo cannot be proven
   ([Accepted RR Provenance](#accepted-rr-provenance)).
+- A deleted incident package whose project the IBS account cannot read, such
+  as a deleted incident whose access was disabled, and an incident package
+  that IBS deleted before it deleted the incident answer the deleted-package
+  lookup like a package that never existed
+  (`../integrations/ibs-integration.md`, Deleted Package Lookup), so the scopes
+  that require its incident history stay incomplete. A package deleted from an
+  existing incident whose source access is disabled, or whose own metadata
+  disables source access, answers the lookup with HTTP 403, so those scopes
+  fail.
+- Contents of a deleted incident package that are committed to another package
+  of the same incident without a submission request are not followed: the SR
+  is no longer effective ([Effective SR](#effective-sr)), so the delivery can
+  be `PENDING` until the incident's release request is opened, or accepted and
+  its release proven.
 
 None of them produces a false `RELEASED`.
 
@@ -418,7 +433,8 @@ reused by every scope that needs it:
 - the current release evidence and the codestream history, per logical package
   and codestream;
 - request detail, per request number;
-- incident-package history, per incident package;
+- incident-package history, and its deleted-package lookup when it is
+  requested ([Effective SR](#effective-sr)), per incident package;
 - an exact history lookup, per package and revision;
 - an action diff, per action, with its link-base form when it is requested
   ([Action-Scoped CVE Evidence](#action-scoped-cve-evidence)).
@@ -501,11 +517,24 @@ such a request makes the observation incomplete.
 When a later SR replaced the incident contents, the later SR is the effective
 one and its own diff decides whether progress for the CVE remains; the older SR
 is historical. A release of the incident does not end its progress; the release
-is proven separately ([Accepted RR Provenance](#accepted-rr-provenance)). An
-unavailable or incomplete incident history, a missing acceptinfo `srcmd5`, or a
-history that contains no revision for the action makes the observation
-incomplete, except for an uncorrelated in-flight SR of root 1, whose
-unavailable evidence is not evidence ([Required Roots](#required-roots)).
+is proven separately ([Accepted RR Provenance](#accepted-rr-provenance)).
+
+When IBS answers the incident-package history with HTTP 404, Sentinel requests
+the deleted-package lookup of the incident package once
+(`../integrations/ibs-integration.md`, Deleted Package Lookup). When the lookup
+reports the package deleted, as after the Maintenance Team deleted the incident
+or the package, the incident package no longer carries the action's contents:
+the action is not effective and establishes no progress, and its evaluation is
+complete. A later observation evaluates the action again; if IBS restores the
+package, its history decides as above. Any other result of the lookup leaves
+the history unavailable, and the scope reports the history's `not_found` as
+its reason category ([Structured Logs](#structured-logs)); a failed lookup
+request fails the scope ([Observation Outcomes](#observation-outcomes)).
+
+An otherwise unavailable or incomplete incident history, a missing acceptinfo
+`srcmd5`, or a history that contains no revision for the action makes the
+observation incomplete, except for an uncorrelated in-flight SR of root 1,
+whose unavailable evidence is not evidence ([Required Roots](#required-roots)).
 
 An SR in `new` or `review` can establish current progress directly after exact
 action and CVE correlation. A `superseded` SR does not establish progress by
@@ -618,11 +647,13 @@ Examples of incomplete evidence include:
   characters.
 
 None is translated into a negative result. An accepted release action without
-acceptinfo, a history entry without a request number, and a release-scan entry
-whose request is not accepted are not incomplete evidence
+acceptinfo, a history entry without a request number, a release-scan entry
+whose request is not accepted, and an incident-package history answered with
+HTTP 404 for a package that the deleted-package lookup reports deleted are not
+incomplete evidence
 ([Accepted RR Provenance](#accepted-rr-provenance),
 [Request Discovery and Detail](#request-discovery-and-detail),
-[Release Discovery](#release-discovery)).
+[Release Discovery](#release-discovery), [Effective SR](#effective-sr)).
 
 No upstream source guarantees indefinite retention. The feature converges while
 enough request, diff, source-history, issue, binary, or advisory evidence remains
@@ -1024,8 +1055,9 @@ including its unsigned and signed attempts
 ([ibs-integration.md, Request
 Authentication](../integrations/ibs-integration.md#request-authentication)), is
 one request; the link-base diff of an action
-([Action-Scoped CVE Evidence](#action-scoped-cve-evidence)) is a request of its
-own. No IBS request occurs while a Ticket lock is held
+([Action-Scoped CVE Evidence](#action-scoped-cve-evidence)) and the
+deleted-package lookup of an incident package ([Effective SR](#effective-sr))
+are requests of their own. No IBS request occurs while a Ticket lock is held
 ([Algorithm](#algorithm)), so the fetcher never waits while holding one.
 Request wake-ups ([RabbitMQ Request Wake-Ups](#rabbitmq-request-wake-ups)) are
 not fetcher work and apply no delay.
@@ -1388,6 +1420,14 @@ Implementation coverage must include:
   - branch-commit and release-request revisions;
   - a later SR replacing the incident contents, with and without the CVE;
   - unavailable or incomplete incident history;
+  - an incident-package history answered with HTTP 404: a package that the
+    deleted-package lookup reports deleted (with its project, and from an
+    existing incident), which makes the SR not effective, including the
+    observed SR correlated while open whose delivery regresses from
+    `IN_PROGRESS` to `PENDING`, and for an uncorrelated in-flight SR of
+    root 1; every other lookup result (incomplete), a failed lookup
+    (failed), no lookup after any other history outcome, the request delay
+    before it, and one lookup per incident package within an invocation;
   - an accepted submission action without acceptinfo (incomplete);
 - values to be persisted that exceed their columns;
 - a CVE-less scope without any IBS request, and a stale request observation;

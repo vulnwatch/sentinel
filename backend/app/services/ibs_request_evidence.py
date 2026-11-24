@@ -2,9 +2,10 @@
 
 Implements the parsing and form contracts of
 docs/features/integrations/ibs-integration.md (Request ID Search, Request
-Point Detail, Request Action Diff, Package Source History, Service Layer >
-IBSClient) used by `IBSClient.search_request_ids()`, `get_request()`,
-`get_request_action_diff()`, and `get_source_history()`. The records and
+Point Detail, Request Action Diff, Package Source History, Deleted Package
+Lookup, Service Layer > IBSClient) used by `IBSClient.search_request_ids()`,
+`get_request()`, `get_request_action_diff()`, `get_source_history()`, and
+`get_deleted_package()`. The records and
 predicates are re-exported by `app.services.ibs_client`; the handlers and
 the diff-form derivation are internal to `IBSClient`.
 
@@ -33,6 +34,7 @@ from app.core.enums import IBSRequestActionType, IBSRequestState
 __all__ = [
     "REDACTED_PROJECT",
     "AcceptInfo",
+    "DeletedPackage",
     "IBSRequestActionDetail",
     "IBSRequestDetail",
     "IncompleteReason",
@@ -298,6 +300,15 @@ class SourceHistory:
     """The entries of one complete history or exact lookup, ascending."""
 
     entries: tuple[SourceHistoryEntry, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DeletedPackage:
+    """A complete deleted package lookup: IBS deleted `package` of
+    `project` and keeps its sources."""
+
+    project: str
+    package: str
 
 
 class EvidenceHandler[T](Protocol):
@@ -724,3 +735,38 @@ class SourceHistoryHandler:
         elif any(entry.srcmd5 != self.revision for entry in self._entries):
             raise IncompleteEvidenceError("invalid_entry")
         return SourceHistory(entries=tuple(self._entries))
+
+
+# ---------------------------------------------------------------------------
+# Deleted package lookup
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DeletedPackageHandler:
+    """Parses the `<directory>` of a deleted package lookup: complete only
+    when the root is `directory` and its `name` is the requested package.
+    Nothing else of the document is consumed."""
+
+    project: str
+    package: str
+    _depth: int = 0
+    _named: bool = False
+
+    def start_element(self, name: str, attributes: dict[str, str]) -> None:
+        self._depth += 1
+        if self._depth == 1:
+            if name != "directory" or attributes.get("name") != self.package:
+                raise IncompleteEvidenceError("invalid_document")
+            self._named = True
+
+    def end_element(self, name: str) -> None:
+        self._depth -= 1
+
+    def character_data(self, data: str) -> None:
+        return None
+
+    def result(self) -> DeletedPackage:
+        if not self._named:
+            raise IncompleteEvidenceError("invalid_document")
+        return DeletedPackage(project=self.project, package=self.package)

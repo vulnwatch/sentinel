@@ -470,6 +470,18 @@ class FakeRequests:
             responder or xml_response(history_document(entries)),
         )
 
+    def deleted_package(
+        self, project: str, package: str, *, responder: Responder | None = None
+    ) -> None:
+        """Route the deleted package lookup of `project/package`; by default
+        IBS reports the package deleted."""
+        self.route(
+            "GET",
+            f"/source/{project}/{package}",
+            [("deleted", "1")],
+            responder or xml_response(f'<directory name="{package}"/>'.encode()),
+        )
+
     def action_diff(
         self,
         number: int,

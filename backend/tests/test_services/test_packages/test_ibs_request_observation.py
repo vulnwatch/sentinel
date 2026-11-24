@@ -1475,6 +1475,9 @@ class TestEffectiveSubmission:
         fake.request(sr.number, ACCEPTED, sr.action)
         if history is None:
             fake.history(sr.project, sr.physical, responder=status_response(404))
+            fake.deleted_package(
+                sr.project, sr.physical, responder=status_response(404)
+            )
         else:
             fake.history(
                 sr.project,
@@ -1624,6 +1627,311 @@ class TestEffectiveSubmission:
             sr.number,
         )
         assert history_requests(fake) == []
+
+
+def deleted_lookups(fake: FakeRequests) -> list[str]:
+    """The paths of the deleted package lookups requested, in order."""
+    return [path for _, path, query in fake.served if query == (("deleted", "1"),)]
+
+
+def deleted_incident_package(
+    fake: FakeRequests,
+    sr: AcceptedSubmission,
+    *,
+    lookup: Responder | None = None,
+) -> None:
+    """The incident-package history of `sr` answers HTTP 404, and its
+    deleted package lookup answers `lookup` (by default: deleted)."""
+    fake.history(sr.project, sr.physical, responder=status_response(404))
+    fake.deleted_package(sr.project, sr.physical, responder=lookup)
+
+
+class TestDeletedIncidentPackage:
+    """Effective SR: an incident-package history answered with HTTP 404 for
+    a package that the deleted package lookup reports deleted."""
+
+    async def test_deleted_incident_package_makes_the_sr_not_effective(
+        self, fake: FakeRequests, package: str
+    ) -> None:
+        """The observed case: an SR correlated while open, then accepted into
+        an incident that IBS deleted. The observation is complete, persists
+        the SR's current state and provenance, and derives `PENDING`."""
+        sr = accepted_submission(package)
+        fake.request(sr.number, ACCEPTED, sr.action)
+        deleted_incident_package(fake, sr)
+        fake.quiet(package)
+
+        observation = await observe(
+            fake,
+            scope(package=package),
+            replace(
+                correlated_open_form(package, sr),
+                delivery_status=DeliveryStatus.IN_PROGRESS,
+            ),
+        )
+
+        assert observation == Observation(
+            DeliveryStatus.PENDING,
+            (request_write(sr.number, ACCEPTED),),
+            (action_write(sr.number, sr.action, package=package, state=ACCEPTED),),
+        )
+        assert deleted_lookups(fake) == [f"/source/{sr.project}/{sr.physical}"]
+        assert action_diff_paths(fake) == []
+        assert fake.unrouted == []
+
+    async def test_retained_accepted_sr_in_a_deleted_package_is_not_effective(
+        self, fake: FakeRequests, package: str
+    ) -> None:
+        sr = accepted_submission(package)
+        deleted_incident_package(fake, sr)
+        fake.quiet(package)
+
+        observation = await observe(
+            fake,
+            scope(package=package),
+            snapshot(
+                delivery=DeliveryStatus.IN_PROGRESS,
+                correlated=[retained(sr.number, ACCEPTED, sr.action)],
+            ),
+        )
+
+        assert observation == Observation(DeliveryStatus.PENDING, (), ())
+        assert detail_numbers(fake) == []
+
+    async def test_open_sr_keeps_progress_when_another_sr_package_is_deleted(
+        self, fake: FakeRequests, package: str
+    ) -> None:
+        """Only the deleted SR ends: an open SR of the same track still
+        establishes progress."""
+        sr = accepted_submission(package)
+        number, _ = open_submission(fake, package, cve_issue(TICKET_CVE))
+        fake.request(sr.number, ACCEPTED, sr.action)
+        deleted_incident_package(fake, sr)
+        fake.quiet(package, open_submissions=[number])
+
+        observation = await observe(
+            fake, scope(package=package), correlated_open_form(package, sr)
+        )
+
+        assert observation.derived is DeliveryStatus.IN_PROGRESS
+        assert {write.request_number for write in observation.actions} == {
+            sr.number,
+            number,
+        }
+
+    async def test_in_flight_sr_in_a_deleted_package_is_correlated_without_progress(
+        self, fake: FakeRequests, package: str
+    ) -> None:
+        flight = accepted_submission(package)
+        fake.request(flight.number, ACCEPTED, flight.action)
+        fake.action_diff(
+            flight.number,
+            flight.action,
+            cve_issue(TICKET_CVE),
+            codestream_package=package,
+        )
+        deleted_incident_package(fake, flight)
+        fake.quiet(package)
+
+        observation = await observe(
+            fake,
+            scope(package=package),
+            snapshot(in_flight=[retained(flight.number, ACCEPTED, flight.action)]),
+        )
+
+        assert observation == Observation(
+            DeliveryStatus.PENDING,
+            (request_write(flight.number, ACCEPTED),),
+            (
+                action_write(
+                    flight.number, flight.action, package=package, state=ACCEPTED
+                ),
+            ),
+        )
+
+    @pytest.mark.parametrize(
+        "lookup",
+        [
+            pytest.param(status_response(400), id="exists-400"),
+            pytest.param(status_response(404), id="unknown-or-unreadable-404"),
+            pytest.param(
+                xml_response(b'<directory name="other.SUSE_SLE-15-SP6_Update"/>'),
+                id="other-name",
+            ),
+            pytest.param(xml_response(b"<directory"), id="malformed"),
+        ],
+    )
+    async def test_lookup_without_a_deleted_package_keeps_the_history_not_found(
+        self, fake: FakeRequests, package: str, lookup: Responder
+    ) -> None:
+        sr = accepted_submission(package)
+        fake.request(sr.number, ACCEPTED, sr.action)
+        deleted_incident_package(fake, sr, lookup=lookup)
+        fake.quiet(package)
+
+        exc = await unusable(
+            fake, scope(package=package), correlated_open_form(package, sr)
+        )
+
+        assert (exc.reason_category, exc.request_number, exc.failed) == (
+            "not_found",
+            sr.number,
+            False,
+        )
+        assert len(deleted_lookups(fake)) == 1
+
+    @pytest.mark.parametrize(
+        ("lookup", "reason", "status"),
+        [
+            pytest.param(status_response(403), "http_status", 403, id="403"),
+            pytest.param(status_response(500), "http_status", 500, id="500"),
+            pytest.param(
+                raising(httpx.ConnectError("fictional connection failure")),
+                "transport",
+                None,
+                id="transport",
+            ),
+        ],
+    )
+    async def test_failed_lookup_fails_the_observation(
+        self,
+        fake: FakeRequests,
+        package: str,
+        lookup: Responder,
+        reason: str,
+        status: int | None,
+    ) -> None:
+        sr = accepted_submission(package)
+        fake.request(sr.number, ACCEPTED, sr.action)
+        deleted_incident_package(fake, sr, lookup=lookup)
+        fake.quiet(package)
+
+        exc = await unusable(
+            fake, scope(package=package), correlated_open_form(package, sr)
+        )
+
+        assert (exc.reason_category, exc.http_status, exc.request_number) == (
+            reason,
+            status,
+            sr.number,
+        )
+        assert exc.failed is True
+
+    @pytest.mark.parametrize(
+        ("history", "reason"),
+        [
+            pytest.param(status_response(500), "http_status", id="failed"),
+            pytest.param(
+                xml_response(b"<revisionlist/>"), "history_unavailable", id="empty"
+            ),
+            pytest.param(
+                xml_response(b"<revisionlist"), "malformed_xml", id="malformed"
+            ),
+        ],
+    )
+    async def test_no_lookup_after_any_other_history_outcome(
+        self, fake: FakeRequests, package: str, history: Responder, reason: str
+    ) -> None:
+        sr = accepted_submission(package)
+        fake.request(sr.number, ACCEPTED, sr.action)
+        fake.history(sr.project, sr.physical, responder=history)
+        fake.deleted_package(sr.project, sr.physical)
+        fake.quiet(package)
+
+        exc = await unusable(
+            fake, scope(package=package), correlated_open_form(package, sr)
+        )
+
+        assert exc.reason_category == reason
+        assert deleted_lookups(fake) == []
+
+    async def test_no_lookup_for_an_available_history(
+        self, fake: FakeRequests, package: str
+    ) -> None:
+        sr = accepted_submission(package)
+        fake.request(sr.number, ACCEPTED, sr.action)
+        fake.history(
+            sr.project,
+            sr.physical,
+            incident_history((checksum("branch"), None), (sr.srcmd5, sr.number)),
+        )
+        fake.deleted_package(sr.project, sr.physical)
+        fake.quiet(package)
+
+        observation = await observe(
+            fake, scope(package=package), correlated_open_form(package, sr)
+        )
+
+        assert observation.derived is DeliveryStatus.IN_PROGRESS
+        assert deleted_lookups(fake) == []
+
+    async def test_the_request_delay_precedes_the_lookup(
+        self, fake: FakeRequests, package: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        waits: list[int] = []
+        recorder = AsyncMock(side_effect=lambda _: waits.append(len(fake.served)))
+        monkeypatch.setattr(
+            ibs_request_observation, "asyncio", SimpleNamespace(sleep=recorder)
+        )
+        sr = accepted_submission(package)
+        fake.request(sr.number, ACCEPTED, sr.action)
+        deleted_incident_package(fake, sr)
+        fake.quiet(package)
+
+        await observe_together(
+            fake,
+            [(scope(package=package), correlated_open_form(package, sr))],
+            delay=0.5,
+        )
+
+        lookup_position = next(
+            index
+            for index, (_, _, query) in enumerate(fake.served)
+            if query == (("deleted", "1"),)
+        )
+        assert lookup_position in waits
+        assert waits == list(range(1, len(fake.served)))
+        assert recorder.await_args_list == [call(0.5)] * (len(fake.served) - 1)
+
+    @pytest.mark.parametrize(
+        ("lookup", "outcome"),
+        [
+            pytest.param(None, DeliveryStatus.PENDING, id="deleted"),
+            pytest.param(status_response(404), "not_found", id="not-deleted"),
+            pytest.param(status_response(403), "http_status", id="failed"),
+        ],
+    )
+    async def test_one_lookup_per_incident_package_within_an_invocation(
+        self,
+        fake: FakeRequests,
+        package: str,
+        lookup: Responder | None,
+        outcome: DeliveryStatus | str,
+    ) -> None:
+        sr = accepted_submission(package)
+        fake.request(sr.number, ACCEPTED, sr.action)
+        deleted_incident_package(fake, sr, lookup=lookup)
+        fake.quiet(package)
+
+        results = await observe_together(
+            fake,
+            [
+                (scope(package=package), correlated_open_form(package, sr)),
+                (
+                    scope(cve=OTHER_CVE, package=package),
+                    correlated_open_form(package, sr),
+                ),
+            ],
+        )
+
+        assert [
+            result.derived
+            if isinstance(result, Observation)
+            else result.reason_category
+            for result in results
+        ] == [outcome, outcome]
+        assert len(history_requests(fake)) == 1
+        assert len(deleted_lookups(fake)) == 1
 
 
 class TestCurrentReleaseEvidence:
@@ -2472,6 +2780,9 @@ class TestInFlightSubmission:
             fake.history(
                 flight.project, flight.physical, responder=status_response(404)
             )
+            fake.deleted_package(
+                flight.project, flight.physical, responder=status_response(404)
+            )
         else:
             first = 2 if unavailable == "history-incomplete" else 1
             fake.history(
@@ -2592,6 +2903,9 @@ class TestInFlightSubmission:
             )
         else:
             fake.history(
+                flight.project, flight.physical, responder=status_response(404)
+            )
+            fake.deleted_package(
                 flight.project, flight.physical, responder=status_response(404)
             )
         fake.quiet(package, open_submissions=[predecessor])

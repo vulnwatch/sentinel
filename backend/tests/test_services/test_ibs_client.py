@@ -577,6 +577,14 @@ class TestRequestAuthentication:
                 _HISTORY_DOCUMENT,
                 lambda c: c.get_source_history(LIVE_PROJECT, "curl"),
             ),
+            "get_deleted_package": (
+                "GET",
+                "/source/SUSE:Maintenance:80001/curl.SUSE_SLE-15-SP6_Update",
+                b'<directory name="curl.SUSE_SLE-15-SP6_Update"/>',
+                lambda c: c.get_deleted_package(
+                    "SUSE:Maintenance:80001", "curl.SUSE_SLE-15-SP6_Update"
+                ),
+            ),
         }
         public = {
             name

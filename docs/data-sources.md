@@ -529,6 +529,8 @@ repositories.
     unpaged source history, or an exact revision or checksum lookup, with
     revision, checksum, time, and optional request-number provenance used for
     request delivery reconciliation
+  - `GET /source/{project}/{package}?deleted=1` — whether IBS deleted a
+    package, used after its source history answers 404
 - **Integration status**: **Active**. Codestream-level release detection
   uses two complementary mechanisms: the `IBSEventConsumer` (real-time
   via IBS RabbitMQ, see `docs/features/integrations/ibs-rabbitmq-integration.md`) and
@@ -569,9 +571,11 @@ repositories.
     composition, release provenance, and release actions without acceptinfo
     used by submission tracking;
   - on 2026-11-12, codestream-history entries of release requests that are
-    not accepted, left by failed acceptances; and
+    not accepted, left by failed acceptances;
   - on 2026-11-16, the link-base form of the request action diff for source
-    links that conflict with the current codestream.
+    links that conflict with the current codestream; and
+  - on 2026-11-24, the deleted package lookup for incident packages deleted
+    with and without their incident project.
 
   Verified shapes, fields verified only through OBS source inspection, and
   the remaining unverified details of the track-release, authentication, and

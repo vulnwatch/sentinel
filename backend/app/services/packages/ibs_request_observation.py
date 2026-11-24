@@ -13,7 +13,8 @@ the Ticket lock. Nothing here touches the database.
   package, current release evidence and source histories per package,
   request detail per request number, exact lookups per package and
   revision, action diffs per action, with the link-base form after an HTTP
-  400 of the not-accepted form) and reused by every scope; an
+  400 of the not-accepted form, and the deleted package lookup per incident
+  package after an HTTP 404 of its history) and reused by every scope; an
   incomplete or failed artifact stays incomplete or failed for every scope
   that needs it. The caller's request delay separates every two
   consecutive IBS requests of the invocation; none precedes the first.
@@ -87,6 +88,8 @@ _PROGRESSING_STATES: Final = frozenset(
 _EMPTY_SOURCE_TREE: Final = "0"
 _DIFF_REJECTED: Final = "rejected"
 """The incomplete reason of a request action diff answered with HTTP 400."""
+_HISTORY_NOT_FOUND: Final = "not_found"
+"""The incomplete reason of a source history answered with HTTP 404."""
 
 
 class UnusableObservation(Exception):  # noqa: N818 — an outcome, not an error
@@ -337,6 +340,7 @@ class EvidenceCache:
         ] = {}
         self._diffs: dict[ActionKey, frozenset[str] | _Unusable] = {}
         self._release_evidence: dict[tuple[str, str], frozenset[str] | _Unusable] = {}
+        self._deleted: dict[tuple[str, str], bool | _Unusable] = {}
 
     async def _request[T](self, operation: Callable[[], Awaitable[T]]) -> T | _Unusable:
         """Run one IBS operation after the request delay; a known request
@@ -426,6 +430,42 @@ class EvidenceCache:
                 result if isinstance(result, _Unusable) else _evidence(result)
             )
         value = self._histories[key]
+        if isinstance(value, _Unusable):
+            _raise(value, request_number)
+        return value
+
+    async def incident_history(
+        self, project: str, package: str, *, request_number: int
+    ) -> SourceHistory | None:
+        """The unpaged history of the incident package `project/package`
+        of submission `request_number`, or `None` when IBS deleted it.
+
+        Only after the history answers HTTP 404 (`not_found`) is the deleted
+        package lookup requested; when it reports the package deleted, the
+        result is `None`. Any other lookup result keeps the history's
+        `not_found`, and a failed lookup fails the observation."""
+        try:
+            return await self.history(project, package, request_number=request_number)
+        except UnusableObservation as exc:
+            if exc.failed or exc.reason_category != _HISTORY_NOT_FOUND:
+                raise
+            if not await self._is_deleted(project, package, request_number):
+                raise
+            return None
+
+    async def _is_deleted(
+        self, project: str, package: str, request_number: int
+    ) -> bool:
+        key = (project, package)
+        if key not in self._deleted:
+            result = await self._request(
+                lambda: self._client.get_deleted_package(project, package)
+            )
+            if isinstance(result, _Unusable):
+                self._deleted[key] = result if result.failed else False
+            else:
+                self._deleted[key] = result.value is not None
+        value = self._deleted[key]
         if isinstance(value, _Unusable):
             _raise(value, request_number)
         return value
@@ -864,16 +904,19 @@ class _ScopeObservation:
         Effective when its incident-package history has a revision with its
         number and its acceptinfo `srcmd5`, and no later revision carries
         another submission request; otherwise the latest later submission is
-        the effective one and its own diff decides. Missing provenance or a
+        the effective one and its own diff decides. An incident package
+        that IBS deleted makes it not effective. Missing provenance or a
         history without the action's revision is `missing_provenance`; an
-        unavailable history or later detail is incomplete."""
+        otherwise unavailable history or later detail is incomplete."""
         if project is None or package is None or srcmd5 is None:
             raise UnusableObservation(
                 "missing_provenance", request_number=request_number
             )
-        history = await self.cache.history(
+        history = await self.cache.incident_history(
             project, package, request_number=request_number
         )
+        if history is None:
+            return False
         own = [
             entry.revision
             for entry in history.entries
