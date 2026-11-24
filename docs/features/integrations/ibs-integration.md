@@ -1031,8 +1031,9 @@ Established only by OBS source inspection:
   `ReadAccessOfDeleted`): it answers HTTP 400 for a package that exists, and,
   for an account without the admin role, HTTP 404 for a package whose existing
   project the account cannot read and for a deleted project whose access was
-  disabled; a deleted package of a readable project whose source access is
-  disabled answers HTTP 403; and a package that IBS deleted before it deleted
+  disabled; a package deleted from an existing readable project whose source
+  access is disabled, or whose own metadata disables source access, answers
+  HTTP 403; and a package that IBS deleted before it deleted
   its project answers HTTP 404, because deleting a project keeps the files of
   its earlier deleted packages under names that the lookup does not read
   (`delete_project` of the source server, `BSRevision`).

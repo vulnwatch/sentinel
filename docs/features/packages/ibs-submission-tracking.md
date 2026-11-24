@@ -375,9 +375,10 @@ Discovery is bounded, with these accepted limitations:
   that IBS deleted before it deleted the incident answer the deleted-package
   lookup like a package that never existed
   (`../integrations/ibs-integration.md`, Deleted Package Lookup), so the scopes
-  that require its incident history stay incomplete. A deleted incident
-  package whose incident's source access is disabled answers the lookup with
-  HTTP 403, so those scopes fail.
+  that require its incident history stay incomplete. A package deleted from an
+  existing incident whose source access is disabled, or whose own metadata
+  disables source access, answers the lookup with HTTP 403, so those scopes
+  fail.
 - Contents of a deleted incident package that are committed to another package
   of the same incident without a submission request are not followed: the SR
   is no longer effective ([Effective SR](#effective-sr)), so the delivery can
