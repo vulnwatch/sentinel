@@ -60,7 +60,7 @@ MAINTENANCE_TIMEOUT_SECONDS: Final[float] = 20 * 60
 READ_RETRY_DELAYS_SECONDS: Final[tuple[float, ...]] = (2, 4, 8)
 
 # The threads of the `git index-pack` that a clone or a fetch starts
-# (Clone Operations, Resources): fixed, whatever CPUs the host reports. Git
+# (Clone Operations, Threads): fixed, whatever CPUs the host reports. Git
 # passes the `-c` option on to that child process.
 _INDEX_PACK_THREADS: Final[int] = 4
 _INDEX_PACK_THREADS_OPTION: Final[tuple[str, str]] = (

@@ -24,7 +24,9 @@ from pathlib import Path
 import pytest
 from structlog.testing import capture_logs
 
+from app.models.fetcher_config import FetcherConfig
 from app.services import git_operations
+from app.services.fetcher_schedule import effective_task_time_limits
 from app.services.git_operations import (
     CLONE_TIMEOUT_SECONDS,
     FETCH_TIMEOUT_SECONDS,
@@ -148,6 +150,17 @@ def test_timeout_and_retry_constants_match_operation_categories() -> None:
         MAINTENANCE_TIMEOUT_SECONDS,
     ) == (3000, 300, 30, 30, 1200)
     assert READ_RETRY_DELAYS_SECONDS == (2, 4, 8)
+
+
+def test_default_run_timeout_soft_limit_contains_clone_timeout() -> None:
+    # Runtime Dependencies, Run timeout: the soft time limit of the
+    # `FetcherConfig` default `run_timeout` contains the Clone timeout, so
+    # a slow clone ends through its own timeout.
+    column = FetcherConfig.__table__.c["run_timeout"]
+    assert column.default is not None
+    soft_limit = effective_task_time_limits(column.default.arg)["soft_time_limit"]
+
+    assert soft_limit > CLONE_TIMEOUT_SECONDS
 
 
 @pytest.mark.parametrize(

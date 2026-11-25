@@ -231,7 +231,7 @@ automatically (see Recovery below).
 | Property | Value |
 |----------|-------|
 | Persistence | Required across container restarts |
-| Capacity | 50 GB minimum, and free space of at least the size of the `cvelistV5` clone plus 1 GB (see `docs/deployment.md`, Git Worker Volume, for the basis). A full consolidation of the clone's maintenance writes its new pack beside the packs it replaces, so its peak is about twice the clone. On 2026-11-25 the `cvelistV5` clone was 3.6 GB and `vulns.git` about 0.25 GB; `cvelistV5` grew by about 2 GB in the preceding year, at a rate of about 3 GB a year in its last three months |
+| Capacity | 50 GB minimum, and free space of at least the size of the `cvelistV5` clone plus 1 GB (see `docs/deployment.md`, Git Worker Volume, for the basis). A full consolidation of the clone's maintenance writes its new pack beside the packs it replaces, so its peak is about twice the clone. On 2026-11-25 the `cvelistV5` clone was 3.6 GB and `vulns.git` about 0.25 GB; `cvelistV5` grew by about 2 GB in the preceding year, at a rate of about 3.5 GB a year in its last three months |
 | Access mode | ReadWriteOnce (single worker pod) |
 | Filesystem | Any POSIX-compliant filesystem |
 | Backup | Not required (recoverable from upstream repos) |
@@ -1120,8 +1120,8 @@ nothing derived from git's output, so the caller may log it.
 
 **Resources** (measured on 2026-11-25 with git 2.47.3, in a container
 limited to 2 CPUs and 3 GiB, on a `cvelistV5` clone of 2,562,009 objects
-and 3.4 GB). The memory and the duration grow with the number of objects
-that a consolidation reads:
+and 3.4 GiB, that is 3.6 GB). The memory and the duration grow with the
+number of objects that a consolidation reads:
 
 | Consolidation | When | Duration | Peak anonymous memory |
 |---|---|---|---|
