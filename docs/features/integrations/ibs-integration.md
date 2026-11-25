@@ -553,10 +553,10 @@ reconciliation requests after an HTTP 404 of the release diff
 A diff input that is not also a provenance field is never compared, persisted,
 or substituted for a provenance field. Other acceptinfo attributes are not
 consumed. Missing optional elements or attributes are represented as absent
-typed values, not empty strings. Omission can make provenance incomplete, but it is not by itself
-malformed response data. A present `source/@rev` or consumed acceptinfo
-attribute that is empty or violates its contract makes the request observation
-incomplete.
+typed values, not empty strings. Omission can make provenance incomplete, but
+it is not by itself malformed response data. A present `source/@rev` or
+consumed acceptinfo attribute that is empty or violates its contract makes the
+request observation incomplete.
 
 Every consumed project and package value (`source/@project`, `source/@package`,
 `target/@project`, `target/@package`, `target/@releaseproject`, and acceptinfo

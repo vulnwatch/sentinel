@@ -2768,11 +2768,16 @@ def serve_deleted_release(
 
 EXISTS: Final = status_response(400)
 """The deleted package lookup of a package that exists."""
-NOT_DELETED_LOOKUPS: Final = [
-    pytest.param(status_response(400), id="exists-400"),
+UNKNOWN_OR_UNUSABLE_LOOKUPS: Final = [
     pytest.param(status_response(404), id="unknown-or-unreadable-404"),
     pytest.param(xml_response(b'<directory name="other.1"/>'), id="other-name"),
     pytest.param(xml_response(b"<directory"), id="malformed"),
+]
+"""Deleted package lookup results, other than an existing package, that do
+not report the package deleted."""
+NOT_DELETED_LOOKUPS: Final = [
+    pytest.param(EXISTS, id="exists-400"),
+    *UNKNOWN_OR_UNUSABLE_LOOKUPS,
 ]
 """Deleted package lookup results that do not report the package deleted."""
 FAILED_LOOKUPS: Final = [
@@ -2979,7 +2984,7 @@ class TestDeletedReleasePackage:
         assert deleted_lookups(fake) == []
         assert fake.unrouted == []
 
-    @pytest.mark.parametrize("lookup", NOT_DELETED_LOOKUPS[1:])
+    @pytest.mark.parametrize("lookup", UNKNOWN_OR_UNUSABLE_LOOKUPS)
     async def test_target_not_reported_deleted_keeps_the_diff_not_found(
         self, fake: FakeRequests, package: str, lookup: Responder
     ) -> None:

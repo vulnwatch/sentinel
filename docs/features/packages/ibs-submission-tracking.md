@@ -665,9 +665,9 @@ the observation incomplete. This applies to every release action of an
 `accepted` request whose release diff or exact lookup the observation
 requires: one correlated to the track, one found by the release scan, and one
 found through another root. Only such an action can prove a release; a
-release action with acceptinfo of a request that is not accepted, left by a
-failed acceptance ([Release Discovery](#release-discovery)), keeps an
-unavailable diff as incomplete evidence, because its request can still
+release action with acceptinfo of a request in `new` or `review`, as a
+failed acceptance can leave ([Release Discovery](#release-discovery)), keeps
+an unavailable diff as incomplete evidence, because its request can still
 establish progress.
 A later observation evaluates the action again; if IBS restores the package,
 the proof decides as above. Any other result of the lookups leaves the
@@ -708,9 +708,9 @@ None is translated into a negative result. An accepted release action without
 acceptinfo, a history entry without a request number, a release-scan entry
 whose request is not accepted, an incident-package history answered with HTTP
 404 for a package that the deleted-package lookup reports deleted, and a
-release diff or exact lookup of a release action answered with HTTP 404 when
-the deleted-package lookup reports its target or origin package deleted are
-not incomplete evidence
+release diff or exact lookup of a release action of an accepted request
+answered with HTTP 404 when the deleted-package lookup reports its target or
+origin package deleted are not incomplete evidence
 ([Accepted RR Provenance](#accepted-rr-provenance),
 [Request Discovery and Detail](#request-discovery-and-detail),
 [Release Discovery](#release-discovery), [Effective SR](#effective-sr)).
@@ -1489,9 +1489,9 @@ Implementation coverage must include:
     delivery evidence), for an action correlated to the track, one found by
     the release scan, and an uncorrelated one of an accepted request found
     through another root (not correlated); a release action with acceptinfo
-    of a request that is not accepted (incomplete, without a lookup); the
-    origin lookup only after a release diff 404,
-    when the target is not reported deleted and the acceptinfo names both
+    of a request in `new` or `review` (incomplete, without a lookup); the
+    origin lookup only after a release diff 404, when the target is not
+    reported deleted and the acceptinfo names both
     `oproject` and `opackage`; every other lookup result (incomplete,
     `not_found`), a failed lookup (failed), no lookup after any other
     outcome, the request delay before it, and one lookup per package within
