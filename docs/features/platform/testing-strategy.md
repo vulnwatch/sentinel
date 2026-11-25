@@ -83,8 +83,10 @@ its cache disabled — when every such subprocess is hermetic:
   foreground (`maintenance.autoDetach=false`). The configuration is
   passed through `GIT_CONFIG_GLOBAL`, which the Git operations module keeps
   (`docs/features/platform/git-fetcher-infrastructure.md`, Module Invariants
-  Rule 3), so it also reaches the processes that module starts under test;
-  production keeps Git's default maintenance.
+  Rule 3), so it also reaches the processes that module starts under test.
+  The module's own fetch disables automatic maintenance on the command line
+  regardless of configuration, and its explicit maintenance runs in the
+  foreground (same document, Fetch Operations and Maintenance Operations).
 
 A read-only Git command that deliberately inspects the checkout itself, such
 as the `git ls-files` of the documentation-link test (see Structural Tests),

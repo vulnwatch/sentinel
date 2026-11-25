@@ -1,8 +1,8 @@
 """Hermetic tests of `app.services.git_operations` against real git.
 
 Contract: `docs/features/platform/git-fetcher-infrastructure.md` (Bare Clone
-Pattern, Cursor SHA Unreachable, Runtime Dependencies, Error Classification,
-Function Catalog). Every repository lives under `tmp_path`; an autouse
+Pattern, Cursor SHA Unreachable, Recovery, Runtime Dependencies, Error
+Classification, Function Catalog). Every repository lives under `tmp_path`; an autouse
 fixture removes every inherited `GIT_*` variable and the user and system Git
 configuration from the module's processes, so the tests also pass inside the
 Git hooks (see `docs/features/platform/testing-strategy.md`, Tier 1 — Unit
@@ -28,6 +28,7 @@ from app.services import git_operations
 from app.services.git_operations import (
     CLONE_TIMEOUT_SECONDS,
     FETCH_TIMEOUT_SECONDS,
+    MAINTENANCE_TIMEOUT_SECONDS,
     READ_RETRY_DELAYS_SECONDS,
     READ_TIMEOUT_SECONDS,
     SHOW_TIMEOUT_SECONDS,
@@ -35,6 +36,7 @@ from app.services.git_operations import (
     GitError,
     GitFetchError,
     GitFileError,
+    GitMaintenanceError,
     check_sha_reachable,
     clone,
     delete_clone,
@@ -43,6 +45,7 @@ from app.services.git_operations import (
     get_commit_date,
     get_head_sha,
     is_clone_valid,
+    maintain,
     rev_list_before,
     show_file,
 )
@@ -136,11 +139,14 @@ def test_timeout_and_retry_constants_match_operation_categories() -> None:
         FETCH_TIMEOUT_SECONDS,
         READ_TIMEOUT_SECONDS,
         SHOW_TIMEOUT_SECONDS,
-    ) == (1800, 300, 30, 30)
+        MAINTENANCE_TIMEOUT_SECONDS,
+    ) == (1800, 300, 30, 30, 1200)
     assert READ_RETRY_DELAYS_SECONDS == (2, 4, 8)
 
 
-@pytest.mark.parametrize("error", [GitFetchError, GitCorruptionError, GitFileError])
+@pytest.mark.parametrize(
+    "error", [GitFetchError, GitCorruptionError, GitFileError, GitMaintenanceError]
+)
 def test_exception_hierarchy_phase_error_subclasses_git_error(
     error: type[GitError],
 ) -> None:
@@ -174,6 +180,7 @@ async def test_operations_command_shapes_use_their_category_timeout(
     await diff_names(bare, head, head, path_filter="cves/")
     await rev_list_before(bare, "2100-01-01T00:00:00+00:00")
     await show_file(bare, head, "README")
+    await maintain(bare)
 
     read = READ_TIMEOUT_SECONDS
     verify = ("rev-parse", "--verify", "--quiet", "--end-of-options")
@@ -186,7 +193,14 @@ async def test_operations_command_shapes_use_their_category_timeout(
         ),
         ((git_dir, "symbolic-ref", "--end-of-options", "HEAD"), read),
         (
-            (git_dir, "fetch", "--end-of-options", "origin", "+HEAD:refs/heads/main"),
+            (
+                git_dir,
+                "fetch",
+                "--no-auto-maintenance",
+                "--end-of-options",
+                "origin",
+                "+HEAD:refs/heads/main",
+            ),
             FETCH_TIMEOUT_SECONDS,
         ),
         ((git_dir, "rev-parse", "--verify", "--end-of-options", "HEAD"), read),
@@ -200,6 +214,10 @@ async def test_operations_command_shapes_use_their_category_timeout(
         ),
         ((git_dir, "rev-list", "-1", before, "--end-of-options", "HEAD"), read),
         ((git_dir, "show", "--end-of-options", f"{head}:README"), SHOW_TIMEOUT_SECONDS),
+        (
+            (git_dir, "repack", "-d", "-n", "-q", "--geometric=2", "--threads=1"),
+            MAINTENANCE_TIMEOUT_SECONDS,
+        ),
     ]
 
 
@@ -272,25 +290,18 @@ async def test_inherited_repository_variables_do_not_affect_target_clone(
     assert rev_parse(decoy, "HEAD") == decoy_head
 
 
-@pytest.mark.parametrize(
-    ("configuration", "expected_runs"),
-    [
-        pytest.param("hermetic", 0, id="hermetic"),
-        # Control: with git's default, the same fetch starts maintenance.
-        pytest.param("git-default", 1, id="git-default"),
-    ],
-)
-async def test_fetch_origin_automatic_maintenance_follows_global_configuration(
+@pytest.mark.parametrize("configuration", ["hermetic", "git-default"])
+async def test_fetch_origin_starts_no_automatic_maintenance_whatever_the_configuration(
     bare: Path,
     upstream: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     configuration: str,
-    expected_runs: int,
 ) -> None:
-    # Rule 3 keeps `GIT_CONFIG_GLOBAL`, so the harness configuration reaches
-    # the module's own `git fetch`; production keeps git's default (Fetch
-    # Operations, Automatic maintenance).
+    # `--no-auto-maintenance` overrides any configuration: with git's
+    # default (run in the foreground here), the module's fetch still starts
+    # no `git maintenance run --auto` (Fetch Operations, Automatic
+    # maintenance).
     commit_files(upstream, {"README": b"updated\n"})
     trace = tmp_path / "trace.json"
     monkeypatch.setenv("GIT_TRACE2_EVENT", str(trace))
@@ -301,7 +312,25 @@ async def test_fetch_origin_automatic_maintenance_follows_global_configuration(
     await fetch_origin(bare)
 
     assert ["fetch"] in [argv[2:3] for argv in traced_commands(trace)]
-    assert len(automatic_maintenance_runs(trace)) == expected_runs
+    assert automatic_maintenance_runs(trace) == []
+
+    # Control: the same configuration makes a plain `git fetch` start it, so
+    # the trace would show a maintenance run if the module's fetch started one.
+    commit_files(upstream, {"README": b"again\n"})
+    control = tmp_path / "control.json"
+    git(
+        None,
+        f"--git-dir={bare}",
+        "fetch",
+        "--quiet",
+        "origin",
+        "+HEAD:refs/heads/main",
+        env_extra={
+            "GIT_TRACE2_EVENT": str(control),
+            "GIT_CONFIG_GLOBAL": str(foreground_maintenance_config(tmp_path)),
+        },
+    )
+    assert len(automatic_maintenance_runs(control)) == 1
 
 
 # --- Clone operations -------------------------------------------------------
@@ -915,6 +944,144 @@ async def test_show_file_missing_blob_object_raises_file_error_after_one_attempt
 
     assert len(git_calls) == 1
     assert sleeps == []
+
+
+# --- maintain ---------------------------------------------------------------
+
+
+def _pack_object_counts(git_dir: Path) -> dict[str, int]:
+    """The number of objects of each pack, by pack name, read from the last
+    fan-out entry of its version-2 index."""
+    counts = {}
+    for index in (git_dir / "objects" / "pack").glob("pack-*.idx"):
+        data = index.read_bytes()
+        assert data[:8] == b"\xfftOc\x00\x00\x00\x02"
+        counts[index.stem] = int.from_bytes(data[8 + 255 * 4 : 8 + 256 * 4], "big")
+    return counts
+
+
+def _all_objects(git_dir: Path) -> set[str]:
+    listed = git(
+        None,
+        f"--git-dir={git_dir}",
+        "cat-file",
+        "--batch-all-objects",
+        "--batch-check=%(objectname)",
+    )
+    return set(listed.stdout.split())
+
+
+def _loose_objects(git_dir: Path) -> list[Path]:
+    return [path for path in (git_dir / "objects").glob("??/*") if path.is_file()]
+
+
+_FORCED_HEAD = "+HEAD:refs/heads/main"
+
+
+@pytest.fixture
+def fetched_packs(tmp_path: Path) -> tuple[Path, Path, str]:
+    """A bare clone whose clone pack holds 52 objects, followed by four
+    fetches packed one pack each (as a fetch above `fetch.unpackLimit`
+    keeps its pack) and one fetch left as loose objects. Returns the clone,
+    the upstream, and the name of the clone's pack."""
+    upstream = init_upstream(tmp_path / "upstream")
+    files = {f"cves/{number:02}.json": f"{number}\n".encode() for number in range(50)}
+    commit_files(upstream, files, message="initial")
+    bare = _clone_bare(upstream, tmp_path / "clone")
+    (clone_pack,) = _pack_object_counts(bare)
+    for number in range(5):
+        commit_files(upstream, {f"cves/new-{number}.json": f"{number}\n".encode()})
+        git(None, f"--git-dir={bare}", "fetch", "--quiet", "origin", _FORCED_HEAD)
+        if number < 4:
+            git(None, f"--git-dir={bare}", "repack", "-d", "-q")
+    return bare, upstream, clone_pack
+
+
+async def test_maintain_rolls_fetch_packs_into_geometric_progression_keeping_objects(
+    fetched_packs: tuple[Path, Path, str], git_calls: list[GitCall]
+) -> None:
+    bare, _, clone_pack = fetched_packs
+    before = _all_objects(bare)
+    assert len(_pack_object_counts(bare)) == 5
+    assert _loose_objects(bare)
+
+    await maintain(bare)
+
+    # The clone's pack is kept; the four fetch packs and the loose objects
+    # become one pack, which the clone's pack outweighs at least twofold.
+    counts = _pack_object_counts(bare)
+    assert clone_pack in counts
+    assert len(counts) == 2
+    (rolled_up,) = (count for name, count in counts.items() if name != clone_pack)
+    assert counts[clone_pack] >= 2 * rolled_up
+    assert _loose_objects(bare) == []
+    assert _all_objects(bare) == before
+    git(None, f"--git-dir={bare}", "fsck", "--connectivity-only", "--no-progress")
+    assert _subcommands(git_calls) == ["repack"]
+
+
+async def test_maintain_keeps_commit_left_unreachable_by_upstream_rewrite(
+    bare: Path, upstream: Path
+) -> None:
+    base = rev_parse(bare, "HEAD")
+    cursor = commit_files(upstream, {"cves/a.json": b"a\n"})
+    await fetch_origin(bare)
+    git(upstream, "reset", "--quiet", "--hard", base)
+    commit_files(upstream, {"cves/b.json": b"b\n"})
+    await fetch_origin(bare)
+
+    await maintain(bare)
+
+    # Nothing is pruned (Cursor SHA Unreachable): the old cursor commit,
+    # unreachable from the branch, is packed and stays reachable by SHA.
+    assert _loose_objects(bare) == []
+    assert await check_sha_reachable(bare, cursor) is True
+
+
+async def test_maintain_removes_pack_temporaries_before_repacking(bare: Path) -> None:
+    pack_dir = bare / "objects" / "pack"
+    temporaries = ["tmp_pack_Ab12Cd", "tmp_idx_Ab12Cd", ".tmp-4242-pack-0123.pack"]
+    for name in temporaries:
+        (pack_dir / name).write_bytes(b"partial")
+    (pack_dir / "tmp_directory").mkdir()
+    (pack_dir / "unrelated.txt").write_bytes(b"kept")
+    packs = _pack_object_counts(bare)
+
+    await maintain(bare)
+
+    remaining = _entries(pack_dir)
+    assert not set(temporaries) & set(remaining)
+    assert {"tmp_directory", "unrelated.txt"} <= set(remaining)
+    assert _pack_object_counts(bare) == packs
+
+
+async def test_maintain_without_repository_raises_maintenance_error_once(
+    tmp_path: Path, git_calls: list[GitCall], sleeps: list[float]
+) -> None:
+    with pytest.raises(GitMaintenanceError, match="git repack exited") as excinfo:
+        await maintain(tmp_path / "absent")
+
+    assert excinfo.value.reason == "failed"
+    assert _subcommands(git_calls) == ["repack"]
+    assert sleeps == []
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+async def test_maintain_unremovable_temporary_raises_without_running_git(
+    bare: Path, git_calls: list[GitCall]
+) -> None:
+    pack_dir = bare / "objects" / "pack"
+    (pack_dir / "tmp_pack_Ab12Cd").write_bytes(b"partial")
+    pack_dir.chmod(0o555)
+    try:
+        with pytest.raises(GitMaintenanceError, match="temporaries") as excinfo:
+            await maintain(bare)
+    finally:
+        pack_dir.chmod(0o755)
+
+    assert excinfo.value.reason == "failed"
+    assert isinstance(excinfo.value.__cause__, PermissionError)
+    assert git_calls == []
 
 
 # --- delete_clone -----------------------------------------------------------

@@ -60,7 +60,7 @@ FROM python:${PYTHON_VERSION}-slim@${PYTHON_BASE_DIGEST} AS runtime
 WORKDIR /app
 
 # The Git worker role runs the Git-based CVE fetchers through the system
-# git binary (minimum 2.30 — see
+# git binary (minimum 2.32 — see
 # docs/features/platform/git-fetcher-infrastructure.md, Runtime
 # Dependencies); the slim base image has none. The single image serves every
 # role (docs/deployment.md, Container Build Conventions), so git is

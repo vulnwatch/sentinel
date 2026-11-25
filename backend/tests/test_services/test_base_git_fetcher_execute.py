@@ -6,8 +6,9 @@ Owning specifications:
 - docs/features/platform/git-fetcher-infrastructure.md (Cursor Persistence;
   Write Mechanism; Empty Delta; First-Run Detection; Recovery; Cursor SHA
   Unreachable; Error Classification; Template Method: `execute()` steps
-  1-11, Infrastructure errors, Error Handling Strategy, Status
-  Determination; Hook Methods; `_compute_recovery_delta()`).
+  1-12, Infrastructure errors, Error Handling Strategy, Status
+  Determination; Hook Methods; `_compute_recovery_delta()`; Maintenance
+  Operations).
 - docs/features/platform/cve-fetcher-infrastructure.md (`CVEFetchResult`;
   Per-CVE Finalization; Batch Error Handling, the `cve_fetch_item_failed`
   event; Metric Definitions).
@@ -56,7 +57,7 @@ from app.services.base_cve_fetcher import (
     HANDOFF_PUBLICATION_FAILED_EVENT,
     CVEFetchResult,
 )
-from app.services.base_fetcher import FetcherError
+from app.services.base_fetcher import FetcherError, FetcherRunConfig
 from app.services.base_git_fetcher import (
     CLONE_CORRUPTION_DETECTED_EVENT,
     CLONE_DELETE_FAILED_EVENT,
@@ -70,17 +71,26 @@ from app.services.base_git_fetcher import (
     DELETE_FAILED_MESSAGE,
     DELTA_FILE_MISSING_AT_HEAD_EVENT,
     FETCH_FAILED_MESSAGE,
+    MAINTENANCE_COMPLETED_EVENT,
+    MAINTENANCE_FAILED_EVENT,
+    MAINTENANCE_SKIPPED_EVENT,
     RECOVERY_BOUNDARY_NOT_FOUND_EVENT,
     BaseGitFetcher,
 )
 from app.services.cve_ingest import UpsertAction
-from app.services.git_operations import GitCorruptionError, GitFetchError, GitFileError
+from app.services.git_operations import (
+    GitCorruptionError,
+    GitFetchError,
+    GitFileError,
+    GitMaintenanceError,
+)
 from tests.support.cve_catch_up import RESOLVE, source_state
 from tests.support.git_fetchers import (
     RUN_CONFIG,
     SOURCE,
     GitCalls,
     GitFetcherProbe,
+    GitReplacement,
     GitRunHarness,
     GitWorkspace,
     ItemStep,
@@ -419,6 +429,7 @@ class TestSubsequentRun:
             "check_sha_reachable",
             "diff_names",
             "show_file",
+            "maintain",
         ]
         clone = workspace.clone_path(probe)
         assert git_calls.of("check_sha_reachable") == [((clone, cursor["sha"]), {})]
@@ -662,7 +673,11 @@ class TestRecovery:
         with capture_logs() as logs:
             result = await harness.run(probe)
 
-        assert git_calls.names()[-2:] == ["check_sha_reachable", "rev_list_before"]
+        assert git_calls.names()[-3:] == [
+            "check_sha_reachable",
+            "rev_list_before",
+            "maintain",
+        ]
         assert "diff_names" not in git_calls.names()
         assert _warnings(logs) == [
             CURSOR_SHA_UNREACHABLE_EVENT,
@@ -1659,3 +1674,218 @@ class TestPublishedTasks:
         # The rolled-back ingestion created no CVE row.
         assert await harness.cve_named(cve_id) is None
         assert probe.isolated == [(cve_id, CVESourceFetchStatus.FAILURE)]
+
+
+# ---------------------------------------------------------------------------
+# Clone maintenance (step 12)
+# ---------------------------------------------------------------------------
+
+
+def _loose_objects(clone: Path) -> list[Path]:
+    return [path for path in (clone / "objects").glob("??/*") if path.is_file()]
+
+
+def _recording_maintenance(harness: GitRunHarness) -> GitReplacement:
+    """A `maintain` replacement that records its position among the run's
+    events, then runs the real maintenance."""
+
+    async def replacement(real: GitReplacement, repo_path: Path) -> None:
+        harness.events.append("maintain")
+        await real(repo_path)
+
+    return replacement
+
+
+async def _fetching_run_setup(
+    workspace: GitWorkspace, harness: GitRunHarness, git_calls: GitCalls
+) -> tuple[GitFetcherProbe, str]:
+    """A fetcher after its first run, with one new upstream file for the
+    next run, which fetches. Returns the probe and the new HEAD."""
+    workspace.upstream.commit({"README": b"one\n"}, date=D_BASE)
+    probe = await _fetcher(workspace, harness, step=token())
+    await _first_run(harness, probe)
+    head = workspace.upstream.commit({cve_path("CVE-2024-0002"): b"{}"}, date=D_CURSOR)
+    _reset(harness, git_calls)
+    return probe, head
+
+
+class TestCloneMaintenance:
+    async def test_fetched_run_maintains_clone_after_items_and_logs_completion(
+        self, workspace: GitWorkspace, harness: GitRunHarness, git_calls: GitCalls
+    ) -> None:
+        probe, head = await _fetching_run_setup(workspace, harness, git_calls)
+        git_calls.replacements["maintain"] = _recording_maintenance(harness)
+        clone = workspace.clone_path(probe)
+
+        with capture_logs() as logs:
+            result = await harness.run(probe)
+
+        assert git_calls.names()[-1] == "maintain"
+        assert git_calls.of("maintain") == [((clone,), {})]
+        events = harness.events
+        finalized = next(i for i, e in enumerate(events) if e.startswith("finalize:"))
+        assert events.index("commit_and_dispatch") < events.index("maintain")
+        assert events.index("maintain") < finalized
+        # The real maintenance packed the objects that the fetch left loose.
+        assert _loose_objects(clone) == []
+        assert is_bare_clone(clone)
+        (completed,) = events_named(logs, MAINTENANCE_COMPLETED_EVENT)
+        assert completed.keys() == {
+            "event",
+            "log_level",
+            "fetcher_name",
+            "duration_seconds",
+        }
+        assert (completed["log_level"], completed["fetcher_name"]) == (
+            "info",
+            probe.name,
+        )
+        assert isinstance(completed["duration_seconds"], float)
+        assert _warnings(logs) == []
+        assert result.row.status == "success"
+        assert result.row.cursor == {"sha": head, "committed_at": D_CURSOR}
+        _bounded(logs, workspace)
+
+    async def test_runs_that_clone_do_not_maintain(
+        self, workspace: GitWorkspace, harness: GitRunHarness, git_calls: GitCalls
+    ) -> None:
+        workspace.upstream.commit({"README": b"one\n"}, date=D_BASE)
+        probe = await _fetcher(workspace, harness, step=token())
+
+        with capture_logs() as logs:
+            await _first_run(harness, probe)
+            shutil.rmtree(workspace.clone_path(probe))
+            workspace.upstream.commit({cve_path("CVE-2024-0002"): b"{}"}, date=D_CURSOR)
+            rebuilt = await harness.run(probe)
+
+        assert git_calls.names().count("clone") == 2
+        assert "fetch_origin" not in git_calls.names()
+        assert "maintain" not in git_calls.names()
+        assert events_named(logs, MAINTENANCE_COMPLETED_EVENT) == []
+        assert events_named(logs, MAINTENANCE_SKIPPED_EVENT) == []
+        assert rebuilt.row.status == "success"
+
+    @pytest.mark.parametrize("reason", ["timeout", "failed"])
+    async def test_maintenance_failure_is_bounded_warning_and_keeps_outcome(
+        self,
+        workspace: GitWorkspace,
+        harness: GitRunHarness,
+        git_calls: GitCalls,
+        reason: str,
+    ) -> None:
+        probe, head = await _fetching_run_setup(workspace, harness, git_calls)
+        git_calls.errors["maintain"] = GitMaintenanceError(SECRET, reason=reason)
+
+        with capture_logs() as logs:
+            result = await harness.run(probe)
+
+        assert events_named(logs, MAINTENANCE_FAILED_EVENT) == [
+            {
+                "event": MAINTENANCE_FAILED_EVENT,
+                "log_level": "warning",
+                "fetcher_name": probe.name,
+                "reason": reason,
+            }
+        ]
+        assert events_named(logs, MAINTENANCE_COMPLETED_EVENT) == []
+        assert result.row.status == "success"
+        assert result.row.metrics == (1, 0, 0, 0)
+        assert result.row.cursor == {"sha": head, "committed_at": D_CURSOR}
+        assert result.row.error_message is None
+        assert is_bare_clone(workspace.clone_path(probe))
+        _bounded(logs, workspace)
+
+    @pytest.mark.parametrize(
+        ("hard_time_limit", "maintained"),
+        [
+            # floor(1326 * 0.95) = 1259 s: less than the 1200 s maintenance
+            # timeout plus the 60 s margin even when `execute()` starts.
+            pytest.param(1326, False, id="does-not-fit"),
+            # floor(1400 * 0.95) = 1330 s: fits while `execute()` has taken
+            # less than 70 s.
+            pytest.param(1400, True, id="fits"),
+        ],
+    )
+    async def test_maintenance_starts_only_when_its_timeout_fits_before_soft_limit(
+        self,
+        workspace: GitWorkspace,
+        harness: GitRunHarness,
+        git_calls: GitCalls,
+        hard_time_limit: int,
+        maintained: bool,
+    ) -> None:
+        probe, head = await _fetching_run_setup(workspace, harness, git_calls)
+        run_config = FetcherRunConfig(
+            hard_time_limit_seconds=hard_time_limit, request_delay=0, custom_settings={}
+        )
+
+        with capture_logs() as logs:
+            result = await harness.run(probe, run_config=run_config)
+
+        skipped = events_named(logs, MAINTENANCE_SKIPPED_EVENT)
+        if maintained:
+            assert git_calls.names()[-1] == "maintain"
+            assert skipped == []
+            assert len(events_named(logs, MAINTENANCE_COMPLETED_EVENT)) == 1
+        else:
+            assert "maintain" not in git_calls.names()
+            (event,) = skipped
+            assert event.keys() == {
+                "event",
+                "log_level",
+                "fetcher_name",
+                "remaining_seconds",
+                "required_seconds",
+            }
+            assert event["log_level"] == "warning"
+            assert event["fetcher_name"] == probe.name
+            assert event["required_seconds"] == 1260
+            assert isinstance(event["remaining_seconds"], int)
+            assert event["remaining_seconds"] <= 1259
+        assert result.row.status == "success"
+        assert result.row.cursor == {"sha": head, "committed_at": D_CURSOR}
+
+    @pytest.mark.parametrize(
+        "signal",
+        [SoftTimeLimitExceeded(), MemoryError()],
+        ids=lambda signal: type(signal).__name__,
+    )
+    async def test_whole_run_signal_during_maintenance_propagates(
+        self,
+        workspace: GitWorkspace,
+        harness: GitRunHarness,
+        git_calls: GitCalls,
+        signal: Exception,
+    ) -> None:
+        probe, _ = await _fetching_run_setup(workspace, harness, git_calls)
+        git_calls.errors["maintain"] = signal
+
+        with capture_logs() as logs:
+            result = await harness.run(probe, raises=type(signal))
+
+        assert result.raised is signal
+        assert events_named(logs, MAINTENANCE_FAILED_EVENT) == []
+        assert result.row.status == "failure"
+        assert result.row.cursor is None
+
+    async def test_maintenance_without_configuration_snapshot_starts_without_budget(
+        self, workspace: GitWorkspace, harness: GitRunHarness, git_calls: GitCalls
+    ) -> None:
+        # `run()` always passes a snapshot; without one, no soft time limit
+        # is known and step 12 maintains the clone (Template Method, 12a).
+        probe = await _fetcher(workspace, harness, step=token())
+        fetcher = probe.cls()
+        assert fetcher.config is None
+        clone = workspace.clone_path(probe)
+
+        async def maintained(real: GitReplacement, repo_path: Path) -> None:
+            return None
+
+        git_calls.replacements["maintain"] = maintained
+
+        with capture_logs() as logs:
+            await fetcher._maintain_within_budget(clone, started=0.0)
+
+        assert git_calls.of("maintain") == [((clone,), {})]
+        assert events_named(logs, MAINTENANCE_SKIPPED_EVENT) == []
+        assert len(events_named(logs, MAINTENANCE_COMPLETED_EVENT)) == 1

@@ -77,7 +77,7 @@ For architectural decisions and design constraints, see
 | Docker Compose CLI plugin | 2.32.2+ | Repository-managed development and test orchestration |
 | PostgreSQL | 18+ | Primary database |
 | Redis | 8+ | Session cache, login lockout, Celery broker |
-| Git | 2.30+ | Git-based CVE fetcher operations (Git worker only; installed in the image, and on the developer host for the local Git worker) |
+| Git | 2.32+ | Git-based CVE fetcher operations (Git worker only; installed in the image, and on the developer host for the local Git worker) |
 | [uv](https://docs.astral.sh/uv/getting-started/installation/) | 0.13.6+ | Manages the Python interpreter of `backend/.python-version` and all backend dependencies for local development (see "Quick Start" below) and for the image-smoke harness, which runs host pytest and its timeout supervisor on that interpreter (see `docs/features/platform/testing-strategy.md`, Image / Container Smoke Testing). Development only |
 | [gh](https://cli.github.com/) | any recent release | Strongly recommended, development only — manages issues, pull requests, and GitHub Flow from the command line. See `docs/conventions.md` (Git Conventions) |
 | [glab](https://gitlab.com/gitlab-org/cli) | any recent release | Optional, development only — interacts with SUSE-internal GitLab repositories, issues, and merge requests (e.g., SMELT, SMASH). Requires authentication against `gitlab.suse.de`. See `AGENTS.md` (Local Environment) |
@@ -3114,6 +3114,33 @@ permission.
 3. `Local git clone directory could not be removed — manual intervention
    required`: check the volume's mount state and permissions, then remove
    the clone directory manually
+
+#### Git Clone Maintenance
+
+A Git fetcher run that fetched ends by maintaining its clone
+(`docs/features/platform/git-fetcher-infrastructure.md`, Maintenance
+Operations). The Git worker logs one of these events per such run:
+
+1. `git_clone_maintenance_completed` (INFO): the normal case, with its
+   `duration_seconds`
+2. `git_clone_maintenance_skipped` (WARNING): the run had less time left
+   before its soft time limit (`remaining_seconds`) than the maintenance
+   may take (`required_seconds`). An occasional skip after a long run needs
+   no action. A skip on every run means that `run_timeout` of the fetcher
+   is too low for it (see the Run timeout rule in Runtime Dependencies of
+   the same document)
+3. `git_clone_maintenance_failed` (WARNING) with `reason`: `timeout` means
+   that the maintenance did not end within its 20 minutes, usually because
+   the Git worker has too little CPU or a slow volume; `failed` means any
+   other failure, for example a full volume. The run itself is unaffected,
+   and the next run retries
+
+When the Git worker restarts with an out-of-memory kill (`OOMKilled`, exit
+code 137) during a Git fetcher run, and the run then stays `running` until
+stale run detection finalizes it as `failure`, its memory limit is below what
+the clone's maintenance or the clone itself needs (Maintenance Operations
+lists the measured peaks). Raise the limit; the interrupted maintenance
+leaves the clone valid and the next run resumes it.
 
 #### Slow or Hung Process
 

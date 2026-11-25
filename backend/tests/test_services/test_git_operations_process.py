@@ -2,10 +2,11 @@
 
 Contract: `docs/features/platform/git-fetcher-infrastructure.md` (Runtime
 Dependencies, Error Classification, Function Catalog: Module Invariants
-Rule 3, Fetch Operations, Read Operations). A fake `git` (a `/bin/sh`
-script first on `PATH`) records each invocation's PID, argv, and
-environment, and can print fixed output, exit with a given code, hang with
-a background grandchild that holds git's output pipes, or ignore SIGTERM.
+Rule 3, Fetch Operations, Read Operations, Maintenance Operations). A fake
+`git` (a `/bin/sh` script first on `PATH`) records each invocation's PID,
+argv, and environment, and can print fixed output, exit with a given code,
+hang with a background grandchild that holds git's output pipes, or ignore
+SIGTERM.
 Timeouts are shortened by patching the module's constants, which are read
 at call time, and the retry backoff is recorded instead of awaited.
 """
@@ -31,6 +32,7 @@ from app.services.git_operations import (
     GitError,
     GitFetchError,
     GitFileError,
+    GitMaintenanceError,
     check_sha_reachable,
     clone,
     diff_names,
@@ -38,6 +40,7 @@ from app.services.git_operations import (
     get_commit_date,
     get_head_sha,
     is_clone_valid,
+    maintain,
     rev_list_before,
     show_file,
 )
@@ -290,6 +293,13 @@ _OPERATIONS = {
         "SHOW_TIMEOUT_SECONDS",
         GitFileError,
         ["show"],
+    ),
+    "maintenance": _Operation(
+        {"repack": _HANG},
+        maintain,
+        "MAINTENANCE_TIMEOUT_SECONDS",
+        GitMaintenanceError,
+        ["repack"],
     ),
 }
 
@@ -595,6 +605,12 @@ _SINGLE_ATTEMPT = {
         GitFileError,
         ["show"],
     ),
+    "maintenance": (
+        {"repack": Behavior(exit_code=128)},
+        maintain,
+        GitMaintenanceError,
+        ["repack"],
+    ),
 }
 
 
@@ -603,7 +619,7 @@ _SINGLE_ATTEMPT = {
     _SINGLE_ATTEMPT.values(),
     ids=_SINGLE_ATTEMPT.keys(),
 )
-async def test_clone_fetch_show_failure_makes_one_attempt(
+async def test_unretried_operation_failure_makes_one_attempt(
     fake_git: FakeGitFactory,
     repo: Path,
     sleeps: list[float],
@@ -619,6 +635,50 @@ async def test_clone_fetch_show_failure_makes_one_attempt(
 
     assert fake.subcommands() == subcommands
     assert sleeps == []
+
+
+@pytest.mark.parametrize(
+    ("behavior", "reason"),
+    [
+        pytest.param(_HANG, "timeout", id="timeout"),
+        pytest.param(
+            Behavior(stderr="fatal: example failure\n", exit_code=128),
+            "failed",
+            id="non-zero-exit",
+        ),
+    ],
+)
+async def test_maintain_failure_reason_names_timeout_or_other_failure(
+    fake_git: FakeGitFactory,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    behavior: Behavior,
+    reason: str,
+) -> None:
+    fake = fake_git.install({"repack": behavior})
+    monkeypatch.setattr(git_operations, "MAINTENANCE_TIMEOUT_SECONDS", _SHORT_TIMEOUT)
+
+    with pytest.raises(GitMaintenanceError) as excinfo:
+        await maintain(repo)
+
+    # The reason is a fixed value; git's stderr stays in the exception text.
+    assert excinfo.value.reason == reason
+    if reason == "failed":
+        assert "example failure" in str(excinfo.value)
+    await _assert_no_process_left(fake)
+
+
+async def test_maintain_git_not_startable_reason_is_failed(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    empty_bin = tmp_path / "empty-bin"
+    empty_bin.mkdir()
+    monkeypatch.setenv("PATH", str(empty_bin))
+
+    with pytest.raises(GitMaintenanceError) as excinfo:
+        await maintain(repo)
+
+    assert excinfo.value.reason == "failed"
 
 
 @pytest.mark.parametrize(
@@ -707,6 +767,7 @@ _UNSTARTABLE = {
     "fetch_origin": (fetch_origin, GitCorruptionError),
     "get_head_sha": (get_head_sha, GitCorruptionError),
     "show_file": (lambda repo: show_file(repo, "HEAD", "README"), GitFileError),
+    "maintain": (maintain, GitMaintenanceError),
 }
 
 
@@ -741,6 +802,7 @@ _EVERY_OPERATION: list[Callable[[Path], Awaitable[object]]] = [
     lambda repo: diff_names(repo, HEAD_SHA, HEAD_SHA),
     lambda repo: rev_list_before(repo, "2026-01-01"),
     lambda repo: show_file(repo, "HEAD", "README"),
+    maintain,
 ]
 
 
@@ -778,6 +840,7 @@ async def test_every_invocation_receives_filtered_environment(
         "diff",
         "rev-list",
         "show",
+        "repack",
     ]
     for env in environments:
         assert not env.keys() & git_operations._GIT_LOCAL_ENV_VARS
