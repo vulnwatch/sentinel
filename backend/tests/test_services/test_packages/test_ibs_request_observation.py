@@ -2918,6 +2918,7 @@ class TestDeletedReleasePackage:
         assert observation == Observation(DeliveryStatus.PENDING, (), ())
         assert deleted_lookups(fake) == [f"/source/{CODESTREAM}/{rr.target_package}"]
         assert action_diff_paths(fake) == []
+        assert fake.unrouted == []
 
     async def test_correlated_release_with_a_deleted_origin_proves_nothing(
         self, fake: FakeRequests, package: str
@@ -2955,12 +2956,35 @@ class TestDeletedReleasePackage:
         assert observation == Observation(DeliveryStatus.PENDING, (), ())
         assert deleted_lookups(fake) == [f"/source/{CODESTREAM}/{rr.target_package}"]
 
-    @pytest.mark.parametrize("lookup", NOT_DELETED_LOOKUPS)
+    async def test_release_of_a_request_that_is_not_accepted_stays_incomplete(
+        self, fake: FakeRequests, package: str
+    ) -> None:
+        """A release action with acceptinfo of an open request, as left by a
+        failed acceptance, can still establish progress: its diff 404 stays
+        incomplete, without a lookup."""
+        rr = accepted_release(package)
+        fake.request(rr.number, REVIEW, rr.action)
+        fake.action_diff(
+            rr.number,
+            rr.action,
+            codestream_package=package,
+            responder=status_response(404),
+        )
+        fake.deleted_package(CODESTREAM, rr.target_package)
+        fake.quiet(package, open_releases=[rr.number])
+
+        exc = await unusable(fake, scope(package=package))
+
+        assert (exc.reason_category, exc.request_number) == ("not_found", rr.number)
+        assert deleted_lookups(fake) == []
+        assert fake.unrouted == []
+
+    @pytest.mark.parametrize("lookup", NOT_DELETED_LOOKUPS[1:])
     async def test_target_not_reported_deleted_keeps_the_diff_not_found(
         self, fake: FakeRequests, package: str, lookup: Responder
     ) -> None:
         """Without an origin package in the acceptinfo, only the target
-        package is looked up."""
+        package is looked up. (A target that exists: `TestReleaseScan`.)"""
         rr = accepted_release(package)
         fake.release_evidence(CODESTREAM, package, cve_issue(TICKET_CVE))
         codestream_history(fake, package, rr.number)
@@ -2994,6 +3018,35 @@ class TestDeletedReleasePackage:
             False,
         )
         assert len(deleted_lookups(fake)) == 2
+
+    @pytest.mark.parametrize("field", ["oproject", "opackage"])
+    async def test_no_origin_lookup_without_both_origin_fields(
+        self, fake: FakeRequests, package: str, field: str
+    ) -> None:
+        rr, opackage = release_with_origin(package)
+        assert rr.action.accept is not None
+        partial = replace(
+            rr,
+            action=replace(
+                rr.action, accept=replace(rr.action.accept, **{field: None})
+            ),
+        )
+        fake.release_evidence(CODESTREAM, package, cve_issue(TICKET_CVE))
+        codestream_history(fake, package, partial.number)
+        serve_deleted_release(
+            fake, package, partial, target=EXISTS, origin_package=opackage
+        )
+
+        exc = await unusable(fake, scope(package=package))
+
+        assert (exc.reason_category, exc.request_number) == (
+            "not_found",
+            partial.number,
+        )
+        assert deleted_lookups(fake) == [
+            f"/source/{CODESTREAM}/{partial.target_package}"
+        ]
+        assert fake.unrouted == []
 
     @pytest.mark.parametrize("lookup", NOT_DELETED_LOOKUPS)
     async def test_target_not_reported_deleted_keeps_the_lookup_not_found(
@@ -3088,18 +3141,24 @@ class TestDeletedReleasePackage:
     async def test_no_lookup_for_a_submission_diff_answered_with_404(
         self, fake: FakeRequests, package: str
     ) -> None:
-        """Only an accepted release action's diff leads to the lookup."""
-        number, action = open_submission(fake, package, diff=False)
+        """Only the diff of a release action leads to the lookup, even for
+        an accepted submission whose incident package IBS deleted."""
+        sr = accepted_submission(package)
+        fake.request(sr.number, ACCEPTED, sr.action)
         fake.action_diff(
-            number, action, codestream_package=package, responder=status_response(404)
+            sr.number,
+            sr.action,
+            codestream_package=package,
+            responder=status_response(404),
         )
-        serve_searches(fake, package, submissions=(number,))
-        fake.release_evidence(CODESTREAM, package)
+        fake.deleted_package(sr.project, sr.physical)
+        fake.quiet(package, open_submissions=[sr.number])
 
         exc = await unusable(fake, scope(package=package))
 
-        assert (exc.reason_category, exc.request_number) == ("not_found", number)
+        assert (exc.reason_category, exc.request_number) == ("not_found", sr.number)
         assert deleted_lookups(fake) == []
+        assert fake.unrouted == []
 
     async def test_the_request_delay_precedes_each_lookup(
         self, fake: FakeRequests, package: str, monkeypatch: pytest.MonkeyPatch

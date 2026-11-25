@@ -730,7 +730,7 @@ class _ScopeObservation:
         if accepted is None:
             return False
         number = detail.request_number
-        if diff_first and not await self._positive(action):
+        if diff_first and not await self._positive(action, accepted_request=True):
             return False
         if accepted.rev is None or accepted.srcmd5 is None:
             raise UnusableObservation("missing_provenance", request_number=number)
@@ -754,7 +754,7 @@ class _ScopeObservation:
             or lookup.entries[0].request_number != number
         ):
             raise UnusableObservation("release_proof_failed", request_number=number)
-        return diff_first or await self._positive(action)
+        return diff_first or await self._positive(action, accepted_request=True)
 
     def _proven(
         self, detail: IBSRequestDetail, action: IBSRequestActionDetail
@@ -876,16 +876,20 @@ class _ScopeObservation:
                 matching.append(action)
         return sorted(matching, key=lambda action: order(detail_action_key(action)))
 
-    async def _positive(self, action: IBSRequestActionDetail) -> bool:
+    async def _positive(
+        self, action: IBSRequestActionDetail, *, accepted_request: bool = False
+    ) -> bool:
         """Whether `action`'s own diff has positive evidence for the Ticket
-        CVE. The release diff of an accepted release action answered with
+        CVE. With `accepted_request` (the action's request is `accepted`),
+        the release diff of a release action with acceptinfo answered with
         HTTP 404 for a target or origin package that IBS deleted is no
         evidence (Accepted RR Provenance, Deleted release packages)."""
         try:
             labels = await self.cache.action_labels(action, self.package_name)
         except UnusableObservation as exc:
             if (
-                exc.failed
+                not accepted_request
+                or exc.failed
                 or exc.reason_category != _DIFF_NOT_FOUND
                 or action.action_type is not IBSRequestActionType.MAINTENANCE_RELEASE
                 or action.acceptinfo is None
@@ -933,7 +937,9 @@ class _ScopeObservation:
         if detail.state not in _PROGRESSING_STATES:
             return
         key = detail_action_key(action)
-        if key not in self.correlated and not await self._positive(action):
+        if key not in self.correlated and not await self._positive(
+            action, accepted_request=detail.state is IBSRequestState.ACCEPTED
+        ):
             return
         self._plan(detail, action)
         if detail.state is not IBSRequestState.ACCEPTED:

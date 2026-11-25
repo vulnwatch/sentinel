@@ -679,9 +679,8 @@ class TestDeletedReleasePackage:
 
         assert kinds(outcomes) == {scope.track_id: "updated"}
         assert fake.unrouted == []
-        assert [
-            served for served in fake.served if served[2] == (("deleted", "1"),)
-        ] == _recorded("g_deleted_target")
+        scan = _recorded(*G_SCAN_FIXTURES)
+        assert [served for served in fake.served if served in scan] == scan
         probe = await world.probe()
         assert await delivery_of(probe, scope.track_id) == DeliveryStatus.PENDING
         assert await evidence_of(probe, scope.track_id) == []
