@@ -13,8 +13,9 @@ the Ticket lock. Nothing here touches the database.
   package, current release evidence and source histories per package,
   request detail per request number, exact lookups per package and
   revision, action diffs per action, with the link-base form after an HTTP
-  400 of the not-accepted form, and the deleted package lookup per incident
-  package after an HTTP 404 of its history) and reused by every scope; an
+  400 of the not-accepted form, and the deleted package lookup per package
+  after an HTTP 404 of an incident-package history, or of the release diff
+  or exact lookup of a release action) and reused by every scope; an
   incomplete or failed artifact stays incomplete or failed for every scope
   that needs it. The caller's request delay separates every two
   consecutive IBS requests of the invocation; none precedes the first.
@@ -90,6 +91,8 @@ _DIFF_REJECTED: Final = "rejected"
 """The incomplete reason of a request action diff answered with HTTP 400."""
 _HISTORY_NOT_FOUND: Final = "not_found"
 """The incomplete reason of a source history answered with HTTP 404."""
+_DIFF_NOT_FOUND: Final = "not_found"
+"""The incomplete reason of a request action diff answered with HTTP 404."""
 
 
 class UnusableObservation(Exception):  # noqa: N818 — an outcome, not an error
@@ -449,13 +452,18 @@ class EvidenceCache:
         except UnusableObservation as exc:
             if exc.failed or exc.reason_category != _HISTORY_NOT_FOUND:
                 raise
-            if not await self._is_deleted(project, package, request_number):
+            if not await self.is_deleted(
+                project, package, request_number=request_number
+            ):
                 raise
             return None
 
-    async def _is_deleted(
-        self, project: str, package: str, request_number: int
+    async def is_deleted(
+        self, project: str, package: str, *, request_number: int
     ) -> bool:
+        """Whether the deleted package lookup reports `project/package`
+        deleted. Any incomplete lookup result is `False`; a failed lookup
+        fails the observation, attributed to `request_number`."""
         key = (project, package)
         if key not in self._deleted:
             result = await self._request(
@@ -714,8 +722,10 @@ class _ScopeObservation:
         `srcmd5` is `missing_provenance`; a lookup of the action's own
         target package that does not return that revision with that
         checksum and the request number is `release_proof_failed`; an
-        unavailable lookup or diff is incomplete. `diff_first` checks the
-        release diff before the lookup (the release scan)."""
+        unavailable lookup or diff is incomplete, except that a release
+        diff or lookup answered with HTTP 404 for a package that IBS
+        deleted proves nothing (`_release_package_deleted`). `diff_first`
+        checks the release diff before the lookup (the release scan)."""
         accepted = action.acceptinfo
         if accepted is None:
             return False
@@ -726,12 +736,19 @@ class _ScopeObservation:
             raise UnusableObservation("missing_provenance", request_number=number)
         assert action.target_project is not None
         assert action.target_package is not None
-        lookup = await self.cache.history(
-            action.target_project,
-            action.target_package,
-            revision=accepted.rev,
-            request_number=number,
-        )
+        try:
+            lookup = await self.cache.history(
+                action.target_project,
+                action.target_package,
+                revision=accepted.rev,
+                request_number=number,
+            )
+        except UnusableObservation as exc:
+            if exc.failed or exc.reason_category != _HISTORY_NOT_FOUND:
+                raise
+            if not await self._release_package_deleted(action, origin=False):
+                raise
+            return False
         if len(lookup.entries) != 1 or (
             lookup.entries[0].srcmd5 != accepted.srcmd5
             or lookup.entries[0].request_number != number
@@ -755,7 +772,8 @@ class _ScopeObservation:
 
         An entry of a request that is not accepted, such as the commit of
         a failed acceptance, proves nothing and is skipped without its
-        diff."""
+        diff; so is, after its diff or lookup, an action whose target or
+        origin package IBS deleted."""
         history = await self.cache.history(self.codestream, self.package_name)
         seen: set[int] = set()
         for entry in reversed(history.entries):
@@ -859,7 +877,50 @@ class _ScopeObservation:
         return sorted(matching, key=lambda action: order(detail_action_key(action)))
 
     async def _positive(self, action: IBSRequestActionDetail) -> bool:
-        return self.cve_id in await self.cache.action_labels(action, self.package_name)
+        """Whether `action`'s own diff has positive evidence for the Ticket
+        CVE. The release diff of an accepted release action answered with
+        HTTP 404 for a target or origin package that IBS deleted is no
+        evidence (Accepted RR Provenance, Deleted release packages)."""
+        try:
+            labels = await self.cache.action_labels(action, self.package_name)
+        except UnusableObservation as exc:
+            if (
+                exc.failed
+                or exc.reason_category != _DIFF_NOT_FOUND
+                or action.action_type is not IBSRequestActionType.MAINTENANCE_RELEASE
+                or action.acceptinfo is None
+                or not await self._release_package_deleted(action, origin=True)
+            ):
+                raise
+            return False
+        return self.cve_id in labels
+
+    async def _release_package_deleted(
+        self, action: IBSRequestActionDetail, *, origin: bool
+    ) -> bool:
+        """Whether the deleted package lookup reports the target package of
+        the accepted release `action` deleted, or, with `origin` (after an
+        HTTP 404 of the release diff) and when it does not, the origin
+        package `opackage` in a `SUSE:` `oproject` of its acceptinfo."""
+        assert action.target_project is not None
+        assert action.target_package is not None
+        number = action.request_number
+        if await self.cache.is_deleted(
+            action.target_project, action.target_package, request_number=number
+        ):
+            return True
+        accepted = action.acceptinfo
+        if (
+            not origin
+            or accepted is None
+            or accepted.oproject is None
+            or accepted.opackage is None
+            or not accepted.oproject.startswith(SUSE_NAMESPACE)
+        ):
+            return False
+        return await self.cache.is_deleted(
+            accepted.oproject, accepted.opackage, request_number=number
+        )
 
     async def _evaluate(
         self, detail: IBSRequestDetail, action: IBSRequestActionDetail

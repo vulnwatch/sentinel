@@ -1303,6 +1303,411 @@
         ]
       ],
       "status": 404
+    },
+    "g_sourceinfo_current.xml": {
+      "captured_at": "2026-11-25",
+      "method": "GET",
+      "path": "/source/SUSE:SLE-15:Update",
+      "query": [
+        [
+          "view",
+          "info"
+        ],
+        [
+          "nofilename",
+          "1"
+        ],
+        [
+          "package",
+          "cpio"
+        ]
+      ],
+      "status": 200
+    },
+    "g_diff_current.xml": {
+      "captured_at": "2026-11-25",
+      "method": "POST",
+      "path": "/source/SUSE:SLE-15:Update/cpio",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "expand",
+          "1"
+        ],
+        [
+          "orev",
+          "0"
+        ],
+        [
+          "rev",
+          "eb1eba6a605f41fd7cef2d7202878282"
+        ]
+      ],
+      "status": 200
+    },
+    "g_history_codestream.xml": {
+      "captured_at": "2026-11-25",
+      "method": "GET",
+      "path": "/source/SUSE:SLE-15:Update/cpio/_history",
+      "query": [],
+      "status": 200
+    },
+    "g_request_rr_960405.xml": {
+      "captured_at": "2026-11-25",
+      "method": "GET",
+      "path": "/request/960405",
+      "query": [],
+      "status": 200
+    },
+    "g_diff_rr_960405.xml": {
+      "captured_at": "2026-11-25",
+      "method": "POST",
+      "path": "/source/SUSE:SLE-15:Update/cpio.81305",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "withissues",
+          "1"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "rev",
+          "e5de2ef5cc879aa927d442c36fc8cfab"
+        ],
+        [
+          "orev",
+          "ee08e6b2c9893f3d1048688ebae74cb9"
+        ],
+        [
+          "oproject",
+          "SUSE:SLE-15:Update"
+        ],
+        [
+          "opackage",
+          "cpio.81304"
+        ]
+      ],
+      "status": 200
+    },
+    "g_request_rr_960404.xml": {
+      "captured_at": "2026-11-25",
+      "method": "GET",
+      "path": "/request/960404",
+      "query": [],
+      "status": 200
+    },
+    "g_diff_rr_960404.xml": {
+      "captured_at": "2026-11-25",
+      "method": "POST",
+      "path": "/source/SUSE:SLE-15:Update/cpio.81304",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "withissues",
+          "1"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "rev",
+          "ee08e6b2c9893f3d1048688ebae74cb9"
+        ],
+        [
+          "orev",
+          "79af28d9750bae6624bbf121456a6b8e"
+        ],
+        [
+          "oproject",
+          "SUSE:SLE-15:Update"
+        ],
+        [
+          "opackage",
+          "cpio.81303"
+        ]
+      ],
+      "status": 200
+    },
+    "g_request_rr_960403.xml": {
+      "captured_at": "2026-11-25",
+      "method": "GET",
+      "path": "/request/960403",
+      "query": [],
+      "status": 200
+    },
+    "g_diff_rr_960403.xml": {
+      "captured_at": "2026-11-25",
+      "method": "POST",
+      "path": "/source/SUSE:SLE-15:Update/cpio.81303",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "withissues",
+          "1"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "rev",
+          "79af28d9750bae6624bbf121456a6b8e"
+        ],
+        [
+          "orev",
+          "bdabe44ddb2f5364fe9c8b51228baabf"
+        ],
+        [
+          "oproject",
+          "SUSE:SLE-15:Update"
+        ],
+        [
+          "opackage",
+          "cpio.81301"
+        ]
+      ],
+      "status": 200
+    },
+    "g_request_rr_960402.xml": {
+      "captured_at": "2026-11-25",
+      "method": "GET",
+      "path": "/request/960402",
+      "query": [],
+      "status": 200
+    },
+    "g_diff_rr_960402.xml": {
+      "captured_at": "2026-11-25",
+      "method": "POST",
+      "path": "/source/SUSE:SLE-15:Update/cpio.81302",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "withissues",
+          "1"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "rev",
+          "c045a01eec18b78352f0b8df1a7ee4b2"
+        ],
+        [
+          "orev",
+          "bdabe44ddb2f5364fe9c8b51228baabf"
+        ],
+        [
+          "oproject",
+          "SUSE:SLE-15:Update"
+        ],
+        [
+          "opackage",
+          "cpio.81301"
+        ]
+      ],
+      "status": 404
+    },
+    "g_request_rr_960401.xml": {
+      "captured_at": "2026-11-25",
+      "method": "GET",
+      "path": "/request/960401",
+      "query": [],
+      "status": 200
+    },
+    "g_diff_rr_960401.xml": {
+      "captured_at": "2026-11-25",
+      "method": "POST",
+      "path": "/source/SUSE:SLE-15:Update/cpio.81301",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "withissues",
+          "1"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "rev",
+          "bdabe44ddb2f5364fe9c8b51228baabf"
+        ],
+        [
+          "orev",
+          "71a00277ecb66f77f925d60028f60f05"
+        ]
+      ],
+      "status": 200
+    },
+    "g_deleted_target.xml": {
+      "captured_at": "2026-11-25",
+      "method": "GET",
+      "path": "/source/SUSE:SLE-15:Update/cpio.81302",
+      "query": [
+        [
+          "deleted",
+          "1"
+        ]
+      ],
+      "status": 200
+    },
+    "g_history_lookup_deleted_target.xml": {
+      "captured_at": "2026-11-25",
+      "method": "GET",
+      "path": "/source/SUSE:SLE-15:Update/cpio.81302/_history",
+      "query": [
+        [
+          "rev",
+          "1"
+        ]
+      ],
+      "status": 404
+    },
+    "g_history_lookup.xml": {
+      "captured_at": "2026-11-25",
+      "method": "GET",
+      "path": "/source/SUSE:SLE-15:Update/cpio.81301/_history",
+      "query": [
+        [
+          "rev",
+          "1"
+        ]
+      ],
+      "status": 200
+    },
+    "g_request_rr_origin_deleted.xml": {
+      "captured_at": "2026-11-25",
+      "method": "GET",
+      "path": "/request/960406",
+      "query": [],
+      "status": 200
+    },
+    "g_diff_rr_origin_deleted.xml": {
+      "captured_at": "2026-11-25",
+      "method": "POST",
+      "path": "/source/SUSE:SLE-12-SP2:Update/openssl.81306",
+      "query": [
+        [
+          "cmd",
+          "diff"
+        ],
+        [
+          "view",
+          "xml"
+        ],
+        [
+          "withissues",
+          "1"
+        ],
+        [
+          "onlyissues",
+          "1"
+        ],
+        [
+          "rev",
+          "61ac98ad964f8c7625511d35081a7bc6"
+        ],
+        [
+          "orev",
+          "585b37cd6e06c1331f6acf186c7c8619"
+        ],
+        [
+          "oproject",
+          "SUSE:SLE-12-SP2:Update"
+        ],
+        [
+          "opackage",
+          "openssl.81307"
+        ]
+      ],
+      "status": 404
+    },
+    "g_history_lookup_origin_deleted.xml": {
+      "captured_at": "2026-11-25",
+      "method": "GET",
+      "path": "/source/SUSE:SLE-12-SP2:Update/openssl.81306/_history",
+      "query": [
+        [
+          "rev",
+          "1"
+        ]
+      ],
+      "status": 200
+    },
+    "g_deleted_target_exists.xml": {
+      "captured_at": "2026-11-25",
+      "method": "GET",
+      "path": "/source/SUSE:SLE-12-SP2:Update/openssl.81306",
+      "query": [
+        [
+          "deleted",
+          "1"
+        ]
+      ],
+      "status": 400
+    },
+    "g_deleted_origin.xml": {
+      "captured_at": "2026-11-25",
+      "method": "GET",
+      "path": "/source/SUSE:SLE-12-SP2:Update/openssl.81307",
+      "query": [
+        [
+          "deleted",
+          "1"
+        ]
+      ],
+      "status": 200
     }
   }
 }

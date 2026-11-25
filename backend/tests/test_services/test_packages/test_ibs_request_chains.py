@@ -3,8 +3,8 @@ sanitized live provenance chains.
 
 Owning specifications: docs/features/packages/ibs-submission-tracking.md
 (Required Roots, Effective SR including a deleted incident package, Release
-Discovery, Accepted RR Provenance, Delivery Derivation, Shared Authoritative
-Reconciliation) and
+Discovery, Accepted RR Provenance including deleted release packages,
+Delivery Derivation, Shared Authoritative Reconciliation) and
 docs/features/packages/package-model.md (Automatic Transitions: delivery
 transitions, `PENDING -> IN_PROGRESS -> RELEASED` in one transaction).
 
@@ -52,6 +52,11 @@ from tests.support.ibs_request_provenance import (
     F_INCIDENT_DELETED,
     F_KERNEL_PACKAGE,
     F_SR_DELETED,
+    G_CVE,
+    G_INCIDENT,
+    G_RR,
+    G_RR_WITHDRAWN,
+    G_SCAN,
     SLE12_SP5,
     SLE15,
     SP4,
@@ -87,6 +92,23 @@ A_INCIDENT: Final = 80001
 A_LOOKUP_SRCMD5: Final = "c40f9d03a8728b65ac857fe47495c082"
 C_KERNEL_CVE: Final = "CVE-2024-44981"
 """A CVE released by kernel release request 960035 and not by 960036."""
+G_UNRELEASED_CVE: Final = "CVE-2026-90401"
+"""A fictional CVE of the current `cpio` sources that no captured release
+diff of chain G carries, as when the withdrawn release alone released it."""
+G_SCAN_FIXTURES: Final = (
+    "g_history_codestream",
+    *(
+        name
+        for number in G_SCAN
+        for name in (
+            f"g_request_rr_{number}",
+            f"g_diff_rr_{number}",
+            *(["g_deleted_target"] if number == G_RR_WITHDRAWN else []),
+        )
+    ),
+)
+"""The codestream history and the documents that the release scan of chain G
+reads for every entry, newest first."""
 
 
 def _fixture_action(name: str, target_package: str) -> Action:
@@ -588,3 +610,78 @@ class TestDeletedIncidentPackage:
                 source_project=f"SUSE:Maintenance:REQUEST:{F_SR_DELETED}",
             )
         ]
+
+
+class TestDeletedReleasePackage:
+    """Chain G: IBS deleted the target package of an accepted release
+    request of `cpio` in `SUSE:SLE-15:Update` after its release, so its
+    release diff answers HTTP 404, and the deleted package lookup reports
+    the package deleted."""
+
+    async def test_the_scan_continues_past_the_withdrawn_release_to_the_proof(
+        self, world: RequestWorld, fake: FakeRequests
+    ) -> None:
+        seed = RequestSeed(world)
+        scope = await seed.track(
+            await seed.ticket(cve_id=G_CVE), package="cpio", codestream=SLE15
+        )
+        await seed.commit()
+        world.numbers().update(G_SCAN)
+        for name in (
+            "g_sourceinfo_current",
+            "g_diff_current",
+            *G_SCAN_FIXTURES,
+            "g_history_lookup",
+        ):
+            serve_provenance(fake, name)
+
+        outcomes = await reconcile(fake, [scope])
+
+        assert kinds(outcomes) == {scope.track_id: "created"}
+        assert fake.unrouted == []
+        assert fake.served == _recorded(
+            "g_sourceinfo_current",
+            "g_diff_current",
+            *G_SCAN_FIXTURES,
+            "g_history_lookup",
+        )
+        probe = await world.probe()
+        assert await delivery_of(probe, scope.track_id) == DeliveryStatus.RELEASED
+        [row] = await evidence_of(probe, scope.track_id)
+        assert (row.request_number, row.incident_number, row.accepted_revision) == (
+            G_RR,
+            G_INCIDENT,
+            "1",
+        )
+
+    async def test_without_another_release_the_delivery_derives_from_other_roots(
+        self, world: RequestWorld, fake: FakeRequests
+    ) -> None:
+        """The accepted limitation: when the release that cannot be proven
+        is the only one of the Ticket CVE, the scan exhausts the history and
+        the observation completes; without other progress, a track that was
+        `IN_PROGRESS` returns to `PENDING`."""
+        seed = RequestSeed(world)
+        scope = await seed.track(
+            await seed.ticket(cve_id=G_UNRELEASED_CVE),
+            package="cpio",
+            codestream=SLE15,
+            delivery=DeliveryStatus.IN_PROGRESS,
+        )
+        await seed.commit()
+        world.numbers().update(G_SCAN)
+        fake.quiet("cpio", SLE15)
+        fake.release_evidence(SLE15, "cpio", cve_issue(G_UNRELEASED_CVE))
+        for name in G_SCAN_FIXTURES:
+            serve_provenance(fake, name)
+
+        outcomes = await reconcile(fake, [scope])
+
+        assert kinds(outcomes) == {scope.track_id: "updated"}
+        assert fake.unrouted == []
+        assert [
+            served for served in fake.served if served[2] == (("deleted", "1"),)
+        ] == _recorded("g_deleted_target")
+        probe = await world.probe()
+        assert await delivery_of(probe, scope.track_id) == DeliveryStatus.PENDING
+        assert await evidence_of(probe, scope.track_id) == []

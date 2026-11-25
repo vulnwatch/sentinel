@@ -1,0 +1,53 @@
+<request id="960401">
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81301" package="cpio.SUSE_SLE-15_Update" />
+    <target project="SUSE:SLE-15:Update" package="cpio.81301" />
+    <acceptinfo rev="1" srcmd5="bdabe44ddb2f5364fe9c8b51228baabf" osrcmd5="71a00277ecb66f77f925d60028f60f05" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81301" package="patchinfo" />
+    <target project="SUSE:SLE-15:Update" package="patchinfo.81301" />
+    <acceptinfo rev="1" srcmd5="98929a400aaabfc6a531560539437537" osrcmd5="71a00277ecb66f77f925d60028f60f05" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81301" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Basesystem:15-SP1:aarch64" package="patchinfo.81301" />
+    <acceptinfo rev="1" srcmd5="98929a400aaabfc6a531560539437537" osrcmd5="71a00277ecb66f77f925d60028f60f05" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81301" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Basesystem:15-SP1:ppc64le" package="patchinfo.81301" />
+    <acceptinfo rev="1" srcmd5="98929a400aaabfc6a531560539437537" osrcmd5="71a00277ecb66f77f925d60028f60f05" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81301" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Basesystem:15-SP1:s390x" package="patchinfo.81301" />
+    <acceptinfo rev="1" srcmd5="98929a400aaabfc6a531560539437537" osrcmd5="71a00277ecb66f77f925d60028f60f05" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81301" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Basesystem:15-SP1:x86_64" package="patchinfo.81301" />
+    <acceptinfo rev="1" srcmd5="98929a400aaabfc6a531560539437537" osrcmd5="71a00277ecb66f77f925d60028f60f05" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81301" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Basesystem:15:aarch64" package="patchinfo.81301" />
+    <acceptinfo rev="1" srcmd5="98929a400aaabfc6a531560539437537" osrcmd5="71a00277ecb66f77f925d60028f60f05" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81301" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Basesystem:15:ppc64le" package="patchinfo.81301" />
+    <acceptinfo rev="1" srcmd5="98929a400aaabfc6a531560539437537" osrcmd5="71a00277ecb66f77f925d60028f60f05" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81301" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Basesystem:15:s390x" package="patchinfo.81301" />
+    <acceptinfo rev="1" srcmd5="98929a400aaabfc6a531560539437537" osrcmd5="71a00277ecb66f77f925d60028f60f05" />
+  </action>
+  <action type="maintenance_release">
+    <source project="SUSE:Maintenance:81301" package="patchinfo" />
+    <target project="SUSE:Updates:SLE-Module-Basesystem:15:x86_64" package="patchinfo.81301" />
+    <acceptinfo rev="1" srcmd5="98929a400aaabfc6a531560539437537" osrcmd5="71a00277ecb66f77f925d60028f60f05" />
+  </action>
+  <state name="accepted" created="2019-11-05T17:53:25" when="2019-11-25T16:33:14" />
+</request>
