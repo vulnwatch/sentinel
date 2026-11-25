@@ -486,8 +486,9 @@ A completely parsed action diff with no qualifying issue is a successful
 no-match for that action. A malformed, unavailable, truncated, or ambiguous diff
 is incomplete; when correlation or effective contents depend on it, the
 observation is incomplete, and it never deletes retained history or proves a
-negative. The one exception is the release diff of an accepted release action
-whose target or origin package IBS deleted, which is not evidence
+negative. Another exception is the release diff of a release action of an
+accepted request whose target or origin package IBS deleted, which is not
+evidence
 ([Accepted RR Provenance](#accepted-rr-provenance), Deleted release
 packages). The diff of an action that is not accepted can be unavailable,
 temporarily or permanently, for the reasons listed in
@@ -660,9 +661,14 @@ History). Sentinel therefore requests the deleted-package lookup
 When a package is reported deleted, the release diff or the exact lookup can
 no longer be obtained: the action proves nothing and carries no evidence for
 the Ticket CVE, so its diff correlates it to no track, and it does not make
-the observation incomplete. This applies to every accepted release action
-whose release diff or exact lookup the observation requires: one correlated to
-the track, one found by the release scan, and one found through another root.
+the observation incomplete. This applies to every release action of an
+`accepted` request whose release diff or exact lookup the observation
+requires: one correlated to the track, one found by the release scan, and one
+found through another root. Only such an action can prove a release; a
+release action with acceptinfo of a request that is not accepted, left by a
+failed acceptance ([Release Discovery](#release-discovery)), keeps an
+unavailable diff as incomplete evidence, because its request can still
+establish progress.
 A later observation evaluates the action again; if IBS restores the package,
 the proof decides as above. Any other result of the lookups leaves the
 evidence unavailable, and the scope reports the original `not_found` as its
@@ -1469,9 +1475,8 @@ Implementation coverage must include:
     deleted, including the observed codestream history in which an older
     release is then proven, and an exhausted history after it: a complete
     observation without `RELEASED` whose delivery derives from the remaining
-    roots (`IN_PROGRESS` with an effective SR; otherwise `PENDING`, including
-    a regression from `IN_PROGRESS` and its block by the stale-negative
-    guard);
+    roots (`IN_PROGRESS` with other current progress, such as an open SR;
+    otherwise `PENDING`, including a regression from `IN_PROGRESS`);
 - the release proof:
   - success, and failure of each comparison;
   - missing acceptinfo `rev` or `srcmd5`, and an unavailable lookup;
@@ -1482,13 +1487,15 @@ Implementation coverage must include:
     target or origin package, and an exact lookup answered with HTTP 404 for
     a target package, that the deleted-package lookup reports deleted (no
     delivery evidence), for an action correlated to the track, one found by
-    the release scan, and an uncorrelated accepted one found through another
-    root (not correlated); the origin lookup only after a release diff 404,
+    the release scan, and an uncorrelated one of an accepted request found
+    through another root (not correlated); a release action with acceptinfo
+    of a request that is not accepted (incomplete, without a lookup); the
+    origin lookup only after a release diff 404,
     when the target is not reported deleted and the acceptinfo names both
     `oproject` and `opackage`; every other lookup result (incomplete,
     `not_found`), a failed lookup (failed), no lookup after any other
     outcome, the request delay before it, and one lookup per package within
-    an invocation, shared with the incident-package lookups;
+    an invocation;
   - a release proven although its SR's expanded checksum differs from the
     release request's source revision;
 - effective-SR selection:
@@ -1604,8 +1611,9 @@ No mechanism can reconstruct facts after every relevant request detail, action
 diff, source-history entry, issue index, binary, and advisory artifact has
 disappeared upstream. Such a scope is incomplete and preserves the last proven
 delivery state, except where the deleted-package lookup reports a package
-deleted ([Observation Outcomes](#observation-outcomes)). Synchronization health is represented by `FetcherRun`, consumer
-status, metrics, and sanitized logs, never by another delivery state.
+deleted ([Observation Outcomes](#observation-outcomes)). Synchronization health
+is represented by `FetcherRun`, consumer status, metrics, and sanitized logs,
+never by another delivery state.
 
 ## Scope Exclusions
 
