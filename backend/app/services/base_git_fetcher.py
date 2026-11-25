@@ -19,7 +19,8 @@ catch. Concrete subclasses declare the configurable attributes and implement
 Git failures never leave this class as git exceptions: clone and fetch
 failures, corruption (after deleting the clone), and deletion failures become
 `FetcherError` with a fixed public message and the triggering exception
-chained, so git's stderr reaches only `error_detail`. A run that fetched ends
+chained, so git's stderr reaches only `error_detail`. A completed clone logs
+its duration (`git_clone_completed`). A run that fetched ends
 with the clone's maintenance (step 12), which starts only when it can end
 before the soft time limit and whose failure is a WARNING that leaves the run
 outcome unchanged. Every log event is bounded: no stderr, URL, stored cursor
@@ -76,6 +77,7 @@ DELETE_FAILED_GUIDANCE: Final = (
 CLONE_UNAVAILABLE_MESSAGE: Final = "Git clone not available for single-item lookup"
 ALL_CANDIDATES_FAILED_MESSAGE: Final = "File read failed for all candidate paths"
 
+CLONE_COMPLETED_EVENT: Final = "git_clone_completed"
 CLONE_INVALID_REBUILDING_EVENT: Final = "git_clone_invalid_rebuilding"
 CLONE_CORRUPTION_DETECTED_EVENT: Final = "git_clone_corruption_detected"
 CLONE_DELETE_FAILED_EVENT: Final = "git_clone_delete_failed"
@@ -311,10 +313,18 @@ class BaseGitFetcher(BaseCVEFetcher):
         await self.commit_and_dispatch(session, result)
 
     async def _clone_or_fail(self, repo_path: Path) -> None:
+        """Steps 3a and 4a: clone, and log how long it took, which tells an
+        operator how close a clone comes to the Clone timeout."""
+        clone_started = time.monotonic()
         try:
             await self._clone_repo(repo_path)
         except GitFetchError as exc:
             raise FetcherError(CLONE_FAILED_MESSAGE) from exc
+        logger.info(
+            CLONE_COMPLETED_EVENT,
+            fetcher_name=self.name,
+            duration_seconds=round(time.monotonic() - clone_started, 1),
+        )
 
     async def _delete_or_fail(self, repo_path: Path) -> None:
         try:

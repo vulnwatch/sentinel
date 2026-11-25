@@ -47,6 +47,7 @@ For architectural decisions and design constraints, see
   - [Celery Worker Pool Requirement](#celery-worker-pool-requirement)
   - [Startup Ordering](#startup-ordering)
   - [Git Worker Volume](#git-worker-volume)
+  - [Git Worker Resources](#git-worker-resources)
   - [Timezone and Locale Requirements](#timezone-and-locale-requirements)
   - [Python Interpreter Limits](#python-interpreter-limits)
   - [Clock Synchronization](#clock-synchronization)
@@ -2009,13 +2010,39 @@ stores bare clones of external git repositories used by CVE fetchers.
 
 | Property | Value |
 |----------|-------|
-| Minimum capacity | 8 GB |
+| Minimum capacity | 50 GB |
+| Free space | At least the size of the `cvelistV5` clone plus 1 GB |
 | Access mode | ReadWriteOnce (single worker) |
 | Backup | Not required — recoverable cache (fetchers re-clone if lost) |
 
 Bare clones have no working tree — accidental checkout expansion
 (which could consume ~4 GB for cvelistV5 alone) is structurally
 impossible.
+
+**Capacity.** The volume holds both clones: on 2026-11-25, 3.6 GB for
+`cvelistV5` and about 0.25 GB for `vulns.git`. A full consolidation of
+`cvelistV5` by the clone's maintenance writes a new pack of about the
+clone's size beside the packs it replaces, and deletes them only afterwards
+(`docs/features/platform/git-fetcher-infrastructure.md`, Maintenance
+Operations), so its peak is about twice the clone: on the test
+deployment, about 7.3 GB in use on a 10 GiB volume (2026-11-25). The
+objects of `cvelistV5` took about 1.5 GB a year earlier, so the clone grew
+by about 2 GB in that year, and at a rate of about 3 GB a year in its last
+three months (measured as the on-disk size of the objects reachable from
+the upstream `HEAD` of each date). 50 GB covers the peak, with the free
+space below, until the clone reaches about 24 GB: at the rate of the last
+three months in about six years, and if the clone keeps growing by a
+factor of 2.3 a year, as in the year to 2026-11-25, in about two.
+
+**Free space.** Because the growth is not predictable, check the free
+space regularly, for example with `df` on the volume and `du -s` of
+`GIT_CLONE_BASE_DIR/cvelistV5`, and enlarge the volume before the free
+space falls below the size of the `cvelistV5` clone plus 1 GB. A full
+consolidation that runs out of space fails as
+`git_clone_maintenance_failed` with `reason` `failed` and removes its
+temporary pack (see [Git Clone Maintenance](#git-clone-maintenance)); a
+full volume also makes the fetches fail (see
+[Git Fetcher Runs Keep Failing](#git-fetcher-runs-keep-failing)).
 
 The volume MUST be writable by the image's non-root runtime user (see
 [Container Build Conventions](#container-build-conventions)). The image
@@ -2030,6 +2057,90 @@ directory the user cannot write fails every Git fetcher run at clone time.
 See `docs/features/platform/git-fetcher-infrastructure.md` (Volume
 Requirements, Recovery, Worker Affinity) for volume layout, recovery
 procedures, and worker affinity configuration.
+
+### Git Worker Resources
+
+The `git` processes of the Git worker need much more CPU and memory than
+its Python processes, and the largest of them grow with the `cvelistV5`
+repository. These requirements hold for `--concurrency=1` (see
+[Kubernetes Workloads](#kubernetes-workloads), Worker concurrency); a
+further child process adds its own Python process and lets another Git
+fetcher task overlap a `sync_mitre_cves` clone or maintenance, whose peaks
+then add up.
+
+| Resource | Requirement |
+|----------|-------------|
+| CPU limit | At least 2 CPU; 4 CPU recommended. More than 4 does not shorten the clone |
+| Memory limit | At least 4 GiB, and at least 1 KiB per object of the `cvelistV5` clone plus 0.5 GiB |
+| Memory request | Equal to the memory limit |
+
+**CPU.** The clone of `cvelistV5`, on a first run or when the clone is
+rebuilt, is limited by CPU: its `git index-pack` inflates, resolves, and
+hashes the whole repository with 4 threads
+(`docs/features/platform/git-fetcher-infrastructure.md`, Clone Operations)
+and must end within the 50-minute Clone timeout, or the run fails and the
+next run clones again from the start. A fetch and the clone's maintenance
+(one thread) need far less. Measured on 2026-11-25 with git 2.47.3:
+
+| Clone of `cvelistV5` (2.56 million objects, 3.6 GB) | CPU limit | Duration | CPU time |
+|---|---|---|---|
+| Test deployment (Kubernetes, nodes of 8 CPUs, on which git also selects 4 threads) | 2 | 1,634 s (27 min) | 3,128 s |
+| Container on a development host | 2 | 1,322 s (22 min); download 1.5 min | 2,521 s |
+| Same, indexing only, both limits under the same load | 2 and 4 | 1,522 s and 861 s | — |
+
+4 CPUs therefore take about 0.57 times as long as 2, about 16 minutes on
+the test deployment. The CPU time of the clone about doubled in the year to
+2026-11-25: indexing the repository of a year earlier (1.44 million
+objects) took 1,221 s of CPU time against 2,524 s for the one of
+2026-11-25, measured the same way. If it keeps doubling, a clone at 2 CPUs
+exceeds the Clone timeout within about a year, and one at 4 CPUs within
+about two. A request below the CPU limit lets the clone use the limit only
+while the node has that CPU free; the durations above assume it has.
+
+**Re-evaluation of the CPU.** Each clone logs `git_clone_completed` with
+its `duration_seconds` (`docs/features/platform/git-fetcher-infrastructure.md`,
+Template Method `execute()`, steps 3a and 4a). When a clone of `cvelistV5`
+takes more than 2,000 seconds, two thirds of the Clone timeout, raise the
+CPU limit, up to 4 CPU. A clone that takes more than 2,000 seconds at
+4 CPUs needs a change to the Clone timeout or to the clone itself
+(`docs/features/platform/git-fetcher-infrastructure.md`, Runtime
+Dependencies), because more CPUs do not shorten it. A clone
+happens only on a first run or a rebuild, so to check the margin without
+waiting for one, delete the clone directory while no run of
+`sync_mitre_cves` is active: the next run clones again and resumes from the
+stored cursor (`docs/features/platform/git-fetcher-infrastructure.md`,
+Recovery).
+
+**Memory.** Two `git` processes set the memory requirement; the Celery
+processes of the Git worker add about 150 to 170 MiB:
+
+- The clone: 1,423 to 1,944 MiB of anonymous memory for the 2026-11-25
+  repository with 4 threads, depending on how its pack is compressed, and
+  1,196 MiB for the repository of a year earlier. Without a fixed thread
+  count, the same clone used 3,814 MiB with the 12 threads that
+  `index-pack` selects on a host of 24 CPUs.
+- A full consolidation by the clone's maintenance: about 0.6 KiB per
+  object that it packs, 1,545 MiB on 2026-11-25
+  (`docs/features/platform/git-fetcher-infrastructure.md`, Maintenance
+  Operations, Resources). It packs every object, and happens only once the
+  clone holds about 1.5 times the objects of its largest pack, so the next
+  one packs at most about 1.5 times the objects that the clone holds now:
+  1 KiB per object of the clone covers it.
+
+Both also fill the page cache up to the memory limit, which the kernel
+reclaims: the test deployment's clone reached its 3 GiB limit 226 times
+without an out-of-memory kill. The 4 GiB floor leaves the clone about twice
+its measured peak. The per-object term exceeds 4 GiB once the clone holds
+about 3.7 million objects; at the growth of 2026 (1.1 million objects in
+the year to 2026-11-25, at a rate of about 1.6 million a year in its last
+three months), that is around the second half of 2027. Count the objects
+in the Git worker's container with
+`git --git-dir=<GIT_CLONE_BASE_DIR>/cvelistV5 count-objects -v`: the sum of
+`count` and `in-pack`. A memory limit below the requirement shows as an
+out-of-memory kill of the Git worker during a Git fetcher run (see
+[Git Clone Maintenance](#git-clone-maintenance)), which repeats on every
+run that fetches. A memory request equal to the limit keeps the node from
+running short of the memory that the Git worker needs at its peaks.
 
 ### Timezone and Locale Requirements
 
@@ -2200,7 +2311,7 @@ Deployment-agnostic packaging).
 |------|----------|----------|-----------------|----------------------|
 | API server | Deployment | 1 or more | Rolling update | Liveness probe `/health`, readiness probe `/ready`, `timeoutSeconds` of at least 5 (see [Health Checks](#health-checks)) |
 | Celery worker | Deployment | 1 or more | Rolling update | Explicit `--concurrency` (see Worker concurrency below); no probe (see Worker recovery and probes below) |
-| Git worker | Deployment | Exactly 1 | `Recreate` | ReadWriteOnce volume at `GIT_CLONE_BASE_DIR` with `fsGroup: 1000` (see [Git Worker Volume](#git-worker-volume)); explicit `--concurrency`; no probe (see Worker recovery and probes below) |
+| Git worker | Deployment | Exactly 1 | `Recreate` | ReadWriteOnce volume at `GIT_CLONE_BASE_DIR` with `fsGroup: 1000` (see [Git Worker Volume](#git-worker-volume)); `--concurrency=1` with the CPU and memory of [Git Worker Resources](#git-worker-resources); no probe (see Worker recovery and probes below) |
 | Celery Beat | Deployment | Exactly 1 | Any | A replacement waits for the redbeat distributed lock until the previous instance stops (`docs/features/platform/fetcher-infrastructure.md`, Lock Acquisition) |
 | IBS RabbitMQ consumer | Deployment | Exactly 1 | `Recreate` | `terminationGracePeriodSeconds` of at least 60 (see [Singleton Processes](#singleton-processes)). Not deployed when `IBS_RABBITMQ_ENABLED=false`, because a Deployment restarts a successful exit |
 | Alembic migration | Job | — | — | Completes before any runtime workload starts (see [Database Migrations](#database-migrations)) |
@@ -2228,7 +2339,8 @@ starts one child process per CPU reported by `os.cpu_count()`. In a container
 that is the node's CPU count, not the container's CPU limit, so a worker on a
 large node starts more children than its CPU and memory limits support. Both
 worker roles MUST pass `--concurrency` explicitly, sized to their resource
-limits.
+limits. For the Git worker, [Git Worker Resources](#git-worker-resources)
+states the limits for `--concurrency=1`.
 
 **Worker recovery and probes.** Both worker roles MUST resume consuming once
 the broker is reachable again after a restart or an outage, without a process
@@ -3116,6 +3228,12 @@ permission.
 3. `Local git clone directory could not be removed — manual intervention
    required`: check the volume's mount state and permissions, then remove
    the clone directory manually
+4. `clone failed` on every run with `error_detail`
+   `git timed out after 3000 seconds`: the clone does not end within the
+   Clone timeout, and each run starts it again from the beginning. Check the
+   CPU of the Git worker against
+   [Git Worker Resources](#git-worker-resources), and whether the node lets
+   it use its CPU limit
 
 #### Git Clone Maintenance
 
@@ -3155,9 +3273,10 @@ Recovery).
 When the Git worker restarts with an out-of-memory kill (`OOMKilled`, exit
 code 137) during a Git fetcher run, and the run then stays `running` until
 stale run detection finalizes it as `failure`, its memory limit may be below
-what the clone's maintenance needs (Maintenance Operations lists the measured
-peaks). Such a run keeps its previous cursor although its items are
-committed, and the kill repeats on every run that fetches, which processes
+what the clone's maintenance needs (see
+[Git Worker Resources](#git-worker-resources)). Such a run keeps its
+previous cursor although its items are committed, and the kill repeats on
+every run that fetches, which processes
 the same growing delta again, until the limit is raised. The interrupted
 maintenance leaves the clone valid.
 

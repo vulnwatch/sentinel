@@ -24,6 +24,7 @@ import os
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -146,10 +147,33 @@ def foreground_maintenance_config(directory: Path) -> Path:
     return path
 
 
-def _trace_events(trace: Path, event: str) -> list[list[str]]:
+def _trace_records(trace: Path) -> list[dict[str, Any]]:
     lines = trace.read_text(encoding="utf-8").splitlines() if trace.exists() else []
-    records = [json.loads(line) for line in lines]
-    return [record["argv"] for record in records if record["event"] == event]
+    return [json.loads(line) for line in lines]
+
+
+def _trace_events(trace: Path, event: str) -> list[list[str]]:
+    return [
+        record["argv"] for record in _trace_records(trace) if record["event"] == event
+    ]
+
+
+def index_pack_config_values(trace: Path, key: str) -> list[str | None]:
+    """The value of the configuration `key` in every `git index-pack`
+    process that wrote to the `GIT_TRACE2_EVENT` file `trace`, `None` where
+    it was unset. The trace lists `key` only with
+    `GIT_TRACE2_CONFIG_PARAMS=<key>`."""
+    records = _trace_records(trace)
+    values = {
+        record["sid"]: record["value"]
+        for record in records
+        if record["event"] == "def_param" and record["param"] == key
+    }
+    return [
+        values.get(record["sid"])
+        for record in records
+        if record["event"] == "start" and record["argv"][1:2] == ["index-pack"]
+    ]
 
 
 def traced_commands(trace: Path) -> list[list[str]]:

@@ -108,7 +108,9 @@ with `--git-dir` (see "Function Catalog").
 Except for the validity check, the commands above are shown without the
 module's common prefix: every repository-scoped command runs as
 `git --git-dir=<repo_path> ...` with the environment of Module
-Invariants Rule 3.
+Invariants Rule 3. The clone and the fetch also pass
+`-c pack.threads=4` before their subcommand, which fixes the threads of
+the `git index-pack` they start (see "Clone Operations").
 
 ## Cursor Persistence
 
@@ -229,7 +231,7 @@ automatically (see Recovery below).
 | Property | Value |
 |----------|-------|
 | Persistence | Required across container restarts |
-| Capacity | 8 GB minimum (current usage ~3.2 GB; provides headroom for git repack operations — which temporarily require old + new pack coexistence (~6.4 GB peak) — plus future growth at ~150 MB/year) |
+| Capacity | 50 GB minimum, and free space of at least the size of the `cvelistV5` clone plus 1 GB (see `docs/deployment.md`, Git Worker Volume, for the basis). A full consolidation of the clone's maintenance writes its new pack beside the packs it replaces, so its peak is about twice the clone. On 2026-11-25 the `cvelistV5` clone was 3.6 GB and `vulns.git` about 0.25 GB; `cvelistV5` grew by about 2 GB in the preceding year, at a rate of about 3 GB a year in its last three months |
 | Access mode | ReadWriteOnce (single worker pod) |
 | Filesystem | Any POSIX-compliant filesystem |
 | Backup | Not required (recoverable from upstream repos) |
@@ -515,22 +517,23 @@ timeouts and retry policy per operation category:
 
 | Operation | Timeout | Retries | Examples |
 |---|---|---|---|
-| Clone | 30 minutes | 0 | Initial bare clone (~3.0 GB download for cvelistV5) |
-| Fetch | 5 minutes | 0 | Incremental `git fetch --no-auto-maintenance --end-of-options origin +HEAD:<ref>` |
+| Clone | 50 minutes | 0 | Initial bare clone (~3.6 GB download for cvelistV5 on 2026-11-25; see "Clone Operations", Resources) |
+| Fetch | 5 minutes | 0 | Incremental `git -c pack.threads=4 fetch --no-auto-maintenance --end-of-options origin +HEAD:<ref>` |
 | Read | 30 seconds | 3 (backoff: 2s, 4s, 8s) | `git diff`, `git rev-parse`, `git symbolic-ref` (the branch lookup inside `fetch_origin`), `git ls-tree`, `git rev-list`, `git log` |
 | Show | 30 seconds | 0 | `git show --end-of-options <ref>:<path>` (per-file blob access) |
 | Maintenance | 20 minutes | 0 | `git repack -d -n -q --geometric=2 --threads=1` (the clone's maintenance, see "Maintenance Operations") |
 
 **Run timeout**: a Git fetcher's `run_timeout` (`FetcherConfig`, see
 `fetcher-infrastructure.md`, Time Limits and Queue Routing) must contain the
-Clone timeout (30 minutes) and the Fetch timeout (5 minutes) within its soft
+Clone timeout (50 minutes) and the Fetch timeout (5 minutes) within its soft
 time limit, so that a first-run or rebuilt clone, or a slow fetch, ends through
 its own timeout classification rather than the whole-run limit. A run either
 clones or fetches and maintains, and the Fetch and Maintenance timeouts
 together (25 minutes) stay below the Clone timeout, so the Clone timeout
-dominates: the soft time limit (95% of `run_timeout`) must exceed 30 minutes,
-which needs a `run_timeout` of at least about 1900 seconds. The `FetcherConfig`
-bootstrap default of 3600 seconds satisfies this; an operator who lowers
+dominates: the soft time limit (95% of `run_timeout`) must exceed 50 minutes,
+which needs a `run_timeout` of at least about 3200 seconds. The `FetcherConfig`
+bootstrap default of 3600 seconds (a soft time limit of 57 minutes) satisfies
+this; an operator who lowers
 `run_timeout` for a Git fetcher keeps it above that bound. The maintenance
 never makes a run exceed its soft time limit: it starts only when its whole
 timeout still fits (`execute()` step 12).
@@ -541,7 +544,7 @@ seconds) before raising `GitCorruptionError`. This absorbs transient
 I/O faults on networked storage (NFS, PVC with remote backend) without
 misclassifying them as repository corruption. The worst-case added
 latency per operation is ~14 seconds (negligible vs. the 30-second
-timeout and vastly cheaper than a false-positive re-clone of ~3.0 GB). Clone and Fetch are not retried because they already handle
+timeout and vastly cheaper than a false-positive re-clone of ~3.6 GB). Clone and Fetch are not retried because they already handle
 transient network errors through git's own retry logic. Show is not
 retried because per-file failures are already non-fatal (`GitFileError`
 → `record_failed()`, continue to next item).
@@ -681,7 +684,8 @@ with one fixed exception: it is **bare-only**. `clone()` always creates
 a bare clone, and every other function addresses `repo_path` as a bare
 repository (see "Bare Clone Compatibility"), so a work-tree clone is not
 a supported mode of the module. Its operational bounds — the timeouts,
-the read retry policy, and the geometric factor and thread count of
+the read retry policy, the `index-pack` thread count of `clone()` and
+`fetch_origin()`, and the geometric factor and thread count of
 `maintain()` — are fixed module constants, not domain defaults.
 
 - **Domain defaults** (filter=None, single-branch=True)
@@ -840,24 +844,44 @@ modifications needed.
 
 | Function | Signature | Returns | Timeout | Raises |
 |----------|-----------|---------|---------|--------|
-| `clone` | `async def clone(url: str, dest: Path, *, filter_spec: str \| None = None, single_branch: bool = False) -> None` | `None` | Clone (30 min) | `GitFetchError` |
+| `clone` | `async def clone(url: str, dest: Path, *, filter_spec: str \| None = None, single_branch: bool = False) -> None` | `None` | Clone (50 min) | `GitFetchError` |
 
 **Behavior**:
 
 1. Build the command with all flags before positional arguments,
    separated by `--`:
-   a. Start with `["git", "clone", "--bare"]` (always bare — the module
-      has no non-bare mode; see "Responsibility Separation")
+   a. Start with `["git", "-c", "pack.threads=4", "clone", "--bare"]`
+      (always bare — the module has no non-bare mode; see
+      "Responsibility Separation"; for the threads, see below)
    b. If `filter_spec` is not `None`: append `--filter=<filter_spec>`
    c. If `single_branch` is `True`: append `--single-branch`
    d. Append `--` (end-of-options separator)
    e. Append `url` and `str(dest)` as positional arguments
-   Result example: `["git", "clone", "--bare", "--single-branch", "--", url, str(dest)]`
-   (if `filter_spec` is set: `["git", "clone", "--bare", "--filter=<value>", "--single-branch", "--", url, str(dest)]`)
+   Result example: `["git", "-c", "pack.threads=4", "clone", "--bare", "--single-branch", "--", url, str(dest)]`
+   (if `filter_spec` is set: `["git", "-c", "pack.threads=4", "clone", "--bare", "--filter=<value>", "--single-branch", "--", url, str(dest)]`)
 2. Execute the command via `asyncio.create_subprocess_exec` with the
-   clone timeout (30 minutes)
+   clone timeout (50 minutes)
 3. If the process exits with non-zero code or the timeout expires:
    raise `GitFetchError` with stderr content
+
+**Threads**: a clone receives the whole repository as one pack, which
+`git index-pack` indexes: it inflates every object, resolves every delta,
+and hashes the result. Without a setting, `index-pack` starts about half
+of the CPUs that the host reports (at most 20), regardless of a
+container's CPU limit, and each thread keeps its own delta base cache
+(`core.deltaBaseCacheLimit`, 96 MiB by default), so the clone's memory
+would grow with the size of the node. `-c pack.threads=4` fixes the
+threads at 4, the count that a host of 8 CPUs selects; git passes the
+option on to the `index-pack` it starts. The fetch passes the same option
+(see "Fetch Operations").
+
+**Resources**: the clone is the largest consumer of CPU of a Git fetcher
+and, until the clone's maintenance makes a full consolidation (see
+"Maintenance Operations", Resources), its largest consumer of memory. The
+download takes a minute or two; `index-pack` takes the rest, at the CPU
+limit throughout. The CPU and memory that a Git worker needs for it are
+stated in `docs/deployment.md` (Git Worker Resources), with the
+measurements they rest on.
 
 ### Fetch Operations
 
@@ -891,9 +915,13 @@ Semantics: updates the clone's own branch, and therefore `HEAD`, from
    fetch fail, and the run would never reach the maintenance. A filesystem
    error raises `GitFetchError` without starting the fetch.
 3. **Fetch** (Fetch phase, not retried): run
-   `git fetch --no-auto-maintenance --end-of-options origin +HEAD:<ref>`
-   with the fetch timeout. The explicit forced refspec updates the clone's branch from
-   the remote's `HEAD` even though a bare clone has no
+   `git -c pack.threads=4 fetch --no-auto-maintenance --end-of-options
+   origin +HEAD:<ref>` (after `--git-dir=<repo_path>`) with the fetch
+   timeout. `-c pack.threads=4` fixes the threads of the `git index-pack`
+   that indexes a fetch of more than `fetch.unpackLimit` objects, as for
+   the clone (see "Clone Operations"). The explicit forced refspec
+   updates the clone's branch from the remote's `HEAD` even though a
+   bare clone has no
    `remote.origin.fetch` configuration, follows a change of the upstream
    default branch, and follows an upstream history rewrite (a non-forced
    refspec would be rejected). Because the source is the remote's `HEAD`,
@@ -1099,7 +1127,7 @@ that a consolidation reads:
 |---|---|---|---|
 | A few new objects into a small pack | A run in steady state | 1.3 s | 190 MiB |
 | The packs of 60 fetches (16 days) beside the clone's pack | The first maintenance of a clone that git's automatic maintenance could not maintain | 34 s | 962 MiB |
-| Every pack, the clone's included, into one | When the objects added since the clone's pack was written reach half of it: for `cvelistV5`, which grows by about 5,000 objects a day, about eight months after a clone, then after intervals each about 1.5 times the previous one | 95 s | 1,545 MiB, measured with the clone's pack and 16 days of fetches; about 2.2 GiB at the first full consolidation (see below) |
+| Every pack, the clone's included, into one | When the objects added since the clone's pack was written reach half of it: for `cvelistV5`, which grew by about 3,100 objects a day in the year to 2026-11-25 and by about 4,300 in its last three months, about ten to fourteen months after a clone, then after intervals each about 1.5 times the previous one | 95 s | 1,545 MiB, measured with the clone's pack and 16 days of fetches; about 2.2 GiB at the first full consolidation (see below) |
 
 The full consolidation is the largest. It writes a temporary pack of
 about the repository's size beside the existing packs (see Volume
@@ -1112,9 +1140,8 @@ consolidation that the table's row describes happens only once the added
 objects reach half of the clone's pack, so it packs about 1.5 times the
 clone's objects: for `cvelistV5`, about 3.7 million objects and therefore
 about 2.2 GiB, and each later full consolidation about 1.5 times the
-previous one. The memory that a Git worker needs for it belongs to the
-worker's resource requirements (`docs/deployment.md`, Kubernetes
-Workloads).
+previous one. The memory that a Git worker needs for it is stated in
+`docs/deployment.md` (Git Worker Resources).
 
 ### Filesystem Operations
 
@@ -1239,7 +1266,10 @@ above.
       exists (if `_delete_if_exists()` raises `OSError`: log the bounded
       ERROR `git_clone_delete_failed` — see "Error Classification" —
       and propagate as `FetcherError`), then clone repository
-      with configured options
+      with configured options. After a successful clone, log the INFO
+      `git_clone_completed` (`fetcher_name`, `duration_seconds` of the
+      clone), which shows how close a clone comes to the Clone timeout
+      (`docs/deployment.md`, Git Worker Resources)
    b. If clone IS valid: skip clone (reuse existing)
    c. Read HEAD SHA from the repository
    d. Read HEAD commit date via `get_commit_date(repo_path, "HEAD")`
@@ -1251,7 +1281,7 @@ above.
       invalid but a cursor exists, so it is rebuilt), delete directory if
       exists (if `_delete_if_exists()` raises `OSError`: log the bounded
       ERROR `git_clone_delete_failed` and propagate as `FetcherError`),
-      clone repository
+      clone repository, and log `git_clone_completed` as in step 3a
    b. If clone IS valid: update the clone's branch from origin via
       `fetch_origin()` (incremental update; see "Fetch Operations")
 5. Read HEAD SHA from the repository
@@ -1373,8 +1403,8 @@ above.
        (`self.config` is `None`, which `run()` never does), no budget is
        known and the maintenance starts. With the default `run_timeout` of
        3600 seconds, the maintenance starts in a run whose `execute()` has
-       taken at most 36 minutes; with the minimum of about 1900 seconds that
-       Runtime Dependencies (Run timeout) requires, at most about 9 minutes.
+       taken at most 36 minutes; with the minimum of about 3200 seconds that
+       Runtime Dependencies (Run timeout) requires, at most about 29 minutes.
     b. **Maintain**: call `_maintain_clone(repo_path)` (`maintain()`, see
        "Maintenance Operations"). On success, log the INFO
        `git_clone_maintenance_completed` (`fetcher_name`,

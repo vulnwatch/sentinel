@@ -157,8 +157,15 @@ class FakeGitFactory:
         script.write_text(
             "#!/bin/sh\n"
             f"state={shlex.quote(str(state))}\n"
-            'sub="$1"\n'
-            'case "$sub" in --git-dir=*) sub="$2" ;; esac\n'
+            # The subcommand follows the `--git-dir=` and `-c` options.
+            'sub=""\n'
+            'while [ "$#" -gt 0 ]; do\n'
+            '  case "$1" in\n'
+            "    --git-dir=*) shift ;;\n"
+            "    -c) shift 2 ;;\n"
+            '    *) sub="$1"; break ;;\n'
+            "  esac\n"
+            "done\n"
             'env -0 > "$state/env.$$"\n'
             'echo "$$ $sub" >> "$state/calls"\n'
             'case "$sub" in\n'

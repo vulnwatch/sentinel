@@ -60,6 +60,7 @@ from app.services.base_cve_fetcher import (
 )
 from app.services.base_fetcher import FetcherError, FetcherRunConfig
 from app.services.base_git_fetcher import (
+    CLONE_COMPLETED_EVENT,
     CLONE_CORRUPTION_DETECTED_EVENT,
     CLONE_DELETE_FAILED_EVENT,
     CLONE_FAILED_MESSAGE,
@@ -204,6 +205,21 @@ def _warnings(logs: list[Any]) -> list[str]:
     ]
 
 
+def _assert_clone_completed(logs: list[Any], probe: GitFetcherProbe) -> None:
+    """Exactly one bounded INFO `git_clone_completed` with the duration of
+    the clone (steps 3a and 4a)."""
+    [entry] = events_named(logs, CLONE_COMPLETED_EVENT)
+    duration = entry["duration_seconds"]
+    assert entry == {
+        "event": CLONE_COMPLETED_EVENT,
+        "log_level": "info",
+        "fetcher_name": probe.name,
+        "duration_seconds": duration,
+    }
+    assert isinstance(duration, float)
+    assert duration >= 0
+
+
 def _bounded(logs: list[Any], workspace: GitWorkspace, *more: str) -> None:
     assert_bounded_logs(
         logs, *workspace.forbidden_texts(), SECRET, "fatal:", "exited with", *more
@@ -345,6 +361,7 @@ class TestFirstRun:
         assert probe.deltas == []
         assert is_bare_clone(clone)
         assert _warnings(logs) == []
+        _assert_clone_completed(logs, probe)
         assert harness.published.calls == []
         _bounded(logs, workspace)
 
@@ -367,6 +384,7 @@ class TestFirstRun:
         assert result.row.cursor == {"sha": cloned, "committed_at": D_BASE}
         assert probe.calls == []
         assert _warnings(logs) == []
+        assert events_named(logs, CLONE_COMPLETED_EVENT) == []
 
     @pytest.mark.parametrize("kind", ["plain-directory", "empty-bare-repository"])
     async def test_invalid_directory_without_cursor_is_deleted_then_cloned(
@@ -444,6 +462,7 @@ class TestSubsequentRun:
         assert result.row.cursor == {"sha": head, "committed_at": D_CURSOR}
         assert result.fetcher.previous_cursor == cursor
         assert _warnings(logs) == []
+        assert events_named(logs, CLONE_COMPLETED_EVENT) == []
 
     async def test_empty_delta_succeeds_with_zero_metrics_and_advances_cursor(
         self, workspace: GitWorkspace, harness: GitRunHarness, git_calls: GitCalls
@@ -534,6 +553,7 @@ class TestCloneRebuild:
             }
         ]
         assert events_named(logs, CURSOR_SHA_UNREACHABLE_EVENT) == []
+        _assert_clone_completed(logs, probe)
         assert git_calls.of("diff_names") == [
             ((clone, cursor["sha"], head), {"path_filter": "cves/"})
         ]
@@ -1458,6 +1478,7 @@ class TestInfrastructureErrors:
         assert result.row.error_traceback is not None
         assert "GitFetchError" in result.row.error_traceback
         assert not workspace.clone_path(probe).exists()
+        assert events_named(logs, CLONE_COMPLETED_EVENT) == []
         _bounded(logs, workspace, "missing-upstream")
 
     async def test_rebuild_clone_failure_is_public_message_and_keeps_cursor(
@@ -1486,6 +1507,7 @@ class TestInfrastructureErrors:
         assert result.row.error_detail is not None
         assert "missing-upstream" in result.row.error_detail
         assert not workspace.clone_path(probe).exists()
+        assert events_named(logs, CLONE_COMPLETED_EVENT) == []
         _bounded(logs, workspace, "missing-upstream")
 
     async def test_fetch_failure_keeps_clone_and_cursor(
