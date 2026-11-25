@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.routing import Match
+from starlette.types import ASGIApp
 
 from app.api import health, interactive_docs
 from app.api.dependencies import drain_ticket_convergence_after_commit
@@ -82,9 +83,28 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     yield
 
 
+class _SentinelApplication(SentinelAPI):
+    """The application, with `RequestIDMiddleware` outside the whole stack
+    that the framework builds.
+
+    Starlette installs the handler registered for `Exception`
+    (`_unhandled_exception_handler`) in `ServerErrorMiddleware`, outside
+    every middleware added with `add_middleware`. Wrapping the built stack
+    instead gives every response the `X-Request-ID` header, the `500
+    INTERNAL_ERROR` of an unhandled exception and the diagnostic page of
+    `DEBUG` included, and binds `request_id` while that `500` is logged
+    (`docs/api-spec.md`, Request Tracing;
+    `docs/features/platform/logging.md`, Relationship to the API Request
+    Tracing contract).
+    """
+
+    def build_middleware_stack(self) -> ASGIApp:
+        return RequestIDMiddleware(super().build_middleware_stack())
+
+
 # `SentinelAPI` documents the dependency-derived global responses in the
 # OpenAPI document (`app/api/openapi.py`).
-app = SentinelAPI(
+app = _SentinelApplication(
     title="Sentinel",
     description="Security update management platform for SUSE/openSUSE distributions",
     version=get_version("sentinel"),
@@ -127,13 +147,13 @@ app.add_middleware(
 )
 # The last middleware added runs first. Cross-origin request protection
 # (docs/features/identity/authentication.md, Cross-Origin Request
-# Protection) runs inside `RequestIDMiddleware`, so its rejection carries
-# `X-Request-ID` and its log record `request_id`, and before CORS, routing,
-# and every dependency (docs/api-spec.md, Cross-Origin Request Protection).
+# Protection) runs inside `RequestIDMiddleware`, which wraps the whole stack
+# (`_SentinelApplication`), so its rejection carries `X-Request-ID` and its
+# log record `request_id`, and before CORS, routing, and every dependency
+# (docs/api-spec.md, Cross-Origin Request Protection).
 app.add_middleware(
     CrossOriginProtectionMiddleware, trusted_origins=settings.cors_origins
 )
-app.add_middleware(RequestIDMiddleware)
 
 
 @app.exception_handler(AppError)

@@ -57,6 +57,12 @@ class RequestIDMiddleware:
     invocation). This guarantees log lines emitted by a background task
     still carry `request_id`, and that the context is reset only once
     that full lifecycle completes.
+
+    `app.main` installs it around the whole middleware stack the framework
+    builds, outside Starlette's `ServerErrorMiddleware`, rather than with
+    `add_middleware`: the `500` that `ServerErrorMiddleware` renders for
+    an unhandled exception is then sent through `send_wrapper`, and is
+    logged while `request_id` is still bound.
     """
 
     def __init__(self, app: ASGIApp) -> None:
