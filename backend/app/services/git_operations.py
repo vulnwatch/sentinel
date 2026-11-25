@@ -15,17 +15,20 @@ access, performs no business logic, and logs no repository content.
 Failures are classified by phase. Clone and fetch failures raise
 `GitFetchError` without retry. Local reads are retried with a 2/4/8 second
 backoff before `GitCorruptionError`. A `git show` failure raises
-`GitFileError` without retry. Exceptions carry git's stderr for diagnostics
-only; sanitizing it for public messages is the caller's responsibility.
+`GitFileError` without retry. A maintenance failure raises
+`GitMaintenanceError` without retry. Exceptions carry git's stderr for
+diagnostics only; sanitizing it for public messages is the caller's
+responsibility.
 
 The git process started by a call never outlives it: on timeout,
 cancellation, or any other exception while it starts or runs, its process
 group is terminated (SIGTERM, then SIGKILL after a short grace period) and
-the process is reaped before the exception propagates. Git's own detached
-automatic maintenance after a fetch is not managed here (Fetch Operations,
-Automatic maintenance), and a start that asyncio itself abandons after
-spawning git is an accepted residual risk (Runtime Dependencies, Process
-lifecycle).
+the process is reaped before the exception propagates. The fetch disables
+git's automatic maintenance, which would otherwise continue detached after
+the call, and first removes the pack temporaries that interrupted git
+processes left behind; the clone is maintained explicitly by `maintain()`
+(Maintenance Operations). A start that asyncio itself abandons after spawning git is an
+accepted residual risk (Runtime Dependencies, Process lifecycle).
 """
 
 from __future__ import annotations
@@ -51,7 +54,18 @@ CLONE_TIMEOUT_SECONDS: Final[float] = 30 * 60
 FETCH_TIMEOUT_SECONDS: Final[float] = 5 * 60
 READ_TIMEOUT_SECONDS: Final[float] = 30
 SHOW_TIMEOUT_SECONDS: Final[float] = 30
+MAINTENANCE_TIMEOUT_SECONDS: Final[float] = 20 * 60
 READ_RETRY_DELAYS_SECONDS: Final[tuple[float, ...]] = (2, 4, 8)
+
+# The maintenance repack (Maintenance Operations): a geometric progression
+# with factor 2, one delta-search thread whatever CPUs the host reports.
+_GEOMETRIC_FACTOR: Final[int] = 2
+_MAINTENANCE_THREADS: Final[int] = 1
+
+# Name prefixes of the temporary files that git writes in `objects/pack/`
+# (`pack-objects`, `index-pack`: `tmp_pack_*`, `tmp_idx_*`, ...; `repack`:
+# `.tmp-<pid>-pack-*`) and leaves behind when it is killed.
+_PACK_TEMPORARY_PREFIXES: Final[tuple[str, ...]] = ("tmp_", ".tmp-")
 
 # Seconds a terminated git process group gets to exit after SIGTERM (so git
 # can remove its lock files and partial clone) before it receives SIGKILL.
@@ -110,6 +124,18 @@ class GitCorruptionError(GitError):
 
 class GitFileError(GitError):
     """Reading one file's content failed; other files are unaffected."""
+
+
+class GitMaintenanceError(GitError):
+    """The maintenance of a clone failed; the clone is intact.
+
+    `reason` is `"timeout"` when the maintenance timeout expired and
+    `"failed"` for any other failure; it carries no text derived from git's
+    output, so it may be logged."""
+
+    def __init__(self, detail: str, *, reason: str) -> None:
+        super().__init__(detail)
+        self.reason = reason
 
 
 @dataclass(frozen=True, slots=True)
@@ -305,6 +331,22 @@ async def clone(
 # --- Fetch operations -------------------------------------------------------
 
 
+def _remove_pack_temporaries(repo_path: Path) -> None:
+    """Remove the temporary files that an interrupted git process left in
+    `objects/pack/`. No-op when the directory does not exist."""
+    try:
+        with os.scandir(repo_path / "objects" / "pack") as iterator:
+            entries = list(iterator)
+    except FileNotFoundError:
+        return
+    for entry in entries:
+        if entry.name.startswith(_PACK_TEMPORARY_PREFIXES) and not entry.is_dir(
+            follow_symlinks=False
+        ):
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(entry.path)
+
+
 async def _branch_ref(repo_path: Path) -> str:
     """The clone's own branch (`refs/heads/...`) that `HEAD` names."""
 
@@ -322,12 +364,18 @@ async def _branch_ref(repo_path: Path) -> str:
 
 
 async def fetch_origin(repo_path: Path) -> None:
-    """Update the clone's own branch, and therefore `HEAD`, from the remote's
-    `HEAD`. Raises `GitCorruptionError` (branch lookup) or `GitFetchError`."""
+    """Remove the pack temporaries of interrupted git processes, then update
+    the clone's own branch, and therefore `HEAD`, from the remote's `HEAD`.
+    Raises `GitCorruptionError` (branch lookup) or `GitFetchError`."""
     ref = await _branch_ref(repo_path)
+    try:
+        await asyncio.to_thread(_remove_pack_temporaries, repo_path)
+    except OSError as exc:
+        raise GitFetchError(f"pack temporaries could not be removed: {exc}") from exc
     command = (
         _git_dir(repo_path),
         "fetch",
+        "--no-auto-maintenance",
         "--end-of-options",
         "origin",
         f"+HEAD:{ref}",
@@ -514,6 +562,41 @@ async def show_file(repo_path: Path, ref: str, file_path: str) -> bytes | None:
     ):
         return None
     raise GitFileError(_describe(command, completed))
+
+
+# --- Maintenance operations -------------------------------------------------
+
+
+async def _discard_pack_temporaries(repo_path: Path) -> None:
+    """Best-effort removal of the pack temporaries after a failed repack;
+    a filesystem error is left to the next `fetch_origin()`."""
+    with contextlib.suppress(OSError):
+        await asyncio.to_thread(_remove_pack_temporaries, repo_path)
+
+
+async def maintain(repo_path: Path) -> None:
+    """Consolidate the clone's packs into a geometric progression, in the
+    foreground, with one thread. Raises `GitMaintenanceError` (no retry)
+    after removing what the failed repack left in `objects/pack/`; the
+    clone stays intact."""
+    command = (
+        _git_dir(repo_path),
+        "repack",
+        "-d",
+        "-n",
+        "-q",
+        f"--geometric={_GEOMETRIC_FACTOR}",
+        f"--threads={_MAINTENANCE_THREADS}",
+    )
+    try:
+        completed = await _run(command, limit_seconds=MAINTENANCE_TIMEOUT_SECONDS)
+    except _AttemptFailedError as failure:
+        reason = "timeout" if isinstance(failure.__cause__, TimeoutError) else "failed"
+        await _discard_pack_temporaries(repo_path)
+        raise GitMaintenanceError(failure.detail, reason=reason) from None
+    if completed.returncode != 0:
+        await _discard_pack_temporaries(repo_path)
+        raise GitMaintenanceError(_describe(command, completed), reason="failed")
 
 
 # --- Filesystem operations --------------------------------------------------

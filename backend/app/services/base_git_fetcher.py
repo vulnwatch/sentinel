@@ -19,9 +19,11 @@ catch. Concrete subclasses declare the configurable attributes and implement
 Git failures never leave this class as git exceptions: clone and fetch
 failures, corruption (after deleting the clone), and deletion failures become
 `FetcherError` with a fixed public message and the triggering exception
-chained, so git's stderr reaches only `error_detail`. Every log event is
-bounded: no stderr, URL, stored cursor value, or upstream path, and a
-`cve_id` only when it is a canonical CVE-ID.
+chained, so git's stderr reaches only `error_detail`. A run that fetched ends
+with the clone's maintenance (step 12), which starts only when it can end
+before the soft time limit and whose failure is a WARNING that leaves the run
+outcome unchanged. Every log event is bounded: no stderr, URL, stored cursor
+value, or upstream path, and a `cve_id` only when it is a canonical CVE-ID.
 
 `git_operations` and `config` are dereferenced at call time so tests can
 substitute a function or the clone base directory.
@@ -29,10 +31,11 @@ substitute a function or the clone base directory.
 
 from __future__ import annotations
 
+import time
 from asyncio import CancelledError
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, ClassVar, Final
+from typing import Any, ClassVar, Final, NamedTuple
 
 import structlog
 from celery.exceptions import SoftTimeLimitExceeded
@@ -48,10 +51,12 @@ from app.services.base_cve_fetcher import (
     CVENotInSource,
 )
 from app.services.base_fetcher import FetcherError
+from app.services.fetcher_schedule import effective_task_time_limits
 from app.services.git_operations import (
     GitCorruptionError,
     GitFetchError,
     GitFileError,
+    GitMaintenanceError,
 )
 
 logger = structlog.get_logger(__name__)
@@ -81,8 +86,27 @@ RECOVERY_BOUNDARY_NOT_FOUND_EVENT: Final = "git_recovery_boundary_not_found"
 DELTA_FILE_MISSING_AT_HEAD_EVENT: Final = "git_delta_file_missing_at_head"
 ITEM_ID_MALFORMED_EVENT: Final = "git_fetch_single_item_id_malformed"
 CANDIDATE_READ_FAILED_EVENT: Final = "git_fetch_single_candidate_read_failed"
+MAINTENANCE_COMPLETED_EVENT: Final = "git_clone_maintenance_completed"
+MAINTENANCE_FAILED_EVENT: Final = "git_clone_maintenance_failed"
+MAINTENANCE_SKIPPED_EVENT: Final = "git_clone_maintenance_skipped"
+
+# Seconds kept free, besides the maintenance timeout, between the start of
+# the maintenance and the run's soft time limit (step 12): the time before
+# `execute()` starts, the termination grace of a timed-out git process, and
+# the remaining steps of the run.
+MAINTENANCE_START_MARGIN_SECONDS: Final = 60
 
 _RECOVERY_MARGIN: Final = timedelta(days=1)
+
+
+class _Prepared(NamedTuple):
+    """Result of steps 3-7: HEAD, its date, the delta to process (`None` on
+    the first-run branch), and whether step 4b fetched."""
+
+    head_sha: str
+    head_date: str
+    delta: list[str] | None
+    fetched: bool
 
 
 def is_single_path_component(name: object) -> bool:
@@ -137,7 +161,8 @@ class BaseGitFetcher(BaseCVEFetcher):
     # -- Template method -------------------------------------------------
 
     async def execute(self, session: AsyncSession) -> None:
-        """Run the delta-based Git flow (template steps 1-11)."""
+        """Run the delta-based Git flow (template steps 1-12)."""
+        started = time.monotonic()
         repo_path = self._repo_path()
         cursor_sha = self._get_last_cursor_sha()
         if cursor_sha is None and self.previous_cursor is not None:
@@ -154,17 +179,17 @@ class BaseGitFetcher(BaseCVEFetcher):
             await self._delete_or_fail(repo_path)
             raise FetcherError(CORRUPTION_MESSAGE) from exc
 
-        head_sha, head_date, delta = prepared
-        if delta is not None:
-            selected = self.deduplicate_items(self.filter_delta_files(delta))
+        if prepared.delta is not None:
+            selected = self.deduplicate_items(self.filter_delta_files(prepared.delta))
             for path in selected:
                 await self._process_delta_path(repo_path, path, session)
 
-        self._cursor = {"sha": head_sha, "committed_at": head_date}
+        self._cursor = {"sha": prepared.head_sha, "committed_at": prepared.head_date}
 
-    async def _prepare(
-        self, repo_path: Path, cursor_sha: str | None
-    ) -> tuple[str, str, list[str] | None]:
+        if prepared.fetched:
+            await self._maintain_within_budget(repo_path, started)
+
+    async def _prepare(self, repo_path: Path, cursor_sha: str | None) -> _Prepared:
         """Steps 3-7: clone state, HEAD, and the delta to process (`None`
         on the first-run branch, which records HEAD without processing)."""
         clone_valid = await self._is_clone_valid(repo_path)
@@ -174,8 +199,9 @@ class BaseGitFetcher(BaseCVEFetcher):
                 await self._clone_or_fail(repo_path)
             head_sha = await self._get_head_sha(repo_path)
             head_date = await self._get_commit_date(repo_path, "HEAD")
-            return head_sha, head_date, None
+            return _Prepared(head_sha, head_date, None, fetched=False)
 
+        fetched = clone_valid
         if clone_valid:
             try:
                 await self._fetch_origin(repo_path)
@@ -191,7 +217,7 @@ class BaseGitFetcher(BaseCVEFetcher):
 
         if await self._check_sha_reachable(repo_path, cursor_sha):
             delta = await self._compute_delta(repo_path, cursor_sha, head_sha)
-            return head_sha, head_date, delta
+            return _Prepared(head_sha, head_date, delta, fetched)
 
         committed_at = self._get_last_cursor_committed_at()
         if committed_at is None or recovery_before_date(committed_at) is None:
@@ -201,11 +227,46 @@ class BaseGitFetcher(BaseCVEFetcher):
                 fetcher_name=self.name,
                 reason="absent" if stored is None else "invalid",
             )
-            return head_sha, head_date, []
+            return _Prepared(head_sha, head_date, [], fetched)
 
         logger.warning(CURSOR_SHA_UNREACHABLE_EVENT, fetcher_name=self.name)
         delta = await self._compute_recovery_delta(repo_path, head_sha, committed_at)
-        return head_sha, head_date, delta
+        return _Prepared(head_sha, head_date, delta, fetched)
+
+    async def _maintain_within_budget(self, repo_path: Path, started: float) -> None:
+        """Step 12: maintain the clone when the maintenance can end before
+        the run's soft time limit, else skip it until the next run. A
+        maintenance failure is a WARNING; whole-run signals propagate."""
+        if self.config is not None:
+            soft_limit = effective_task_time_limits(
+                self.config.hard_time_limit_seconds
+            )["soft_time_limit"]
+            remaining = soft_limit - (time.monotonic() - started)
+            required = (
+                git_operations.MAINTENANCE_TIMEOUT_SECONDS
+                + MAINTENANCE_START_MARGIN_SECONDS
+            )
+            if remaining < required:
+                logger.warning(
+                    MAINTENANCE_SKIPPED_EVENT,
+                    fetcher_name=self.name,
+                    remaining_seconds=int(remaining),
+                    required_seconds=int(required),
+                )
+                return
+        maintenance_started = time.monotonic()
+        try:
+            await self._maintain_clone(repo_path)
+        except GitMaintenanceError as exc:
+            logger.warning(
+                MAINTENANCE_FAILED_EVENT, fetcher_name=self.name, reason=exc.reason
+            )
+            return
+        logger.info(
+            MAINTENANCE_COMPLETED_EVENT,
+            fetcher_name=self.name,
+            duration_seconds=round(time.monotonic() - maintenance_started, 1),
+        )
 
     async def _process_delta_path(
         self, repo_path: Path, path: str, session: AsyncSession
@@ -420,6 +481,9 @@ class BaseGitFetcher(BaseCVEFetcher):
 
     async def _show_file(self, path: Path, ref: str, file_path: str) -> bytes | None:
         return await git_operations.show_file(path, ref, file_path)
+
+    async def _maintain_clone(self, path: Path) -> None:
+        await git_operations.maintain(path)
 
     async def _delete_if_exists(self, path: Path) -> None:
         await git_operations.delete_clone(path)

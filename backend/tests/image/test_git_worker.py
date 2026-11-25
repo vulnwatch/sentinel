@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 
-_MINIMUM_GIT_VERSION = (2, 30)
+_MINIMUM_GIT_VERSION = (2, 32)
 _GIT_VERSION_PATTERN = re.compile(r"git version (\d+)\.(\d+)")
 
 _CLONE_DIRECTORY_PROBE_SCRIPT = """

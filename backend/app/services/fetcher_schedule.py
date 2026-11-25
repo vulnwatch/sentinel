@@ -142,10 +142,11 @@ def effective_task_time_limits(run_timeout: int) -> dict[str, int]:
     (`trigger_fetcher`, Celery Publication): `time_limit = max(5,
     run_timeout)`, `soft_time_limit = max(1, floor(run_timeout * 0.95))`.
 
-    Shared by `_effective_options()` below (RedBeat schedule entries) and
+    Shared by `_effective_options()` below (RedBeat schedule entries),
     `app.services.fetcher_operations.trigger_fetcher()` (manual trigger
-    publication) so both call sites derive the same values from a single
-    formula.
+    publication), and `BaseGitFetcher` (the time budget of the clone
+    maintenance, git-fetcher-infrastructure.md, `execute()` step 12) so
+    every call site derives the same values from a single formula.
     """
     return {
         "time_limit": max(5, run_timeout),

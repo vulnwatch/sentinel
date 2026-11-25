@@ -612,6 +612,7 @@ class GitCalls:
         "rev_list_before",
         "show_file",
         "delete_clone",
+        "maintain",
     )
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
