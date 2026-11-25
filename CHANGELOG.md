@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.28.1](https://github.com/vulnwatch/sentinel/compare/v0.28.0...v0.28.1) (2026-11-25)
+
+
+### Bug Fixes
+
+* bound the Git worker's clone and state its resources ([#1360](https://github.com/vulnwatch/sentinel/issues/1360)) ([ce91b6b](https://github.com/vulnwatch/sentinel/commit/ce91b6b690557547288eb2d9ea72985c9130481a)), closes [#1357](https://github.com/vulnwatch/sentinel/issues/1357)
+* carry X-Request-ID and request_id on unhandled 500s ([#1363](https://github.com/vulnwatch/sentinel/issues/1363)) ([7d0efbb](https://github.com/vulnwatch/sentinel/commit/7d0efbbb9d591f10f3f63df61992483f2bdf3cf1))
+* continue the IBS release scan past a deleted release package ([#1352](https://github.com/vulnwatch/sentinel/issues/1352)) ([2473010](https://github.com/vulnwatch/sentinel/commit/24730108f192476ba9323b63852829d9cec7625f))
+* end the progress of an SR whose incident package IBS deleted ([#1350](https://github.com/vulnwatch/sentinel/issues/1350)) ([e158f16](https://github.com/vulnwatch/sentinel/commit/e158f16cd61248f11db4dd11b183a91da4cc0392))
+* replace git's automatic maintenance with a bounded repack ([#1359](https://github.com/vulnwatch/sentinel/issues/1359)) ([453dcee](https://github.com/vulnwatch/sentinel/commit/453dcee4ab8cac7113b9f134ee30ffb5d16d3660))
+
+
+### Dependencies
+
+* **deps:** Lock file maintenance ([#1346](https://github.com/vulnwatch/sentinel/issues/1346)) ([2ac288f](https://github.com/vulnwatch/sentinel/commit/2ac288f3baa987450058c3abef8ee2860bbe2979))
+* **deps:** Update dependency swagger-ui-dist to v5.35.0 ([#1343](https://github.com/vulnwatch/sentinel/issues/1343)) ([96fe38c](https://github.com/vulnwatch/sentinel/commit/96fe38c128771865ff3c5b2a85fe083b0319f242))
+* **deps:** Update python minor and patch dependencies ([#1332](https://github.com/vulnwatch/sentinel/issues/1332)) ([1923db1](https://github.com/vulnwatch/sentinel/commit/1923db1eb369bfe02f2f6cdd87660c0cac250509))
+* **deps:** Update python:3.15-slim Docker digest to 63bb298 ([#1353](https://github.com/vulnwatch/sentinel/issues/1353)) ([e730ebe](https://github.com/vulnwatch/sentinel/commit/e730ebef3c9a14802f43f5d7bada9e20c2864608))
+
 ## [0.28.0](https://github.com/vulnwatch/sentinel/compare/v0.27.0...v0.28.0) (2026-11-19)
 
 
