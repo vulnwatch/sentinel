@@ -2076,7 +2076,7 @@ Threshold).
 | Resource | Requirement |
 |----------|-------------|
 | CPU limit | At least 2 CPU; 4 CPU recommended. More than 4 does not shorten the clone |
-| CPU request | Up to the limit. The durations below assume that the node lets the Git worker use its limit during a clone; a lower request does not guarantee it |
+| CPU request | No requirement. A request below the limit lets a clone use the limit only while the node has that CPU free; the durations below assume it does |
 | Memory limit | At least 4 GiB, and at least 1 KiB per object of the `cvelistV5` clone plus 0.5 GiB |
 | Memory request | Equal to the memory limit |
 
@@ -2112,7 +2112,7 @@ CPU limit, up to 4 CPU. Clones are rare, so the object count of the memory
 check below also tells when to do so without waiting for one: estimated
 from the measurements above, in which the CPU time per object grew with
 the repository, a clone on the test deployment reaches 2,000 seconds at
-about 3 million objects with 2 CPUs and at about 5 million with 4 CPUs. A
+about 3 million objects with 2 CPUs and at about 4.5 million with 4 CPUs. A
 clone that takes more than 2,000 seconds at 4 CPUs needs a change to the
 Clone timeout or to the clone itself
 (`docs/features/platform/git-fetcher-infrastructure.md`, Runtime
@@ -3249,7 +3249,10 @@ permission.
    one, which no longer fits in the Fetch timeout. Confirm that no run of
    the affected fetcher is active, then delete its clone directory as in
    item 2: the next run clones within the Clone timeout and resumes from
-   the stored cursor
+   the stored cursor. Its delta is then large, so it and the next runs may
+   end `failure` at the soft time limit until they converge
+   (`docs/features/platform/git-fetcher-infrastructure.md`, Operational:
+   large delta convergence)
 
 #### Git Clone Maintenance
 

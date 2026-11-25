@@ -472,6 +472,13 @@ for a one-time large delta), then reset it after the recovery completes.
 The run's `error_message` field includes the number of items processed
 before timeout, allowing the admin to estimate the required duration.
 
+A longer `run_timeout` does not help when the fetch itself fails: after an
+outage of months, the fetch's `index-pack` has to index every object added
+meanwhile and can exceed the fixed Fetch timeout (see "Runtime
+Dependencies") on every run. The clone is then rebuilt by deleting its
+directory, so that the next run clones under the Clone timeout
+(`docs/deployment.md`, Troubleshooting, Git Fetcher Runs Keep Failing).
+
 This scenario is uncommon in normal operation:
 - First-run records HEAD without processing (no delta)
 - Recovery delta uses `cursor_committed_at - 1 day` as boundary (not
