@@ -790,8 +790,8 @@ The response with which that proxy rejects a request, such as `413 Content Too
 Large`, is produced before the request reaches the application and is
 therefore outside the error structure of Response Format. The limit is a
 requirement on the deployment, not part of the API contract, and it is far
-larger than the request bodies of the API's operations; a release that adds an
-operation with larger bodies raises that requirement.
+larger than the request bodies of the API's operations; a release in which an
+operation accepts a body larger than that limit raises the requirement.
 
 ## Response Conventions
 
