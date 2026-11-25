@@ -8,7 +8,9 @@ This is the only module in `app/` that starts a process. Every git command
 is passed to `asyncio.create_subprocess_exec` as an argument list, addresses
 its repository with `--git-dir` (no repository discovery), places
 `--end-of-options` before its positional arguments (Module Invariants,
-Rule 2), and runs with the filtered environment of Rule 3. The module is
+Rule 2), and runs with the filtered environment of Rule 3. Clone and fetch
+fix the threads of the `git index-pack` they start with `-c pack.threads`,
+which otherwise follow the CPUs the host reports. The module is
 bare-only and otherwise applies no domain defaults; it has no database
 access, performs no business logic, and logs no repository content.
 
@@ -50,12 +52,21 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-CLONE_TIMEOUT_SECONDS: Final[float] = 30 * 60
+CLONE_TIMEOUT_SECONDS: Final[float] = 50 * 60
 FETCH_TIMEOUT_SECONDS: Final[float] = 5 * 60
 READ_TIMEOUT_SECONDS: Final[float] = 30
 SHOW_TIMEOUT_SECONDS: Final[float] = 30
 MAINTENANCE_TIMEOUT_SECONDS: Final[float] = 20 * 60
 READ_RETRY_DELAYS_SECONDS: Final[tuple[float, ...]] = (2, 4, 8)
+
+# The threads of the `git index-pack` that a clone or a fetch starts
+# (Clone Operations, Threads): fixed, whatever CPUs the host reports. Git
+# passes the `-c` option on to that child process.
+_INDEX_PACK_THREADS: Final[int] = 4
+_INDEX_PACK_THREADS_OPTION: Final[tuple[str, str]] = (
+    "-c",
+    f"pack.threads={_INDEX_PACK_THREADS}",
+)
 
 # The maintenance repack (Maintenance Operations): a geometric progression
 # with factor 2, one delta-search thread whatever CPUs the host reports.
@@ -172,8 +183,16 @@ def _git_dir(repo_path: Path) -> str:
     return f"--git-dir={repo_path}"
 
 
+def _subcommand(args: tuple[str, ...]) -> str:
+    """The git subcommand of `args`, after `--git-dir=` and `-c` options."""
+    rest = list(args)
+    while rest and (rest[0] == "-c" or rest[0].startswith("--git-dir=")):
+        del rest[: 2 if rest[0] == "-c" else 1]
+    return rest[0] if rest else ""
+
+
 def _describe(args: tuple[str, ...], completed: _Completed) -> str:
-    command = args[1] if args[0].startswith("--git-dir=") else args[0]
+    command = _subcommand(args)
     stderr = completed.stderr.strip()
     return f"git {command} exited with {completed.returncode}: {stderr}"
 
@@ -312,8 +331,9 @@ async def clone(
     filter_spec: str | None = None,
     single_branch: bool = False,
 ) -> None:
-    """Create a bare clone of `url` at `dest`. Raises `GitFetchError`."""
-    args = ["clone", "--bare"]
+    """Create a bare clone of `url` at `dest`, indexing the received pack
+    with a fixed number of threads. Raises `GitFetchError`."""
+    args = [*_INDEX_PACK_THREADS_OPTION, "clone", "--bare"]
     if filter_spec is not None:
         args.append(f"--filter={filter_spec}")
     if single_branch:
@@ -365,8 +385,9 @@ async def _branch_ref(repo_path: Path) -> str:
 
 async def fetch_origin(repo_path: Path) -> None:
     """Remove the pack temporaries of interrupted git processes, then update
-    the clone's own branch, and therefore `HEAD`, from the remote's `HEAD`.
-    Raises `GitCorruptionError` (branch lookup) or `GitFetchError`."""
+    the clone's own branch, and therefore `HEAD`, from the remote's `HEAD`,
+    indexing a received pack with a fixed number of threads. Raises
+    `GitCorruptionError` (branch lookup) or `GitFetchError`."""
     ref = await _branch_ref(repo_path)
     try:
         await asyncio.to_thread(_remove_pack_temporaries, repo_path)
@@ -374,6 +395,7 @@ async def fetch_origin(repo_path: Path) -> None:
         raise GitFetchError(f"pack temporaries could not be removed: {exc}") from exc
     command = (
         _git_dir(repo_path),
+        *_INDEX_PACK_THREADS_OPTION,
         "fetch",
         "--no-auto-maintenance",
         "--end-of-options",

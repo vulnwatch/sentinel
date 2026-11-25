@@ -24,7 +24,9 @@ from pathlib import Path
 import pytest
 from structlog.testing import capture_logs
 
+from app.models.fetcher_config import FetcherConfig
 from app.services import git_operations
+from app.services.fetcher_schedule import effective_task_time_limits
 from app.services.git_operations import (
     CLONE_TIMEOUT_SECONDS,
     FETCH_TIMEOUT_SECONDS,
@@ -55,6 +57,7 @@ from tests.support.git_repos import (
     commit_files,
     foreground_maintenance_config,
     git,
+    index_pack_config_values,
     init_bare,
     init_upstream,
     isolate_process_environment,
@@ -68,6 +71,9 @@ pytestmark = pytest.mark.unit
 type GitCall = tuple[tuple[str, ...], float]
 
 RETRY_DELAYS = [2, 4, 8]
+
+# The fixed index-pack threads of clone and fetch (Clone Operations).
+THREADS = ("-c", "pack.threads=4")
 
 
 @pytest.fixture(autouse=True)
@@ -104,9 +110,11 @@ def git_calls(monkeypatch: pytest.MonkeyPatch) -> list[GitCall]:
 
 
 def _subcommands(calls: list[GitCall]) -> list[str]:
-    return [
-        args[1] if args[0].startswith("--git-dir=") else args[0] for args, _ in calls
-    ]
+    subcommands = []
+    for args, _ in calls:
+        rest = [arg for arg in args if not arg.startswith("--git-dir=")]
+        subcommands.append(rest[2] if rest[0] == "-c" else rest[0])
+    return subcommands
 
 
 def _entries(directory: Path, pattern: str = "*") -> list[str]:
@@ -140,8 +148,19 @@ def test_timeout_and_retry_constants_match_operation_categories() -> None:
         READ_TIMEOUT_SECONDS,
         SHOW_TIMEOUT_SECONDS,
         MAINTENANCE_TIMEOUT_SECONDS,
-    ) == (1800, 300, 30, 30, 1200)
+    ) == (3000, 300, 30, 30, 1200)
     assert READ_RETRY_DELAYS_SECONDS == (2, 4, 8)
+
+
+def test_default_run_timeout_soft_limit_contains_clone_timeout() -> None:
+    # Runtime Dependencies, Run timeout: the soft time limit of the
+    # `FetcherConfig` default `run_timeout` contains the Clone timeout, so
+    # a slow clone ends through its own timeout.
+    column = FetcherConfig.__table__.c["run_timeout"]
+    assert column.default is not None
+    soft_limit = effective_task_time_limits(column.default.arg)["soft_time_limit"]
+
+    assert soft_limit > CLONE_TIMEOUT_SECONDS
 
 
 @pytest.mark.parametrize(
@@ -188,13 +207,14 @@ async def test_operations_command_shapes_use_their_category_timeout(
     before = "--before=2100-01-01T00:00:00+00:00"
     assert git_calls == [
         (
-            ("clone", "--bare", "--", upstream.as_uri(), str(second)),
+            (*THREADS, "clone", "--bare", "--", upstream.as_uri(), str(second)),
             CLONE_TIMEOUT_SECONDS,
         ),
         ((git_dir, "symbolic-ref", "--end-of-options", "HEAD"), read),
         (
             (
                 git_dir,
+                *THREADS,
                 "fetch",
                 "--no-auto-maintenance",
                 "--end-of-options",
@@ -305,7 +325,7 @@ async def test_fetch_origin_with_git_default_configuration_starts_no_maintenance
 
     await fetch_origin(bare)
 
-    assert ["fetch"] in [argv[2:3] for argv in traced_commands(trace)]
+    assert ["fetch"] in [argv[4:5] for argv in traced_commands(trace)]
     assert automatic_maintenance_runs(trace) == []
 
     # Control: the same configuration makes a plain `git fetch` start it, so
@@ -369,7 +389,7 @@ async def test_clone_flag_combination_builds_documented_argv(
 
     await clone(url, dest, filter_spec=filter_spec, single_branch=single_branch)
 
-    expected = ("clone", "--bare", *flags, "--", url, str(dest))
+    expected = (*THREADS, "clone", "--bare", *flags, "--", url, str(dest))
     assert calls == [(expected, CLONE_TIMEOUT_SECONDS)]
 
 
@@ -402,6 +422,38 @@ async def test_clone_nonexistent_source_raises_fetch_error_after_one_attempt(
     assert not dest.exists()
 
 
+async def test_clone_index_pack_child_receives_fixed_thread_count(
+    upstream: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The threads are fixed in the `git index-pack` process that the clone
+    # starts, not only in the argv of `git clone` (Clone Operations).
+    trace = tmp_path / "trace.json"
+    monkeypatch.setenv("GIT_TRACE2_EVENT", str(trace))
+    monkeypatch.setenv("GIT_TRACE2_CONFIG_PARAMS", "pack.threads")
+
+    await clone(upstream.as_uri(), tmp_path / "clone")
+
+    assert index_pack_config_values(trace, "pack.threads") == ["4"]
+
+    # Control: a plain clone's index-pack has no such setting, so the trace
+    # tells the two apart.
+    control = tmp_path / "control.json"
+    git(
+        None,
+        "clone",
+        "--quiet",
+        "--bare",
+        "--",
+        upstream.as_uri(),
+        str(tmp_path / "control"),
+        env_extra={
+            "GIT_TRACE2_EVENT": str(control),
+            "GIT_TRACE2_CONFIG_PARAMS": "pack.threads",
+        },
+    )
+    assert index_pack_config_values(control, "pack.threads") == [None]
+
+
 # --- Fetch operations (K-a) -------------------------------------------------
 
 
@@ -416,6 +468,23 @@ async def test_fetch_origin_after_upstream_commit_advances_head(
     await fetch_origin(dest)
 
     assert await get_head_sha(dest) == new_head
+
+
+async def test_fetch_origin_index_pack_child_receives_fixed_thread_count(
+    bare: Path, upstream: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A fetch below `fetch.unpackLimit` objects unpacks them without
+    # index-pack; a limit of 1 makes this small fetch keep a pack, as the
+    # larger fetches of a real repository do.
+    git(None, f"--git-dir={bare}", "config", "fetch.unpackLimit", "1")
+    commit_files(upstream, {"cves/added.json": b"{}\n"})
+    trace = tmp_path / "trace.json"
+    monkeypatch.setenv("GIT_TRACE2_EVENT", str(trace))
+    monkeypatch.setenv("GIT_TRACE2_CONFIG_PARAMS", "pack.threads")
+
+    await fetch_origin(bare)
+
+    assert index_pack_config_values(trace, "pack.threads") == ["4"]
 
 
 async def test_fetch_origin_forced_upstream_rewrite_is_followed_and_cursor_kept(
