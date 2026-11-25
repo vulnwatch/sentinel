@@ -483,6 +483,12 @@ Before the first production deployment:
       Session cookie)
 - [ ] Request rate limiting configured on the proxy in front of the API (see
       [Sentinel Host](#sentinel-host))
+- [ ] Request body size limited on the proxy in front of the API (see
+      [Sentinel Host](#sentinel-host)). Verified through the public hostname
+      with a declared `Content-Length` and without one, over HTTP/1.1
+      (chunked) and over HTTP/2: `POST /api/v1/auth/logout` without
+      credentials returns `401 AUTH_NOT_AUTHENTICATED` with a body of 262,144
+      bytes, and the proxy's `413` with a body of 262,145 bytes
 - [ ] `CORS_ORIGINS` empty or unset, unless a browser client is served from
       an origin other than the Sentinel host (`docs/configuration.md`,
       Application)
@@ -2297,6 +2303,27 @@ identifies a client by the source address of the connection that reaches the
 host, or by a forwarded address only when a hop that it trusts sets it, so
 that clients do not share one limit. The limits are part of the environment
 configuration, which is maintained outside this repository.
+
+**Request body size.** A proxy in front of the API, this reverse proxy or a
+dedicated one, rejects every request under `/api/` whose body is larger than
+256 KiB (262,144 bytes), the Public endpoints included, and forwards a body of
+at most 256 KiB unchanged. The limit applies however the client frames the
+body: a request that declares a larger `Content-Length` is rejected before its
+body is read, and a body without a declared length, such as a chunked HTTP/1.1
+body or an HTTP/2 body, is rejected as soon as the bytes read exceed the
+limit. Sentinel limits no request body itself (`docs/api-spec.md`, Request
+Body Size). The API reads and decodes a JSON body before authentication
+(`docs/api-spec.md`, JSON Request Body Decoding), and the decoded document
+takes many times the size of the body in memory, so the proxy bounds what one
+request, an unauthenticated one included, can take in an API worker, and
+rejects it before it reaches the API. The request bodies of the API's
+operations are far smaller: the largest, that of a Ticket reference
+(`docs/features/tickets/ticket-references.md`, Add Reference), stays below
+64 KiB even with every character written as a JSON escape. A release in which
+an operation accepts a body larger than this limit raises the requirement,
+and the proxy's limit is raised before that release is deployed. The limit is
+part of the environment configuration, which is maintained outside this
+repository.
 
 **Versions.** The `sentinel-aura` repository declares the Sentinel versions
 that each UI release supports, within the range of
