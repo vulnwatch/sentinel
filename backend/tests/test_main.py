@@ -66,7 +66,6 @@ import app.main as main_module
 from app.config import settings
 from app.core.cross_origin import CrossOriginProtectionMiddleware
 from app.core.errors import AppError, ErrorCode, InputError
-from app.core.middleware import RequestIDMiddleware
 from app.main import (
     _app_error_handler,
     _http_exception_handler,
@@ -524,15 +523,16 @@ class TestCrossOriginProtectionRegistration:
         assert registrations == [{"trusted_origins": settings.cors_origins}]
         assert registrations[0]["trusted_origins"] is settings.cors_origins
 
-    def test_runs_after_request_ids_and_before_cors(self) -> None:
+    def test_runs_first_among_user_middleware_and_before_cors(self) -> None:
         # `user_middleware` lists the outermost middleware first.
+        # `RequestIDMiddleware` is not among them: `app.main` wraps the whole
+        # built stack with it, so it still runs before cross-origin request
+        # protection; its behavior on the real app, the `500` of an
+        # unhandled exception included, is covered in
+        # `tests/test_core/test_middleware.py`.
         classes = [cls for cls, _, _ in main_module.app.user_middleware]
 
-        assert classes == [
-            RequestIDMiddleware,
-            CrossOriginProtectionMiddleware,
-            CORSMiddleware,
-        ]
+        assert classes == [CrossOriginProtectionMiddleware, CORSMiddleware]
 
 
 async def _delete_default_cvss_version_setting(

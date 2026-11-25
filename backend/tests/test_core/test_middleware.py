@@ -11,6 +11,7 @@ without depending on database/CORS/other application wiring.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -23,6 +24,9 @@ from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel
 
 from app.core.middleware import RequestIDMiddleware
+from app.core.query_limits import enforce_query_parameter_length_limit
+from app.main import app
+from tests.support.ticket_api import force_production_error_page
 
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
@@ -285,3 +289,109 @@ class TestRequestIDOnRealApp:
         response = await client.get("/nonexistent-request-id-wiring-check")
         assert response.status_code == 404
         assert _UUID_RE.match(response.headers["x-request-id"])
+
+
+# A documented operation whose first dependency, the app-level query
+# parameter length limit, is overridden to raise before authentication or
+# any database access.
+_FAILING_PATH = "/api/v1/version"
+
+
+def _raise_unhandled() -> None:
+    raise RuntimeError("fictional unhandled failure")
+
+
+def _unhandled_exception_records(
+    caplog: pytest.LogCaptureFixture,
+) -> list[dict[str, Any]]:
+    return [
+        record.msg
+        for record in caplog.records
+        if record.name == "app.main"
+        and isinstance(record.msg, dict)
+        and record.msg.get("event") == "unhandled_exception"
+    ]
+
+
+@pytest.fixture
+async def failing_app_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncGenerator[AsyncClient]:
+    """A client of the real app whose `_FAILING_PATH` raises an unhandled
+    exception, returning the transmitted response instead of the exception
+    that Starlette's `ServerErrorMiddleware` re-raises after sending it.
+
+    Debug mode is forced off (`force_production_error_page`), so the
+    production `500 INTERNAL_ERROR` handler renders the response; a test
+    may turn it on again and reset the cached middleware stack.
+    """
+    force_production_error_page(monkeypatch)
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        enforce_query_parameter_length_limit,
+        _raise_unhandled,
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as client:
+        yield client
+
+
+@pytest.mark.e2e
+class TestRequestIDOnUnhandledException:
+    """Regression for #1358: Starlette installs the handler registered for
+    `Exception` in `ServerErrorMiddleware`, outside every middleware added
+    with `add_middleware`, so the `500 INTERNAL_ERROR` of an unhandled
+    exception lacked `X-Request-ID` and its `unhandled_exception` record
+    lacked `request_id` (`docs/api-spec.md`, Request Tracing;
+    `docs/features/platform/logging.md`, Relationship to the API Request
+    Tracing contract). Exercised on the real `app.main` wiring."""
+
+    async def test_500_carries_the_adopted_request_id(
+        self, failing_app_client: AsyncClient
+    ) -> None:
+        response = await failing_app_client.get(
+            _FAILING_PATH, headers={"X-Request-ID": "unhandled-check-id"}
+        )
+
+        assert response.status_code == 500
+        assert response.json()["code"] == "INTERNAL_ERROR"
+        assert response.headers["x-request-id"] == "unhandled-check-id"
+
+    async def test_unhandled_exception_record_carries_the_response_request_id(
+        self, failing_app_client: AsyncClient, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # No client-supplied value: the generated ID is on the `500` too.
+        with caplog.at_level(logging.ERROR, logger="app.main"):
+            response = await failing_app_client.get(_FAILING_PATH)
+
+        records = _unhandled_exception_records(caplog)
+        assert len(records) == 1
+        assert records[0]["request_id"] == response.headers["x-request-id"]
+
+    async def test_context_reset_after_unhandled_exception(
+        self, failing_app_client: AsyncClient
+    ) -> None:
+        await failing_app_client.get(
+            _FAILING_PATH, headers={"X-Request-ID": "unhandled-leak-id"}
+        )
+
+        assert structlog.contextvars.get_contextvars().get("request_id") is None
+
+    async def test_debug_diagnostic_page_carries_the_request_id(
+        self, failing_app_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`DEBUG` replaces the `500 INTERNAL_ERROR` with Starlette's
+        diagnostic page (`docs/api-spec.md`, Response Format), which is still
+        a response that carries `X-Request-ID`."""
+        monkeypatch.setattr(app, "debug", True)
+        monkeypatch.setattr(app, "middleware_stack", None)
+
+        response = await failing_app_client.get(
+            _FAILING_PATH, headers={"X-Request-ID": "debug-page-id"}
+        )
+
+        assert response.status_code == 500
+        assert "INTERNAL_ERROR" not in response.text
+        assert response.headers["x-request-id"] == "debug-page-id"
