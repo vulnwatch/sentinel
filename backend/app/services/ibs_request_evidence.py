@@ -217,8 +217,10 @@ class RequestIdSearchResult:
 class AcceptInfo:
     """The consumed `acceptinfo` attributes of one action.
 
-    `rev` and `srcmd5` are provenance; the others are diff inputs only.
-    Absent attributes are `None`. `oproject` is already in the stored form.
+    `rev` and `srcmd5` are provenance; the others are diff inputs only,
+    and `oproject` and `opackage` also name the origin package of the
+    deleted package lookup. Absent attributes are `None`. `oproject` is
+    already in the stored form.
     """
 
     rev: str | None = None

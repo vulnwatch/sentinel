@@ -1,0 +1,10 @@
+<sourcediff>
+  <issues>
+    <issue state="added" tracker="cve" name="2010-0624" label="CVE-2010-0624" />
+    <issue state="added" tracker="cve" name="2014-9112" label="CVE-2014-9112" />
+    <issue state="added" tracker="cve" name="2016-2037" label="CVE-2016-2037" />
+    <issue state="added" tracker="cve" name="2019-14866" label="CVE-2019-14866" />
+    <issue state="added" tracker="cve" name="2021-38185" label="CVE-2021-38185" />
+    <issue state="added" tracker="cve" name="2023-7207" label="CVE-2023-7207" />
+  </issues>
+</sourcediff>

@@ -370,6 +370,14 @@ Discovery is bounded, with these accepted limitations:
   codestream sources is not discovered.
 - A release recorded without acceptinfo cannot be proven
   ([Accepted RR Provenance](#accepted-rr-provenance)).
+- A release whose target package or origin package IBS deleted cannot be
+  proven, and its release diff is no longer available
+  ([Accepted RR Provenance](#accepted-rr-provenance)). The release scan
+  continues past it, so when it is the only release that delivered the Ticket
+  CVE, the observation completes without a proven release, and the delivery
+  derives from the remaining roots: it can be `IN_PROGRESS` or `PENDING`,
+  including a regression from `IN_PROGRESS` under the stale-negative guard,
+  although the release happened.
 - A deleted incident package whose project the IBS account cannot read, such
   as a deleted incident whose access was disabled, and an incident package
   that IBS deleted before it deleted the incident answer the deleted-package
@@ -433,8 +441,11 @@ reused by every scope that needs it:
 - the current release evidence and the codestream history, per logical package
   and codestream;
 - request detail, per request number;
-- incident-package history, and its deleted-package lookup when it is
-  requested ([Effective SR](#effective-sr)), per incident package;
+- incident-package history, per incident package;
+- the deleted-package lookup, per package, when it is requested for an
+  incident package ([Effective SR](#effective-sr)) or for the target or origin
+  package of a release action
+  ([Accepted RR Provenance](#accepted-rr-provenance));
 - an exact history lookup, per package and revision;
 - an action diff, per action, with its link-base form when it is requested
   ([Action-Scoped CVE Evidence](#action-scoped-cve-evidence)).
@@ -475,7 +486,11 @@ A completely parsed action diff with no qualifying issue is a successful
 no-match for that action. A malformed, unavailable, truncated, or ambiguous diff
 is incomplete; when correlation or effective contents depend on it, the
 observation is incomplete, and it never deletes retained history or proves a
-negative. The diff of an action that is not accepted can be unavailable,
+negative. Another exception is the release diff of a release action of an
+accepted request whose target or origin package IBS deleted, which is not
+evidence
+([Accepted RR Provenance](#accepted-rr-provenance), Deleted release
+packages). The diff of an action that is not accepted can be unavailable,
 temporarily or permanently, for the reasons listed in
 `../integrations/ibs-integration.md` (Request Action Diff).
 
@@ -578,11 +593,18 @@ release:
      the proof of [Accepted RR Provenance](#accepted-rr-provenance) decides:
      - a proven release ends the scan;
      - a failed proof makes the observation incomplete.
+   - When the release diff or the exact lookup of the action is unavailable
+     because IBS deleted its target or origin package
+     ([Accepted RR Provenance](#accepted-rr-provenance), Deleted release
+     packages), the action proves nothing: continue with the next older
+     entry. Only an accepted action whose proof completes can prove a
+     release, so the scan takes no evidence from such an entry, and an older
+     release that it proves is a real release.
 
-   A request detail, release diff, or exact lookup that is unavailable when the
-   scan needs it makes the observation incomplete. When the scan exhausts the
-   history, or stops at an action without acceptinfo, the observation is
-   complete without a proven release.
+   Any other request detail, release diff, or exact lookup that is unavailable
+   when the scan needs it makes the observation incomplete. When the scan
+   exhausts the history, or stops at an action without acceptinfo, the
+   observation is complete without a proven release.
 
 The current release evidence is source evidence of the codestream only. It
 never reads, writes, or depends on the track's affectedness status. A proven
@@ -616,7 +638,43 @@ none in two cases: releases made before it stored acceptinfo, and packages that
 it releases as a link to another package of the same release request. Such an
 action proves nothing and does not make the observation incomplete. An action
 with acceptinfo whose lookup is unavailable, or that returns another revision,
-checksum, or request number, is incomplete evidence.
+checksum, or request number, is incomplete evidence, except for a deleted
+release package (below).
+
+**Deleted release packages.** IBS can delete the target package of a release
+action, as when the Maintenance Team withdraws a release, or the origin
+package of its acceptinfo (`opackage` in `oproject`), as when it deletes an
+older reissued update that a newer release replaced. IBS resolves the packages
+of a diff only among existing packages: the release diff names the target
+package and, when the acceptinfo has one, the origin package, so it answers
+HTTP 404 when either was deleted; the exact lookup names only the target
+package and answers HTTP 404 when it was deleted
+(`../integrations/ibs-integration.md`, Request Action Diff and Package Source
+History). Sentinel therefore requests the deleted-package lookup
+(`../integrations/ibs-integration.md`, Deleted Package Lookup):
+
+- after an HTTP 404 of the release diff, of the action's target package and,
+  when that lookup does not report it deleted and the acceptinfo has both
+  `oproject` and `opackage`, of that origin package;
+- after an HTTP 404 of the exact lookup, of the action's target package only.
+
+When a package is reported deleted, the release diff or the exact lookup can
+no longer be obtained: the action proves nothing and carries no evidence for
+the Ticket CVE, so its diff correlates it to no track, and it does not make
+the observation incomplete. This applies to every release action of an
+`accepted` request whose release diff or exact lookup the observation
+requires: one correlated to the track, one found by the release scan, and one
+found through another root. Only such an action can prove a release; a
+release action with acceptinfo of a request in `new` or `review`, as a
+failed acceptance can leave ([Release Discovery](#release-discovery)), keeps
+an unavailable diff as incomplete evidence, because its request can still
+establish progress.
+A later observation evaluates the action again; if IBS restores the package,
+the proof decides as above. Any other result of the lookups leaves the
+evidence unavailable, and the scope reports the original `not_found` as its
+reason category ([Structured Logs](#structured-logs)); a failed lookup request
+fails the scope ([Observation Outcomes](#observation-outcomes)). No lookup is
+requested after any other outcome of the release diff or the exact lookup.
 
 The proof binds release to the contents of that release request. An SR that
 later reuses the incident is released, and proven, by its own release request.
@@ -648,9 +706,11 @@ Examples of incomplete evidence include:
 
 None is translated into a negative result. An accepted release action without
 acceptinfo, a history entry without a request number, a release-scan entry
-whose request is not accepted, and an incident-package history answered with
-HTTP 404 for a package that the deleted-package lookup reports deleted are not
-incomplete evidence
+whose request is not accepted, an incident-package history answered with HTTP
+404 for a package that the deleted-package lookup reports deleted, and a
+release diff or exact lookup of a release action of an accepted request
+answered with HTTP 404 when the deleted-package lookup reports its target or
+origin package deleted are not incomplete evidence
 ([Accepted RR Provenance](#accepted-rr-provenance),
 [Request Discovery and Detail](#request-discovery-and-detail),
 [Release Discovery](#release-discovery), [Effective SR](#effective-sr)).
@@ -658,7 +718,10 @@ incomplete evidence
 No upstream source guarantees indefinite retention. The feature converges while
 enough request, diff, source-history, issue, binary, or advisory evidence remains
 discoverable. If all required evidence has disappeared, preserving the last
-established local delivery state is the intentional safe result.
+established local delivery state is the intentional safe result. A package that
+the deleted-package lookup reports deleted is not disappeared evidence: its
+effect is defined in [Effective SR](#effective-sr) and
+[Accepted RR Provenance](#accepted-rr-provenance).
 
 ## Delivery Derivation
 
@@ -1055,10 +1118,11 @@ including its unsigned and signed attempts
 ([ibs-integration.md, Request
 Authentication](../integrations/ibs-integration.md#request-authentication)), is
 one request; the link-base diff of an action
-([Action-Scoped CVE Evidence](#action-scoped-cve-evidence)) and the
-deleted-package lookup of an incident package ([Effective SR](#effective-sr))
-are requests of their own. No IBS request occurs while a Ticket lock is held
-([Algorithm](#algorithm)), so the fetcher never waits while holding one.
+([Action-Scoped CVE Evidence](#action-scoped-cve-evidence)) and each
+deleted-package lookup ([Effective SR](#effective-sr),
+[Accepted RR Provenance](#accepted-rr-provenance)) are requests of their own.
+No IBS request occurs while a Ticket lock is held ([Algorithm](#algorithm)), so
+the fetcher never waits while holding one.
 Request wake-ups ([RabbitMQ Request Wake-Ups](#rabbitmq-request-wake-ups)) are
 not fetcher work and apply no delay.
 
@@ -1407,12 +1471,31 @@ Implementation coverage must include:
   - a stop at an accepted action without acceptinfo, and an exhausted
     history;
   - incomplete outcomes for an unavailable entry and a failed proof;
+  - a continuation past an entry whose target package or origin package IBS
+    deleted, including the observed codestream history in which an older
+    release is then proven, and an exhausted history after it: a complete
+    observation without `RELEASED` whose delivery derives from the remaining
+    roots (`IN_PROGRESS` with other current progress, such as an open SR;
+    otherwise `PENDING`, including a regression from `IN_PROGRESS`);
 - the release proof:
   - success, and failure of each comparison;
   - missing acceptinfo `rev` or `srcmd5`, and an unavailable lookup;
   - the history of the logical codestream package never accepted as the proof
     target;
   - an accepted action without acceptinfo as no delivery evidence;
+  - deleted release packages: a release diff answered with HTTP 404 for a
+    target or origin package, and an exact lookup answered with HTTP 404 for
+    a target package, that the deleted-package lookup reports deleted (no
+    delivery evidence), for an action correlated to the track, one found by
+    the release scan, and an uncorrelated one of an accepted request found
+    through another root (not correlated); a release action with acceptinfo
+    of a request in `new` or `review` (incomplete, without a lookup); the
+    origin lookup only after a release diff 404, when the target is not
+    reported deleted and the acceptinfo names both
+    `oproject` and `opackage`; every other lookup result (incomplete,
+    `not_found`), a failed lookup (failed), no lookup after any other
+    outcome, the request delay before it, and one lookup per package within
+    an invocation;
   - a release proven although its SR's expanded checksum differs from the
     release request's source revision;
 - effective-SR selection:
@@ -1527,8 +1610,10 @@ reconciliation and cannot establish a different domain result.
 No mechanism can reconstruct facts after every relevant request detail, action
 diff, source-history entry, issue index, binary, and advisory artifact has
 disappeared upstream. Such a scope is incomplete and preserves the last proven
-delivery state. Synchronization health is represented by `FetcherRun`, consumer
-status, metrics, and sanitized logs, never by another delivery state.
+delivery state, except where the deleted-package lookup reports a package
+deleted ([Observation Outcomes](#observation-outcomes)). Synchronization health
+is represented by `FetcherRun`, consumer status, metrics, and sanitized logs,
+never by another delivery state.
 
 ## Scope Exclusions
 

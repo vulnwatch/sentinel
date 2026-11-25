@@ -2,9 +2,10 @@
 
 The documents under `backend/tests/fixtures/ibs/reconciliation/` were
 captured read-only from the IBS API (`https://api.suse.de`) on 2026-10-14
-(chains A to C), on 2026-11-12 (chain D), on 2026-11-16 (chain E), and on
-2026-11-24 (chain F) with `secbox osc -A https://api.suse.de api [-X POST]
-...` (chains E and F through the `osc` library in the same container)
+(chains A to C), on 2026-11-12 (chain D), on 2026-11-16 (chain E), on
+2026-11-24 (chain F), and on 2026-11-25 (chain G) with `secbox osc -A
+https://api.suse.de api [-X POST] ...` (chains E to G through the `osc`
+library in the same container)
 (docs/conventions.md, External Integration Contract Verification;
 docs/features/packages/ibs-submission-tracking.md, Required Roots, Effective
 SR, Release Discovery, Accepted RR Provenance, Action-Scoped CVE Evidence;
@@ -13,10 +14,12 @@ Each call ran in a capture process that kept stdout and stderr in memory
 and wrote only an allow-listed rebuild of the document; nothing raw reached
 a terminal or a file. The diff requests were built with the production
 `request_action_diff_form()` from the captured point detail (chain E: the
-same not-accepted form, followed by `linkrev=base` for the link-base form),
-and the current release evidence with the source-info and `orev=0`
-source-diff forms of `IBSClient`. Only consumed elements and attributes
-were written:
+same not-accepted form, followed by `linkrev=base` for the link-base form;
+chain G: the accepted form, built by the capture from the live detail in the
+same way, which the contract tests confirm by serving each recorded query to
+the production client), and the current release evidence with the
+source-info and `orev=0` source-diff forms of `IBSClient`. Only consumed
+elements and attributes were written:
 
 - point detail: `request/@id`; `state/@name`, `@created`, `@when`,
   `@superseded_by`; `action/@type`; `source/@project`, `@package`, `@rev`;
@@ -25,8 +28,9 @@ were written:
 - source history: `revision/@rev` with its `srcmd5`, `time`, and
   `requestid` children;
 - diffs: `sourcediff`, `issues`, `issue/@state`, `@tracker`, `@name`,
-  `@label`; an error response: `status/@code`, `@origin` (the body of an
-  HTTP 400 diff is not consumed);
+  `@label` (chain G: of `cve` issues only; the other trackers were dropped);
+  an error response: `status/@code`, `@origin` (the body of an HTTP 400 or
+  404 diff is not consumed);
 - source info: `sourceinfo/@package`, `@srcmd5`, and an `error` child;
 - deleted package lookup: `directory/@name` (its `rev`, `srcmd5`, `entry`,
   and `linkinfo` are not consumed); an error response: `status/@code`.
@@ -39,11 +43,12 @@ and cookies.
 Values: the real-to-fictional mapping of the earlier request capture
 (`tests/support/ibs_request_api.py`) no longer exists, so this group has
 its own fictional block. Request numbers start at 960001, at 960101 in
-chain D, at 960201 in chain E, and at 960301 in chain F (one value per
-real number, also inside `SUSE:Maintenance:REQUEST:{n}` projects and history
-`requestid`), incident numbers at 81001, at 81101 in chain D, and at 81201
-in chain F (also in `SUSE:Maintenance:{n}` projects and `.{n}` package
-suffixes), and every checksum is a fictional
+chain D, at 960201 in chain E, at 960301 in chain F, and at 960401 in chain
+G (one value per real number, also inside `SUSE:Maintenance:REQUEST:{n}`
+projects and history `requestid`), incident numbers at 81001, at 81101 in
+chain D, at 81201 in chain F, and at 81301 in chain G (also in
+`SUSE:Maintenance:{n}` projects and `.{n}` package suffixes), and every
+checksum is a fictional
 MD5-shaped value that keeps the equalities of the live data within its
 chain. Revision numbers, timestamps, and the public CVE and bug
 identifiers are as served. Every captured project is a `SUSE:` project.
@@ -54,7 +59,7 @@ fictional username (`jdoe`, `asmith`, `bwilson`), equal owners by equal
 names. The chain E capture replaced such owners before printing; its
 documents carry none.
 
-Six chains:
+Seven chains:
 
 - **A — current release evidence of the `openvpn` chain of
   `tests/support/ibs_request_api.py`** in `SUSE:SLE-15-SP6:Update`:
@@ -143,6 +148,28 @@ Six chains:
   the deleted project), and `f_deleted_error_unknown_project` (HTTP 404
   `unknown_project`). The live directories also carried `rev` and `srcmd5`;
   for 960301 they equalled its acceptinfo `rev` and `srcmd5`.
+- **G — releases whose target or origin package IBS deleted**. The release
+  scan of `cpio` in `SUSE:SLE-15:Update`, whose current sources still carry
+  CVE-2019-14866: `g_sourceinfo_current` and `g_diff_current`;
+  `g_history_codestream` (six revisions; the third has no request number);
+  `g_request_rr_{n}` and the release diff `g_diff_rr_{n}` of every release
+  request that the scan reads, from the newest, 960405, to the proving one,
+  960401 (incident 81301), with `g_history_lookup` (the exact lookup of
+  `cpio.81301`). IBS deleted `cpio.81302`, the target package of 960402,
+  after its release (the revision after 960402 has no request number and
+  the next release names `cpio.81301` as its origin package): its release
+  diff `g_diff_rr_960402` and its exact lookup
+  `g_history_lookup_deleted_target` answered HTTP 404 `unknown_package`, and
+  its deleted package lookup `g_deleted_target` answered its `<directory>`.
+  The releases newer than 960402 carry other CVEs. The origin package of
+  `openssl` in `SUSE:SLE-12-SP2:Update`: `g_request_rr_origin_deleted`
+  (960406, incident 81306, whose acceptinfo names the origin package
+  `openssl.81307`, an older reissued update that IBS deleted after this
+  release) with its release diff `g_diff_rr_origin_deleted` (HTTP 404
+  `unknown_package`), the available exact lookup of its target package
+  `g_history_lookup_origin_deleted`, and the deleted package lookups of its
+  target package `g_deleted_target_exists` (HTTP 400 `package_exists`) and
+  of its origin package `g_deleted_origin` (its `<directory>`).
 
 The `orev=0` diff of the kernel codestream package was verified live (HTTP
 200, about 17,000 issues, 2.4 MB, 4 s) and is not stored because of its
@@ -150,7 +177,7 @@ size; its shape is the one of `a_diff_current` and `b_diff_current`.
 
 `responses.json` records the method, decoded path, ordered query, and
 status of each request with the fictional values; each document of chains
-D to F also records its own `captured_at`, which overrides the date of
+D to G also records its own `captured_at`, which overrides the date of
 the file. Every status is 200 except those of `ERROR_STATUSES`.
 `serve_provenance_fixture()` serves the documents at their recorded method,
 path, query, and status through the authenticating `IBSServer`, so the
@@ -180,12 +207,14 @@ PROVENANCE_FIXTURE_DATE: Final = "2026-10-14"
 CHAIN_D_FIXTURE_DATE: Final = "2026-11-12"
 CHAIN_E_FIXTURE_DATE: Final = "2026-11-16"
 CHAIN_F_FIXTURE_DATE: Final = "2026-11-24"
+CHAIN_G_FIXTURE_DATE: Final = "2026-11-25"
 
 SP4: Final = "SUSE:SLE-15-SP4:Update"
 SP6: Final = "SUSE:SLE-15-SP6:Update"
 SLE15: Final = "SUSE:SLE-15:Update"
 SLE12_SP5: Final = "SUSE:SLE-12-SP5:Update"
 SP7: Final = "SUSE:SLE-15-SP7:Update"
+SLE12_SP2: Final = "SUSE:SLE-12-SP2:Update"
 
 A_CVES: Final = ("CVE-2026-63650", "CVE-2026-84732")
 """The CVEs that release request 910051 of the request group released."""
@@ -260,6 +289,36 @@ CHAIN_F_FIXTURES: Final = (
     "f_deleted_error_unknown_project",
 )
 
+G_CVE: Final = "CVE-2019-14866"
+"""A CVE of the current `cpio` sources released only by `G_RR`."""
+G_RR: Final = 960401
+G_INCIDENT: Final = 81301
+G_RR_WITHDRAWN: Final = 960402
+"""The release request whose target package IBS deleted."""
+G_INCIDENT_WITHDRAWN: Final = 81302
+G_SCAN: Final = tuple(range(960405, G_RR - 1, -1))
+"""The release requests that the release scan reads, newest first."""
+G_RR_ORIGIN_DELETED: Final = 960406
+G_INCIDENT_ORIGIN_DELETED: Final = 81306
+G_ORIGIN_DELETED: Final = "openssl.81307"
+"""The origin package of `G_RR_ORIGIN_DELETED`, which IBS deleted."""
+
+CHAIN_G_FIXTURES: Final = (
+    "g_sourceinfo_current",
+    "g_diff_current",
+    "g_history_codestream",
+    *(f"g_request_rr_{number}" for number in G_SCAN),
+    *(f"g_diff_rr_{number}" for number in G_SCAN),
+    "g_history_lookup",
+    "g_history_lookup_deleted_target",
+    "g_deleted_target",
+    "g_request_rr_origin_deleted",
+    "g_diff_rr_origin_deleted",
+    "g_history_lookup_origin_deleted",
+    "g_deleted_target_exists",
+    "g_deleted_origin",
+)
+
 ERROR_STATUSES: Final = {
     **dict.fromkeys(CHAIN_E_CONFLICTS, 400),
     "f_history_incident_deleted": 404,
@@ -268,6 +327,10 @@ ERROR_STATUSES: Final = {
     "f_deleted_error_unknown_package": 404,
     "f_deleted_error_unknown_package_deleted_project": 404,
     "f_deleted_error_unknown_project": 404,
+    f"g_diff_rr_{G_RR_WITHDRAWN}": 404,
+    "g_history_lookup_deleted_target": 404,
+    "g_diff_rr_origin_deleted": 404,
+    "g_deleted_target_exists": 400,
 }
 """The recorded status of every fixture that IBS did not answer with 200."""
 
@@ -302,6 +365,7 @@ PROVENANCE_FIXTURES: Final = (
     *CHAIN_D_FIXTURES,
     *CHAIN_E_FIXTURES,
     *CHAIN_F_FIXTURES,
+    *CHAIN_G_FIXTURES,
 )
 
 

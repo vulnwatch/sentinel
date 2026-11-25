@@ -1,0 +1,6 @@
+<sourcediff>
+  <issues>
+    <issue state="changed" tracker="cve" name="2010-0624" label="CVE-2010-0624" />
+    <issue state="added" tracker="cve" name="2021-38185" label="CVE-2021-38185" />
+  </issues>
+</sourcediff>

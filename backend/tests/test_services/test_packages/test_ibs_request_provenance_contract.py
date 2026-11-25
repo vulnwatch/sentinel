@@ -9,7 +9,7 @@ Diff with Issue Extraction, Request Point Detail, Request Action Diff,
 Package Source History, Deleted Package Lookup, Request Contract
 Verification Status), verified
 against the sanitized live captures of 2026-10-14, 2026-11-12, 2026-11-16,
-and 2026-11-24 described in `tests/support/ibs_request_provenance.py`
+2026-11-24, and 2026-11-25 described in `tests/support/ibs_request_provenance.py`
 (docs/conventions.md, External Integration Contract Verification).
 
 Every document is read through the production `IBSClient` over the fake
@@ -55,6 +55,8 @@ from tests.support.ibs_request_provenance import (
     CHAIN_E_FIXTURES,
     CHAIN_F_FIXTURE_DATE,
     CHAIN_F_FIXTURES,
+    CHAIN_G_FIXTURE_DATE,
+    CHAIN_G_FIXTURES,
     D_CVE,
     D_INCIDENT,
     D_INCIDENT_REVOKED,
@@ -72,8 +74,18 @@ from tests.support.ibs_request_provenance import (
     F_LIVEPATCH_PACKAGE,
     F_SR_DELETED,
     F_SR_PACKAGE_DELETED,
+    G_CVE,
+    G_INCIDENT,
+    G_INCIDENT_ORIGIN_DELETED,
+    G_INCIDENT_WITHDRAWN,
+    G_ORIGIN_DELETED,
+    G_RR,
+    G_RR_ORIGIN_DELETED,
+    G_RR_WITHDRAWN,
+    G_SCAN,
     PROVENANCE_FIXTURE_DATE,
     PROVENANCE_FIXTURES,
+    SLE12_SP2,
     SLE12_SP5,
     SLE15,
     SP4,
@@ -267,6 +279,8 @@ class TestCapture:
                 expected = CHAIN_E_FIXTURE_DATE
             elif name in CHAIN_F_FIXTURES:
                 expected = CHAIN_F_FIXTURE_DATE
+            elif name in CHAIN_G_FIXTURES:
+                expected = CHAIN_G_FIXTURE_DATE
             else:
                 expected = PROVENANCE_FIXTURE_DATE
             assert provenance_fixture_date(name) == expected
@@ -776,3 +790,135 @@ class TestDeletedIncidentPackages:
         assert result.incomplete_reason == reason
         root = ET.fromstring(load_provenance_fixture(f"f_deleted_error_{name}"))
         assert root.attrib == {"code": code}
+
+
+class TestDeletedReleasePackages:
+    """Chain G: accepted release requests whose target package (960402) or
+    origin package (960406) IBS deleted. Their release diff answers HTTP
+    404, and only the deleted package lookup tells the deletion from a
+    package that never existed or cannot be read."""
+
+    async def test_current_sources_carry_the_cve_of_the_oldest_release(
+        self, routes: QueryRoutes
+    ) -> None:
+        async with ibs_client() as client:
+            info = await client.get_source_info(SLE15, ["cpio"])
+            current = info["cpio"].source_info
+            assert current is not None
+            issues = await client.get_diff_issues(SLE15, "cpio", "0", current.srcmd5)
+        assert G_CVE in {
+            issue.label
+            for issue in issues
+            if issue.tracker == "cve" and issue.state == "added"
+        }
+
+    async def test_the_complete_history_names_the_scanned_requests_newest_first(
+        self, routes: QueryRoutes
+    ) -> None:
+        """The revision after the withdrawn release has no request number."""
+        async with ibs_client() as client:
+            history = await _history(client, SLE15, "cpio")
+        entries = history.entries
+        assert [entry.revision for entry in entries] == list(range(1, len(entries) + 1))
+        assert [
+            entry.request_number
+            for entry in reversed(entries)
+            if entry.request_number is not None
+        ] == list(G_SCAN)
+        [position] = [
+            index
+            for index, entry in enumerate(entries)
+            if entry.request_number == G_RR_WITHDRAWN
+        ]
+        assert entries[position + 1].request_number is None
+
+    async def test_the_withdrawn_release_names_a_deleted_target_package(
+        self, routes: QueryRoutes
+    ) -> None:
+        target = f"cpio.{G_INCIDENT_WITHDRAWN}"
+        async with ibs_client() as client:
+            detail = await _detail(client, G_RR_WITHDRAWN)
+            action = _release(detail, target, SLE15)
+            diff = await client.get_request_action_diff(
+                action, codestream_package="cpio"
+            )
+            assert action.acceptinfo is not None
+            assert action.acceptinfo.rev is not None
+            lookup = await client.get_source_history(
+                SLE15, target, revision=action.acceptinfo.rev
+            )
+            deleted = await client.get_deleted_package(SLE15, target)
+        assert detail.state is IBSRequestState.ACCEPTED
+        assert (action.acceptinfo.oproject, action.acceptinfo.opackage) == (
+            SLE15,
+            f"cpio.{G_INCIDENT}",
+        )
+        assert diff.incomplete_reason == "not_found"
+        assert lookup.incomplete_reason == "not_found"
+        for name in (f"g_diff_rr_{G_RR_WITHDRAWN}", "g_history_lookup_deleted_target"):
+            assert ET.fromstring(load_provenance_fixture(name)).attrib == {
+                "code": "unknown_package"
+            }
+        assert deleted.value is not None, deleted.incomplete_reason
+        assert (deleted.value.project, deleted.value.package) == (SLE15, target)
+
+    async def test_the_next_release_names_the_package_before_the_withdrawn_one(
+        self, routes: QueryRoutes
+    ) -> None:
+        async with ibs_client() as client:
+            detail = await _detail(client, G_SCAN[-3])
+        action = _codestream_release(detail, "cpio", SLE15)
+        assert action.acceptinfo is not None
+        assert action.acceptinfo.opackage == f"cpio.{G_INCIDENT}"
+
+    async def test_no_newer_release_carries_the_cve(self, routes: QueryRoutes) -> None:
+        async with ibs_client() as client:
+            for number in G_SCAN[:-2]:
+                detail = await _detail(client, number)
+                assert detail.state is IBSRequestState.ACCEPTED
+                action = _codestream_release(detail, "cpio", SLE15)
+                assert G_CVE not in _cves(await _diff(client, action, "cpio"))
+
+    async def test_the_oldest_release_proves_the_cve(self, routes: QueryRoutes) -> None:
+        async with ibs_client() as client:
+            rr = await _detail(client, G_RR)
+            assert rr.state is IBSRequestState.ACCEPTED
+            action = _release(rr, f"cpio.{G_INCIDENT}", SLE15)
+            assert action.acceptinfo is not None
+            assert action.acceptinfo.opackage is None
+            await _assert_proof(client, action, SLE15, G_RR)
+            assert G_CVE in _cves(await _diff(client, action, "cpio"))
+
+    async def test_a_release_names_a_deleted_origin_package(
+        self, routes: QueryRoutes
+    ) -> None:
+        """Its own target package exists and proves the revision; only the
+        release diff, which names the origin package, is unavailable."""
+        target = f"openssl.{G_INCIDENT_ORIGIN_DELETED}"
+        async with ibs_client() as client:
+            detail = await _detail(client, G_RR_ORIGIN_DELETED)
+            action = _release(detail, target, SLE12_SP2)
+            diff = await client.get_request_action_diff(
+                action, codestream_package="openssl"
+            )
+            await _assert_proof(client, action, SLE12_SP2, G_RR_ORIGIN_DELETED)
+            target_lookup = await client.get_deleted_package(SLE12_SP2, target)
+            origin_lookup = await client.get_deleted_package(
+                SLE12_SP2, G_ORIGIN_DELETED
+            )
+        assert detail.state is IBSRequestState.ACCEPTED
+        assert action.acceptinfo is not None
+        assert (action.acceptinfo.oproject, action.acceptinfo.opackage) == (
+            SLE12_SP2,
+            G_ORIGIN_DELETED,
+        )
+        assert diff.incomplete_reason == "not_found"
+        assert ET.fromstring(
+            load_provenance_fixture("g_diff_rr_origin_deleted")
+        ).attrib == {"code": "unknown_package"}
+        assert target_lookup.incomplete_reason == "rejected"
+        assert ET.fromstring(
+            load_provenance_fixture("g_deleted_target_exists")
+        ).attrib == {"code": "package_exists"}
+        assert origin_lookup.value is not None, origin_lookup.incomplete_reason
+        assert origin_lookup.value.package == G_ORIGIN_DELETED

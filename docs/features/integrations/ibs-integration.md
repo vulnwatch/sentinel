@@ -542,17 +542,21 @@ When `<acceptinfo>` is present, Sentinel consumes these optional attributes:
 | `xsrcmd5` | Lowercase 32-character hexadecimal checksum | Diff input only |
 | `osrcmd5` | Lowercase 32-character hexadecimal checksum | Diff input only |
 | `oxsrcmd5` | Lowercase 32-character hexadecimal checksum | Diff input only |
-| `oproject` | IBS name | Diff input only |
-| `opackage` | IBS name | Diff input only |
+| `oproject` | IBS name | Diff input and deleted-package lookup input |
+| `opackage` | IBS name | Diff input and deleted-package lookup input |
 
-Diff inputs build the [Request Action Diff](#request-action-diff). A diff input
-that is not also a provenance field is never compared, persisted, or substituted
-for a provenance field. Other acceptinfo attributes are not consumed. Missing
-optional elements or attributes are represented as absent typed values, not
-empty strings. Omission can make provenance incomplete, but it is not by itself
-malformed response data. A present `source/@rev` or consumed acceptinfo
-attribute that is empty or violates its contract makes the request observation
-incomplete.
+Diff inputs build the [Request Action Diff](#request-action-diff); `oproject`
+and `opackage` also name the package of the
+[Deleted Package Lookup](#deleted-package-lookup) that the consuming
+reconciliation requests after an HTTP 404 of the release diff
+(`docs/features/packages/ibs-submission-tracking.md`, Accepted RR Provenance).
+A diff input that is not also a provenance field is never compared, persisted,
+or substituted for a provenance field. Other acceptinfo attributes are not
+consumed. Missing optional elements or attributes are represented as absent
+typed values, not empty strings. Omission can make provenance incomplete, but
+it is not by itself malformed response data. A present `source/@rev` or
+consumed acceptinfo attribute that is empty or violates its contract makes the
+request observation incomplete.
 
 Every consumed project and package value (`source/@project`, `source/@package`,
 `target/@project`, `target/@package`, `target/@releaseproject`, and acceptinfo
@@ -732,10 +736,13 @@ incomplete, and its body is not consumed. Observed causes are a source link
 that no longer expands against the current codestream (400 with a backend
 status document; the link-base form above remains available), and, with 404, a
 removed request staging project, a source project that the IBS account cannot
-read, and a codestream without the old package. OBS answers a project that the
-account cannot read like an unknown project, so the two cannot be told apart.
-A project whose access is disabled, as IBS does for embargoed updates, is
-readable only by an account with a role in that project itself. A role in
+read, a codestream without the old package, and, for the accepted form, a
+target package or an `opackage` that IBS deleted: IBS resolves the path
+package and `opackage` only among existing packages, so no diff form can name
+a deleted package. OBS answers a project that the account cannot read like an
+unknown project, so the two cannot be told apart. A project whose access is
+disabled, as IBS does for embargoed updates, is readable only by an account
+with a role in that project itself. A role in
 `SUSE:Maintenance` does not reach an existing project: IBS copies it into the
 incident projects that it creates afterwards (`docs/deployment.md`,
 Pre-Production Checklist). A malformed, interrupted, or partially parsed diff
@@ -743,7 +750,10 @@ is also incomplete. The consuming reconciliation decides whether an action's
 diff is required; an incomplete diff never proves a negative and never deletes
 or invalidates retained request/action history. The diff of a not-accepted
 action can become permanently unavailable once its staging project is removed,
-and remains unavailable while the account cannot read its source project.
+and remains unavailable while the account cannot read its source project. The
+diff of an accepted action becomes unavailable once IBS deletes its target
+package or its `opackage`; the [Deleted Package Lookup](#deleted-package-lookup)
+identifies that case.
 
 #### Package Source History
 
@@ -824,9 +834,10 @@ GET /source/{project}/{package}?deleted=1
 ```
 
 This lookup establishes that IBS deleted a package, which the source history
-alone cannot: its 404 also answers a package that never existed and a project
-that the account cannot read. `project` is a `SUSE:` project and `package` is
-an IBS name (see [Request Point Detail](#request-point-detail)). The lookup
+and the request action diff alone cannot: their 404 also answers a package
+that never existed and a project that the account cannot read. `project` is a
+`SUSE:` project and `package` is an IBS name (see
+[Request Point Detail](#request-point-detail)). The lookup
 reports a package deleted when it does not exist now but IBS keeps its sources,
 because IBS deleted the package from an existing project or deleted the
 project that contained it. A package that IBS deleted from a project that it
@@ -860,8 +871,9 @@ propagate.
 #### Request Contract Verification Status
 
 Sanitized read-only verification against the IBS API on 2026-09-08,
-2026-10-13, 2026-10-14, 2026-11-12, 2026-11-16, 2026-11-17, and 2026-11-24,
-and inspection of the OBS source, established the request operations above.
+2026-10-13, 2026-10-14, 2026-11-12, 2026-11-16, 2026-11-17, 2026-11-24, and
+2026-11-25, and inspection of the OBS source, established the request
+operations above.
 Request numbers, checksums, and personal fields were never recorded in the
 repository.
 
@@ -947,6 +959,18 @@ Verified live:
     meta, read with an operator account, the incident projects created after
     the grant named the account as `reader`, and the earlier ones checked did
     not; none of them was access-disabled.
+  - On 2026-11-25, the release diff of an accepted release action whose
+    `opackage` IBS had deleted from the codestream (an older reissued update
+    that the release replaced) answered HTTP 404 `Package not found` naming
+    that package, while the exact lookup of its own target package was
+    available; for two release actions whose target package IBS had deleted,
+    the release diff and the exact lookup of the target package both answered
+    HTTP 404. For the first, the same diff without `oproject` and `opackage`,
+    and with the incident's source package as origin, answered HTTP 400
+    `not in repository`; with the logical codestream package as origin it
+    answered 200, but in a sample of 32 accepted releases of one package in
+    that codestream that form succeeded for only 5, so no diff form replaces
+    the deleted package.
   - Without `expand=1`, a not-accepted action reports its entire changelog as
     added.
   - Issues carry `state`, `tracker`, `name`, `label`, and `url`, including the
@@ -1002,6 +1026,14 @@ Verified live:
     deleted packages of an existing project. For a package of a deleted
     project, `_history` with `deleted=1` returns the package's meta history,
     not its source history.
+  - On 2026-11-25, the deleted target packages and the deleted `opackage` of
+    the release actions above answered the lookup with HTTP 200 and their
+    `<directory name>`; the existing target package of the release whose
+    `opackage` was deleted answered HTTP 400. The project listing with
+    `deleted=1` of 14 SLE 12 and SLE 15 codestream projects listed deleted
+    release target packages (`{package}.{n}`, including `patchinfo.{n}`) in
+    12 of them: 159 in `SUSE:SLE-12:Update`, 84 in `SUSE:SLE-15:Update`, and
+    from 2 to 58 in the others.
 
 Established only by OBS source inspection:
 
@@ -1014,6 +1046,11 @@ Established only by OBS source inspection:
   `startbefore` and applies no default `limit`;
 - how IBS builds the diff of a request action, including the cases in which
   the not-accepted form deliberately differs;
+- the source diff resolves its path package and its `opackage` only among
+  existing packages (`SourcePackageCommandController#diff` and
+  `set_origin_package`, through `Package.get_by_project_and_name`, which finds
+  only existing packages; a deleted package has no package record), so no diff
+  form can name a deleted package;
 - the link-base form: `linkrev=base` expands a branch link against its
   `baserev`, and the source diff compares with that revision when the link
   target is its `oproject` and `opackage` (`BSSrcServer::Link::handlelinks`,
