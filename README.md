@@ -30,6 +30,14 @@ update coordination across multiple maintained distribution versions,
 following the SUSE maintenance workflow and integrating with SUSE-internal
 services.
 
+> [!NOTE]
+> **Internal, non-commercial project.** Sentinel is an internal tool of the
+> SUSE Security Team, published as open source. It is not a commercial
+> product: SUSE does not sell, market, or offer it as a product or service.
+> It is not related to, affiliated with, or endorsed by any other product or
+> company that uses the name Sentinel. All trademarks belong to their
+> respective owners.
+
 ## Overview
 
 ### What Sentinel does
