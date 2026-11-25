@@ -781,6 +781,18 @@ Response Format. A `429` that the API itself returns, such as
 feature, is not request rate limiting, and carries that error structure, whose
 `code` distinguishes it from a rejection by the proxy.
 
+### Request Body Size
+
+The API does not limit the size of a request body. A proxy in front of it
+rejects a body larger than the limit that `docs/deployment.md` (Sentinel Host,
+Request body size) requires, whether or not the request declares its length.
+The response with which that proxy rejects a request, such as `413 Content Too
+Large`, is produced before the request reaches the application and is
+therefore outside the error structure of Response Format. The limit is a
+requirement on the deployment, not part of the API contract, and it is far
+larger than the request bodies of the API's operations; a release that adds an
+operation with larger bodies raises that requirement.
+
 ## Response Conventions
 
 ### Response Format
