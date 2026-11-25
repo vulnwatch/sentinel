@@ -593,7 +593,7 @@ class GitMaintenanceError(GitError): ... # Maintenance — clone is intact
 | `git clone` / `git fetch` | Any failure (network, auth, timeout, remote `HEAD` not resolvable, pack temporaries not removable before the fetch) | `GitFetchError` | Do NOT delete clone. Raise `FetcherError`. Next cycle retries |
 | Local read: the branch lookup inside `fetch_origin` before its fetch (`git symbolic-ref`), and every read after a successful fetch (`git diff`, `git rev-parse`, `git ls-tree`, `git rev-list`, `git log`) | Persistent failure after retry exhaustion (3 retries with exponential backoff) | `GitCorruptionError` | Delete clone directory. Raise `FetcherError`. Next cycle re-clones + applies recovery strategy |
 | `git show` during delta file processing | Any failure (timeout, corrupt/missing blob in local store) | `GitFileError` | Periodic delta path: fail that selected item. Single-item candidate lookup: local candidate bookkeeping only; try the next candidate and never call `record_failed()` because no `FetcherRun` exists |
-| Maintenance (`maintain()`, after the run's items) | Any failure (timeout, non-zero exit, git not startable) | `GitMaintenanceError` | Do NOT delete clone; `maintain()` has removed the failed repack's pack temporaries. Log the bounded WARNING `git_clone_maintenance_failed`; the run's outcome and cursor are unchanged. The next run that fetches retries |
+| Maintenance (`maintain()`, after the run's items) | Any failure (timeout, non-zero exit, git not startable) | `GitMaintenanceError` | Do NOT delete clone; `maintain()` has attempted to remove the failed repack's pack temporaries. Log the bounded WARNING `git_clone_maintenance_failed`; the run's outcome and cursor are unchanged. The next run that fetches retries |
 | Directory deletion (recovery/cleanup) | Filesystem rejection (permissions, read-only mount, busy handle) | `OSError` | Log the bounded ERROR `git_clone_delete_failed`: `fetcher_name`, the clone path (`repo_path`), the `errno`, and the fixed `guidance` "Manual intervention required — check filesystem permissions and mount state", never the exception text. Raise `FetcherError`. Next cycle re-attempts (permanent until operator resolves filesystem issue) |
 
 The `FetcherError` raised for each fetcher action carries a fixed public
@@ -1063,8 +1063,8 @@ no commit-graph, bitmap, or multi-pack index is written.
 
 Run `git --git-dir=<repo_path> repack -d -n -q --geometric=2
 --threads=1` with the maintenance timeout, without retry. After a failed
-repack (a non-zero exit, or the timeout once the `git` process has been
-reaped), remove the pack temporaries of Fetch Operations step 2 before
+repack (a non-zero exit, the timeout once the `git` process has been
+reaped, or git that cannot be started), remove the pack temporaries of Fetch Operations step 2 before
 raising, best effort: a filesystem error there is ignored, and the next
 `fetch_origin()` removes them or reports it. Both clones share one volume,
 so the temporary pack of a full consolidation that failed on a full volume
