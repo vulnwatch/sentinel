@@ -359,17 +359,10 @@ class TestRequestIDOnUnhandledException:
         assert response.json()["code"] == "INTERNAL_ERROR"
         assert response.headers["x-request-id"] == "unhandled-check-id"
 
-    async def test_500_carries_a_generated_request_id(
-        self, failing_app_client: AsyncClient
-    ) -> None:
-        response = await failing_app_client.get(_FAILING_PATH)
-
-        assert response.status_code == 500
-        assert _UUID_RE.match(response.headers["x-request-id"])
-
     async def test_unhandled_exception_record_carries_the_response_request_id(
         self, failing_app_client: AsyncClient, caplog: pytest.LogCaptureFixture
     ) -> None:
+        # No client-supplied value: the generated ID is on the `500` too.
         with caplog.at_level(logging.ERROR, logger="app.main"):
             response = await failing_app_client.get(_FAILING_PATH)
 

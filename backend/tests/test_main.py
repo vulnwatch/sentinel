@@ -20,9 +20,8 @@ exception. The routing and body-decoding responses are covered end to end
 in `tests/test_api/test_framework_errors.py`. Also covers the CORS
 middleware registration (`docs/configuration.md`, Application): the real
 app's options and, on a standalone app with those options, the responses
-with no configured origin, a configured origin, and an unconfigured one; the
-registration of cross-origin request protection relative to it; and the
-installation of `RequestIDMiddleware` outside `ServerErrorMiddleware`.
+with no configured origin, a configured origin, and an unconfigured one; and
+the registration of cross-origin request protection relative to it.
 
 A minimal standalone FastAPI app registers the real, imported handler
 function (not a re-implementation) plus one route that deliberately
@@ -62,13 +61,11 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.middleware.errors import ServerErrorMiddleware
 
 import app.main as main_module
 from app.config import settings
 from app.core.cross_origin import CrossOriginProtectionMiddleware
 from app.core.errors import AppError, ErrorCode, InputError
-from app.core.middleware import RequestIDMiddleware
 from app.main import (
     _app_error_handler,
     _http_exception_handler,
@@ -526,33 +523,16 @@ class TestCrossOriginProtectionRegistration:
         assert registrations == [{"trusted_origins": settings.cors_origins}]
         assert registrations[0]["trusted_origins"] is settings.cors_origins
 
-    def test_runs_after_request_ids_and_before_cors(self) -> None:
+    def test_runs_first_among_user_middleware_and_before_cors(self) -> None:
         # `user_middleware` lists the outermost middleware first.
+        # `RequestIDMiddleware` is not among them: `app.main` wraps the whole
+        # built stack with it, so it still runs before cross-origin request
+        # protection; its behavior on the real app, the `500` of an
+        # unhandled exception included, is covered in
+        # `tests/test_core/test_middleware.py`.
         classes = [cls for cls, _, _ in main_module.app.user_middleware]
 
         assert classes == [CrossOriginProtectionMiddleware, CORSMiddleware]
-        # `RequestIDMiddleware` wraps the whole built stack instead
-        # (`TestRequestIDMiddlewareRegistration`).
-        assert RequestIDMiddleware not in classes
-
-
-@pytest.mark.unit
-class TestRequestIDMiddlewareRegistration:
-    """`app.main` installs `RequestIDMiddleware` outside Starlette's
-    `ServerErrorMiddleware`, so the `500 INTERNAL_ERROR` of an unhandled
-    exception carries `X-Request-ID` and is logged with `request_id`
-    (`docs/api-spec.md`, Request Tracing). Its behavior on the real app is
-    covered in `tests/test_core/test_middleware.py`."""
-
-    def test_wraps_the_server_error_middleware(self) -> None:
-        # The class's own method: the OpenAPI response contract check
-        # replaces the instance attribute to wrap the stack in turn
-        # (`tests/support/openapi_contract.py`).
-        application = main_module.app
-        stack = type(application).build_middleware_stack(application)
-
-        assert isinstance(stack, RequestIDMiddleware)
-        assert isinstance(stack.app, ServerErrorMiddleware)
 
 
 async def _delete_default_cvss_version_setting(
