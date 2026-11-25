@@ -290,24 +290,18 @@ async def test_inherited_repository_variables_do_not_affect_target_clone(
     assert rev_parse(decoy, "HEAD") == decoy_head
 
 
-@pytest.mark.parametrize("configuration", ["hermetic", "git-default"])
-async def test_fetch_origin_starts_no_automatic_maintenance_whatever_the_configuration(
-    bare: Path,
-    upstream: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    configuration: str,
+async def test_fetch_origin_with_git_default_configuration_starts_no_maintenance(
+    bare: Path, upstream: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # `--no-auto-maintenance` overrides any configuration: with git's
-    # default (run in the foreground here), the module's fetch still starts
-    # no `git maintenance run --auto` (Fetch Operations, Automatic
-    # maintenance).
+    # `--no-auto-maintenance` overrides the configuration: with git's
+    # default (run in the foreground here, instead of the hermetic
+    # configuration that disables it), the module's fetch still starts no
+    # `git maintenance run --auto` (Fetch Operations, Automatic maintenance).
+    config = foreground_maintenance_config(tmp_path)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
     commit_files(upstream, {"README": b"updated\n"})
     trace = tmp_path / "trace.json"
     monkeypatch.setenv("GIT_TRACE2_EVENT", str(trace))
-    if configuration == "git-default":
-        config = foreground_maintenance_config(tmp_path)
-        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
 
     await fetch_origin(bare)
 
@@ -325,10 +319,7 @@ async def test_fetch_origin_starts_no_automatic_maintenance_whatever_the_configu
         "--quiet",
         "origin",
         "+HEAD:refs/heads/main",
-        env_extra={
-            "GIT_TRACE2_EVENT": str(control),
-            "GIT_CONFIG_GLOBAL": str(foreground_maintenance_config(tmp_path)),
-        },
+        env_extra={"GIT_TRACE2_EVENT": str(control), "GIT_CONFIG_GLOBAL": str(config)},
     )
     assert len(automatic_maintenance_runs(control)) == 1
 
@@ -487,6 +478,59 @@ def _remove_upstream(upstream: Path) -> None:
 
 def _point_upstream_head_to_missing_branch(upstream: Path) -> None:
     git(upstream, "symbolic-ref", "HEAD", "refs/heads/missing")
+
+
+async def test_fetch_origin_removes_pack_temporaries_before_fetching(
+    bare: Path, upstream: Path, git_calls: list[GitCall]
+) -> None:
+    pack_dir = bare / "objects" / "pack"
+    temporaries = ["tmp_pack_Ab12Cd", "tmp_idx_Ab12Cd", ".tmp-4242-pack-0123.pack"]
+    for name in temporaries:
+        (pack_dir / name).write_bytes(b"partial")
+    (pack_dir / "tmp_directory").mkdir()
+    (pack_dir / "unrelated.txt").write_bytes(b"kept")
+    new_head = commit_files(upstream, {"README": b"updated\n"})
+
+    await fetch_origin(bare)
+
+    remaining = _entries(pack_dir)
+    assert not set(temporaries) & set(remaining)
+    assert {"tmp_directory", "unrelated.txt"} <= set(remaining)
+    assert await get_head_sha(bare) == new_head
+    assert _subcommands(git_calls) == ["symbolic-ref", "fetch", "rev-parse"]
+
+
+async def test_fetch_origin_without_pack_directory_fetches(
+    upstream: Path, tmp_path: Path
+) -> None:
+    # A local clone keeps the upstream's loose objects, so the clone holds
+    # no pack and its pack directory can be removed without losing objects.
+    bare = tmp_path / "clone"
+    git(None, "clone", "--quiet", "--bare", "--", str(upstream), str(bare))
+    (bare / "objects" / "pack").rmdir()
+    new_head = commit_files(upstream, {"README": b"updated\n"})
+
+    await fetch_origin(bare)
+
+    assert await get_head_sha(bare) == new_head
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+async def test_fetch_origin_unremovable_temporary_raises_fetch_error_without_fetch(
+    bare: Path, git_calls: list[GitCall], sleeps: list[float]
+) -> None:
+    pack_dir = bare / "objects" / "pack"
+    (pack_dir / "tmp_pack_Ab12Cd").write_bytes(b"partial")
+    pack_dir.chmod(0o555)
+    try:
+        with pytest.raises(GitFetchError, match="temporaries") as excinfo:
+            await fetch_origin(bare)
+    finally:
+        pack_dir.chmod(0o755)
+
+    assert isinstance(excinfo.value.__cause__, PermissionError)
+    assert _subcommands(git_calls) == ["symbolic-ref"]
+    assert sleeps == []
 
 
 @pytest.mark.parametrize(
@@ -980,7 +1024,7 @@ _FORCED_HEAD = "+HEAD:refs/heads/main"
 
 @pytest.fixture
 def fetched_packs(tmp_path: Path) -> tuple[Path, Path, str]:
-    """A bare clone whose clone pack holds 52 objects, followed by four
+    """A bare clone whose clone pack holds 53 objects, followed by four
     fetches packed one pack each (as a fetch above `fetch.unpackLimit`
     keeps its pack) and one fetch left as loose objects. Returns the clone,
     the upstream, and the name of the clone's pack."""
@@ -1038,23 +1082,6 @@ async def test_maintain_keeps_commit_left_unreachable_by_upstream_rewrite(
     assert await check_sha_reachable(bare, cursor) is True
 
 
-async def test_maintain_removes_pack_temporaries_before_repacking(bare: Path) -> None:
-    pack_dir = bare / "objects" / "pack"
-    temporaries = ["tmp_pack_Ab12Cd", "tmp_idx_Ab12Cd", ".tmp-4242-pack-0123.pack"]
-    for name in temporaries:
-        (pack_dir / name).write_bytes(b"partial")
-    (pack_dir / "tmp_directory").mkdir()
-    (pack_dir / "unrelated.txt").write_bytes(b"kept")
-    packs = _pack_object_counts(bare)
-
-    await maintain(bare)
-
-    remaining = _entries(pack_dir)
-    assert not set(temporaries) & set(remaining)
-    assert {"tmp_directory", "unrelated.txt"} <= set(remaining)
-    assert _pack_object_counts(bare) == packs
-
-
 async def test_maintain_without_repository_raises_maintenance_error_once(
     tmp_path: Path, git_calls: list[GitCall], sleeps: list[float]
 ) -> None:
@@ -1064,24 +1091,6 @@ async def test_maintain_without_repository_raises_maintenance_error_once(
     assert excinfo.value.reason == "failed"
     assert _subcommands(git_calls) == ["repack"]
     assert sleeps == []
-
-
-@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
-async def test_maintain_unremovable_temporary_raises_without_running_git(
-    bare: Path, git_calls: list[GitCall]
-) -> None:
-    pack_dir = bare / "objects" / "pack"
-    (pack_dir / "tmp_pack_Ab12Cd").write_bytes(b"partial")
-    pack_dir.chmod(0o555)
-    try:
-        with pytest.raises(GitMaintenanceError, match="temporaries") as excinfo:
-            await maintain(bare)
-    finally:
-        pack_dir.chmod(0o755)
-
-    assert excinfo.value.reason == "failed"
-    assert isinstance(excinfo.value.__cause__, PermissionError)
-    assert git_calls == []
 
 
 # --- delete_clone -----------------------------------------------------------

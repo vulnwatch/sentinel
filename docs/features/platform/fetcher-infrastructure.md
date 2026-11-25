@@ -1462,8 +1462,10 @@ is a Beat/dispatch concern, not an execution-time one).
 limit extracted from the Celery request headers (see "Per-Run Hard
 Time Limit" in "Stale Run Detection"), not from the live
 `FetcherConfig.run_timeout` column, so that all downstream consumers —
-error sanitization, any future per-run timeout budget — use the limit
-of the specific delivery, never the live configuration. This snapshot
+error sanitization and per-run timeout budgets such as the Git clone
+maintenance's (`docs/features/platform/git-fetcher-infrastructure.md`,
+Template Method: `execute()`, step 12) — use the limit of the specific
+delivery, never the live configuration. This snapshot
 is passed to `BaseFetcher.run()` as the `config` parameter and is
 available to `execute()` via `self.config`.
 
@@ -3729,8 +3731,8 @@ under which the worker process executes. This value is:
 The runtime configuration snapshot (`FetcherRunConfig`) passed to
 `BaseFetcher.run()` carries the per-run value as its own
 `hard_time_limit_seconds` field, so all downstream consumers (error
-sanitization, any future per-run timeout budget) use the effective
-limit of the specific delivery.
+sanitization, per-run timeout budgets) use the effective limit of the
+specific delivery.
 
 ### Queued Stale Threshold
 

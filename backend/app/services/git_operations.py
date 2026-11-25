@@ -25,8 +25,9 @@ cancellation, or any other exception while it starts or runs, its process
 group is terminated (SIGTERM, then SIGKILL after a short grace period) and
 the process is reaped before the exception propagates. The fetch disables
 git's automatic maintenance, which would otherwise continue detached after
-the call; the clone is maintained explicitly by `maintain()` (Maintenance
-Operations). A start that asyncio itself abandons after spawning git is an
+the call, and first removes the pack temporaries that interrupted git
+processes left behind; the clone is maintained explicitly by `maintain()`
+(Maintenance Operations). A start that asyncio itself abandons after spawning git is an
 accepted residual risk (Runtime Dependencies, Process lifecycle).
 """
 
@@ -330,6 +331,22 @@ async def clone(
 # --- Fetch operations -------------------------------------------------------
 
 
+def _remove_pack_temporaries(repo_path: Path) -> None:
+    """Remove the temporary files that an interrupted git process left in
+    `objects/pack/`. No-op when the directory does not exist."""
+    try:
+        with os.scandir(repo_path / "objects" / "pack") as iterator:
+            entries = list(iterator)
+    except FileNotFoundError:
+        return
+    for entry in entries:
+        if entry.name.startswith(_PACK_TEMPORARY_PREFIXES) and not entry.is_dir(
+            follow_symlinks=False
+        ):
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(entry.path)
+
+
 async def _branch_ref(repo_path: Path) -> str:
     """The clone's own branch (`refs/heads/...`) that `HEAD` names."""
 
@@ -347,9 +364,14 @@ async def _branch_ref(repo_path: Path) -> str:
 
 
 async def fetch_origin(repo_path: Path) -> None:
-    """Update the clone's own branch, and therefore `HEAD`, from the remote's
-    `HEAD`. Raises `GitCorruptionError` (branch lookup) or `GitFetchError`."""
+    """Remove the pack temporaries of interrupted git processes, then update
+    the clone's own branch, and therefore `HEAD`, from the remote's `HEAD`.
+    Raises `GitCorruptionError` (branch lookup) or `GitFetchError`."""
     ref = await _branch_ref(repo_path)
+    try:
+        await asyncio.to_thread(_remove_pack_temporaries, repo_path)
+    except OSError as exc:
+        raise GitFetchError(f"pack temporaries could not be removed: {exc}") from exc
     command = (
         _git_dir(repo_path),
         "fetch",
@@ -545,33 +567,10 @@ async def show_file(repo_path: Path, ref: str, file_path: str) -> bytes | None:
 # --- Maintenance operations -------------------------------------------------
 
 
-def _remove_pack_temporaries(repo_path: Path) -> None:
-    """Remove the temporary files that an interrupted git process left in
-    `objects/pack/`. No-op when the directory does not exist."""
-    try:
-        with os.scandir(repo_path / "objects" / "pack") as iterator:
-            entries = list(iterator)
-    except FileNotFoundError:
-        return
-    for entry in entries:
-        if entry.name.startswith(_PACK_TEMPORARY_PREFIXES) and not entry.is_dir(
-            follow_symlinks=False
-        ):
-            with contextlib.suppress(FileNotFoundError):
-                os.unlink(entry.path)
-
-
 async def maintain(repo_path: Path) -> None:
     """Consolidate the clone's packs into a geometric progression, in the
-    foreground, with one thread. Removes the pack temporaries of
-    interrupted git processes first. Raises `GitMaintenanceError` (no
-    retry); the clone stays intact."""
-    try:
-        await asyncio.to_thread(_remove_pack_temporaries, repo_path)
-    except OSError as exc:
-        raise GitMaintenanceError(
-            f"pack temporaries could not be removed: {exc}", reason="failed"
-        ) from exc
+    foreground, with one thread. Raises `GitMaintenanceError` (no retry);
+    the clone stays intact."""
     command = (
         _git_dir(repo_path),
         "repack",

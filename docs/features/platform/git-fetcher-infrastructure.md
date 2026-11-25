@@ -69,7 +69,8 @@ The pattern:
    `git symbolic-ref --end-of-options HEAD` (for example
    `refs/heads/main`), then
    `git fetch --no-auto-maintenance --end-of-options origin +HEAD:<ref>`
-   updates that branch
+   (after removing the pack temporaries of interrupted git processes, see
+   "Fetch Operations") updates that branch
    from the remote's `HEAD` (the upstream default branch), and therefore
    updates the local `HEAD`, and downloads new objects. The explicit
    refspec is required: a bare clone has no `remote.origin.fetch`
@@ -344,18 +345,25 @@ retry exhaustion):
 **Interrupted maintenance** (the maintenance timeout, a whole-run signal,
 or a kill of the Git worker, including an out-of-memory kill, interrupts
 `maintain()`): the clone stays valid, because the repack installs its new
-pack before it deletes the packs it replaces. An interruption can leave
-temporary files of up to the size of the consolidated packs in
-`objects/pack/`; the next `maintain()` removes them before it repacks
-(see "Maintenance Operations"). The maintenance takes no lock, so no lock
-file of git's own maintenance (`gc.pid`, `objects/maintenance.lock`) can
-block it; such files left by a release whose fetch still started git's
-automatic maintenance are inert, since nothing runs that maintenance any
-more. A timed-out or failed maintenance is logged as the WARNING
-`git_clone_maintenance_failed` and leaves the run's outcome unchanged; a
-kill of the Git worker leaves the run `running` until Stale Run Detection
-finalizes it as `failure` (`fetcher-infrastructure.md`). The next run that
-fetches retries the maintenance from the state left behind.
+pack before it deletes the packs it replaces. An interruption, like a
+consolidation that fails on a full volume, can leave temporary files of up
+to the size of the consolidated packs in `objects/pack/`; the next
+`fetch_origin()` removes them before it fetches (see "Fetch Operations"),
+so that they cannot keep the volume full and make every later fetch fail.
+The maintenance takes no lock, so no lock file of git's own maintenance
+(`gc.pid`, `objects/maintenance.lock`) can block it; such files left by a
+release whose fetch still started git's automatic maintenance are inert,
+since nothing runs that maintenance any more. A timed-out or failed
+maintenance is logged as the WARNING `git_clone_maintenance_failed` and
+leaves the run's outcome unchanged. A kill of the Git worker during the
+maintenance ends the run before `run()` finalizes it: the run stays
+`running` until Stale Run Detection finalizes it as `failure`
+(`fetcher-infrastructure.md`), so its cursor does not advance although its
+items are committed, and the next run processes the same delta again
+(idempotently). An interrupted repack keeps no progress: the next run that
+fetches starts the maintenance again, and an out-of-memory kill therefore
+repeats on every such run until the Git worker's memory limit covers the
+maintenance (see "Maintenance Operations", Resources).
 
 ## Cursor SHA Unreachable
 
@@ -580,10 +588,10 @@ class GitMaintenanceError(GitError): ... # Maintenance — clone is intact
 
 | Phase | Failure condition | Exception | Fetcher action |
 |-------|-------------------|-----------|----------------|
-| `git clone` / `git fetch` | Any failure (network, auth, timeout, remote `HEAD` not resolvable) | `GitFetchError` | Do NOT delete clone. Raise `FetcherError`. Next cycle retries |
+| `git clone` / `git fetch` | Any failure (network, auth, timeout, remote `HEAD` not resolvable, pack temporaries not removable before the fetch) | `GitFetchError` | Do NOT delete clone. Raise `FetcherError`. Next cycle retries |
 | Local read: the branch lookup inside `fetch_origin` before its fetch (`git symbolic-ref`), and every read after a successful fetch (`git diff`, `git rev-parse`, `git ls-tree`, `git rev-list`, `git log`) | Persistent failure after retry exhaustion (3 retries with exponential backoff) | `GitCorruptionError` | Delete clone directory. Raise `FetcherError`. Next cycle re-clones + applies recovery strategy |
 | `git show` during delta file processing | Any failure (timeout, corrupt/missing blob in local store) | `GitFileError` | Periodic delta path: fail that selected item. Single-item candidate lookup: local candidate bookkeeping only; try the next candidate and never call `record_failed()` because no `FetcherRun` exists |
-| Maintenance (`maintain()`, after the run's items) | Any failure (timeout, non-zero exit, git not startable, pack temporaries not removable) | `GitMaintenanceError` | Do NOT delete clone. Log the bounded WARNING `git_clone_maintenance_failed`; the run's outcome and cursor are unchanged. The next run that fetches retries |
+| Maintenance (`maintain()`, after the run's items) | Any failure (timeout, non-zero exit, git not startable) | `GitMaintenanceError` | Do NOT delete clone. Log the bounded WARNING `git_clone_maintenance_failed`; the run's outcome and cursor are unchanged. The next run that fetches retries |
 | Directory deletion (recovery/cleanup) | Filesystem rejection (permissions, read-only mount, busy handle) | `OSError` | Log the bounded ERROR `git_clone_delete_failed`: `fetcher_name`, the clone path (`repo_path`), the `errno`, and the fixed `guidance` "Manual intervention required — check filesystem permissions and mount state", never the exception text. Raise `FetcherError`. Next cycle re-attempts (permanent until operator resolves filesystem issue) |
 
 The `FetcherError` raised for each fetcher action carries a fixed public
@@ -748,7 +756,8 @@ check for database-sourced SHAs.
 An argument containing U+0000 cannot be passed to a process. A function
 given such a value raises `ValueError` before git starts: it is a caller
 error, not a git failure, so it is neither retried nor classified as
-`GitFetchError`, `GitCorruptionError`, or `GitFileError`. Paths returned
+`GitFetchError`, `GitCorruptionError`, `GitFileError`, or
+`GitMaintenanceError`. Paths returned
 by `diff_names` never contain U+0000, and `check_sha_reachable` and
 `is_clone_valid` return `False` for such a value (Rule 1; a path that is
 not a directory).
@@ -852,7 +861,7 @@ modifications needed.
 
 | Function | Signature | Returns | Timeout | Raises |
 |----------|-----------|---------|---------|--------|
-| `fetch_origin` | `async def fetch_origin(repo_path: Path) -> None` | `None` | Read (30 sec) for the branch lookup; Fetch (5 min) for the fetch | `GitCorruptionError` (branch lookup); `GitFetchError` (fetch) |
+| `fetch_origin` | `async def fetch_origin(repo_path: Path) -> None` | `None` | Read (30 sec) for the branch lookup; Fetch (5 min) for the fetch | `GitCorruptionError` (branch lookup); `GitFetchError` (pack temporaries, fetch) |
 
 Semantics: updates the clone's own branch, and therefore `HEAD`, from
 `origin`. Incremental — only new objects are transferred.
@@ -866,7 +875,21 @@ Semantics: updates the clone's own branch, and therefore `HEAD`, from
    `refs/heads/master` for vulns.git). Any other outcome — an unreadable
    or detached `HEAD`, or the timeout — is a failed read: it follows the
    read retry policy and then raises `GitCorruptionError`.
-2. **Fetch** (Fetch phase, not retried): run
+2. **Remove pack temporaries** (Fetch phase, not retried): delete every
+   entry of `<repo_path>/objects/pack/` that is not a directory and whose
+   name starts with `tmp_` (the temporary pack, index, and reverse-index
+   files of `git pack-objects` and `git index-pack`) or `.tmp-` (those of
+   `git repack`). Git writes them while it creates a pack and leaves them
+   behind when it is killed or fails, for example on a full volume; an
+   interrupted fetch or maintenance can leave as much as the packs it was
+   writing. A missing directory is a no-op. Removing them is safe because
+   only the periodic sync writes the clone (Concurrency Rules, rules 1
+   and 4), and its fetch is the first write of a run. They are removed
+   before the fetch, not only before the maintenance, because a volume
+   that they keep full would make the fetch fail and the run would never
+   reach the maintenance. A filesystem error raises `GitFetchError`
+   without starting the fetch.
+3. **Fetch** (Fetch phase, not retried): run
    `git fetch --no-auto-maintenance --end-of-options origin +HEAD:<ref>`
    with the fetch timeout. The explicit forced refspec updates the clone's branch from
    the remote's `HEAD` even though a bare clone has no
@@ -1037,32 +1060,24 @@ no commit-graph, bitmap, or multi-pack index is written.
 
 **Behavior**:
 
-1. **Remove pack temporaries**: delete every entry of
-   `<repo_path>/objects/pack/` that is not a directory and whose name
-   starts with `tmp_` (the temporary pack, index, and reverse-index files
-   of `git pack-objects` and `git index-pack`) or `.tmp-` (those of
-   `git repack`). Git writes them while it creates a pack and leaves them
-   behind when it is killed; an interrupted consolidation can leave as
-   much as the consolidated packs on the volume. A missing directory is a
-   no-op. Removing them is safe because only the periodic sync writes the
-   clone (Concurrency Rules, rules 1 and 4), and the maintenance runs in
-   that sync after its fetch has ended. A filesystem error raises
-   `GitMaintenanceError` without invoking git.
-2. **Repack**: run `git --git-dir=<repo_path> repack -d -n -q
-   --geometric=2 --threads=1` with the maintenance timeout, without retry.
-   `--geometric=2` rolls the smallest packs and the loose objects into one
-   new pack so that each remaining pack holds at least twice the objects
-   of all smaller ones together: it reads only the objects of the packs
-   it rolls up, walks no history, and leaves the clone's pack alone until
-   the objects added after the clone reach half of it. `-d` deletes the
-   rolled-up packs and loose objects only after the new pack is in place.
-   `-n` skips the `update-server-info` files, which a clone that serves
-   nothing does not need. `--threads=1` fixes the delta-search threads,
-   which otherwise default to the CPUs that the host reports regardless of
-   a container's CPU limit. Git's maintenance configuration (`gc.*`,
-   `maintenance.*`) and lock files (`gc.pid`, `objects/maintenance.lock`)
-   are not involved. A non-zero exit, the timeout, or git that cannot be
-   started raises `GitMaintenanceError` with stderr content.
+Run `git --git-dir=<repo_path> repack -d -n -q --geometric=2
+--threads=1` with the maintenance timeout, without retry. The pack
+temporaries that an interrupted maintenance leaves are removed by the next
+`fetch_origin()` (see "Fetch Operations").
+
+`--geometric=2` rolls the smallest packs and the loose objects into one
+new pack so that each remaining pack holds at least twice the objects of
+all smaller ones together: it packs only the objects of the packs it rolls
+up, and leaves the clone's pack alone until the objects added after the
+clone reach half of it. `-d` deletes the rolled-up packs and loose objects
+only after the new pack is in place. `-n` skips the `update-server-info`
+files, which a clone that serves nothing does not need. `--threads=1`
+fixes the delta-search threads, which otherwise default to the CPUs that
+the host reports regardless of a container's CPU limit. Git's maintenance
+configuration (`gc.*`, `maintenance.*`) and lock files (`gc.pid`,
+`objects/maintenance.lock`) are not involved. A non-zero exit, the
+timeout, or git that cannot be started raises `GitMaintenanceError` with
+stderr content.
 
 `GitMaintenanceError` carries `reason`: `timeout` when the maintenance
 timeout expired, `failed` for every other failure. The value contains
@@ -1084,9 +1099,15 @@ about the repository's size beside the existing packs (see Volume
 Requirements) and fills the page cache up to the memory limit, which the
 kernel reclaims without an out-of-memory kill. It uses one CPU, so a CPU
 limit of one CPU or more does not lengthen it. Its memory grows with the
-repository (about 0.6 KiB per object at this measurement); the memory
-that a Git worker needs for it belongs to the worker's resource
-requirements (`docs/deployment.md`, Kubernetes Workloads).
+repository (about 0.6 KiB per object at this measurement). The
+measurement consolidated the clone's pack with 16 days of fetches; the
+consolidation that the table's row describes happens only once the added
+objects reach half of the clone's pack, so it packs about 1.5 times the
+clone's objects: for `cvelistV5`, about 3.7 million objects and therefore
+about 2.2 GiB, and each later full consolidation about 1.5 times the
+previous one. The memory that a Git worker needs for it belongs to the
+worker's resource requirements (`docs/deployment.md`, Kubernetes
+Workloads).
 
 ### Filesystem Operations
 
@@ -1324,15 +1345,15 @@ above.
     negligible (milliseconds).
 
 11. Set cursor to `{"sha": head_sha, "committed_at": head_date}`
-12. **Clone maintenance** — only when step 4b fetched (a first run, and a
-    run that rebuilt the clone at step 4a, hold a single fresh pack):
+12. **Clone maintenance** — only when step 4b fetched (a run that did not
+    fetch added no pack):
     a. **Time budget**: the maintenance starts only when, started now and
        lasting its whole timeout, it ends before the run's soft time
        limit. `execute()` records a monotonic clock at its start; the soft
        time limit is derived from the run's
        `config.hard_time_limit_seconds` with the formula of
        `fetcher-infrastructure.md` (Time Limits and Queue Routing:
-       `floor(run_timeout × 0.95)`). The maintenance starts when the soft
+       `max(1, floor(run_timeout × 0.95))`). The maintenance starts when the soft
        time limit minus the time elapsed since the start of `execute()` is
        at least the Maintenance timeout (20 minutes) plus a fixed margin of
        60 seconds. The margin covers the time between the start of the

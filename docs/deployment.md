@@ -3119,7 +3119,8 @@ permission.
 
 A Git fetcher run that fetched ends by maintaining its clone
 (`docs/features/platform/git-fetcher-infrastructure.md`, Maintenance
-Operations). The Git worker logs one of these events per such run:
+Operations). The Git worker logs one of these events for each such run that
+completes its items; a run that ends earlier, with `failure`, logs none:
 
 1. `git_clone_maintenance_completed` (INFO): the normal case, with its
    `duration_seconds`
@@ -3130,17 +3131,33 @@ Operations). The Git worker logs one of these events per such run:
    is too low for it (see the Run timeout rule in Runtime Dependencies of
    the same document)
 3. `git_clone_maintenance_failed` (WARNING) with `reason`: `timeout` means
-   that the maintenance did not end within its 20 minutes, usually because
-   the Git worker has too little CPU or a slow volume; `failed` means any
-   other failure, for example a full volume. The run itself is unaffected,
-   and the next run retries
+   that the maintenance did not end within its 20 minutes, which it uses
+   one CPU for: the volume is slow, or the Git worker has less than one CPU;
+   `failed` means any other failure, for example a full volume, which needs
+   free space of about the repository's size for the temporary pack of a
+   full consolidation (see [Git Worker Volume](#git-worker-volume)). The
+   run itself is unaffected, and the next run retries
+
+The event carries no git output. When `failed` repeats on every run, run
+the maintenance by hand in the Git worker's container, with no run of the
+affected fetcher active, to see git's error:
+`git --git-dir=<directory> repack -d -n --geometric=2 --threads=1`, where
+`<directory>` is the clone under `GIT_CLONE_BASE_DIR` (by default
+`/var/lib/sentinel/git`): `cvelistV5` for `sync_mitre_cves`, `vulns.git` for
+`sync_kernel_cves`.
+If the error names damaged objects, delete that clone directory: the clone is
+a recoverable cache, and the next run re-clones it and resumes from the
+stored cursor (`docs/features/platform/git-fetcher-infrastructure.md`,
+Recovery).
 
 When the Git worker restarts with an out-of-memory kill (`OOMKilled`, exit
 code 137) during a Git fetcher run, and the run then stays `running` until
-stale run detection finalizes it as `failure`, its memory limit is below what
-the clone's maintenance or the clone itself needs (Maintenance Operations
-lists the measured peaks). Raise the limit; the interrupted maintenance
-leaves the clone valid and the next run resumes it.
+stale run detection finalizes it as `failure`, its memory limit may be below
+what the clone's maintenance needs (Maintenance Operations lists the measured
+peaks). Such a run keeps its previous cursor although its items are
+committed, and the kill repeats on every run that fetches, which processes
+the same growing delta again, until the limit is raised. The interrupted
+maintenance leaves the clone valid.
 
 #### Slow or Hung Process
 

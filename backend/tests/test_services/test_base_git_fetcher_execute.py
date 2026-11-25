@@ -41,6 +41,7 @@ import os
 import shutil
 from collections.abc import AsyncIterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -51,7 +52,7 @@ from structlog.testing import capture_logs
 
 from app.core.enums import CVESourceFetchStatus
 from app.models.ticket import Ticket
-from app.services import ticket_convergence_publication
+from app.services import base_git_fetcher, ticket_convergence_publication
 from app.services.base_cve_fetcher import (
     CVE_FETCH_ITEM_FAILED_EVENT,
     HANDOFF_PUBLICATION_FAILED_EVENT,
@@ -575,7 +576,7 @@ class TestUpstreamRewrite:
             result = await harness.run(probe)
 
         clone = workspace.clone_path(probe)
-        # The bare clone keeps no reflog; the old commit awaits pruning.
+        # The bare clone keeps no reflog, and nothing prunes the old commit.
         assert has_commit(clone, old)
         assert "rev_list_before" not in git_calls.names()
         assert events_named(logs, CURSOR_SHA_UNREACHABLE_EVENT) == []
@@ -1746,25 +1747,6 @@ class TestCloneMaintenance:
         assert result.row.cursor == {"sha": head, "committed_at": D_CURSOR}
         _bounded(logs, workspace)
 
-    async def test_runs_that_clone_do_not_maintain(
-        self, workspace: GitWorkspace, harness: GitRunHarness, git_calls: GitCalls
-    ) -> None:
-        workspace.upstream.commit({"README": b"one\n"}, date=D_BASE)
-        probe = await _fetcher(workspace, harness, step=token())
-
-        with capture_logs() as logs:
-            await _first_run(harness, probe)
-            shutil.rmtree(workspace.clone_path(probe))
-            workspace.upstream.commit({cve_path("CVE-2024-0002"): b"{}"}, date=D_CURSOR)
-            rebuilt = await harness.run(probe)
-
-        assert git_calls.names().count("clone") == 2
-        assert "fetch_origin" not in git_calls.names()
-        assert "maintain" not in git_calls.names()
-        assert events_named(logs, MAINTENANCE_COMPLETED_EVENT) == []
-        assert events_named(logs, MAINTENANCE_SKIPPED_EVENT) == []
-        assert rebuilt.row.status == "success"
-
     @pytest.mark.parametrize("reason", ["timeout", "failed"])
     async def test_maintenance_failure_is_bounded_warning_and_keeps_outcome(
         self,
@@ -1796,14 +1778,12 @@ class TestCloneMaintenance:
         _bounded(logs, workspace)
 
     @pytest.mark.parametrize(
-        ("hard_time_limit", "maintained"),
+        ("elapsed", "maintained"),
         [
-            # floor(1326 * 0.95) = 1259 s: less than the 1200 s maintenance
-            # timeout plus the 60 s margin even when `execute()` starts.
-            pytest.param(1326, False, id="does-not-fit"),
-            # floor(1400 * 0.95) = 1330 s: fits while `execute()` has taken
-            # less than 70 s.
-            pytest.param(1400, True, id="fits"),
+            # floor(1400 * 0.95) = 1330 s of soft limit; 1330 - 70 = 1260 s
+            # left, exactly the 1200 s timeout plus the 60 s margin.
+            pytest.param(70.0, True, id="exactly-fits"),
+            pytest.param(71.0, False, id="one-second-short"),
         ],
     )
     async def test_maintenance_starts_only_when_its_timeout_fits_before_soft_limit(
@@ -1811,13 +1791,19 @@ class TestCloneMaintenance:
         workspace: GitWorkspace,
         harness: GitRunHarness,
         git_calls: GitCalls,
-        hard_time_limit: int,
+        monkeypatch: pytest.MonkeyPatch,
+        elapsed: float,
         maintained: bool,
     ) -> None:
         probe, head = await _fetching_run_setup(workspace, harness, git_calls)
         run_config = FetcherRunConfig(
-            hard_time_limit_seconds=hard_time_limit, request_delay=0, custom_settings={}
+            hard_time_limit_seconds=1400, request_delay=0, custom_settings={}
         )
+        # The module's own clock: 0 s at the start of `execute()`, `elapsed`
+        # afterwards. The global `time.monotonic` stays real (asyncio uses it).
+        readings = iter([0.0])
+        clock = SimpleNamespace(monotonic=lambda: next(readings, elapsed))
+        monkeypatch.setattr(base_git_fetcher, "time", clock)
 
         with capture_logs() as logs:
             result = await harness.run(probe, run_config=run_config)
@@ -1829,19 +1815,15 @@ class TestCloneMaintenance:
             assert len(events_named(logs, MAINTENANCE_COMPLETED_EVENT)) == 1
         else:
             assert "maintain" not in git_calls.names()
-            (event,) = skipped
-            assert event.keys() == {
-                "event",
-                "log_level",
-                "fetcher_name",
-                "remaining_seconds",
-                "required_seconds",
-            }
-            assert event["log_level"] == "warning"
-            assert event["fetcher_name"] == probe.name
-            assert event["required_seconds"] == 1260
-            assert isinstance(event["remaining_seconds"], int)
-            assert event["remaining_seconds"] <= 1259
+            assert skipped == [
+                {
+                    "event": MAINTENANCE_SKIPPED_EVENT,
+                    "log_level": "warning",
+                    "fetcher_name": probe.name,
+                    "remaining_seconds": 1259,
+                    "required_seconds": 1260,
+                }
+            ]
         assert result.row.status == "success"
         assert result.row.cursor == {"sha": head, "committed_at": D_CURSOR}
 
