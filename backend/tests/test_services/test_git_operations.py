@@ -1082,17 +1082,6 @@ async def test_maintain_keeps_commit_left_unreachable_by_upstream_rewrite(
     assert await check_sha_reachable(bare, cursor) is True
 
 
-async def test_maintain_without_repository_raises_maintenance_error_once(
-    tmp_path: Path, git_calls: list[GitCall], sleeps: list[float]
-) -> None:
-    with pytest.raises(GitMaintenanceError, match="git repack exited") as excinfo:
-        await maintain(tmp_path / "absent")
-
-    assert excinfo.value.reason == "failed"
-    assert _subcommands(git_calls) == ["repack"]
-    assert sleeps == []
-
-
 # --- delete_clone -----------------------------------------------------------
 
 

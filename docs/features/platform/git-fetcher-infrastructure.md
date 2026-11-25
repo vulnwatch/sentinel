@@ -347,9 +347,11 @@ or a kill of the Git worker, including an out-of-memory kill, interrupts
 `maintain()`): the clone stays valid, because the repack installs its new
 pack before it deletes the packs it replaces. An interruption, like a
 consolidation that fails on a full volume, can leave temporary files of up
-to the size of the consolidated packs in `objects/pack/`; the next
-`fetch_origin()` removes them before it fetches (see "Fetch Operations"),
-so that they cannot keep the volume full and make every later fetch fail.
+to the size of the consolidated packs in `objects/pack/`. `maintain()`
+removes them right after a failed repack (see "Maintenance Operations"),
+and the next `fetch_origin()` removes those that a kill or a whole-run
+signal left before it fetches (see "Fetch Operations"), so that they
+cannot keep the volume full and make later fetches fail.
 The maintenance takes no lock, so no lock file of git's own maintenance
 (`gc.pid`, `objects/maintenance.lock`) can block it; such files left by a
 release whose fetch still started git's automatic maintenance are inert,
@@ -591,7 +593,7 @@ class GitMaintenanceError(GitError): ... # Maintenance — clone is intact
 | `git clone` / `git fetch` | Any failure (network, auth, timeout, remote `HEAD` not resolvable, pack temporaries not removable before the fetch) | `GitFetchError` | Do NOT delete clone. Raise `FetcherError`. Next cycle retries |
 | Local read: the branch lookup inside `fetch_origin` before its fetch (`git symbolic-ref`), and every read after a successful fetch (`git diff`, `git rev-parse`, `git ls-tree`, `git rev-list`, `git log`) | Persistent failure after retry exhaustion (3 retries with exponential backoff) | `GitCorruptionError` | Delete clone directory. Raise `FetcherError`. Next cycle re-clones + applies recovery strategy |
 | `git show` during delta file processing | Any failure (timeout, corrupt/missing blob in local store) | `GitFileError` | Periodic delta path: fail that selected item. Single-item candidate lookup: local candidate bookkeeping only; try the next candidate and never call `record_failed()` because no `FetcherRun` exists |
-| Maintenance (`maintain()`, after the run's items) | Any failure (timeout, non-zero exit, git not startable) | `GitMaintenanceError` | Do NOT delete clone. Log the bounded WARNING `git_clone_maintenance_failed`; the run's outcome and cursor are unchanged. The next run that fetches retries |
+| Maintenance (`maintain()`, after the run's items) | Any failure (timeout, non-zero exit, git not startable) | `GitMaintenanceError` | Do NOT delete clone; `maintain()` has removed the failed repack's pack temporaries. Log the bounded WARNING `git_clone_maintenance_failed`; the run's outcome and cursor are unchanged. The next run that fetches retries |
 | Directory deletion (recovery/cleanup) | Filesystem rejection (permissions, read-only mount, busy handle) | `OSError` | Log the bounded ERROR `git_clone_delete_failed`: `fetcher_name`, the clone path (`repo_path`), the `errno`, and the fixed `guidance` "Manual intervention required — check filesystem permissions and mount state", never the exception text. Raise `FetcherError`. Next cycle re-attempts (permanent until operator resolves filesystem issue) |
 
 The `FetcherError` raised for each fetcher action carries a fixed public
@@ -885,10 +887,9 @@ Semantics: updates the clone's own branch, and therefore `HEAD`, from
    writing. A missing directory is a no-op. Removing them is safe because
    only the periodic sync writes the clone (Concurrency Rules, rules 1
    and 4), and its fetch is the first write of a run. They are removed
-   before the fetch, not only before the maintenance, because a volume
-   that they keep full would make the fetch fail and the run would never
-   reach the maintenance. A filesystem error raises `GitFetchError`
-   without starting the fetch.
+   before the fetch because a volume that they keep full would make the
+   fetch fail, and the run would never reach the maintenance. A filesystem
+   error raises `GitFetchError` without starting the fetch.
 3. **Fetch** (Fetch phase, not retried): run
    `git fetch --no-auto-maintenance --end-of-options origin +HEAD:<ref>`
    with the fetch timeout. The explicit forced refspec updates the clone's branch from
@@ -1061,9 +1062,15 @@ no commit-graph, bitmap, or multi-pack index is written.
 **Behavior**:
 
 Run `git --git-dir=<repo_path> repack -d -n -q --geometric=2
---threads=1` with the maintenance timeout, without retry. The pack
-temporaries that an interrupted maintenance leaves are removed by the next
-`fetch_origin()` (see "Fetch Operations").
+--threads=1` with the maintenance timeout, without retry. After a failed
+repack (a non-zero exit, or the timeout once the `git` process has been
+reaped), remove the pack temporaries of Fetch Operations step 2 before
+raising, best effort: a filesystem error there is ignored, and the next
+`fetch_origin()` removes them or reports it. Both clones share one volume,
+so the temporary pack of a full consolidation that failed on a full volume
+would otherwise keep the volume full, and make the other Git fetcher's
+fetches fail, until this fetcher's next run. What a kill or a whole-run
+signal interrupts is removed by the next `fetch_origin()`.
 
 `--geometric=2` rolls the smallest packs and the loose objects into one
 new pack so that each remaining pack holds at least twice the objects of
@@ -1092,7 +1099,7 @@ that a consolidation reads:
 |---|---|---|---|
 | A few new objects into a small pack | A run in steady state | 1.3 s | 190 MiB |
 | The packs of 60 fetches (16 days) beside the clone's pack | The first maintenance of a clone that git's automatic maintenance could not maintain | 34 s | 962 MiB |
-| Every pack, the clone's included, into one | When the objects added since the clone's pack was written reach half of it: for `cvelistV5`, which grows by about 5,000 objects a day, about eight months after a clone, then after intervals each about 1.5 times the previous one | 95 s | 1,545 MiB |
+| Every pack, the clone's included, into one | When the objects added since the clone's pack was written reach half of it: for `cvelistV5`, which grows by about 5,000 objects a day, about eight months after a clone, then after intervals each about 1.5 times the previous one | 95 s | 1,545 MiB, measured with the clone's pack and 16 days of fetches; about 2.2 GiB at the first full consolidation (see below) |
 
 The full consolidation is the largest. It writes a temporary pack of
 about the repository's size beside the existing packs (see Volume
@@ -1441,7 +1448,7 @@ Infrastructure failures and their outcomes:
 | Infrastructure failure | Exception | `execute()` action | Public `error_message` | BaseFetcher behavior |
 |------------------------|-----------|--------------------|------------------------|---------------------|
 | Clone fails (network) | `GitFetchError` | Catch → raise `FetcherError` (clone intact) | `External git repository unreachable — clone failed` | `status = failure`, cursor not advanced |
-| Fetch fails (network) | `GitFetchError` | Catch → raise `FetcherError` (clone intact) | `External git repository unreachable — fetch failed` | `status = failure`, cursor not advanced |
+| Fetch fails (network, or the local clone cannot be written) | `GitFetchError` | Catch → raise `FetcherError` (clone intact) | `External git repository unreachable — fetch failed` | `status = failure`, cursor not advanced |
 | HEAD or branch unreadable (corruption after retries) | `GitCorruptionError` | Delete clone → raise `FetcherError` | `Local git clone was damaged and has been removed — it will be re-cloned on the next run` | `status = failure`, cursor not advanced |
 | Reachability, delta, or recovery-boundary computation fails (corruption after retries) | `GitCorruptionError` | Delete clone → raise `FetcherError` | `Local git clone was damaged and has been removed — it will be re-cloned on the next run` | `status = failure`, cursor not advanced |
 | Directory deletion fails (filesystem) | `OSError` | Log ERROR → raise `FetcherError` | `Local git clone directory could not be removed — manual intervention required` | `status = failure`, cursor not advanced. Requires operator filesystem intervention |

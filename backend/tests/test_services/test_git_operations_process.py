@@ -657,6 +657,11 @@ async def test_maintain_failure_reason_names_timeout_or_other_failure(
 ) -> None:
     fake = fake_git.install({"repack": behavior})
     monkeypatch.setattr(git_operations, "MAINTENANCE_TIMEOUT_SECONDS", _SHORT_TIMEOUT)
+    # What the failed repack left behind is removed before the error.
+    pack_dir = repo / "objects" / "pack"
+    pack_dir.mkdir(parents=True)
+    (pack_dir / "tmp_pack_Ab12Cd").write_bytes(b"partial")
+    (pack_dir / "pack-kept.pack").write_bytes(b"kept")
 
     with pytest.raises(GitMaintenanceError) as excinfo:
         await maintain(repo)
@@ -665,7 +670,28 @@ async def test_maintain_failure_reason_names_timeout_or_other_failure(
     assert excinfo.value.reason == reason
     if reason == "failed":
         assert "example failure" in str(excinfo.value)
+    assert sorted(path.name for path in pack_dir.iterdir()) == ["pack-kept.pack"]
     await _assert_no_process_left(fake)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses directory permissions")
+async def test_maintain_failure_unremovable_temporary_keeps_maintenance_error(
+    fake_git: FakeGitFactory, repo: Path
+) -> None:
+    fake_git.install({"repack": Behavior(stderr="fatal: example\n", exit_code=128)})
+    pack_dir = repo / "objects" / "pack"
+    pack_dir.mkdir(parents=True)
+    (pack_dir / "tmp_pack_Ab12Cd").write_bytes(b"partial")
+    pack_dir.chmod(0o555)
+    try:
+        with pytest.raises(GitMaintenanceError, match="repack exited") as excinfo:
+            await maintain(repo)
+    finally:
+        pack_dir.chmod(0o755)
+
+    # The removal is best effort: the next fetch removes it or reports.
+    assert excinfo.value.reason == "failed"
+    assert (pack_dir / "tmp_pack_Ab12Cd").exists()
 
 
 async def test_maintain_git_not_startable_reason_is_failed(

@@ -567,10 +567,18 @@ async def show_file(repo_path: Path, ref: str, file_path: str) -> bytes | None:
 # --- Maintenance operations -------------------------------------------------
 
 
+async def _discard_pack_temporaries(repo_path: Path) -> None:
+    """Best-effort removal of the pack temporaries after a failed repack;
+    a filesystem error is left to the next `fetch_origin()`."""
+    with contextlib.suppress(OSError):
+        await asyncio.to_thread(_remove_pack_temporaries, repo_path)
+
+
 async def maintain(repo_path: Path) -> None:
     """Consolidate the clone's packs into a geometric progression, in the
-    foreground, with one thread. Raises `GitMaintenanceError` (no retry);
-    the clone stays intact."""
+    foreground, with one thread. Raises `GitMaintenanceError` (no retry)
+    after removing what the failed repack left in `objects/pack/`; the
+    clone stays intact."""
     command = (
         _git_dir(repo_path),
         "repack",
@@ -584,8 +592,10 @@ async def maintain(repo_path: Path) -> None:
         completed = await _run(command, limit_seconds=MAINTENANCE_TIMEOUT_SECONDS)
     except _AttemptFailedError as failure:
         reason = "timeout" if isinstance(failure.__cause__, TimeoutError) else "failed"
+        await _discard_pack_temporaries(repo_path)
         raise GitMaintenanceError(failure.detail, reason=reason) from None
     if completed.returncode != 0:
+        await _discard_pack_temporaries(repo_path)
         raise GitMaintenanceError(_describe(command, completed), reason="failed")
 
 

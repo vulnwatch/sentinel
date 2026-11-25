@@ -3098,9 +3098,11 @@ permission.
 
 1. `External git repository unreachable — clone failed` or `— fetch failed`
    on every run: check outbound access to the repository host (see
-   [Network Access](#network-access-stagingproduction)). For a clone
-   failure, also check that `GIT_CLONE_BASE_DIR` is writable by the
-   runtime user (see [Git Worker Volume](#git-worker-volume))
+   [Network Access](#network-access-stagingproduction)). Also check that
+   `GIT_CLONE_BASE_DIR` is writable by the runtime user and not full (see
+   [Git Worker Volume](#git-worker-volume)): `error_detail` then names the
+   local cause, such as `No space left on device` or `pack temporaries
+   could not be removed`
 2. `fetch failed` on every run while the host is reachable, after the Git
    worker was killed without a graceful shutdown (for example SIGKILL or
    an out-of-memory kill): git may have left a stale lock file in the
@@ -3131,9 +3133,9 @@ completes its items; a run that ends earlier, with `failure`, logs none:
    is too low for it (see the Run timeout rule in Runtime Dependencies of
    the same document)
 3. `git_clone_maintenance_failed` (WARNING) with `reason`: `timeout` means
-   that the maintenance did not end within its 20 minutes, which it uses
-   one CPU for: the volume is slow, or the Git worker has less than one CPU;
-   `failed` means any other failure, for example a full volume, which needs
+   that the maintenance did not end within its 20 minutes. It uses one CPU,
+   so the usual causes are a slow volume or a Git worker with less than one
+   CPU. `failed` means any other failure, for example a full volume, which needs
    free space of about the repository's size for the temporary pack of a
    full consolidation (see [Git Worker Volume](#git-worker-volume)). The
    run itself is unaffected, and the next run retries
