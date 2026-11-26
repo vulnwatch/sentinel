@@ -817,7 +817,10 @@ settings with the same duration implement the cooldown:
   `minimumReleaseAge` to the same duration for the major, minor, and patch
   updates of every manager, so Renovate proposes a version only once it is
   seven days old; otherwise a Python update PR could propose a version that
-  uv cannot lock. No package is exempt from this rule. An update that is
+  uv cannot lock. No package is exempt from this rule; one later rule
+  shortens it to three days for the version updates of the PostgreSQL and
+  Redis images, whose tags are republished every few days (see PostgreSQL
+  and Redis images below). An update that is
   still too young is listed under "Pending Status Checks" on the Dependency
   Dashboard, where a maintainer can request it early, except a Python
   dependency (see Security fixes under the cooldown below). Digest updates
@@ -903,12 +906,22 @@ tests run the same servers, and Renovate updates all of them in one PR; a
 unit test fails when the copies diverge or one leaves the pinned form.
 `scripts/image-smoke.sh` pre-pulls the infrastructure services through
 `docker compose pull` of the smoke Compose file, so it holds no copy of its
-own. Their version updates follow the release-age cooldown and their digest
-updates wait for approval like any other (see Digest updates above). Both
-images have more than 1,000 tags, so a lookup can lack their release
-timestamps, and Docker Hub republishes their exact version tags; a version
-update can therefore wait under "Pending Status Checks" on the Dependency
-Dashboard until a maintainer requests it (see Release-age cooldown above).
+own. Their digest updates wait for approval like any other (see Digest
+updates above).
+
+Their version updates wait three days instead of seven, the only shortened
+release-age cooldown (see Release-age cooldown above). Docker Hub dates a
+version by the last push of its tag, and the official images republish
+their exact version tags whenever Debian or the upstream project publishes
+fixes, every few days; under seven days a new version waited for a week
+without a rebuild, often for weeks. Three days still leave a release time to
+be withdrawn or corrected, and the risk is bounded: the images run only in
+development, CI, and the tests, and every update passes CI before a
+maintainer merges it. The `redis` Python package keeps seven days, because
+uv locks it only then. Both images have more than 1,000 tags, so a lookup
+can also lack their release timestamps; a version update then waits under
+"Pending Status Checks" on the Dependency Dashboard until a maintainer
+requests it.
 
 The supported major versions are requirements (Software Requirements;
 `docs/features/platform/testing-strategy.md`, CI Pipeline), so a new major
