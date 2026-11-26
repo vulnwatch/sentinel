@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.29.0](https://github.com/vulnwatch/sentinel/compare/v0.28.1...v0.29.0) (2026-11-26)
+
+
+### Features
+
+* add the Bugzilla needinfo count endpoint ([#1379](https://github.com/vulnwatch/sentinel/issues/1379)) ([cc8cff2](https://github.com/vulnwatch/sentinel/commit/cc8cff260e121c88f91e3866fafcc59451461aad))
+
+
+### Dependencies
+
+* **deps:** Update dependency fastapi to v0.165.0 ([#1365](https://github.com/vulnwatch/sentinel/issues/1365)) ([1c66ce2](https://github.com/vulnwatch/sentinel/commit/1c66ce23a12c5c06dc84da054517e3cd3df73bb0))
+
 ## [0.28.1](https://github.com/vulnwatch/sentinel/compare/v0.28.0...v0.28.1) (2026-11-25)
 
 

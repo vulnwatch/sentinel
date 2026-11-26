@@ -1322,7 +1322,7 @@ wheels = [
 
 [[package]]
 name = "sentinel"
-version = "0.28.1"
+version = "0.29.0"
 source = { editable = "." }
 dependencies = [
     { name = "aio-pika" },
