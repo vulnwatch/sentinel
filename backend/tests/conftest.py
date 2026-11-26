@@ -107,6 +107,7 @@ from app.services.session_service import create_session
 from app.services.tickets import sync_nvd_cves
 from tests.support.audit_models import SampleAuditEvent
 from tests.support.celery_apps import create_celery_test_app
+from tests.support.container_images import POSTGRES_IMAGE, REDIS_IMAGE
 from tests.support.database import create_database, drop_database
 from tests.support.logging_state import preserved_logging_state
 from tests.support.openapi_contract import (
@@ -161,8 +162,7 @@ def _start_postgres_container(max_connections: int = 100) -> str:
     # Lazy import — testcontainers is only needed when no URL is provided
     from testcontainers.community.postgres import PostgresContainer
 
-    # renovate: depName=postgres
-    container = PostgresContainer("postgres:18")
+    container = PostgresContainer(POSTGRES_IMAGE)
     container.with_command(
         "postgres -c fsync=off -c synchronous_commit=off -c full_page_writes=off"
         f" -c max_connections={max_connections}"
@@ -237,8 +237,7 @@ def _start_redis_container() -> str:
     # Lazy import — testcontainers is only needed when no URL is provided
     from testcontainers.community.redis import RedisContainer
 
-    # renovate: depName=redis
-    container = RedisContainer("redis:8")
+    container = RedisContainer(REDIS_IMAGE)
     container.start()
     atexit.register(container.stop)
     host = container.get_container_host_ip()

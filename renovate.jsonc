@@ -56,11 +56,11 @@
   },
   // This repository overrides Renovate's default ignorePaths (inherited
   // from the "config:recommended" preset) to drop "**/tests/**" ONLY —
-  // that pattern silently excluded backend/tests/conftest.py from every
-  // manager, including the custom.regex manager below. Do NOT re-add
-  // "**/tests/**" here — see docs/deployment.md (Testcontainers image
-  // references) for the full root-cause analysis and why this override
-  // is necessary.
+  // that pattern silently excluded the testcontainers image pins under
+  // backend/tests/ from every manager, including the custom.regex manager
+  // below. Do NOT re-add "**/tests/**" here — see docs/deployment.md
+  // (Testcontainers image references) for the full root-cause analysis and
+  // why this override is necessary.
   "ignorePaths": [
     "**/node_modules/**",
     "**/bower_components/**",
@@ -81,10 +81,10 @@
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Docker images referenced by testcontainers fixtures in backend/tests/conftest.py — not detected by any built-in manager since they are plain string arguments in Python code, not a Dockerfile/compose/workflow declaration",
-      "managerFilePatterns": ["backend/tests/conftest.py"],
+      "description": "Docker images of the testcontainers fixtures, pinned by version and digest in backend/tests/support/container_images.py — not detected by any built-in manager since they are plain strings in Python code, not a Dockerfile/compose/workflow declaration",
+      "managerFilePatterns": ["backend/tests/support/container_images.py"],
       "matchStrings": [
-        "#\\s*renovate:\\s*depName=(?<depName>[a-z0-9._-]+)\\s+\\w+\\s*=\\s*\\w+Container\\(\"[a-z0-9._/-]+:(?<currentValue>[^\"]+)\"\\)"
+        "#\\s*renovate:\\s*depName=(?<depName>[a-z0-9._-]+)\\s+[A-Z][A-Z0-9_]*(?::\\s*Final)?\\s*=\\s*\"[a-z0-9._/-]+:(?<currentValue>[^\"@]+)@(?<currentDigest>sha256:[a-f0-9]+)\""
       ],
       "datasourceTemplate": "docker"
     },
@@ -248,15 +248,23 @@
       "enabled": false
     },
     {
-      "description": "Docker image updates for testcontainers fixtures (backend/tests/conftest.py): test-only, so they carry no release signal",
+      "description": "Docker image updates for testcontainers fixtures (backend/tests/support/container_images.py): test-only, so they carry no release signal",
       "matchManagers": ["custom.regex"],
-      "matchFileNames": ["backend/tests/conftest.py"],
+      "matchFileNames": ["backend/tests/support/container_images.py"],
       "commitMessagePrefix": "ci(deps):"
     },
     {
       "description": "Images of the Compose files: the development stack (docker-compose.yml) and the image smoke stack (docker-compose.smoke.yml). The image does not contain them, so their updates carry no release signal",
       "matchManagers": ["docker-compose"],
       "commitMessagePrefix": "ci(deps):"
+    },
+    {
+      "description": "A new major version of the PostgreSQL or Redis image (the Compose files, the CI service containers, and the testcontainers fixtures) opens as a draft PR, rebased only when it conflicts: it announces the major and runs CI on it, but cannot be merged by accident, because the supported majors are requirements that change only by an explicit decision — see docs/deployment.md (Workflow Conventions, PostgreSQL and Redis images). The docker datasource leaves out the redis Python package",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["postgres", "redis"],
+      "matchUpdateTypes": ["major"],
+      "draftPR": true,
+      "rebaseWhen": "conflicted"
     },
     {
       "description": "Keep the uv version used by astral-sh/setup-uv (CI), the uv binary copied into the builder stage of the Docker image (COPY --from), and the uv_build range in backend/pyproject.toml [build-system] (the backend bundled in that binary; pep621 normalizes the name to uv-build) in sync — see backend/Dockerfile comment. The image comes from Docker Hub (astral/uv), the only registry from which Renovate reads the release timestamps of images, so the whole group waits for the release-age cooldown. A lookup that lacks the image's timestamps (it has more than 1,000 tags) holds its update, and the group's PR then opens without it: a unit test fails it until the Dockerfile tag matches the setup-uv version. uv is a build tool that the image does not contain (the runtime stage copies the virtual environment that it installs, not uv), so the group's updates carry no release signal: a change that they make to the installed environment ships with the next release. The prefix is set here because the members' managers set different ones",
