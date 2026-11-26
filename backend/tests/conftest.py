@@ -95,6 +95,7 @@ from app.models import (
     UserRole,
 )
 from app.services import (
+    bugzilla_needinfo_service,
     cve_service,
     cvss_recalculation_coordination,
     ibs_consumer_status,
@@ -806,9 +807,12 @@ async def redis_client(
     (login lockout counter), `cve_service.get_fetch_pending_redis_url`
     (per-CVE source-status pending overlay),
     `cvss_recalculation_coordination.get_cvss_recalculation_redis_url`
-    (CVSS recalculation lease), and
+    (CVSS recalculation lease),
     `ibs_consumer_status.get_ibs_consumer_status_redis_url` (IBS consumer
-    heartbeat) — so they observe this same instance during the test.
+    heartbeat), and
+    `bugzilla_needinfo_service.get_bugzilla_needinfo_redis_url` (Bugzilla
+    needinfo count cache and lock) — so they observe this same instance
+    during the test.
     Teardown restores every override, flushes again, and closes the client.
     Cleanup/provisioning failures fail the test rather than skip.
     """
@@ -833,6 +837,11 @@ async def redis_client(
     monkeypatch.setattr(
         ibs_consumer_status,
         "get_ibs_consumer_status_redis_url",
+        lambda: _redis_test_url,
+    )
+    monkeypatch.setattr(
+        bugzilla_needinfo_service,
+        "get_bugzilla_needinfo_redis_url",
         lambda: _redis_test_url,
     )
     try:

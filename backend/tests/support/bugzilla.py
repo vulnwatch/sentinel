@@ -1,6 +1,6 @@
 """Shared SUSE Bugzilla fixtures and a fake `/rest/bug` endpoint.
 
-The files under `backend/tests/fixtures/bugzilla/` are live
+The files under `backend/tests/fixtures/bugzilla/` listed below are live
 `GET https://bugzilla.suse.com/rest/bug` responses captured anonymously on
 2026-11-16 through Sentinel's production HTTP client
 (`create_http_client(name="sync_bugzilla_bugs")`: its standard User-Agent,
@@ -29,6 +29,9 @@ consumed fields with `include_fields=id,alias,summary,groups`
   byte-for-byte;
 - `error_400.json`: the HTTP 400 answer to an unknown search field
   (`f1=nonexistent_field`), stored byte-for-byte.
+
+The `jsonrpc_*.json` files of the same directory belong to the needinfo
+count and are described in `tests/support/bugzilla_jsonrpc.py`.
 
 The bugs were sanitized before saving (docs/conventions.md, External
 Integration Contract Verification): every `summary` was replaced with

@@ -1203,18 +1203,21 @@ _HEADER_SECRET_MARKER = "Fictional-Header-Secret"
 class TestHeaderSecretValidation:
     """`NVD_API_KEY`, `GITHUB_TOKEN`, and `SLACK_BOT_TOKEN` are sent verbatim
     as HTTP header values (`docs/conventions.md`, Secret Field Typing;
-    docs/configuration.md, External APIs): a non-empty value must be
-    printable ASCII without whitespace, otherwise startup fails with an error
-    that names the variable and never renders the value. Empty or unset stays
-    valid."""
+    docs/configuration.md, External APIs), and `BUGZILLA_API_KEY`, sent in a
+    JSON request body, follows the same rule
+    (docs/features/integrations/bugzilla-needinfo-count.md, Authentication):
+    a non-empty value must be printable ASCII without whitespace, otherwise
+    startup fails with an error that names the variable and never renders
+    the value. Empty or unset stays valid."""
 
     @pytest.fixture(
         params=[
             ("NVD_API_KEY", "nvd_api_key"),
             ("GITHUB_TOKEN", "github_token"),
             ("SLACK_BOT_TOKEN", "slack_bot_token"),
+            ("BUGZILLA_API_KEY", "bugzilla_api_key"),
         ],
-        ids=["nvd", "github", "slack"],
+        ids=["nvd", "github", "slack", "bugzilla"],
     )
     def setting(self, request: pytest.FixtureRequest) -> tuple[str, str]:
         """`(environment variable, Settings attribute)`."""
@@ -1334,11 +1337,15 @@ _CONFIGURED_SECRETS: dict[str, str] = {
     "IBS_SSH_PRIVATE_KEY": fictional_settings_value(),
     "NVD_API_KEY": _fictional("nvd"),
     "GITHUB_TOKEN": _fictional("github"),
+    "BUGZILLA_API_KEY": _fictional("bugzilla"),
 }
 _SHORT_JWT_SECRET_KEY = _fictional("jwt")
 """Shorter than the 32-character minimum."""
 _SECRET_FRAGMENTS = (
-    *(_fictional(name) for name in ("db", "redis", "broker", "nvd", "github", "jwt")),
+    *(
+        _fictional(name)
+        for name in ("db", "redis", "broker", "nvd", "github", "bugzilla", "jwt")
+    ),
     _CONFIGURED_SECRETS["IBS_SSH_PRIVATE_KEY"][:24],
     _CONFIGURED_SECRETS["IBS_SSH_PRIVATE_KEY"][-24:],
 )

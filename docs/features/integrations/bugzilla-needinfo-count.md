@@ -154,7 +154,7 @@ read classifies the response into exactly one outcome:
 | HTTP 200, on an authenticated read, whose body is a JSON object in which `error` is a JSON object with a member `code` equal to the integer `306`, the code of an invalid or revoked API key | **API key rejected** |
 | HTTP 200 whose body is a JSON object in which `error` is a JSON object with a member `code` that is an integer, in every other case | **Bugzilla error** |
 | Any HTTP status other than 200, including a redirect, which is not followed, a 403 of the bot protection, a 429, and a 5xx after transport retries | **HTTP failure** |
-| HTTP 200 with any other body: not decodable, including a body whose content coding the shared client rejects, not JSON, not a JSON object, or with `error` or `result` absent or invalid | **Invalid response** |
+| HTTP 200 with any other body: not decodable, including a body whose content coding the shared client rejects, not JSON, not a JSON object, or with `error` absent or invalid, or with `error` `null` and `result` absent or invalid | **Invalid response** |
 | Connection error, timeout, proxy error, or protocol error after transport retries, or the deadline of the read | **Transport failure** |
 
 - The body is decoded as UTF-8 through `decode_json()` (`docs/conventions.md`,

@@ -24,6 +24,7 @@ from app.api.openapi import API_V1_RESPONSES, SentinelAPI
 from app.api.v1 import (
     api_keys,
     auth,
+    bugzilla,
     cnas,
     cves,
     cvss,
@@ -344,6 +345,7 @@ for _router in (
     maintained_packages.router,
     maintainer.router,
     platform.router,
+    bugzilla.router,
 ):
     app.include_router(
         _router, dependencies=_API_V1_DEPENDENCIES, responses=API_V1_RESPONSES

@@ -598,11 +598,20 @@ class TestStructuralAbsences:
         assert not [name for name in names if name.endswith("ServiceError")]
 
     def test_no_route_task_or_error_code_names_the_source(self) -> None:
+        """Routes are discovered with `iter_route_contexts()`: `app.routes`
+        alone does not expose the routes included with `include_router()`
+        (see `tests/test_api_conventions.py`)."""
+        from fastapi import routing as fastapi_routing
+
         from app.celery_app import celery_app
         from app.main import app as api
 
-        paths = [getattr(route, "path", "") for route in api.routes]
-        assert paths
+        paths = [
+            context.path
+            for context in fastapi_routing.iter_route_contexts(api.routes)
+            if context.path is not None
+        ]
+        assert "/api/v1/tickets" in paths
         assert not [path for path in paths if "kernel" in path.lower()]
         assert not [name for name in celery_app.tasks if "kernel" in name.lower()]
         assert not [
