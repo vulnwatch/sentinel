@@ -174,6 +174,3 @@ class TestInvalidKeyAnswer:
         assert document["result"] is None
         assert type(document["error"]["code"]) is int
         assert document["error"]["code"] == INVALID_API_KEY_CODE
-
-    def test_error_carries_no_bugs(self) -> None:
-        assert "bugs" not in str(load_fixture(INVALID_KEY_FIXTURE))

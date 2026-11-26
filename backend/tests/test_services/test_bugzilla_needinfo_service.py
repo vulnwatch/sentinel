@@ -997,6 +997,18 @@ async def lock_held_elsewhere(
     yield
 
 
+@pytest.fixture
+def clients(monkeypatch: pytest.MonkeyPatch) -> list[_FaultyRedis]:
+    """The Redis client of every invocation, in creation order, recording
+    the steps it ran; none fails."""
+    return _use_faulty_redis(monkeypatch, set(), Exception())
+
+
+def _waited(client: _FaultyRedis) -> bool:
+    """Whether the invocation waited (step 4) instead of reading."""
+    return "poll" in client.steps and "reget" not in client.steps
+
+
 @pytest.mark.integration
 @pytest.mark.usefixtures("backoff", "fast_wait", "anonymous")
 class TestReadCoordination:
@@ -1004,6 +1016,7 @@ class TestReadCoordination:
         self,
         redis_client: redis_asyncio.Redis,
         gated: Callable[[rpc.Responder], _Gate],
+        clients: list[_FaultyRedis],
     ) -> None:
         gate = gated(rpc.fixture(ANONYMOUS_FIXTURE))
         first = asyncio.create_task(service.get_needinfo_count())
@@ -1015,11 +1028,13 @@ class TestReadCoordination:
 
         assert results[0] == results[1] == NeedinfoCount(1, False, SEARCH_URL)
         assert len(gate.requests) == 1
+        assert _waited(clients[1])
 
     async def test_concurrent_call_shares_the_failure_and_logs_nothing(
         self,
         redis_client: redis_asyncio.Redis,
         gated: Callable[[rpc.Responder], _Gate],
+        clients: list[_FaultyRedis],
     ) -> None:
         gate = gated(rpc.status(403))
         with capture_logs() as logs:
@@ -1031,27 +1046,60 @@ class TestReadCoordination:
 
         assert all(isinstance(r, BugzillaUnavailableError) for r in results)
         assert len(gate.requests) == 1
+        assert _waited(clients[1])
         assert [r["event"] for r in _failure_records(logs)] == [READ_FAILED_EVENT]
 
-    async def test_waiter_receives_a_read_that_ends_near_its_deadline(
+    async def test_waiter_receives_a_count_that_ends_near_the_read_deadline(
         self,
         redis_client: redis_asyncio.Redis,
         gated: Callable[[rpc.Responder], _Gate],
+        clients: list[_FaultyRedis],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The waiter's bound (15 s, here 1 s) exceeds the read deadline, so
-        an outcome that arrives late in the wait is still received."""
+        """The read deadline and the wait keep the specified 10:15 ratio
+        (here 1.0 s and 1.5 s): a read that completes shortly before its
+        deadline still reaches the waiter."""
+        monkeypatch.setattr(service, "READ_DEADLINE_SECONDS", 1.0)
+        monkeypatch.setattr(service, "WAIT_SECONDS", 1.5)
         gate = gated(rpc.fixture(ANONYMOUS_FIXTURE))
         first = asyncio.create_task(service.get_needinfo_count())
         await gate.entered.wait()
         second = await _start_waiter(redis_client)
 
-        await asyncio.sleep(0.7)
+        await asyncio.sleep(0.75)
         assert not second.done()
         gate.open()
 
         assert (await second).count == 1
         assert (await first).count == 1
         assert len(gate.requests) == 1
+        assert _waited(clients[1])
+
+    async def test_waiter_receives_the_failure_of_a_read_cut_at_its_deadline(
+        self,
+        redis_client: redis_asyncio.Redis,
+        gated: Callable[[rpc.Responder], _Gate],
+        clients: list[_FaultyRedis],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The first read never gets an answer and ends at its deadline
+        (Transport failure); the waiter receives that outcome before its own
+        wait ends, without a second Bugzilla request."""
+        monkeypatch.setattr(service, "READ_DEADLINE_SECONDS", 1.0)
+        monkeypatch.setattr(service, "WAIT_SECONDS", 1.5)
+        gate = gated(rpc.fixture(ANONYMOUS_FIXTURE))
+        first = asyncio.create_task(service.get_needinfo_count())
+        await gate.entered.wait()
+        waiting_since = time.monotonic()
+        second = await _start_waiter(redis_client)
+
+        results = await asyncio.gather(first, second, return_exceptions=True)
+
+        assert all(isinstance(r, BugzillaUnavailableError) for r in results)
+        assert time.monotonic() - waiting_since < 1.45
+        assert len(gate.requests) == 1
+        assert _waited(clients[1])
+        assert await _stored(redis_client) == {"outcome": "unavailable"}
 
     @pytest.mark.usefixtures("lock_held_elsewhere")
     async def test_waiter_raises_when_both_keys_disappear(
