@@ -915,14 +915,16 @@ The supported major versions are requirements (Software Requirements;
 version of either image opens as a **draft** PR once it passes the cooldown
 or a maintainer requests it from the Dependency Dashboard, which lists it
 until then. The PR runs CI on the new major but cannot be merged until a
-maintainer marks it ready. Renovate rebases it only when it conflicts, rather than after every
-merge to `master`, and a maintainer requests a rebase with its checkbox
-before marking it ready. Moving to a new major is an explicit decision: the
-PR that does so also updates the requirements that name the major. The rule
-matches the Docker images only, not the `redis` Python package, which
-shares the name; it also gives their branch a `docker-` prefix, so that a
-major update of the package, whose branch Renovate would otherwise name the
-same, never shares a PR with the image's.
+maintainer marks it ready. Renovate rebases it only when it conflicts,
+rather than after every merge to `master`, and a maintainer requests a
+rebase with its checkbox before marking it ready. Moving to a new major is
+an explicit decision: the PR that does so also updates the requirements
+that name the major. The rule matches the Docker images only, not the
+`redis` Python package, which shares the name. Renovate names a branch
+after the package and its major whatever the datasource, so every update of
+the two images gets a branch with a `docker-` prefix: otherwise a major
+update of the package would share a branch, and a PR, with an update of the
+image on the same major line.
 
 **Testcontainers image references.** The `testcontainers`-provisioned
 PostgreSQL and Redis images used by `backend/tests/conftest.py` and
@@ -937,8 +939,8 @@ file, matching a `# renovate: depName=<name>` hint comment placed directly
 above each constant. Adding a new testcontainers-provisioned service
 follows the same pattern: add its pinned constant, with the hint comment
 immediately above it, to that file; a unit test fails when a
-`*Container(...)` call names its image in a string literal instead, or
-names none and falls back to the floating default image of
+`*Container(...)` call names its image in a string literal instead, or is
+called without arguments and falls back to the floating default image of
 `testcontainers`.
 
 This repository extends the `config:recommended` preset, which adds

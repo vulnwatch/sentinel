@@ -221,14 +221,30 @@ SERVER_IMAGE_MANAGERS = [
 def test_major_updates_of_the_server_images_open_as_drafts(
     image: str, manager: str, file: str
 ) -> None:
-    # A draft announces the major and runs CI on it but cannot be merged by
+    # Once it opens, a draft runs CI on the new major but cannot be merged by
     # accident; a rebase after every merge would only rerun CI on it.
     major = Update(manager, image, file, "major", datasource="docker")
 
     assert setting(major, "draftPR") is True
     assert setting(major, "rebaseWhen") == "conflicted"
-    # Every copy shares the branch, apart from the redis Python package's.
-    assert setting(major, "additionalBranchPrefix") == "docker-"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("update_type", ["major", "minor", "patch", "digest"])
+@pytest.mark.parametrize("image", SERVER_IMAGES)
+@pytest.mark.parametrize(
+    ("manager", "file"), SERVER_IMAGE_MANAGERS, ids=lambda value: value
+)
+def test_every_update_of_the_server_images_has_a_branch_of_its_own(
+    image: str, manager: str, file: str, update_type: str
+) -> None:
+    # Renovate names a branch <depName>-<major>.x whatever the datasource: a
+    # major of the redis Python package would otherwise share the branch of an
+    # update of the image on the same major line. Every copy of the image
+    # gets the same prefix, so that one PR still updates them all.
+    update = Update(manager, image, file, update_type, datasource="docker")
+
+    assert setting(update, "additionalBranchPrefix") == "docker-"
 
 
 @pytest.mark.unit
@@ -243,7 +259,6 @@ def test_other_updates_of_the_server_images_open_as_ordinary_prs(
 
     assert setting(update, "draftPR") is None
     assert setting(update, "rebaseWhen") is None
-    assert setting(update, "additionalBranchPrefix") is None
 
 
 @pytest.mark.unit
