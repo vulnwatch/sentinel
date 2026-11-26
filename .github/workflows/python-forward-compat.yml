@@ -58,7 +58,11 @@ jobs:
         image: redis:8.10.3@sha256:7671653d5e27b7e1a4cee76b46e63753b36c75b475dc8fcd88d2d31143a258c2
         ports:
           - 6379:6379
+        # As in ci.yml: redis-server directly, as the image's non-root user,
+        # so that no bundled module is loaded.
         options: >-
+          --entrypoint redis-server
+          --user redis
           --health-cmd "redis-cli ping"
           --health-interval 10s
           --health-timeout 5s

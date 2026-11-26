@@ -108,7 +108,7 @@ from app.services.session_service import create_session
 from app.services.tickets import sync_nvd_cves
 from tests.support.audit_models import SampleAuditEvent
 from tests.support.celery_apps import create_celery_test_app
-from tests.support.container_images import POSTGRES_IMAGE, REDIS_IMAGE
+from tests.support.container_images import POSTGRES_IMAGE
 from tests.support.database import create_database, drop_database
 from tests.support.logging_state import preserved_logging_state
 from tests.support.openapi_contract import (
@@ -129,6 +129,7 @@ from tests.support.parallel import (
     worker_id,
 )
 from tests.support.product_eligibility import ELIGIBILITY_OVERRIDE_SET_AT
+from tests.support.redis import redis_server_container
 from tests.support.ticket_mutations import (
     DEFAULT_IGNORE_REASON,
     PRIORITY_OVERRIDE_SET_AT,
@@ -234,11 +235,10 @@ _redis_container_url: str | None = None
 
 def _start_redis_container() -> str:
     """Start an ephemeral Redis test server and return its URL (logical
-    database 0). The container is stopped when this process exits."""
-    # Lazy import — testcontainers is only needed when no URL is provided
-    from testcontainers.community.redis import RedisContainer
-
-    container = RedisContainer(REDIS_IMAGE)
+    database 0). It runs as `redis_server_container()` describes, without
+    the image's bundled modules. The container is stopped when this process
+    exits."""
+    container = redis_server_container()
     container.start()
     atexit.register(container.stop)
     host = container.get_container_host_ip()
