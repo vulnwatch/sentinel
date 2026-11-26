@@ -581,6 +581,13 @@ fixture. The test harness selects one of two modes:
    starts an ephemeral Redis 8 container with `testcontainers`. The
    container is shared for the test session and destroyed afterward.
 
+In both modes, and in every dedicated container (see Worker and Test
+Isolation), the Redis server loads no module from a file, as a deployment
+runs it (`docs/deployment.md`, Software Requirements), so that a use of a
+module command fails the suite. An integration test reads `MODULE LIST` from
+the harness's server and from a dedicated container and fails on any module
+with a path; the modules that the server builds in report an empty path.
+
 `TEST_REDIS_URL` is test-harness-only configuration, not Sentinel
 runtime configuration. Tests MUST never use `REDIS_URL` or
 `CELERY_BROKER_URL` as fixture storage, even when either variable points

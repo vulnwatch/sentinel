@@ -26,12 +26,36 @@ if TYPE_CHECKING:
 
 _REDIS_PORT = 6379
 
-_SERVER_COMMAND = ["redis-server", "--save", "", "--appendonly", "no"]
+_SERVER_ARGUMENTS = ["--save", "", "--appendonly", "no"]
 """Persistence disabled, as in every deployment (docs/deployment.md,
 Persistence is Disabled by Design): a restart therefore loses every key."""
 
 _READY_DEADLINE = 30.0
 _DOCKER_STOP_TIMEOUT = 10
+
+
+def redis_server_container() -> RedisContainer:
+    """A Redis test container, not yet started, that runs as a deployment
+    runs Redis.
+
+    It starts `redis-server` directly, as the image's non-root `redis` user
+    without capabilities or privilege escalation, rather than through the
+    image's entrypoint, which would load the modules that the image bundles
+    (docs/deployment.md, Software Requirements), and persists nothing. Every
+    testcontainers-provisioned Redis server uses it.
+    """
+    # Lazy import, as in tests/conftest.py: Docker is needed only here.
+    from testcontainers.community.redis import RedisContainer
+
+    container = RedisContainer(
+        REDIS_IMAGE,
+        entrypoint="redis-server",
+        user="redis",
+        cap_drop=["ALL"],
+        security_opt=["no-new-privileges"],
+    )
+    container.with_command(_SERVER_ARGUMENTS)
+    return container
 
 
 def redis_url_from_client(client: redis_asyncio.Redis) -> str:
@@ -120,15 +144,12 @@ def dedicated_redis_container() -> Iterator[DedicatedRedisContainer]:
     For server-global scenarios only (see docs/features/platform/
     testing-strategy.md, Redis Strategy): the test may restart, flush, or
     stop this server without affecting the shared worker databases.
-    Persistence is disabled, and the host port is fixed so a restart keeps
-    the URL. The container is always removed on exit.
+    The server runs as `redis_server_container()` describes, and the host
+    port is fixed so a restart keeps the URL. The container is always
+    removed on exit.
     """
-    # Lazy import, as in tests/conftest.py: Docker is needed only here.
-    from testcontainers.community.redis import RedisContainer
-
     port = unused_tcp_port()
-    container = RedisContainer(REDIS_IMAGE)
-    container.with_command(_SERVER_COMMAND).with_bind_ports(_REDIS_PORT, port)
+    container = redis_server_container().with_bind_ports(_REDIS_PORT, port)
     try:
         container.start()
         dedicated = DedicatedRedisContainer(
