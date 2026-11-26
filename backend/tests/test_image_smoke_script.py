@@ -31,9 +31,11 @@ ROLE_CONTAINERS = {
     "beat": "dddddddddddd",
     "ibs-consumer": "ffffffffffff",
 }
-# The infrastructure services of docker-compose.smoke.yml and their images,
-# in the order of the runner's bounded pre-pull list.
-INFRASTRUCTURE_IMAGES = {"postgres": "postgres:18", "redis": "redis:8"}
+SMOKE_COMPOSE = ROOT_DIR / "docker-compose.smoke.yml"
+# The infrastructure services of docker-compose.smoke.yml, in the order of the
+# runner's bounded pre-pull. Their pinned images are checked by
+# tests/test_infrastructure_image_pins.py.
+INFRASTRUCTURE_SERVICES = ("postgres", "redis")
 
 # The backend project's interpreter, as `uv python find` reports it; it
 # runs the supervisor and lies outside PATH.
@@ -121,9 +123,6 @@ fi
 if [[ "${1:-}" == "build" ]]; then
     exit "${DOCKER_BUILD_EXIT:-0}"
 fi
-if [[ "${1:-}" == "pull" ]]; then
-    exit "${DOCKER_PULL_EXIT:-0}"
-fi
 if [[ "${1:-}" == "image" && "${2:-}" == "inspect" ]]; then
     count_file="${IMAGE_SMOKE_STATE_DIR}/inspect-count"
     count=0
@@ -202,6 +201,7 @@ if [[ "${1:-}" == "compose" ]]; then
     done
     case "${1:-}" in
         up) exit "${COMPOSE_UP_EXIT:-0}" ;;
+        pull) exit "${COMPOSE_PULL_EXIT:-0}" ;;
         port)
             printf '%s\n' "${COMPOSE_PORT-127.0.0.1:49152}"
             exit "${COMPOSE_PORT_EXIT:-0}"
@@ -346,6 +346,15 @@ def _project_from_up(calls: list[str]) -> str:
         if call.startswith("docker compose -p ") and " up " in call
     )
     return up_call.split()[3]
+
+
+def _infrastructure_pulls(project: str) -> list[str]:
+    """The pre-pull of each infrastructure service, through Compose, so that
+    the smoke Compose file is the only copy of their image references."""
+    return [
+        f"docker compose -p {project} -f {SMOKE_COMPOSE} pull {service}"
+        for service in INFRASTRUCTURE_SERVICES
+    ]
 
 
 @pytest.mark.unit
@@ -506,7 +515,7 @@ def test_runner_fails_closed_when_active_context_resolution_fails(
 
     assert result.returncode == expected_status
     assert message in result.stderr
-    assert not any("docker build" in call or "docker pull" in call for call in calls)
+    assert not any("docker build" in call or " pull " in call for call in calls)
 
 
 @pytest.mark.unit
@@ -516,7 +525,7 @@ def test_runner_rejects_unreachable_docker_engine(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "Docker Engine is unreachable" in result.stderr
     assert any("preflight-docker" in call for call in _supervisor_calls(calls))
-    assert not any("docker pull" in call for call in calls)
+    assert not any(" pull " in call for call in calls)
 
 
 @pytest.mark.unit
@@ -528,7 +537,7 @@ def test_runner_rejects_podman_api_behind_docker_cli(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "Podman compatibility endpoints are not supported" in result.stderr
-    assert not any("docker pull" in call for call in calls)
+    assert not any(" pull " in call for call in calls)
 
 
 @pytest.mark.unit
@@ -542,7 +551,7 @@ def test_runner_rejects_unsupported_or_invalid_compose(
 
     assert result.returncode == 1
     assert "Docker Compose" in result.stderr or "Compose version" in result.stderr
-    assert not any("docker pull" in call for call in calls)
+    assert not any(" pull " in call for call in calls)
 
 
 @pytest.mark.unit
@@ -551,7 +560,7 @@ def test_runner_rejects_missing_compose_plugin(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "Docker Compose CLI plugin not found" in result.stderr
-    assert not any("docker pull" in call for call in calls)
+    assert not any(" pull " in call for call in calls)
 
 
 @pytest.mark.unit
@@ -577,7 +586,7 @@ def test_runner_rejects_remote_endpoint_before_candidate_work(
     assert result.returncode == 1
     assert endpoint in result.stderr
     assert "DOCKER_HOST" in result.stderr
-    assert not any("docker build" in call or "docker pull" in call for call in calls)
+    assert not any("docker build" in call or " pull " in call for call in calls)
 
 
 @pytest.mark.unit
@@ -616,7 +625,7 @@ def test_runner_checks_active_context_even_with_local_docker_host(
     assert "context 'remote-builder'" in result.stderr
     assert "ssh://builder.example.test" in result.stderr
     assert any("docker context inspect remote-builder" in call for call in calls)
-    assert not any("docker build" in call or "docker pull" in call for call in calls)
+    assert not any("docker build" in call or " pull " in call for call in calls)
 
 
 @pytest.mark.unit
@@ -740,9 +749,8 @@ def test_runner_builds_exactly_once_then_pins_compose_to_image_id(
     up_call = next(call for call in docker_calls if " up " in call)
     assert up_call.endswith(" up -d --wait --no-build --pull never")
     assert not any("compose" in call and " build" in call for call in docker_calls)
-    assert not any(
-        " pull " in call and "postgres:18" not in call and "redis:8" not in call
-        for call in docker_calls
+    assert [call for call in docker_calls if " pull " in call] == (
+        _infrastructure_pulls(_project_from_up(calls))
     )
 
 
@@ -759,7 +767,7 @@ def test_runner_propagates_initial_candidate_resolution_failure(tmp_path: Path) 
         result.stderr
     )
     assert "phase=candidate exit=14" in result.stderr
-    assert not any("docker pull" in call for call in calls)
+    assert not any(" pull " in call for call in calls)
 
 
 @pytest.mark.unit
@@ -778,7 +786,7 @@ def test_runner_rejects_malformed_candidate_image_id(
 
     assert result.returncode == 1
     assert f"Docker returned invalid image ID '{image_id}'" in result.stderr
-    assert not any("docker pull" in call for call in calls)
+    assert not any(" pull " in call for call in calls)
 
 
 @pytest.mark.unit
@@ -804,20 +812,17 @@ def test_runner_retains_original_candidate_reference_for_capture_and_drift(
 
 @pytest.mark.unit
 def test_compose_pins_app_roles_and_uses_dynamic_loopback_port() -> None:
-    compose_path = ROOT_DIR / "docker-compose.smoke.yml"
-    compose_text = compose_path.read_text(encoding="utf-8")
+    compose_text = SMOKE_COMPOSE.read_text(encoding="utf-8")
     # Merge keys are resolved: each role is checked with the values it
     # inherits from the shared application anchor.
-    services = load_yaml_file(compose_path)["services"]
+    services = load_yaml_file(SMOKE_COMPOSE)["services"]
 
-    assert set(services) == set(ROLE_CONTAINERS) | set(INFRASTRUCTURE_IMAGES)
+    assert set(services) == set(ROLE_CONTAINERS) | set(INFRASTRUCTURE_SERVICES)
     for role in ROLE_CONTAINERS:
         assert services[role]["image"] == (
             "${IMAGE_SMOKE_IMAGE_ID:?IMAGE_SMOKE_IMAGE_ID is required}"
         ), role
         assert "build" not in services[role], role
-    for name, image in INFRASTRUCTURE_IMAGES.items():
-        assert services[name]["image"] == image
     # Only the API publishes a port: a daemon-allocated host port on loopback.
     assert {
         name: service["ports"]
@@ -878,9 +883,25 @@ def test_runner_no_build_reuses_local_image_and_pulls_only_infrastructure(
     assert result.returncode == 0, result.stderr
     docker_calls = _docker_calls(calls)
     assert not any(call.startswith("docker build ") for call in docker_calls)
-    assert [call for call in docker_calls if call.startswith("docker pull ")] == [
-        f"docker pull {image}" for image in INFRASTRUCTURE_IMAGES.values()
-    ]
+    assert [call for call in docker_calls if " pull " in call] == (
+        _infrastructure_pulls(_project_from_up(calls))
+    )
+
+
+@pytest.mark.unit
+def test_runner_stops_at_a_failed_infrastructure_pull(tmp_path: Path) -> None:
+    result, calls = _run_script(
+        tmp_path, "--no-build", env_overrides={"COMPOSE_PULL_EXIT": "9"}
+    )
+
+    assert result.returncode == 9
+    assert "phase=infra-pull exit=9" in result.stderr
+    docker_calls = _docker_calls(calls)
+    pulls = [call for call in docker_calls if " pull " in call]
+    # The first failed pull ends the pre-pull, and the stack never starts.
+    assert len(pulls) == 1
+    assert pulls[0].endswith(f" -f {SMOKE_COMPOSE} pull {INFRASTRUCTURE_SERVICES[0]}")
+    assert not any(" up " in call for call in docker_calls)
 
 
 @pytest.mark.unit

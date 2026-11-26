@@ -19,6 +19,8 @@ import redis
 import redis.asyncio as redis_asyncio
 from redis.exceptions import RedisError
 
+from tests.support.container_images import REDIS_IMAGE
+
 if TYPE_CHECKING:
     from testcontainers.community.redis import RedisContainer
 
@@ -125,8 +127,7 @@ def dedicated_redis_container() -> Iterator[DedicatedRedisContainer]:
     from testcontainers.community.redis import RedisContainer
 
     port = unused_tcp_port()
-    # renovate: depName=redis
-    container = RedisContainer("redis:8")
+    container = RedisContainer(REDIS_IMAGE)
     container.with_command(_SERVER_COMMAND).with_bind_ports(_REDIS_PORT, port)
     try:
         container.start()

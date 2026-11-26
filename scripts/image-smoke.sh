@@ -298,12 +298,14 @@ resolve_candidate() {
 }
 
 pull_infrastructure() {
-    local image status=0
-    # Keep this list aligned with the infrastructure image declarations in
-    # docker-compose.smoke.yml; startup itself also rejects pulls explicitly.
-    for image in postgres:18 redis:8; do
-        run_bounded "infra-pull-${image%%:*}" "${INFRA_PULL_TIMEOUT}" \
-            docker pull "${image}" || status=$?
+    local service status=0
+    # The infrastructure services of docker-compose.smoke.yml, pulled through
+    # Compose so that the Compose file is the only copy of their pinned image
+    # references; startup itself also rejects pulls explicitly.
+    for service in postgres redis; do
+        run_bounded "infra-pull-${service}" "${INFRA_PULL_TIMEOUT}" \
+            docker compose -p "${COMPOSE_PROJECT}" -f "${SMOKE_COMPOSE}" \
+            pull "${service}" || status=$?
         ((status == 0)) || return "${status}"
     done
 }

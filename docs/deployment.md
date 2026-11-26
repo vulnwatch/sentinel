@@ -594,7 +594,8 @@ workflows and the files they read, Renovate tracks:
   bumping both the SHA and the trailing version comment when a new release
   is published. The same manager tracks the `with:` version inputs of
   commonly used community-maintained actions (e.g. `astral-sh/setup-uv`'s
-  `version:` input) and the images of `services:` containers, with no
+  `version:` input) and the images of `services:` containers, pinned by
+  version and digest (`<name>:<version>@sha256:<digest>`), with no
   additional configuration.
 - **Other action `version:` inputs** (such as `codecov/codecov-action`'s),
   through a custom manager matching a
@@ -623,8 +624,10 @@ workflows and the files they read, Renovate tracks:
   reference.
 - **Images of the Compose files and the Dockerfile** that a workflow starts
   or builds (for example `docker-compose.smoke.yml` and `backend/Dockerfile`
-  in the image smoke gate), through the built-in `docker-compose` and
-  `dockerfile` managers (see Container Build Conventions).
+  in the image smoke gate), pinned by version and digest, through the
+  built-in `docker-compose` and `dockerfile` managers (see Container Build
+  Conventions). The development stack of `docker-compose.yml` follows the
+  same form (see PostgreSQL and Redis images below).
 
 A new pin uses one of these forms, so that Renovate tracks it from the
 start. Updates of the dependencies that these custom managers find under
@@ -788,7 +791,9 @@ three complementary mechanisms:
   the locked set.
 
 **Release-age cooldown.** A new release of a dependency, direct or
-transitive, enters the repository only once it is seven days old. A
+transitive, enters the repository only once it is seven days old; the one
+shortened cooldown, three days, applies to the version updates of the
+PostgreSQL and Redis images (see PostgreSQL and Redis images below). A
 malicious or broken release is usually detected and removed from its
 registry within days of its upload, so the wait keeps it out of the image,
 out of CI, and out of developer environments, which `uv sync` updates
@@ -814,7 +819,9 @@ settings with the same duration implement the cooldown:
   `minimumReleaseAge` to the same duration for the major, minor, and patch
   updates of every manager, so Renovate proposes a version only once it is
   seven days old; otherwise a Python update PR could propose a version that
-  uv cannot lock. No package is exempt from this rule. An update that is
+  uv cannot lock. No package is exempt from this rule; one later rule
+  shortens it to three days for the version updates of the PostgreSQL and
+  Redis images, whose tags are republished every few days. An update that is
   still too young is listed under "Pending Status Checks" on the Dependency
   Dashboard, where a maintainer can request it early, except a Python
   dependency (see Security fixes under the cooldown below). Digest updates
@@ -889,24 +896,73 @@ old. A dependency that only a custom manager tracks, such as Swagger UI,
 receives no vulnerability alert, so its security fix waits for the cooldown
 unless it can be requested early as above.
 
+**PostgreSQL and Redis images.** The PostgreSQL and Redis servers that
+development, CI, and the tests run come from the official `postgres` and
+`redis` images, pinned by version and digest in every copy: the
+development stack (`docker-compose.yml`), the image smoke stack
+(`docker-compose.smoke.yml`), the `services:` containers of `ci.yml` and
+`python-forward-compat.yml`, and the testcontainers fixtures (below). Every
+copy names the same version and digest, so that a developer, CI, and the
+tests run the same servers, and Renovate updates all of them in one PR; a
+unit test fails when the copies diverge or one leaves the pinned form.
+`scripts/image-smoke.sh` pre-pulls the infrastructure services through
+`docker compose pull` of the smoke Compose file, so it holds no copy of its
+own. Their digest updates wait for approval like any other (see Digest
+updates above).
+
+Their version updates wait three days instead of seven, the one shortened
+release-age cooldown (see Release-age cooldown above). Docker Hub dates a
+version by the last push of its tag, and the official images republish
+their exact version tags whenever Debian or the upstream project publishes
+fixes, every few days; under seven days a new version waited for a week
+without a rebuild, often for weeks. Three days still leave a release time to
+be withdrawn or corrected, and the risk is bounded: the images run only in
+development, CI, and the tests, and every update passes CI before a
+maintainer merges it. The `redis` Python package keeps seven days, because
+uv locks it only then. Both images have more than 1,000 tags, so a lookup
+can also lack their release timestamps; a version update then waits under
+"Pending Status Checks" on the Dependency Dashboard until a maintainer
+requests it.
+
+The supported major versions are requirements (Software Requirements;
+`docs/features/platform/testing-strategy.md`, CI Pipeline), so a new major
+version of either image opens as a **draft** PR once it passes the cooldown
+or a maintainer requests it from the Dependency Dashboard, which lists it
+until then. The PR runs CI on the new major but cannot be merged until a
+maintainer marks it ready. Renovate rebases it only when it conflicts,
+rather than after every merge to `master`, and a maintainer requests a
+rebase with its checkbox before marking it ready. Moving to a new major is
+an explicit decision: the PR that does so also updates the requirements
+that name the major. The rule matches the Docker images only, not the
+`redis` Python package, which shares the name. Renovate names a branch
+after the package and its major whatever the datasource, so every update of
+the two images gets a branch with a `docker-` prefix: otherwise a major
+update of the package would share a branch, and a PR, with an update of the
+image on the same major line.
+
 **Testcontainers image references.** The `testcontainers`-provisioned
-PostgreSQL and Redis images used by `backend/tests/conftest.py` (see
-`docs/features/platform/testing-strategy.md`, Database Provisioning)
-are plain string arguments in Python code, not a
+PostgreSQL and Redis images used by `backend/tests/conftest.py` and
+`backend/tests/support/redis.py` (see
+`docs/features/platform/testing-strategy.md`, Database Provisioning and
+Redis Strategy) are plain strings in Python code, not a
 Dockerfile/compose/workflow declaration — none of Renovate's built-in
-managers detect them. A `customManagers` regex entry in `renovate.jsonc`
-tracks these references instead, matching a
-`# renovate: depName=<name>` hint comment placed directly above each
-`*Container(...)` call. Adding a new testcontainers-provisioned service
-follows the same pattern: add the hint comment immediately above the
-container instantiation.
+managers detect them. Every fixture takes its image from a constant of
+`backend/tests/support/container_images.py`, pinned by version and
+digest, and a `customManagers` regex entry in `renovate.jsonc` tracks that
+file, matching a `# renovate: depName=<name>` hint comment placed directly
+above each constant. Adding a new testcontainers-provisioned service
+follows the same pattern: add its pinned constant, with the hint comment
+immediately above it, to that file; a unit test fails when a
+`*Container(...)` call names its image in a string literal instead, or is
+called without arguments and falls back to the floating default image of
+`testcontainers`.
 
 This repository extends the `config:recommended` preset, which adds
 `**/vendor/**`, `**/examples/**`, `**/__tests__/**`, `**/test/**`,
 `**/tests/**`, and `**/__fixtures__/**` to Renovate's default
 `ignorePaths` (`**/node_modules/**`, `**/bower_components/**`). The
-inherited `**/tests/**` pattern silently excludes
-`backend/tests/conftest.py` from every manager — including the custom
+inherited `**/tests/**` pattern silently excludes every file under
+`backend/tests/` from every manager — including the custom
 one above — before `managerFilePatterns` is ever evaluated:
 `ignorePaths` is a root-level-only setting in Renovate and cannot be
 scoped per manager or per `packageRules` entry. `renovate.jsonc`
