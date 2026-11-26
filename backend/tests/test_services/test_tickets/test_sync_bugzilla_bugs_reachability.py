@@ -442,14 +442,35 @@ class TestStructuralAbsences:
         assert not [name for name in names if name.endswith("ServiceError")]
 
     def test_no_route_task_or_error_code_names_the_source(self) -> None:
+        """The fetcher adds none. The only Bugzilla route and error code
+        belong to the needinfo count
+        (docs/features/integrations/bugzilla-needinfo-count.md), which the
+        fetcher modules never reference, and the fetcher never reads
+        `BUGZILLA_API_KEY` (cve-sync-bugzilla.md, Security and Privacy).
+        Routes are discovered with
+        `iter_route_contexts()` (see `tests/test_api_conventions.py`)."""
+        from fastapi import routing as fastapi_routing
+
         from app.celery_app import celery_app
         from app.main import app as api
 
-        paths = [getattr(route, "path", "") for route in api.routes]
+        paths = [
+            context.path
+            for context in fastapi_routing.iter_route_contexts(api.routes)
+            if context.path is not None
+        ]
         assert paths
-        assert not [path for path in paths if "bugzilla" in path.lower()]
+        assert [path for path in paths if "bugzilla" in path.lower()] == [
+            "/api/v1/bugzilla/needinfo-count"
+        ]
         assert not [name for name in celery_app.tasks if "bugzilla" in name.lower()]
-        assert not [member for member in ErrorCode if "BUGZILLA" in member.name]
+        assert [member for member in ErrorCode if "BUGZILLA" in member.name] == [
+            ErrorCode.BUGZILLA_UNAVAILABLE
+        ]
+        for module in _BUGZILLA_MODULES:
+            source = inspect.getsource(module)
+            assert "bugzilla_needinfo" not in source
+            assert "bugzilla_api_key" not in source
 
 
 # ---------------------------------------------------------------------------

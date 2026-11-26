@@ -86,9 +86,17 @@ def _validate_https_api_prefix(value: str, variable: str) -> str:
 _HEADER_VALUE = re.compile(r"[\x21-\x7e]*")
 """Printable ASCII without whitespace; empty means "not configured"."""
 
-_HEADER_SECRET_FIELDS = ("nvd_api_key", "github_token", "slack_bot_token")
-"""Secret settings sent verbatim as an HTTP header value
-(docs/conventions.md, Secret Field Typing)."""
+_HEADER_SECRET_FIELDS = (
+    "nvd_api_key",
+    "github_token",
+    "slack_bot_token",
+    "bugzilla_api_key",
+)
+"""Secret settings that must be printable ASCII without whitespace: those
+sent verbatim as an HTTP header value (docs/conventions.md, Secret Field
+Typing), and `BUGZILLA_API_KEY`, sent in a JSON request body, to which its
+owning specification applies the same rule (docs/configuration.md, External
+APIs)."""
 
 
 _UNRESTRICTED_CORS_ORIGINS = frozenset({"*", "null"})
@@ -166,6 +174,11 @@ class Settings(BaseSettings):
     # Slack bot token (sync_slack_avatars); empty disables the integration
     # (docs/features/identity/user-avatars.md, Slack App and Bot Token)
     slack_bot_token: SecretStr = SecretStr("")
+
+    # SUSE Bugzilla API key of the needinfo count (API server only); empty
+    # makes the read anonymous
+    # (docs/features/integrations/bugzilla-needinfo-count.md, Authentication)
+    bugzilla_api_key: SecretStr = SecretStr("")
 
     # Git-based fetchers
     git_clone_base_dir: str = "/var/lib/sentinel/git"
@@ -282,17 +295,15 @@ class Settings(BaseSettings):
     def _validate_header_secret(
         cls, value: SecretStr, info: ValidationInfo
     ) -> SecretStr:
-        """Reject a secret that is not a valid HTTP header value at startup.
+        """Reject a non-empty secret that is not printable ASCII without
+        whitespace at startup.
 
         The value is rejected, never trimmed, and the message names only the
         variable. See docs/conventions.md (Secret Field Typing).
         """
         if _HEADER_VALUE.fullmatch(value.get_secret_value()) is None:
             variable = (info.field_name or "").upper()
-            msg = (
-                f"Invalid {variable}: must be printable ASCII without whitespace "
-                "(it is sent as an HTTP header value)."
-            )
+            msg = f"Invalid {variable}: must be printable ASCII without whitespace."
             raise ValueError(msg)
         return value
 

@@ -254,6 +254,12 @@ class TestErrorCode:
         `<DEPENDENCY>_UNAVAILABLE`)."""
         assert ErrorCode.CELERY_UNAVAILABLE == "CELERY_UNAVAILABLE"
 
+    def test_bugzilla_unavailable_is_registered(self) -> None:
+        """See docs/features/integrations/bugzilla-needinfo-count.md (Service
+        Exceptions) and docs/api-spec.md (Infrastructure Dependency
+        Errors)."""
+        assert ErrorCode.BUGZILLA_UNAVAILABLE == "BUGZILLA_UNAVAILABLE"
+
     def test_admin_user_mutation_error_codes_are_registered(self) -> None:
         """See docs/features/identity/user-service.md (Service
         Exceptions) and docs/features/identity/user-management.md
