@@ -791,7 +791,9 @@ three complementary mechanisms:
   the locked set.
 
 **Release-age cooldown.** A new release of a dependency, direct or
-transitive, enters the repository only once it is seven days old. A
+transitive, enters the repository only once it is seven days old; the one
+shortened cooldown, three days, applies to the version updates of the
+PostgreSQL and Redis images (see PostgreSQL and Redis images below). A
 malicious or broken release is usually detected and removed from its
 registry within days of its upload, so the wait keeps it out of the image,
 out of CI, and out of developer environments, which `uv sync` updates
@@ -819,8 +821,7 @@ settings with the same duration implement the cooldown:
   seven days old; otherwise a Python update PR could propose a version that
   uv cannot lock. No package is exempt from this rule; one later rule
   shortens it to three days for the version updates of the PostgreSQL and
-  Redis images, whose tags are republished every few days (see PostgreSQL
-  and Redis images below). An update that is
+  Redis images, whose tags are republished every few days. An update that is
   still too young is listed under "Pending Status Checks" on the Dependency
   Dashboard, where a maintainer can request it early, except a Python
   dependency (see Security fixes under the cooldown below). Digest updates
@@ -909,7 +910,7 @@ unit test fails when the copies diverge or one leaves the pinned form.
 own. Their digest updates wait for approval like any other (see Digest
 updates above).
 
-Their version updates wait three days instead of seven, the only shortened
+Their version updates wait three days instead of seven, the one shortened
 release-age cooldown (see Release-age cooldown above). Docker Hub dates a
 version by the last push of its tag, and the official images republish
 their exact version tags whenever Debian or the upstream project publishes

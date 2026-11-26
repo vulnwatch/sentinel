@@ -273,7 +273,7 @@
       "rebaseWhen": "conflicted"
     },
     {
-      "description": "The only exception to the release-age cooldown rule above: the version updates of the PostgreSQL and Redis images wait 3 days instead of 7. Docker Hub dates a version by the last push of its tag, and these official images are republished every few days (Debian and upstream fixes), so under 7 days a new version waited weeks for a quiet week. They run only in development, CI, and the tests, and every update passes CI before it is merged — see docs/deployment.md (Workflow Conventions, Release-age cooldown). The docker datasource leaves out the redis Python package, which keeps 7 days, as uv requires; digest updates keep their approval",
+      "description": "The one shortened release-age cooldown: the version updates of the PostgreSQL and Redis images wait 3 days instead of 7. Docker Hub dates a version by the last push of its tag, and these official images are republished every few days (Debian and upstream fixes), so under 7 days a new version waited weeks for a quiet week. They run only in development, CI, and the tests, and every update passes CI before it is merged — see docs/deployment.md (Workflow Conventions, PostgreSQL and Redis images). The docker datasource leaves out the redis Python package, which keeps 7 days, as uv requires; digest updates keep their approval",
       "matchDatasources": ["docker"],
       "matchPackageNames": ["postgres", "redis"],
       "matchUpdateTypes": ["major", "minor", "patch"],

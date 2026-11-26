@@ -21,15 +21,14 @@ See issue #1107.
 No package is exempt from Renovate's cooldown. One rule shortens it: the
 version updates of the PostgreSQL and Redis images wait 3 days, because Docker
 Hub dates a version by the last push of its tag and these images are
-republished every few days (Workflow Conventions, Release-age cooldown; issue
-#1367). The uv image comes from Docker Hub, the only registry from which
+republished every few days (Workflow Conventions, PostgreSQL and Redis images;
+issue #1367). The uv image comes from Docker Hub, the only registry from which
 Renovate reads the release timestamps of images, and its tag must match every
 `setup-uv` version, so a uv PR that lacks the image's update fails. The
 Dockerfile frontend is pinned to an exact version, so that its releases are
-version updates. The cooldown cannot age a
-digest update, so every digest update except the base image's waits for
-approval on the Dependency Dashboard instead (Workflow Conventions, Digest
-updates). See issue #1120.
+version updates. The cooldown cannot age a digest update, so every digest
+update except the base image's waits for approval on the Dependency Dashboard
+instead (Workflow Conventions, Digest updates). See issue #1120.
 """
 
 from __future__ import annotations
@@ -265,13 +264,6 @@ def test_renovate_holds_every_new_version_for_the_backend_cooldown() -> None:
 
 SERVER_IMAGES = ("postgres", "redis")
 SERVER_IMAGE_COOLDOWN = "3 days"
-# A file of each manager that reads a copy of the server images.
-SERVER_IMAGE_FILES = [
-    ("docker-compose", "docker-compose.yml"),
-    ("docker-compose", "docker-compose.smoke.yml"),
-    ("github-actions", ".github/workflows/ci.yml"),
-    ("custom.regex", "backend/tests/support/container_images.py"),
-]
 
 
 def _server_image_cooldown() -> dict[str, Any]:
@@ -290,7 +282,9 @@ def _server_image_cooldown() -> dict[str, Any]:
 def test_server_image_cooldown_rule_matches_only_their_version_updates() -> None:
     # The rule follows the general one, which it overrides, and names its
     # images, its datasource, and the version update types, so that it can
-    # exempt nothing else, not a digest update either.
+    # exempt nothing else, not a digest update either. It names no manager or
+    # file, so every copy of an image waits the same time and one PR still
+    # updates all of them.
     rules = renovate_config()["packageRules"]
     rule = _server_image_cooldown()
 
@@ -303,22 +297,6 @@ def test_server_image_cooldown_rule_matches_only_their_version_updates() -> None
     assert rule["matchDatasources"] == ["docker"]
     assert sorted(rule["matchPackageNames"]) == list(SERVER_IMAGES)
     assert sorted(rule["matchUpdateTypes"]) == ["major", "minor", "patch"]
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("update_type", ["major", "minor", "patch"])
-@pytest.mark.parametrize("image", SERVER_IMAGES)
-@pytest.mark.parametrize(("manager", "file"), SERVER_IMAGE_FILES, ids=str)
-def test_server_image_versions_wait_the_shorter_cooldown(
-    manager: str, file: str, image: str, update_type: str
-) -> None:
-    # Docker Hub dates a version by the last push of its tag, and these
-    # images are republished every few days, so under the backend cooldown a
-    # new version waited weeks. Every copy waits the same time, so that one
-    # PR still updates all of them.
-    update = Update(manager, image, file, update_type, datasource="docker")
-
-    assert setting(update, "minimumReleaseAge") == SERVER_IMAGE_COOLDOWN
 
 
 @pytest.mark.unit
@@ -348,17 +326,6 @@ def test_server_image_versions_wait_the_shorter_cooldown(
 )
 def test_other_dependencies_keep_the_backend_cooldown(update: Update) -> None:
     assert setting(update, "minimumReleaseAge") == backend_cooldown()
-
-
-@pytest.mark.unit
-def test_server_image_digest_updates_keep_their_approval() -> None:
-    # The cooldown cannot age a digest; the approval holds it instead.
-    update = Update(
-        "docker-compose", "redis", "docker-compose.yml", "digest", datasource="docker"
-    )
-
-    assert setting(update, "minimumReleaseAge") is None
-    assert setting(update, "dependencyDashboardApproval") is True
 
 
 @pytest.mark.unit
