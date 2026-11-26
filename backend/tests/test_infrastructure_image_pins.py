@@ -54,9 +54,13 @@ LOCATIONS = {
     f"{CONTAINER_IMAGES_RELATIVE}:POSTGRES_IMAGE",
     f"{CONTAINER_IMAGES_RELATIVE}:REDIS_IMAGE",
 }
-# A testcontainers call that names its image in a string literal rather than
-# through the pinned constants.
-LITERAL_CONTAINER_IMAGE = re.compile(r"\b[A-Z]\w*Container\(\s*[rRbBfFuU]*[\"']")
+# A testcontainers call that names its image in a string literal, positional
+# or as the `image` keyword, rather than through the pinned constants, or that
+# names no image and falls back to the floating default of testcontainers
+# (`postgres:latest`, `redis:latest`).
+UNPINNED_CONTAINER_IMAGE = re.compile(
+    r"\b[A-Z]\w*Container\(\s*(?:(?:image\s*=\s*)?[rRbBfFuU]*[\"']|\))"
+)
 
 
 def _image_name(reference: str) -> str:
@@ -132,14 +136,35 @@ def test_every_copy_of_a_server_image_names_the_same_version_and_digest() -> Non
 @pytest.mark.unit
 def test_testcontainers_fixtures_take_their_images_from_the_pinned_constants() -> None:
     # A literal image argument is the form that no manager read in
-    # tests/support/redis.py.
-    literals = [
+    # tests/support/redis.py. This module holds the samples of the pattern.
+    unpinned = [
         f"{path.relative_to(REPO_ROOT).as_posix()}: {match.group()}"
         for path in sorted(TESTS_ROOT.rglob("*.py"))
-        for match in LITERAL_CONTAINER_IMAGE.finditer(path.read_text(encoding="utf-8"))
+        if path != Path(__file__).resolve()
+        for match in UNPINNED_CONTAINER_IMAGE.finditer(path.read_text(encoding="utf-8"))
     ]
 
-    assert literals == []
+    assert unpinned == []
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("call", "unpinned"),
+    [
+        ('RedisContainer("redis:8")', True),
+        ("PostgresContainer('postgres:18')", True),
+        ('RedisContainer(image="redis:8")', True),
+        ('PostgresContainer(\n    "postgres:18"\n)', True),
+        ("RedisContainer()", True),
+        ("RedisContainer(REDIS_IMAGE)", False),
+        ("PostgresContainer(image=POSTGRES_IMAGE)", False),
+        ("DedicatedRedisContainer(host, port, container)", False),
+        ('_container("redis:8")', False),
+    ],
+)
+def test_unpinned_container_image_pattern(call: str, unpinned: bool) -> None:
+    # The guard above passes vacuously if its pattern misses a form.
+    assert bool(UNPINNED_CONTAINER_IMAGE.search(call)) is unpinned
 
 
 @pytest.mark.unit
@@ -202,6 +227,8 @@ def test_major_updates_of_the_server_images_open_as_drafts(
 
     assert setting(major, "draftPR") is True
     assert setting(major, "rebaseWhen") == "conflicted"
+    # Every copy shares the branch, apart from the redis Python package's.
+    assert setting(major, "additionalBranchPrefix") == "docker-"
 
 
 @pytest.mark.unit
@@ -216,6 +243,7 @@ def test_other_updates_of_the_server_images_open_as_ordinary_prs(
 
     assert setting(update, "draftPR") is None
     assert setting(update, "rebaseWhen") is None
+    assert setting(update, "additionalBranchPrefix") is None
 
 
 @pytest.mark.unit
@@ -232,3 +260,4 @@ def test_major_updates_of_the_redis_python_package_are_not_drafts() -> None:
 
     assert setting(update, "draftPR") is None
     assert setting(update, "rebaseWhen") is None
+    assert setting(update, "additionalBranchPrefix") is None

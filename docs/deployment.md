@@ -904,18 +904,25 @@ unit test fails when the copies diverge or one leaves the pinned form.
 `scripts/image-smoke.sh` pre-pulls the infrastructure services through
 `docker compose pull` of the smoke Compose file, so it holds no copy of its
 own. Their version updates follow the release-age cooldown and their digest
-updates wait for approval like any other (see Digest updates above).
+updates wait for approval like any other (see Digest updates above). Both
+images have more than 1,000 tags, so a lookup can lack their release
+timestamps, and Docker Hub republishes their exact version tags; a version
+update can therefore wait under "Pending Status Checks" on the Dependency
+Dashboard until a maintainer requests it (see Release-age cooldown above).
 
 The supported major versions are requirements (Software Requirements;
 `docs/features/platform/testing-strategy.md`, CI Pipeline), so a new major
-version of either image opens as a **draft** PR: it announces the major and
-runs CI on it, but cannot be merged until a maintainer marks it ready.
-Renovate rebases it only when it conflicts, rather than after every merge to
-`master`, and a maintainer requests a rebase with its checkbox before
-marking it ready. Moving to a new major is an explicit decision: the PR that
-does so also updates the requirements that name the major. The rule matches
-the Docker images only, not the `redis` Python package, which shares the
-name.
+version of either image opens as a **draft** PR once it passes the cooldown
+or a maintainer requests it from the Dependency Dashboard, which lists it
+until then. The PR runs CI on the new major but cannot be merged until a
+maintainer marks it ready. Renovate rebases it only when it conflicts, rather than after every
+merge to `master`, and a maintainer requests a rebase with its checkbox
+before marking it ready. Moving to a new major is an explicit decision: the
+PR that does so also updates the requirements that name the major. The rule
+matches the Docker images only, not the `redis` Python package, which
+shares the name; it also gives their branch a `docker-` prefix, so that a
+major update of the package, whose branch Renovate would otherwise name the
+same, never shares a PR with the image's.
 
 **Testcontainers image references.** The `testcontainers`-provisioned
 PostgreSQL and Redis images used by `backend/tests/conftest.py` and
@@ -930,7 +937,9 @@ file, matching a `# renovate: depName=<name>` hint comment placed directly
 above each constant. Adding a new testcontainers-provisioned service
 follows the same pattern: add its pinned constant, with the hint comment
 immediately above it, to that file; a unit test fails when a
-`*Container(...)` call names its image in a string literal instead.
+`*Container(...)` call names its image in a string literal instead, or
+names none and falls back to the floating default image of
+`testcontainers`.
 
 This repository extends the `config:recommended` preset, which adds
 `**/vendor/**`, `**/examples/**`, `**/__tests__/**`, `**/test/**`,

@@ -259,10 +259,11 @@
       "commitMessagePrefix": "ci(deps):"
     },
     {
-      "description": "A new major version of the PostgreSQL or Redis image (the Compose files, the CI service containers, and the testcontainers fixtures) opens as a draft PR, rebased only when it conflicts: it announces the major and runs CI on it, but cannot be merged by accident, because the supported majors are requirements that change only by an explicit decision — see docs/deployment.md (Workflow Conventions, PostgreSQL and Redis images). The docker datasource leaves out the redis Python package",
+      "description": "A new major version of the PostgreSQL or Redis image (the Compose files, the CI service containers, and the testcontainers fixtures) opens as a draft PR, rebased only when it conflicts: it announces the major and runs CI on it, but cannot be merged by accident, because the supported majors are requirements that change only by an explicit decision — see docs/deployment.md (Workflow Conventions, PostgreSQL and Redis images). The docker datasource leaves out the redis Python package, and the branch prefix keeps a major of that package, whose branch would otherwise have the same name (renovate/redis-<major>.x), out of the image's PR",
       "matchDatasources": ["docker"],
       "matchPackageNames": ["postgres", "redis"],
       "matchUpdateTypes": ["major"],
+      "additionalBranchPrefix": "docker-",
       "draftPR": true,
       "rebaseWhen": "conflicted"
     },
