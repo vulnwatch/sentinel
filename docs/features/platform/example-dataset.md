@@ -1188,6 +1188,10 @@ Operations that need an external source do not complete on a dataset backend:
   while the search of maintained packages answers from the names of
   Maintained Package Names;
 - an on-demand CVE refetch reports every source as disabled;
+- the count of Bugzilla needinfo requests queries SUSE Bugzilla: it answers
+  `503 BUGZILLA_UNAVAILABLE` without access to Bugzilla, and otherwise the
+  real count, of public bugs only unless `BUGZILLA_API_KEY` is set
+  (`docs/features/integrations/bugzilla-needinfo-count.md`);
 - a manual fetcher trigger is rejected, because the fetcher is disabled; and
 - enabling a fetcher would contact its external source, and is not done on a
   dataset backend.

@@ -7,7 +7,7 @@ Index of all feature specification domains.
 | Domain | Description |
 |--------|-------------|
 | [Identity](identity/) | User authentication, authorization, and lifecycle management |
-| [Integrations](integrations/) | IBS REST evidence and RabbitMQ wake-up infrastructure |
+| [Integrations](integrations/) | IBS REST evidence, RabbitMQ wake-up infrastructure, and the Bugzilla needinfo count |
 | [Packages](packages/) | Package affectedness, release and delivery reconciliation, and maintainership |
 | [Platform](platform/) | Cross-cutting infrastructure and system administration |
 | [Tickets](tickets/) | CVE ingestion, triage, severity, and audit trail |
@@ -32,6 +32,7 @@ Index of all feature specification domains.
 
 - [ibs-integration.md](integrations/ibs-integration.md) — IBS REST source and request evidence plus anonymous Product repository downloads
 - [ibs-rabbitmq-integration.md](integrations/ibs-rabbitmq-integration.md) — Standalone IBS RabbitMQ wake-up consumer, heartbeat, and status API
+- [bugzilla-needinfo-count.md](integrations/bugzilla-needinfo-count.md) — Count of open SUSE Bugzilla needinfo requests to the security team (`GET /api/v1/bugzilla/needinfo-count`)
 
 ### Packages
 
