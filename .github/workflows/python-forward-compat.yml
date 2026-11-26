@@ -59,10 +59,13 @@ jobs:
         ports:
           - 6379:6379
         # As in ci.yml: redis-server directly, as the image's non-root user,
-        # so that no bundled module is loaded.
+        # without capabilities or privilege escalation, so that no bundled
+        # module is loaded.
         options: >-
           --entrypoint redis-server
           --user redis
+          --cap-drop ALL
+          --security-opt no-new-privileges
           --health-cmd "redis-cli ping"
           --health-interval 10s
           --health-timeout 5s

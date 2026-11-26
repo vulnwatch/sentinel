@@ -53,7 +53,7 @@ def _modules_loaded_from_files(modules: list[dict[str, Any]]) -> list[str]:
         ([], []),
     ],
 )
-def test_modules_loaded_from_files_detects_a_bundled_module(
+def test_modules_loaded_from_files_reports_only_modules_with_a_path(
     modules: list[dict[str, Any]], loaded: list[str]
 ) -> None:
     # The checks below would pass vacuously if the predicate missed a module.

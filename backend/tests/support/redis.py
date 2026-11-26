@@ -38,15 +38,22 @@ def redis_server_container() -> RedisContainer:
     """A Redis test container, not yet started, that runs as a deployment
     runs Redis.
 
-    It starts `redis-server` directly, as the image's non-root `redis` user,
-    rather than through the image's entrypoint, which would load the modules
-    that the image bundles (docs/deployment.md, Software Requirements), and
-    persists nothing. Every testcontainers-provisioned Redis server uses it.
+    It starts `redis-server` directly, as the image's non-root `redis` user
+    without capabilities or privilege escalation, rather than through the
+    image's entrypoint, which would load the modules that the image bundles
+    (docs/deployment.md, Software Requirements), and persists nothing. Every
+    testcontainers-provisioned Redis server uses it.
     """
     # Lazy import, as in tests/conftest.py: Docker is needed only here.
     from testcontainers.community.redis import RedisContainer
 
-    container = RedisContainer(REDIS_IMAGE, entrypoint="redis-server", user="redis")
+    container = RedisContainer(
+        REDIS_IMAGE,
+        entrypoint="redis-server",
+        user="redis",
+        cap_drop=["ALL"],
+        security_opt=["no-new-privileges"],
+    )
     container.with_command(_SERVER_ARGUMENTS)
     return container
 

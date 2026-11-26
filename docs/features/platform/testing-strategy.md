@@ -586,7 +586,7 @@ Isolation), the Redis server loads no module from a file, as a deployment
 runs it (`docs/deployment.md`, Software Requirements), so that a use of a
 module command fails the suite. An integration test reads `MODULE LIST` from
 the harness's server and from a dedicated container and fails on any module
-with a path; the modules that the server builds in report none.
+with a path; the modules that the server builds in report an empty path.
 
 `TEST_REDIS_URL` is test-harness-only configuration, not Sentinel
 runtime configuration. Tests MUST never use `REDIS_URL` or

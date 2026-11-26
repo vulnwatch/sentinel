@@ -23,12 +23,14 @@ services:
 
   redis:
     image: redis:8.10.3@sha256:7671653d5e27b7e1a4cee76b46e63753b36c75b475dc8fcd88d2d31143a258c2
-    # redis-server directly, as the image's non-root user: the image's
-    # entrypoint would load its bundled modules, which Sentinel does not use
-    # (docs/deployment.md, Software Requirements), and is also what steps
-    # down from root.
+    # redis-server directly, as the image's non-root user, without
+    # capabilities or privilege escalation: the image's entrypoint would load
+    # its bundled modules, which Sentinel does not use (docs/deployment.md,
+    # Software Requirements), and is also what drops these privileges.
     entrypoint: ["redis-server"]
     user: redis
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     command: ["--save", "", "--appendonly", "no"]
     ports:
       - "6379:6379"

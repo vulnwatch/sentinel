@@ -101,8 +101,11 @@ SHOULD run Redis without the modules that the official `redis` 8 image bundles
 (RediSearch, RedisJSON, RedisBloom, and RedisTimeSeries), which removes their
 native code from the attack surface. The image's entrypoint loads every bundled
 module whenever it starts `redis-server`, so a deployment of that image starts
-`redis-server` directly instead, as the image's non-root `redis` user: that
-entrypoint is also what steps down from root. The data types that the server
+`redis-server` directly instead, as the image's non-root `redis` user (uid
+999), with no capabilities and no privilege escalation (for example
+`--cap-drop ALL --security-opt no-new-privileges`, or the Pod Security
+`restricted` settings): that entrypoint is also what drops these privileges
+when it starts as root. The data types that the server
 builds in as modules, such as `vectorset`, cannot be left out; Sentinel does not
 use them either. Development, CI, and the tests run Redis the same way (see
 Workflow Conventions, PostgreSQL and Redis images).
@@ -929,19 +932,6 @@ unit test fails when the copies diverge or one leaves the pinned form.
 own. Their digest updates wait for approval like any other (see Digest
 updates above).
 
-Every Redis copy starts `redis-server` directly, as the image's `redis` user,
-so that it loads none of the image's bundled modules, as a deployment runs it
-(Software Requirements): the Compose files set `entrypoint` and `user`, the
-testcontainers fixtures create their containers through one helper of
-`backend/tests/support/redis.py` that sets both, and the service containers
-pass `--entrypoint redis-server --user redis` in their `options`. The service
-containers use `options` because the pinned `actionlint` rejects the
-`entrypoint` and `command` keys of a service container, so they take no server
-argument and keep Redis's default snapshot settings; they are discarded with
-the job. An integration test fails when the Redis server of the test suite or a
-dedicated test container reports a module loaded from a file
-(`docs/features/platform/testing-strategy.md`, Redis Strategy).
-
 Their version updates wait three days instead of seven, the one shortened
 release-age cooldown (see Release-age cooldown above). Docker Hub dates a
 version by the last push of its tag, and the official images republish
@@ -971,6 +961,21 @@ after the package and its major whatever the datasource, so every update of
 the two images gets a branch with a `docker-` prefix: otherwise a major
 update of the package would share a branch, and a PR, with an update of the
 image on the same major line.
+
+Every Redis copy starts `redis-server` directly, as the image's `redis` user,
+without capabilities and with no privilege escalation, so that it loads none
+of the image's bundled modules, as a deployment runs it (Software
+Requirements): the Compose files set `entrypoint`, `user`, `cap_drop`, and
+`security_opt`, the testcontainers fixtures create their containers through
+one helper of `backend/tests/support/redis.py` that sets the same, and the
+service containers pass `--entrypoint redis-server --user redis --cap-drop ALL
+--security-opt no-new-privileges` in their `options`. The service containers
+use `options` because the pinned `actionlint` rejects the `entrypoint` and
+`command` keys of a service container, so they take no server argument and
+keep Redis's default snapshot settings; they are discarded with the job. An
+integration test fails when the Redis server of the test suite or a dedicated
+test container reports a module loaded from a file
+(`docs/features/platform/testing-strategy.md`, Redis Strategy).
 
 **Testcontainers image references.** The `testcontainers`-provisioned
 PostgreSQL and Redis images used by `backend/tests/conftest.py` and
