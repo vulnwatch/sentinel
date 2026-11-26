@@ -32,7 +32,7 @@ relevant feature specifications in `docs/features/`.
 | SUSE OpenLDAP | Internal | Employee identity, POSIX accounts | Not integrated |
 | SUSEID (Authentik) | Internal | Centralized identity provisioning via SCIM push | Planned |
 | Slack | Internal | Profile picture URLs of Sentinel users | Active |
-| SUSE Bugzilla | Public | Bug tracking, security issues, the bug of each CVE | Active |
+| SUSE Bugzilla | Public | Bug tracking, security issues, the bug of each CVE, needinfo requests to the security team | Active |
 | CISA KEV | Public | Known exploited vulnerabilities catalog | Active |
 | EPSS | Public | Exploit probability scores | Active |
 | GHSA | Public | Security advisories, CVSS, CWE | Active |
@@ -404,11 +404,16 @@ normalizes all forms to the canonical `bsc#` prefix.
   which the "Depends on" field of the aliased bug lists. IBS source diffs
   include Bugzilla tracker references (with tracker type `bnc`) alongside CVE
   references
-- **Access**: Web UI at `bugzilla.suse.com`, and the Bugzilla REST API at
-  `bugzilla.suse.com/rest/` (Bugzilla 5.0.6 on 2026-11-16). Public bugs are
-  readable anonymously; Sentinel sends no credential. Rate limits are not
-  published. SMASH integrates deeply with Bugzilla for issue creation, status
-  tracking, and embargo detection
+- **Access**: Web UI at `bugzilla.suse.com`, the Bugzilla REST API at
+  `bugzilla.suse.com/rest/`, and the JSON-RPC interface at
+  `bugzilla.suse.com/jsonrpc.cgi`, which Bugzilla 5.0 deprecates (Bugzilla
+  5.0.6 on 2026-11-16 and 2026-11-26). Public bugs are readable anonymously;
+  `sync_bugzilla_bugs` uses the REST API and sends no credential. The
+  needinfo count uses the JSON-RPC interface and sends the API key of a
+  Bugzilla account in the request body, when one is configured, so that its
+  search also sees the restricted bugs that this account can see. Rate
+  limits are not published. SMASH integrates deeply with Bugzilla for issue
+  creation, status tracking, and embargo detection
 - **Observations** (anonymous requests, 2026-11-16):
   - `GET /rest/bug?alias={cve_id}` returns the bug of a CVE, matching the
     alias case-insensitively, and an empty `bugs` array for an alias without
@@ -438,15 +443,46 @@ normalizes all forms to the canonical `bsc#` prefix.
   - The status whiteboard carries the SUSE CVSS vectors of the bug, which
     Sentinel does not ingest (`cvss-scoring.md`, Provider Identity and
     Authority)
+- **Observations** (2026-11-26):
+  - `count_only=1` is ignored: the search returns its bugs with all default
+    fields; `include_fields=id` returns only the IDs
+  - A search without `limit`, and one with `limit=0`, returned all 1591 open
+    bugs with a requested `needinfo` flag, so the server applies no default
+    search limit below the 10000-bug maximum
+  - An anonymous search by flag (`f1=flagtypes.name&o1=equals&v1=needinfo%3F`)
+    and requestee (`f2=requestees.login_name&o2=equals&v2=<address>`)
+    returned the public bug of a test pair in 0.3 seconds, and not its
+    restricted twin: requestees are searchable without authentication
+  - The JSON-RPC interface (`POST /jsonrpc.cgi`, `Content-Type:
+    application/json`) answers `Bug.search` with the same search parameters
+    and the same bugs as the REST search, in a JSON object whose `result`
+    holds the bugs and whose `error` is `null`. It answers an error, such as
+    an unknown method, with HTTP 200, `result` `null`, and an `error` object
+    with an integer `code` and a `message`
+  - The API key is read only from the request parameters, never from a
+    header: a REST search with an invalid key in the header
+    `X-BUGZILLA-API-KEY` returned the anonymous result. The same key as the
+    REST query parameter `api_key` answered HTTP 400 with `{"code": 306,
+    "error": true}`, and as the member `Bugzilla_api_key` of a JSON-RPC
+    `Bug.search` it answered HTTP 200 with an `error` of `code` 306; both
+    messages state that the key is invalid
+  - A REST response carries `Access-Control-Allow-Origin: *`; a CORS
+    preflight request to `/jsonrpc.cgi` answers HTTP 403
+  - With the key of an account that sees the security team's restricted
+    bugs, the same JSON-RPC search returned both bugs of the test pair; the
+    search with the key of Sentinel's own account is not yet verified
 - **Access note — Anubis bot protection**: the HTML and XML pages
   (`show_bug.cgi`, including `ctype=xml`) answer a client that has not solved
   the Anubis proof-of-work challenge with the challenge page, whatever the
   User-Agent; a browser solves it. The REST API under `/rest/` is not
   protected and answers JSON to a request with `Accept: application/json`;
-  with `Accept: text/html` it answers an HTML page. Automated access uses only
-  the REST API
+  with `Accept: text/html` it answers an HTML page. The JSON-RPC interface
+  `/jsonrpc.cgi` is not protected either. Automated access uses only these
+  two interfaces
 - **Integration status**: **Active**. `sync_bugzilla_bugs` links the public
-  bug that carries the CVE ID as alias to the Ticket of each known CVE. Further
+  bug that carries the CVE ID as alias to the Ticket of each known CVE.
+  `GET /api/v1/bugzilla/needinfo-count` counts, on request, the open bugs
+  whose `needinfo?` flag asks the security team for information. Further
   Bugzilla IDs appear in IBS source diffs and can be manually linked to
   tickets via the `TicketReference` system. SMASH's extensive Bugzilla
   integration (fetchers for recent bugs, foreign bugs, CVE alias correction,
@@ -456,7 +492,9 @@ normalizes all forms to the canonical `bsc#` prefix.
   https://bugzilla.readthedocs.io/en/5.0/api/
 
 > See [cve-sync-bugzilla.md](features/tickets/cve-sync-bugzilla.md) for the
-> full fetcher specification.
+> full fetcher specification and
+> [bugzilla-needinfo-count.md](features/integrations/bugzilla-needinfo-count.md)
+> for the needinfo count.
 
 ---
 

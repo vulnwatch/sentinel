@@ -1,13 +1,14 @@
 # Integrations
 
-Technical boundaries for authoritative IBS REST evidence and RabbitMQ wake-up
-delivery.
+Technical boundaries for authoritative IBS REST evidence, RabbitMQ wake-up
+delivery, and the SUSE Bugzilla needinfo count.
 
 ## Specs
 
 ```
 ibs-integration.md            IBS REST source/request evidence and anonymous Product repository downloads
 ibs-rabbitmq-integration.md   Standalone IBS RabbitMQ wake-up consumer, heartbeat, status API
+bugzilla-needinfo-count.md    Count of open Bugzilla needinfo requests to the security team
 ```
 
 ## Relationships
@@ -20,5 +21,10 @@ ibs-rabbitmq-integration.md   Standalone IBS RabbitMQ wake-up consumer, heartbea
   package and request events only to accelerate the polling-owned track release
   and submission reconciliation workflows. It also owns the ephemeral
   heartbeat and consumer-status API.
-- Both specs are pure infrastructure — business logic lives in
+- `bugzilla-needinfo-count.md` reads, on request, the number of open SUSE
+  Bugzilla bugs that ask the security team for information, and caches it
+  briefly in Redis. It stores nothing in PostgreSQL and relates to no Ticket;
+  the links between CVEs and their public bugs belong to
+  `tickets/cve-sync-bugzilla.md`.
+- The two IBS specs are pure infrastructure — business logic lives in
   `packages/` and `tickets/` specs that consume these layers.

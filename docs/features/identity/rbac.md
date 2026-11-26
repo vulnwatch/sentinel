@@ -22,7 +22,7 @@ endpoint contract.
 | Capability | Operations Covered |
 |---|---|
 | `create_ticket` | Create ticket manually |
-| `triage_ticket` | Assign/reassign ticket, unassign oneself from a ticket, change ticket status (all transitions: ignore, reopen, duplicate, revert-duplicate), associate CVE with ticket, set/update manual severity, set/change/clear the priority override, refetch an accessible CVE, rerun complete Ticket convergence |
+| `triage_ticket` | Assign/reassign ticket, unassign oneself from a ticket, change ticket status (all transitions: ignore, reopen, duplicate, revert-duplicate), associate CVE with ticket, set/update manual severity, set/change/clear the priority override, refetch an accessible CVE, rerun complete Ticket convergence, view the count of open SUSE Bugzilla needinfo requests to the security team |
 | `manage_packages` | Add/remove packages from tickets, exclude/restore (package, track, product), change track affectedness to any non-`FIXED` status, set `FIXED` only on a locked-current CVE-less Ticket, override product eligibility |
 | `manage_cvss` | Add/edit/delete SUSE CVSS assessments |
 | `manage_references` | Add/edit/delete ticket references |
@@ -260,6 +260,7 @@ no response to a caller that the operation does not already admit.
 | Set/update manual severity | `triage_ticket` |
 | Set/change/clear priority override | `triage_ticket` |
 | Refetch an accessible CVE | `triage_ticket` |
+| View the count of open SUSE Bugzilla needinfo requests to the security team | `triage_ticket` |
 | Add/remove packages from tickets | `manage_packages` |
 | Exclude/restore package, track, or product | `manage_packages` |
 | Change track affectedness to any non-`FIXED` status | `manage_packages` |
@@ -697,6 +698,12 @@ here with the required authorization level and a link to the owning spec.
 |--------|----------|---------------|-------------|
 | GET | `/api/v1/ibs-consumer/status` | Authenticated | [ibs-rabbitmq-integration](../integrations/ibs-rabbitmq-integration.md#get-ibs-consumer-status) |
 
+### Bugzilla
+
+| Method | Endpoint | Authorization | Owning Spec |
+|--------|----------|---------------|-------------|
+| GET | `/api/v1/bugzilla/needinfo-count` | `triage_ticket` | [bugzilla-needinfo-count](../integrations/bugzilla-needinfo-count.md#get-bugzilla-needinfo-count) |
+
 ### Maintainer Operations
 
 | Method | Endpoint | Authorization | Owning Spec |
@@ -981,6 +988,12 @@ here with the required authorization level and a link to the owning spec.
     API keys exclusively for ongoing operations. Rotation means creating a
     replacement key and revoking the old key; see
     `docs/features/identity/api-key-management.md`.
+
+    The role holds `triage_ticket`, and with it the count of SUSE Bugzilla
+    needinfo requests to the security team, which can include restricted
+    bugs: the count discloses their number, never their content
+    (`docs/features/integrations/bugzilla-needinfo-count.md`, Security and
+    Privacy).
 
 ## Assignment Eligibility Wire Format
 

@@ -119,7 +119,7 @@ Sentinel requires outbound access to:
 | GitHub raw content | `raw.githubusercontent.com` | 443 | CVE Program CNA list download (`sync_mitre_cnas`) |
 | git.kernel.org | `git.kernel.org` | 443 | Linux kernel vulnerability repo clone/fetch |
 | Slack Web API | `slack.com` | 443 | User picture lookup (`sync_slack_avatars`) |
-| SUSE Bugzilla | `bugzilla.suse.com` | 443 | Public bug of each CVE (`sync_bugzilla_bugs`) |
+| SUSE Bugzilla | `bugzilla.suse.com` | 443 | Public bug of each CVE (`sync_bugzilla_bugs`, Celery worker); count of needinfo requests to the security team (API server, `docs/features/integrations/bugzilla-needinfo-count.md`) |
 
 ---
 
@@ -344,6 +344,7 @@ database that holds data, including a partially loaded dataset.
 | `IBS_USERNAME` / `IBS_SSH_PRIVATE_KEY` | Dedicated non-personal IBS account and the one-line base64 encoding of its unencrypted Ed25519 private-key file | Supply the key through the environment or secret store; never log it |
 | `IBS_RABBITMQ_URL` | Credential-bearing AMQPS URL | Supply through the environment or secret store; never log it |
 | `SLACK_BOT_TOKEN` | Bot token of SUSE's internal Slack app | Supply to the Celery worker through the environment or secret store; never log it. Empty or unset disables user pictures; the next run of `sync_slack_avatars` clears the stored ones (`docs/features/identity/user-avatars.md`) |
+| `BUGZILLA_API_KEY` | API key of Sentinel's SUSE Bugzilla account | Supply to the API server through the environment or secret store; never log it. Empty or unset makes the needinfo count anonymous, so it counts only public bugs (`docs/features/integrations/bugzilla-needinfo-count.md`) |
 
 #### Deployment Steps
 
@@ -446,6 +447,13 @@ Before the first production deployment:
 - [ ] `SLACK_BOT_TOKEN` supplied to the Celery worker, or deliberately left
       empty, which disables user pictures
       (`docs/features/identity/user-avatars.md`, Slack App and Bot Token)
+- [ ] `BUGZILLA_API_KEY` supplied to the API server, or deliberately left
+      empty, which limits the needinfo count to public bugs. The key belongs
+      to a Bugzilla account that can read the security team's restricted
+      bugs and holds no permission to edit bugs or administer Bugzilla; an
+      exposed key is revoked in Bugzilla
+      (`docs/features/integrations/bugzilla-needinfo-count.md`,
+      Authentication; Security and Privacy)
 - [ ] `NVD_API_KEY` supplied (free NVD API key, recommended) and the
       `sync_nvd_cves` `request_delay` lowered to 0.6 through `FetcherConfig`;
       without a key the fetcher works, but bursts of on-demand fetches,
@@ -2743,8 +2751,10 @@ Sentinel uses Redis in two roles, addressed by two configuration URLs
 - **Application cache/coordination** (`REDIS_URL`, db 0): session
   liveness cache, login lockout counters, on-demand fetch deduplication
   markers and pending overlays, the CVSS recalculation admission and
-  ownership lease, and the IBS consumer's best-effort
-  operational heartbeat.
+  ownership lease, the IBS consumer's best-effort
+  operational heartbeat, and the cached Bugzilla needinfo count with its
+  read lock (`docs/features/integrations/bugzilla-needinfo-count.md`, Redis
+  Keys).
 - **Celery broker + scheduler** (`CELERY_BROKER_URL`, db 1): task queue
   and `celery-redbeat` schedule entries (including the distributed lock
   used as recovery sentinel).

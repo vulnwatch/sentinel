@@ -5,7 +5,8 @@
 Cross-cutting HTTP client and TLS trust store infrastructure used by
 all Sentinel components that make outgoing network connections: fetchers
 (via BaseFetcher), IBSClient, the SMELT requests of package addition and
-of the package tasks, and IBSEventConsumer (AMQP).
+of the package tasks, the Bugzilla needinfo count, and IBSEventConsumer
+(AMQP).
 
 Scope boundary: this spec covers the shared HTTP client factory and TLS
 trust store configuration. Protocol-level reconnection logic, connection
@@ -431,7 +432,8 @@ override configures a proxy (see "Override Safety"). These are system-level
 variables, set at the container or host level for every process role that
 makes outgoing HTTP requests: the Celery workers (fetchers, `IBSClient`,
 and the SMELT requests of package tasks), the IBS RabbitMQ consumer
-(`IBSClient`), and the API server (SMELT requests during package addition).
+(`IBSClient`), and the API server (SMELT requests during package addition
+and the Bugzilla needinfo count).
 
 **Reading**: the factory reads the variables each time it creates a
 client, so a changed value applies to the next client. For each variable
@@ -564,6 +566,19 @@ The SMELT requests of `add_package_to_ticket()`
 - A rotated CA is picked up by the next client: the next request or task
   invocation
 
+The Bugzilla request of `get_needinfo_count()`
+(`docs/features/integrations/bugzilla-needinfo-count.md`) uses the factory
+defaults, with `retry_non_idempotent=True`:
+
+- The API server creates one client for each Bugzilla read of
+  `GET /api/v1/bugzilla/needinfo-count`, which a response from the shared
+  cache does not need, and closes it before the response is sent
+- The read is a `POST` of a read-only search, so the transport-level retry
+  applies to it as to a `GET`; the read has its own deadline of 10 seconds,
+  which includes the retries, and the owning specification defines its
+  outcome and its credential
+- A rotated CA is picked up by the next client: the next Bugzilla read
+
 ## TLS Trust Store Configuration
 
 All outgoing TLS connections from Sentinel — HTTP (shared client) and
@@ -605,6 +620,8 @@ internal CA.
     and closed by the task workflow per invocation
   - API package addition: once per `POST /api/v1/tickets/{ticket_id}/packages`
     request
+  - Bugzilla needinfo count: once per Bugzilla read of
+    `GET /api/v1/bugzilla/needinfo-count`
   - `IBSClient`: once per workflow invocation in Celery roles; once per
     process lifetime in the IBS RabbitMQ consumer
   - `IBSEventConsumer` (AMQPS): once per connection attempt — it builds a
@@ -672,6 +689,7 @@ outage. In local development or a custom image without the
 | `IBSEventConsumer` (AMQPS) | 2 | Next reconnection attempt, no restart |
 | `IBSClient` (httpx client, one per workflow invocation) | 2 | Next workflow invocation in Celery roles, no restart; process restart in the IBS RabbitMQ consumer |
 | SMELT package clients (API package addition, package tasks) | 2 | Next request or task invocation, no restart |
+| Bugzilla needinfo client (API server) | 2 | Next Bugzilla read, no restart |
 | Git subprocess and other OpenSSL-default-verify clients | 1 | Image rebuild (`SUSE_CA_CERT_PATH` overrides only layer 2 — a mounted replacement file does not reach layer 1) |
 
 No git-based fetcher currently clones from a SUSE-internal host (both
@@ -714,7 +732,7 @@ by each component and documented in its respective spec.
 
 | Protocol | Component | Trust Store Source |
 |----------|-----------|-------------------|
-| HTTPS | Shared HTTP client (all fetchers, IBSClient, SMELT package clients) | `build_tls_context()` via `create_http_client()` |
+| HTTPS | Shared HTTP client (all fetchers, IBSClient, SMELT package clients, Bugzilla needinfo client) | `build_tls_context()` via `create_http_client()` |
 | AMQPS | `IBSEventConsumer` | `build_tls_context()` passed to aio-pika/aiormq |
 | Git over HTTPS | `git` subprocess (`BaseGitFetcher`) | Container system trust store (layer 1 — see Trust Store Layering). Not yet exercised: no current git-based fetcher clones from a SUSE-internal host |
 
@@ -728,6 +746,8 @@ by each component and documented in its respective spec.
 - `docs/features/integrations/ibs-integration.md` — IBSClient usage
 - `docs/features/integrations/ibs-rabbitmq-integration.md` — AMQP TLS
   configuration
+- `docs/features/integrations/bugzilla-needinfo-count.md` — the Bugzilla
+  request of the API server
 - `docs/features/platform/git-fetcher-infrastructure.md` — `BaseGitFetcher`
   git subprocess invocation (Trust Store Layering, layer 1 consumer)
 - `docs/data-sources.md` — candidate SUSE-internal git sources

@@ -908,7 +908,7 @@ Error codes are grouped by prefix:
 | `DATE_RANGE_*` | Date range filter validation | `DATE_RANGE_INVERTED`, `DATE_RANGE_TOO_WIDE` |
 | `ROUTE_*` | Request routing (see Routing Responses) | `ROUTE_NOT_FOUND`, `ROUTE_METHOD_NOT_ALLOWED` |
 | `INTERNAL_*` | Unhandled server error | `INTERNAL_ERROR` |
-| `<DEPENDENCY>_UNAVAILABLE` | Infrastructure dependency availability (external service or broker unavailable, including unconfirmed task publication) | `REDIS_UNAVAILABLE`, `SMELT_UNAVAILABLE`, `CELERY_UNAVAILABLE`; reserved: `PROVISIONING_UNAVAILABLE`, `SSO_UNAVAILABLE` |
+| `<DEPENDENCY>_UNAVAILABLE` | Infrastructure dependency availability (external service or broker unavailable, including unconfirmed task publication) | `REDIS_UNAVAILABLE`, `SMELT_UNAVAILABLE`, `BUGZILLA_UNAVAILABLE`, `CELERY_UNAVAILABLE`; reserved: `PROVISIONING_UNAVAILABLE`, `SSO_UNAVAILABLE` |
 
 Rules:
 
@@ -964,6 +964,7 @@ Examples:
 | `REDIS_UNAVAILABLE` | Redis cache/session store |
 | `PROVISIONING_UNAVAILABLE` | External identity provider (reserved) |
 | `SMELT_UNAVAILABLE` | SMELT API |
+| `BUGZILLA_UNAVAILABLE` | SUSE Bugzilla (`docs/features/integrations/bugzilla-needinfo-count.md`) |
 | `SSO_UNAVAILABLE` | SSO identity provider, OIDC discovery (reserved) |
 | `CELERY_UNAVAILABLE` | Celery task broker unavailable or task acceptance unconfirmed; the owning endpoint defines which publication exceptions produce this code, and the code never proves broker rejection |
 
