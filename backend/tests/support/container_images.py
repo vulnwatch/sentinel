@@ -16,4 +16,4 @@ from typing import Final
 # renovate: depName=postgres
 POSTGRES_IMAGE: Final = "postgres:18.6@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42"  # noqa: E501
 # renovate: depName=redis
-REDIS_IMAGE: Final = "redis:8.10.3@sha256:7671653d5e27b7e1a4cee76b46e63753b36c75b475dc8fcd88d2d31143a258c2"  # noqa: E501
+REDIS_IMAGE: Final = "redis:8.12.0@sha256:56a1737794e36c3ebe8a4544a8ab421af3ab1a6488fb2238aec228c404933fed"  # noqa: E501
