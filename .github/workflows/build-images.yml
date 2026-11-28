@@ -99,6 +99,7 @@ jobs:
         with:
           version: "0.13.9"
           enable-cache: true
+          require-checksums: true
 
       # The harness runs its timeout supervisor on the project's interpreter,
       # which it finds but does not install (docs/features/platform/

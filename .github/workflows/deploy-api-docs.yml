@@ -36,6 +36,7 @@ jobs:
         with:
           version: "0.13.9"
           enable-cache: true
+          require-checksums: true
 
       - name: Install backend dependencies
         run: uv sync --locked --no-dev

@@ -11,11 +11,12 @@ and digest, through `scripts/lint-shell.sh` (issue #1099). Every `uvx` tool, in
 a workflow, a script, a Git hook, or the `Makefile`, runs on the project's
 Python version (issue #1103) and with the backend's release-age cooldown
 (issue #1014), and every workflow that sets up uv runs the project only on a
-uv-managed interpreter, which follows the pinned uv (issue #1177). The image
-scan runs Trivy from its image, pinned by version and digest, which Renovate
-looks up on Docker Hub (issue #1097). The Swagger UI of the API's `/api/docs`
-page shares the GitHub Pages site's pin, and the site enables the operation
-filter (issue #1070).
+uv-managed interpreter, which follows the pinned uv (issue #1177). Every
+setup-uv step verifies uv against a checksum that the pinned action bundles or
+the step supplies (issue #1392). The image scan runs Trivy from its image,
+pinned by version and digest, which Renovate looks up on Docker Hub (issue
+#1097). The Swagger UI of the API's `/api/docs` page shares the GitHub Pages
+site's pin, and the site enables the operation filter (issue #1070).
 
 The workflows are parsed as YAML (`tests/support/yaml_files.py`); only the
 `Makefile`, the scripts and the Git hooks, the `/api/docs` page module, and the
@@ -383,6 +384,30 @@ def test_setup_uv_workflows_run_the_project_only_on_managed_interpreters() -> No
     assert workflows
     assert without_managed_python == []
     assert overrides == []
+
+
+@pytest.mark.unit
+def test_setup_uv_steps_require_a_bundled_or_explicit_checksum() -> None:
+    # Without the input, setup-uv verifies a uv version that it does not
+    # bundle against the checksum of the manifest, which comes from the same
+    # origin as the archive (docs/deployment.md, Workflow Conventions, Pinned
+    # action references; issue #1392). Every step uses the one form of the
+    # value, the unquoted boolean `true`.
+    steps = [
+        (f"{path.name}: {job_id}", step)
+        for path in _setup_uv_workflows()
+        for job_id, job in workflow_jobs(load_yaml_file(path)).items()
+        for step in job_steps(job)
+        if str(step.get("uses", "")).startswith("astral-sh/setup-uv@")
+    ]
+    without_required_checksums = [
+        location
+        for location, step in steps
+        if (step.get("with") or {}).get("require-checksums") is not True
+    ]
+
+    assert steps
+    assert without_required_checksums == []
 
 
 @pytest.mark.unit

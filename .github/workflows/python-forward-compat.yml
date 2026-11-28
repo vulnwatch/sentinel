@@ -95,6 +95,7 @@ jobs:
         with:
           version: "0.13.9"
           enable-cache: true
+          require-checksums: true
 
       # Guards against a false-positive forward-compatibility failure:
       # right after a Runtime Version bump, the next minor may have no
