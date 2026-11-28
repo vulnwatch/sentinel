@@ -1,10 +1,12 @@
 """Ticket audit log endpoints.
 
 See `docs/features/tickets/ticket-audit-log.md` (API > List Ticket
-Events; List Ticket Actors) for the authoritative endpoint contracts.
-The handlers stay thin: they validate transport input, delegate the
-protected read to `ticket_audit_log.list_ticket_events()` or
-`ticket_audit_log.list_ticket_actors()`, and map the result or the
+Events; List Ticket Actors; List My Ticket Events) for the authoritative
+endpoint contracts. The handlers stay thin: they validate transport
+input, delegate the protected read to
+`ticket_audit_log.list_ticket_events()`,
+`ticket_audit_log.list_ticket_actors()`, or
+`ticket_audit_log.list_own_ticket_events()`, and map the result or the
 shared `TicketNotFoundError` to HTTP. No business logic or database
 query lives here.
 """
@@ -29,12 +31,18 @@ from app.database import DatabaseSession
 from app.schemas.common import PaginationMeta, UserReference
 from app.schemas.errors import ErrorResponse
 from app.schemas.ticket_audit import (
+    OwnTicketAuditEventData,
+    OwnTicketAuditListResponse,
     TicketActorListResponse,
     TicketAuditEventData,
     TicketAuditListResponse,
 )
 from app.services import ticket_audit_log
-from app.services.ticket_audit_log import TicketEventActor, TicketEventItem
+from app.services.ticket_audit_log import (
+    OwnTicketEventItem,
+    TicketEventActor,
+    TicketEventItem,
+)
 from app.services.ticket_service import ResolvedTicket
 
 router = APIRouter(prefix="/api/v1", tags=["Ticket Audit Log"])
@@ -92,6 +100,22 @@ def _serialize_event(event: TicketEventItem) -> TicketAuditEventData:
         detail=event.detail,
         created_at=event.created_at,
         actor=_serialize_actor(event.actor) if event.actor is not None else None,
+    )
+
+
+def _serialize_own_event(event: OwnTicketEventItem) -> OwnTicketAuditEventData:
+    return OwnTicketAuditEventData(
+        id=event.id,
+        ticket_id=event.ticket_id,
+        cve_id=event.cve_id,
+        is_confidential=event.is_confidential,
+        event_type=event.event_type,
+        old_value=event.old_value,
+        new_value=event.new_value,
+        comment=event.comment,
+        detail=event.detail,
+        created_at=event.created_at,
+        actor=_serialize_actor(event.actor),
     )
 
 
@@ -219,3 +243,83 @@ async def list_ticket_actors(
     except TicketNotFoundError:
         raise ticket_not_found_error() from None
     return TicketActorListResponse(data=[_serialize_actor(actor) for actor in actors])
+
+
+@router.get(
+    "/users/me/tickets/audit-log",
+    response_model=OwnTicketAuditListResponse,
+    summary="List my Ticket audit events",
+    description=(
+        "Returns a paginated list of the Ticket audit events whose actor is "
+        "the authenticated user, across every Ticket that the user can see, "
+        "in fixed reverse-chronological order (created_at DESC, id DESC). "
+        "Each item names its Ticket by SNTL-{n} and carries the Ticket's "
+        "current CVE ID and confidentiality. Supports filtering by event type "
+        "(repeatable), text search, and inclusive date range. An event of a "
+        "Ticket that the user cannot see is neither listed nor counted. "
+        "Requires authentication (JWT session or API key)."
+    ),
+)
+async def list_my_ticket_events(
+    db: DatabaseSession,
+    caller: AuthenticatedTicketCaller,
+    event_type: Annotated[
+        list[str],
+        Query(
+            default_factory=list,
+            description=(
+                "Filter by event type. Repeatable; OR semantics. Invalid "
+                "values are ignored."
+            ),
+            json_schema_extra=enum_filter_schema(TicketAuditEventType, repeatable=True),
+        ),
+    ],
+    search: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Case-insensitive literal substring search across comment, "
+                "old_value, new_value, and detail."
+            )
+        ),
+    ] = None,
+    from_date: Annotated[
+        str | None,
+        Query(description="ISO 8601 date/datetime; inclusive lower bound."),
+    ] = None,
+    to_date: Annotated[
+        str | None,
+        Query(description="ISO 8601 date/datetime; inclusive upper bound."),
+    ] = None,
+    page: Annotated[int, Query(ge=1, le=2_147_483_647, description="Page number.")] = 1,
+    per_page: Annotated[
+        int, Query(ge=1, le=100, description="Items per page; maximum 100.")
+    ] = 20,
+) -> OwnTicketAuditListResponse:
+    """List my Ticket events — see `docs/features/tickets/ticket-audit-log.md`
+    (List My Ticket Events).
+
+    The actor is the authenticated caller; the endpoint declares no
+    `actor` parameter. The path identifies no Ticket, so there is no
+    not-found outcome: the service applies Ticket visibility inside the
+    one statement that selects the events and their total.
+    """
+    parsed_from = parse_date_range_bound("from_date", from_date)
+    parsed_to = parse_date_range_bound("to_date", to_date)
+    validate_date_range_order(parsed_from, parsed_to)
+    result = await ticket_audit_log.list_own_ticket_events(
+        db,
+        caller=caller,
+        event_types=parse_event_types(event_type),
+        search=search,
+        from_date=parsed_from,
+        to_date=parsed_to,
+        page=page,
+        per_page=per_page,
+    )
+    return OwnTicketAuditListResponse(
+        data=[_serialize_own_event(event) for event in result.items],
+        meta=PaginationMeta(
+            total=result.total, page=result.page, per_page=result.per_page
+        ),
+    )

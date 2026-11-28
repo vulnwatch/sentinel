@@ -1,7 +1,8 @@
 """Response schemas for the Ticket audit log endpoints.
 
 See `docs/features/tickets/ticket-audit-log.md` (API > List Ticket
-Events; List Ticket Actors) for the authoritative response contracts
+Events; List Ticket Actors; List My Ticket Events) for the authoritative
+response contracts
 these schemas implement.
 """
 
@@ -56,6 +57,56 @@ class TicketAuditListResponse(BaseModel):
     """Response body for `GET /api/v1/tickets/{ticket_id}/audit-log`."""
 
     data: list[TicketAuditEventData]
+    meta: PaginationMeta
+
+
+class OwnTicketAuditEventData(BaseModel):
+    """One of the caller's own Ticket audit events
+    (`docs/features/tickets/ticket-audit-log.md`, List My Ticket Events).
+
+    The fields of a List Ticket Events item (`TicketAuditEventData`) plus
+    two fields of its Ticket; `actor` is always the caller's complete
+    current User reference, never `null`.
+    """
+
+    id: UUID
+    ticket_id: str = Field(
+        description="Canonical Ticket identity (`SNTL-{n}`).",
+        examples=["SNTL-42"],
+    )
+    cve_id: str | None = Field(
+        description=(
+            "Identifier of the CVE that the Ticket is currently associated "
+            "with, or `null` for a Ticket without a CVE. Current Ticket state, "
+            "not its state when the event was recorded."
+        ),
+        examples=["CVE-2026-1234"],
+    )
+    is_confidential: bool = Field(
+        description=(
+            "Whether the Ticket is currently confidential. Current Ticket "
+            "state, not its state when the event was recorded."
+        )
+    )
+    event_type: TicketAuditEventType
+    old_value: str | None = Field(
+        description=f"Previous value, as its event type records it. {_ENUM_VALUES}"
+    )
+    new_value: str | None = Field(
+        description=f"New value, as its event type records it. {_ENUM_VALUES}"
+    )
+    comment: str | None
+    detail: dict[str, Any] | None
+    created_at: datetime
+    actor: UserReference = Field(
+        description="The caller's complete current User reference."
+    )
+
+
+class OwnTicketAuditListResponse(BaseModel):
+    """Response body for `GET /api/v1/users/me/tickets/audit-log`."""
+
+    data: list[OwnTicketAuditEventData]
     meta: PaginationMeta
 
 

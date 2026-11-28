@@ -672,6 +672,12 @@ _PUBLISHED_FILTERS = [
         True,
         _values(TicketAuditEventType),
     ),
+    (
+        "/api/v1/users/me/tickets/audit-log",
+        "event_type",
+        True,
+        _values(TicketAuditEventType),
+    ),
     ("/api/v1/tickets", "status", True, _TICKET_STATUSES),
     ("/api/v1/tickets", "ignore_reason", True, _values(TicketIgnoreReason)),
     ("/api/v1/tickets", "severity", True, _SEVERITY_FILTER),

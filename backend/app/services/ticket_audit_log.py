@@ -61,6 +61,9 @@ so every part of the result derives from one PostgreSQL snapshot.
 `list_ticket_actors()` (Service Contract > `list_ticket_actors()`)
 selects the accessible parent and the current profile of each distinct
 event actor in one SQL statement in the same way.
+`list_own_ticket_events()` (Service Contract > `list_own_ticket_events()`)
+selects the caller's own events of every Ticket that the caller can see,
+their Ticket fields, total, and page in one SQL statement in the same way.
 """
 
 from __future__ import annotations
@@ -72,7 +75,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Final
 
-from sqlalchemy import CTE, Text, cast, false, func, or_, select, true
+from sqlalchemy import CTE, Select, Text, cast, false, func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -84,6 +87,7 @@ from app.core.enums import (
 )
 from app.core.exceptions import TicketNotFoundError
 from app.core.identifiers import format_ticket_id, parse_ticket_id
+from app.models.cve import CVE
 from app.models.ticket import Ticket
 from app.models.ticket_audit_event import TicketAuditEvent
 from app.models.user import User
@@ -505,6 +509,44 @@ def _accessible_parent(sequence_id: int, caller: TicketCaller) -> CTE:
     )
 
 
+def _apply_event_filters(
+    events: Select[Any],
+    *,
+    event_types: Collection[TicketAuditEventType] | None,
+    search: str | None,
+    from_date: date | datetime | None,
+    to_date: date | datetime | None,
+) -> Select[Any]:
+    """Apply the client filters that every Ticket audit list shares
+    (ticket-audit-log.md, `list_ticket_events()` steps 2, 4, and 5).
+
+    `event_types` is `None` when the filter was not supplied; an empty
+    collection (every supplied value was invalid) matches nothing.
+    `search` is trimmed once and, when non-empty, matched as a literal
+    case-insensitive substring (`%`, `_`, and backslash are literal) of
+    `comment`, `old_value`, `new_value`, or `detail::text`. The date
+    bounds go through `TicketAuditLog.apply_date_filters()`. Different
+    filters compose with AND. Pure: builds an expression only.
+    """
+    if event_types is not None:
+        values = [event_type.value for event_type in event_types]
+        events = events.where(
+            TicketAuditEvent.event_type.in_(values) if values else false()
+        )
+    normalized_search = search.strip() if search is not None else ""
+    if normalized_search:
+        pattern = f"%{escape_like(normalized_search)}%"
+        events = events.where(
+            or_(
+                TicketAuditEvent.comment.ilike(pattern, escape=LIKE_ESCAPE),
+                TicketAuditEvent.old_value.ilike(pattern, escape=LIKE_ESCAPE),
+                TicketAuditEvent.new_value.ilike(pattern, escape=LIKE_ESCAPE),
+                cast(TicketAuditEvent.detail, Text).ilike(pattern, escape=LIKE_ESCAPE),
+            )
+        )
+    return TicketAuditLog.apply_date_filters(events, from_date, to_date)
+
+
 @dataclass(frozen=True, slots=True)
 class TicketEventActor:
     """The current profile of a non-null event actor (api-spec.md, User
@@ -622,24 +664,14 @@ async def list_ticket_events(
         TicketAuditEvent.created_at,
         TicketAuditEvent.user_id,
     ).join(parent, TicketAuditEvent.ticket_id == parent.c.ticket_id)
-    if event_types is not None:
-        values = [event_type.value for event_type in event_types]
-        events = events.where(
-            TicketAuditEvent.event_type.in_(values) if values else false()
-        )
     events = TicketAuditLog.filter_by_actor(events, actor)
-    normalized_search = search.strip() if search is not None else ""
-    if normalized_search:
-        pattern = f"%{escape_like(normalized_search)}%"
-        events = events.where(
-            or_(
-                TicketAuditEvent.comment.ilike(pattern, escape=LIKE_ESCAPE),
-                TicketAuditEvent.old_value.ilike(pattern, escape=LIKE_ESCAPE),
-                TicketAuditEvent.new_value.ilike(pattern, escape=LIKE_ESCAPE),
-                cast(TicketAuditEvent.detail, Text).ilike(pattern, escape=LIKE_ESCAPE),
-            )
-        )
-    events = TicketAuditLog.apply_date_filters(events, from_date, to_date)
+    events = _apply_event_filters(
+        events,
+        event_types=event_types,
+        search=search,
+        from_date=from_date,
+        to_date=to_date,
+    )
     filtered = events.cte("filtered")
 
     total = select(func.count().label("total")).select_from(filtered).cte("total")
@@ -785,4 +817,180 @@ async def list_ticket_actors(
         )
         for row in rows
         if row.actor_id is not None
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class OwnTicketEventItem:
+    """One of the caller's own Ticket audit events, with its Ticket.
+
+    The event fields are those of `TicketEventItem`; `actor` is always the
+    caller's current profile. `cve_id` and `is_confidential` describe the
+    Ticket's current state, not its state when the event was recorded
+    (ticket-audit-log.md, List My Ticket Events).
+    """
+
+    id: uuid.UUID
+    ticket_id: str
+    cve_id: str | None
+    is_confidential: bool
+    event_type: str
+    old_value: str | None
+    new_value: str | None
+    comment: str | None
+    detail: dict[str, Any] | None
+    created_at: datetime
+    actor: TicketEventActor
+
+
+@dataclass(frozen=True, slots=True)
+class OwnTicketEventPage:
+    """One page of the caller's own Ticket audit events and their total."""
+
+    items: tuple[OwnTicketEventItem, ...]
+    total: int
+    page: int
+    per_page: int
+
+
+async def list_own_ticket_events(
+    db: AsyncSession,
+    *,
+    caller: TicketCaller,
+    event_types: Collection[TicketAuditEventType] | None = None,
+    search: str | None = None,
+    from_date: date | datetime | None = None,
+    to_date: date | datetime | None = None,
+    page: int = 1,
+    per_page: int = 20,
+) -> OwnTicketEventPage:
+    """List the caller's own audit events across the Tickets it can see.
+
+    Category B read (ticket-audit-log.md, Service Contract >
+    `list_own_ticket_events()`; API > List My Ticket Events).
+
+    Q1: `caller` is the request-resolved caller information; its
+    `user_id` is the implicit actor. `event_types`, `search`, and the
+    date bounds have the semantics of `list_ticket_events()`. `page` is
+    positive and `per_page` is 1-100.
+
+    Q3: in one SQL statement, and therefore one PostgreSQL snapshot:
+    1. select the events whose `user_id` is the caller and whose Ticket
+       satisfies the canonical visibility predicate, before any client
+       filter; a system event is never a candidate;
+    2. apply the event-type, search, and date filters of
+       `list_ticket_events()`;
+    3. count the filtered events and select the requested page ordered
+       by `created_at DESC, id DESC`;
+    4. project each event with its Ticket's `SNTL-{n}`, current
+       `is_confidential`, the `cve_id` of its current CVE (`None` for a
+       Ticket without one), and the caller's current profile as `actor`.
+    Creates no event, acquires no lock, and never commits or rolls back.
+
+    Q4: returns the page items, the filtered total, and the echoed
+    `page`/`per_page`. A page beyond the last, or a caller without
+    matching events, is empty with the correct total. Every join is
+    many-to-one per event and the visibility branches are `EXISTS`
+    conditions, so the total counts each event once.
+
+    Q6: raises `ValueError` before any query for `page < 1` or `per_page`
+    outside 1-100. Database exceptions propagate unchanged.
+    """
+    if page < 1:
+        raise ValueError("page must be at least 1")
+    if not 1 <= per_page <= MAX_PER_PAGE:
+        raise ValueError(f"per_page must be between 1 and {MAX_PER_PAGE}")
+
+    events = (
+        select(
+            TicketAuditEvent.id,
+            TicketAuditEvent.event_type,
+            TicketAuditEvent.old_value,
+            TicketAuditEvent.new_value,
+            TicketAuditEvent.comment,
+            TicketAuditEvent.detail,
+            TicketAuditEvent.created_at,
+            TicketAuditEvent.user_id,
+            Ticket.sequence_id.label("sequence_id"),
+            Ticket.is_confidential.label("is_confidential"),
+            CVE.cve_id.label("cve_id"),
+        )
+        .join(Ticket, TicketAuditEvent.ticket_id == Ticket.id)
+        .outerjoin(CVE, CVE.id == Ticket.cve_id)
+        .where(
+            TicketAuditEvent.user_id == caller.user_id,
+            ticket_visibility_condition(caller),
+        )
+    )
+    events = _apply_event_filters(
+        events,
+        event_types=event_types,
+        search=search,
+        from_date=from_date,
+        to_date=to_date,
+    )
+    filtered = events.cte("filtered")
+
+    total = select(func.count().label("total")).select_from(filtered).cte("total")
+    page_rows = (
+        select(filtered)
+        .order_by(filtered.c.created_at.desc(), filtered.c.id.desc())
+        .limit(per_page)
+        .offset((page - 1) * per_page)
+        .cte("page")
+    )
+    actor_user = aliased(User, name="actor_user")
+    statement = (
+        select(
+            total.c.total,
+            page_rows.c.id.label("event_id"),
+            page_rows.c.sequence_id,
+            page_rows.c.is_confidential,
+            page_rows.c.cve_id,
+            page_rows.c.event_type,
+            page_rows.c.old_value,
+            page_rows.c.new_value,
+            page_rows.c.comment,
+            page_rows.c.detail,
+            page_rows.c.created_at,
+            actor_user.id.label("actor_id"),
+            actor_user.username.label("actor_username"),
+            actor_user.full_name.label("actor_full_name"),
+            actor_user.active.label("actor_active"),
+            actor_user.bot.label("actor_bot"),
+            actor_user.avatar_url.label("actor_avatar_url"),
+        )
+        .select_from(total)
+        .outerjoin(page_rows, true())
+        .outerjoin(actor_user, actor_user.id == page_rows.c.user_id)
+        .order_by(page_rows.c.created_at.desc(), page_rows.c.id.desc())
+    )
+    rows = (await db.execute(statement)).all()
+
+    items = tuple(
+        OwnTicketEventItem(
+            id=row.event_id,
+            ticket_id=format_ticket_id(row.sequence_id),
+            cve_id=row.cve_id,
+            is_confidential=row.is_confidential,
+            event_type=row.event_type,
+            old_value=row.old_value,
+            new_value=row.new_value,
+            comment=row.comment,
+            detail=row.detail,
+            created_at=row.created_at,
+            actor=TicketEventActor(
+                id=row.actor_id,
+                username=row.actor_username,
+                full_name=row.actor_full_name,
+                active=row.actor_active,
+                bot=row.actor_bot,
+                avatar_url=row.actor_avatar_url,
+            ),
+        )
+        for row in rows
+        if row.event_id is not None
+    )
+    return OwnTicketEventPage(
+        items=items, total=rows[0].total, page=page, per_page=per_page
     )
