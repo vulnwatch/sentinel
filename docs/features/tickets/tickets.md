@@ -1185,7 +1185,7 @@ reading it:
   ([cve-tracking.md](cve-tracking.md#list-cves));
 - `TicketPackageRef` of `PackageListItem`
   (`docs/features/packages/package-model.md`, Search Packages Across
-  Tickets); and
+  Tickets);
 - the maintainer workbench item (`docs/features/packages/maintainer.md`,
   Workbench Row and Privacy Contract); and
 - the item of List My Ticket Events

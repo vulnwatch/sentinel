@@ -2224,12 +2224,10 @@ the response carries the actor's complete user reference and, where the read
 can report an action without a recorded actor, `null` for that action. This
 includes the self-service identity audit log, the fetcher list (`last_run`),
 run list, run detail, and timeline (`disabled_periods`), the self-service API
-key list (`revoked_by`), and the Ticket audit log and Ticket actors (a
-`track_status_changed` to `fixed` through `admin_ticket_ops`). The caller's
-own Ticket audit events are tested with a caller who has lost the roles under
-which they acted: the response carries the caller's own complete user
-reference. For the same
-caller, the fetcher run detail contains neither the `error_detail` nor the
+key list (`revoked_by`), the Ticket audit log and Ticket actors (a
+`track_status_changed` to `fixed` through `admin_ticket_ops`), and the
+caller's own Ticket audit events across Tickets. For the same caller, the
+fetcher run detail contains neither the `error_detail` nor the
 `error_traceback` key.
 
 ### Service Functions

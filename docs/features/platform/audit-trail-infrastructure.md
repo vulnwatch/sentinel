@@ -437,8 +437,9 @@ exist:
 The self-service pattern (authenticated access with implicit user
 scoping) is reusable for future audit trails that need to give users
 visibility into events affecting them, or performed by them, without
-exposing the events of other users or entities. Like every audit trail endpoint, each of these endpoints
-identifies the actor of every event it returns (Actor Field).
+exposing the events of other users or entities. Like every audit trail
+endpoint, each of these endpoints identifies the actor of every event it
+returns (Actor Field).
 
 ## Immutability
 
@@ -452,10 +453,8 @@ Retention Policy above).
 ## Scalability Considerations
 
 Current indexes cover primary query patterns (per-entity lookups) and the
-self-service lists, whose mandatory scope is one user (the inherited
-`user_id` index for List My Ticket Events, `target_user_id` for List My
-Identity Audit Events). Cross-entity queries at high volume may degrade on
-very large tables.
+self-service lists, whose mandatory scope is one user. Cross-entity queries
+at high volume may degrade on very large tables.
 The expected event volume does not justify additional partitioning or
 performance measures at this time. See Retention Policy for the
 rationale.

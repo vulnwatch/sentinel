@@ -662,16 +662,10 @@ Level): it exposes no other user's activity.
 |--------------|--------|---------|-------------|
 | `page`       | int    | 1       | Page number (1-indexed) |
 | `per_page`   | int    | 20      | Items per page (max 100) |
-| `event_type` | string (repeatable) | — | Filter by event type, with the semantics of List Ticket Events. It accepts the event types that this list can return (see Event types below); any other value is ignored as invalid (`docs/api-spec.md`, Enum Filter Validation) |
+| `event_type` | string (repeatable) | — | Filter by event type, with the values and semantics of List Ticket Events (`docs/api-spec.md`, Enum Filter Validation). A type that always records the system actor (Event Type Contract), such as `product_released`, matches no event of this list |
 | `search`     | string | —       | As in List Ticket Events: case-insensitive literal substring of `comment`, `old_value`, `new_value`, or `detail` (cast to text) |
 | `from_date`  | string | —       | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
 | `to_date`    | string | —       | ISO 8601 date/datetime. Include events up to this date (inclusive) |
-
-**Event types**: `duplicate_target_changed`, `package_maintainer_added`, and
-`product_released` always record the system actor (Event Type Contract), so
-they are not event types of this list: neither its responses nor the values
-of its `event_type` filter include them. Every other `TicketAuditEventType`
-value is one.
 
 **Response** (200 OK):
 
@@ -720,9 +714,12 @@ value is one.
     Tickets).
 
   Both fields describe the current Ticket, not its state when the event was
-  recorded: they identify the Ticket, like `ticket_id`, and are not event
-  content (`docs/features/platform/audit-trail-infrastructure.md`,
-  Human-Readable Subjects).
+  recorded. They are a current reference to the Ticket, like the Ticket
+  fields of the maintainer workbench row
+  (`docs/features/packages/maintainer.md`, Workbench Row and Privacy
+  Contract), not event content, whose event-time values the event keeps
+  (`docs/features/platform/audit-trail-infrastructure.md`, Human-Readable
+  Subjects).
 - `actor` is always the complete current User reference of the caller
   (`docs/api-spec.md`, User References in Responses), never `null`, so that an
   item has the same fields as in List Ticket Events
@@ -731,13 +728,11 @@ value is one.
   the actions whose semantic actor the owning contract records as that user
   (Event Type Contract, Rules; Canonical Mutation and No-Event Matrix). It
   does not show:
-  - the derived consequences of a user's action, which record the system
-    actor: the `New → Analysis` promotion after an assignment, the resulting
-    status of a reopen, CVSS-derived severity, automatic Product eligibility
-    and priority, assignment-eligibility sanitation, the final gate-derived
-    `status_change`, package maintainership acquired through a user's package
-    addition, the repoint of the duplicates of a Ticket that the user marks as
-    duplicate, and the assignment cleared by making a Ticket confidential;
+  - the derived consequences of a user's action, which the owning contracts
+    attribute to the system (Event Type Contract, Rules; the Semantic actor
+    column of the matrix), such as the `New → Analysis` promotion after an
+    assignment, the resulting status of a reopen, CVSS-derived severity, and
+    the final gate-derived `status_change`;
   - the actions that record no Ticket event, such as a CVE refetch, a rerun of
     Ticket convergence, the clearing of the ignore reason by a reopen, and the
     deletion of the access grants by a declassification;
@@ -779,10 +774,11 @@ and is not a failure of atomicity.
 
 Audit reads are model-aware service operations. API handlers delegate list and
 count construction to `list_ticket_events()`, `list_ticket_actors()`, and
-`list_own_ticket_events()` in the service layer rather than issuing business ORM queries, and Core has no model
-imports. Audit history is historical evidence only: no event, actor, payload,
-or inferred history may be an input to Ticket accessibility or any current
-authorization or operational state decision.
+`list_own_ticket_events()` in the service layer rather than issuing business
+ORM queries, and Core has no model imports. Audit history is historical
+evidence only: no event, actor, payload, or inferred history may be an input
+to Ticket accessibility or any current authorization or operational state
+decision.
 
 ### `list_ticket_events()`
 
@@ -865,7 +861,7 @@ This Category B operation accepts `db: AsyncSession`, request-resolved
 authenticated caller information, repeatable `event_type` supplied state plus
 valid values, optional `search: str`, optional normalized `from_date`/`to_date`
 bounds, positive `page`, and `per_page` from 1 through 100. The valid values of
-`event_type` are the event types of List My Ticket Events. The result contains
+`event_type` are those of `list_ticket_events()`. The result contains
 service-layer event projections plus `total`, `page`, and `per_page`; it does
 not return or depend on Pydantic schemas. It creates no event, acquires no
 mutation lock, and does not commit or roll back.
@@ -1073,14 +1069,17 @@ required event sequence or explicit no-event outcome. For audited mutations:
     event of another user, no system event, including one of a workflow that
     the caller initiated, and no event of an invisible Ticket. They cover
     callers with scope `all` and `non_confidential`, an explicit grant,
-    included-package maintainership, the loss of the last visibility path of a
-    Ticket on which the caller acted and its regain, an independent-session
-    race that removes visibility after the preliminary point, a role-less
+    included-package maintainership, a caller with several visibility paths
+    to one Ticket (a grant and two included maintained packages), whose
+    events are each listed and counted once, the loss of the last visibility
+    path of a Ticket on which the caller acted and its regain, an
+    independent-session race that removes visibility after the caller
+    information is resolved and before the protected selection, a role-less
     caller with past events, and a caller without events (empty page,
     `total = 0`). They assert `cve_id` for a Ticket with and without a CVE,
     current `is_confidential`, `ticket_id`, and the caller's current `actor`;
-    the event-type filter, including a supplied filter of only invalid or
-    excluded values; the search filter with literal `%`, `_`, and backslash;
+    the event-type filter, including a supplied filter of only invalid
+    values; the search filter with literal `%`, `_`, and backslash;
     the inclusive date bounds and `DATE_RANGE_INVERTED`; an ignored `actor`
     parameter; and `created_at DESC, id DESC` pagination when timestamps tie
 
