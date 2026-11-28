@@ -1185,9 +1185,11 @@ reading it:
   ([cve-tracking.md](cve-tracking.md#list-cves));
 - `TicketPackageRef` of `PackageListItem`
   (`docs/features/packages/package-model.md`, Search Packages Across
-  Tickets); and
+  Tickets);
 - the maintainer workbench item (`docs/features/packages/maintainer.md`,
-  Workbench Row and Privacy Contract).
+  Workbench Row and Privacy Contract); and
+- the item of List My Ticket Events
+  ([ticket-audit-log.md](ticket-audit-log.md#list-my-ticket-events)).
 
 An identifier-only reference that does not apply the visibility of its Ticket,
 such as `duplicate_of_ticket_id` or `existing_ticket_id`
@@ -1267,6 +1269,14 @@ second workbench predicate. For
 and inaccessible Tickets return `404 TICKET_NOT_FOUND` before Ticket status,
 maintainer ownership, or package data is projected. An accessible Ticket with
 no qualifying caller work returns the normal three empty collections.
+
+**My Ticket Events (`GET /api/v1/users/me/tickets/audit-log`)**:
+The Ticket audit service selects the caller's own events only from Tickets
+that satisfy the canonical predicate, and derives the rows, their Ticket
+fields, and `meta.total` from that one candidate set. The path identifies no
+Ticket, so an event of an invisible Ticket is omitted rather than answered with
+`404 TICKET_NOT_FOUND`. See
+[ticket-audit-log.md](ticket-audit-log.md#list-my-ticket-events).
 
 **CVE Detail (`GET /api/v1/cves/{cve_id}/...`)**:
 `GET /api/v1/cves/{cve_id}` and all endpoints under `/api/v1/cves/{cve_id}/`

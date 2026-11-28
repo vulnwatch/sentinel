@@ -33,7 +33,10 @@ class TicketAuditEvent(Base, AuditEventMixin):
     their indexes) from `AuditEventMixin`; append-only, so there is no
     `updated_at`. `event_type` stores a `TicketAuditEventType` value
     (Category B, no CHECK constraint). `ticket_id` is the mandatory
-    parent-scope filter of every Ticket audit query and is indexed. Its
+    parent-scope filter of every per-Ticket audit query and is indexed;
+    the inherited `user_id` index serves the caller-scoped list of one
+    user's events across Tickets (`docs/data-model.md`, TicketAuditEvent,
+    Indexes). Its
     FK has no ON DELETE action (PostgreSQL `NO ACTION`): Tickets are never
     deleted, so deleting a Ticket with events fails loudly.
     """

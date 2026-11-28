@@ -10,7 +10,8 @@ boundary and must not be implemented. Audit events record semantic domain
 changes, not mutation attempts, operational workflow progress, or every factual
 write associated with a Ticket.
 Users can browse, filter, and search the history through the audit-log API
-endpoint, and list the users who acted on a Ticket through List Ticket Actors.
+endpoint, list the users who acted on a Ticket through List Ticket Actors, and
+review their own actions across Tickets through List My Ticket Events.
 
 The `TicketAuditLog` subclass of `BaseAuditLog` provides the event creation
 helper and registers this audit trail in the global registry. See
@@ -633,6 +634,136 @@ operation or equivalent single database view, using the canonical predicate in
 Missing and inaccessible Tickets both return `404 TICKET_NOT_FOUND`; an
 inaccessible Ticket never produces an empty list.
 
+### List My Ticket Events
+
+```
+GET /api/v1/users/me/tickets/audit-log
+```
+
+Returns a paginated list of the Ticket audit events whose actor is the
+authenticated caller (`user_id = current_user.id`), across every Ticket that
+the caller can see, ordered by `created_at DESC, id DESC` like List Ticket
+Events. A user reads it to review their own past actions, such as the
+affectedness of a track that they set, without knowing on which Ticket they
+took them, also after that Ticket was resolved, ignored, or marked as a
+duplicate. Sorting is fixed for the same reason as in List Ticket Events.
+
+The actor is implicit, as the target of List My Identity Audit Events
+(`docs/features/identity/identity-audit-log.md`) is: the endpoint declares no
+`actor` parameter, so a supplied value is ignored (`docs/api-spec.md`,
+Undeclared Query Parameters), and it never returns a system event
+(`user_id IS NULL`) or the event of another user. It follows the self-service
+pattern of `docs/features/platform/audit-trail-infrastructure.md` (Access
+Level): it exposes no other user's activity.
+
+**Query parameters**:
+
+| Parameter    | Type   | Default | Description |
+|--------------|--------|---------|-------------|
+| `page`       | int    | 1       | Page number (1-indexed) |
+| `per_page`   | int    | 20      | Items per page (max 100) |
+| `event_type` | string (repeatable) | — | Filter by event type, with the values and semantics of List Ticket Events (`docs/api-spec.md`, Enum Filter Validation). A type that always records the system actor (Event Type Contract), such as `product_released`, matches no event of this list |
+| `search`     | string | —       | As in List Ticket Events: case-insensitive literal substring of `comment`, `old_value`, `new_value`, or `detail` (cast to text) |
+| `from_date`  | string | —       | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
+| `to_date`    | string | —       | ISO 8601 date/datetime. Include events up to this date (inclusive) |
+
+**Response** (200 OK):
+
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "ticket_id": "SNTL-42",
+      "cve_id": "CVE-2026-1234",
+      "is_confidential": false,
+      "event_type": "track_status_changed",
+      "old_value": "ANALYSIS",
+      "new_value": "AFFECTED",
+      "comment": null,
+      "detail": {"track": "SUSE:SLE-15-SP6:Update", "package": "openssl"},
+      "created_at": "2026-11-27T10:30:00Z",
+      "actor": {
+        "id": "uuid",
+        "username": "fictional.analyst",
+        "full_name": "Fictional Analyst",
+        "active": true,
+        "bot": false,
+        "avatar_url": null
+      }
+    }
+  ],
+  "meta": {
+    "total": 42,
+    "page": 1,
+    "per_page": 20
+  }
+}
+```
+
+**Notes**:
+
+- Each item carries the fields of an event of List Ticket Events, with the
+  same values, and two fields of its Ticket, so that a client recognizes the
+  Ticket of each row without reading it:
+  - `cve_id` (string or null): the identifier of the CVE that the Ticket is
+    currently associated with, or `null` for a Ticket without a CVE;
+  - `is_confidential` (boolean): whether the Ticket is currently confidential.
+    Every item belongs to a Ticket that the caller can see, so the field
+    discloses nothing (`docs/features/tickets/tickets.md`, Confidential
+    Tickets).
+
+  Both fields describe the current Ticket, not its state when the event was
+  recorded. They are a current reference to the Ticket, like the Ticket
+  fields of the maintainer workbench row
+  (`docs/features/packages/maintainer.md`, Workbench Row and Privacy
+  Contract), not event content, whose event-time values the event keeps
+  (`docs/features/platform/audit-trail-infrastructure.md`, Human-Readable
+  Subjects).
+- `actor` is always the complete current User reference of the caller
+  (`docs/api-spec.md`, User References in Responses), never `null`, so that an
+  item has the same fields as in List Ticket Events
+  (`docs/features/platform/audit-trail-infrastructure.md`, Actor Field).
+- The list holds the events whose `user_id` is the caller, and therefore only
+  the actions whose semantic actor the owning contract records as that user
+  (Event Type Contract, Rules; Canonical Mutation and No-Event Matrix). It
+  does not show:
+  - the derived consequences of a user's action, which the owning contracts
+    attribute to the system (Event Type Contract, Rules; the Semantic actor
+    column of the matrix), such as the `New → Analysis` promotion after an
+    assignment, the resulting status of a reopen, CVSS-derived severity, and
+    the final gate-derived `status_change`;
+  - the actions that record no Ticket event, such as a CVE refetch, a rerun of
+    Ticket convergence, the clearing of the ignore reason by a reopen, and the
+    deletion of the access grants by a declassification;
+  - the actions that other audit trails record, such as user, role, setting,
+    fetcher, and CNA administration, including the system `assignment` events
+    that an identity change creates on the Tickets that it clears; and
+  - the events of a Ticket that the caller can no longer see (below).
+- The list is an audit trail retrieval endpoint of the Ticket audit trail: its
+  path ends with `/audit-log` (`docs/api-spec.md`, Audit Trail Endpoint
+  Naming), and it applies the date filters and pagination of audit trail
+  endpoints.
+
+**`Access: Authenticated`**
+
+Like List Ticket Events and every read of Ticket data, the endpoint requires
+no capability (`docs/features/identity/rbac.md`, Access Levels): a caller
+without a role lists the events that they recorded while they held one.
+
+The candidate set is the caller's events of the Tickets that the caller can
+see, under the canonical predicate in `docs/features/identity/rbac.md` (Scope
+and Confidential Ticket Visibility). An event of a Ticket that the caller
+cannot see is neither listed nor counted, so the endpoint discloses nothing
+that the Ticket's own log would not; when the caller regains visibility, its
+events reappear. Ticket visibility and the actor constrain the query before
+the event-type, search, and date filters and before pagination, and the
+items, their Ticket fields, and `meta.total` derive from one database
+operation or equivalent single database view
+(`docs/features/tickets/tickets.md`, Read Atomicity). The path identifies no
+Ticket, so the endpoint has no not-found response: a caller without visible
+events receives an empty page with `meta.total = 0`.
+
 ## Service Contract
 
 Every event required by the owning domain contract is part of the same database
@@ -642,11 +773,12 @@ created. An explicit no-event boundary in the canonical matrix is intentional
 and is not a failure of atomicity.
 
 Audit reads are model-aware service operations. API handlers delegate list and
-count construction to `list_ticket_events()` and `list_ticket_actors()` in the
-service layer rather than issuing business ORM queries, and Core has no model
-imports. Audit history is historical evidence only: no event, actor, payload,
-or inferred history may be an input to Ticket accessibility or any current
-authorization or operational state decision.
+count construction to `list_ticket_events()`, `list_ticket_actors()`, and
+`list_own_ticket_events()` in the service layer rather than issuing business
+ORM queries, and Core has no model imports. Audit history is historical
+evidence only: no event, actor, payload, or inferred history may be an input
+to Ticket accessibility or any current authorization or operational state
+decision.
 
 ### `list_ticket_events()`
 
@@ -722,6 +854,50 @@ coherent PostgreSQL observation, with the same concurrency guarantee as
 `list_ticket_events()`: a result never combines a successful access decision
 with actors selected after visibility was lost. `TicketNotFoundError` and
 database exceptions propagate unchanged.
+
+### `list_own_ticket_events()`
+
+This Category B operation accepts `db: AsyncSession`, request-resolved
+authenticated caller information, repeatable `event_type` supplied state plus
+valid values, optional `search: str`, optional normalized `from_date`/`to_date`
+bounds, positive `page`, and `per_page` from 1 through 100. The valid values of
+`event_type` are those of `list_ticket_events()`. The result contains
+service-layer event projections plus `total`, `page`, and `per_page`; it does
+not return or depend on Pydantic schemas. It creates no event, acquires no
+mutation lock, and does not commit or roll back.
+
+Behavior:
+
+1. Select the candidate events: the events whose `user_id` is the caller's
+   User ID and whose Ticket satisfies the canonical visibility predicate for
+   the caller. The actor is this mandatory scope, not the `actor` filter of
+   `BaseAuditLog.filter_by_actor()`, and no event with `user_id IS NULL` is a
+   candidate.
+2. Apply repeatable `event_type` with OR semantics, as step 2 of
+   `list_ticket_events()`: a supplied filter whose values were all invalid
+   matches no event.
+3. Apply `search` as step 4 of `list_ticket_events()`, and the inclusive date
+   bounds through `BaseAuditLog.apply_date_filters()` as its step 5. Different
+   supplied filter parameters compose with AND.
+4. Order by `created_at DESC, id DESC`, compute `total` after all filters and
+   before page slicing, and return the requested page. A page beyond the last
+   is empty with the correct total, and a caller without matching events
+   receives an empty page with `total = 0`.
+5. Project each event with the fields of step 7 of `list_ticket_events()`: its
+   Ticket's `SNTL-{n}` as `ticket_id` and the caller's complete current User
+   reference as `actor`. Add the Ticket's current `is_confidential` and the
+   `cve_id` of its currently associated CVE, or `None` for a Ticket without a
+   CVE.
+
+The candidate set, the Ticket and actor projections, count, ordering, and page
+derive from one coherent PostgreSQL observation, with the same concurrency
+guarantee as `list_ticket_events()`: a result never lists or counts an event of
+a Ticket selected after the caller lost visibility of it. Join fan-out cannot
+duplicate events or inflate the total.
+
+Raises `ValueError` before any query for `page < 1` or `per_page` outside
+1–100, which the API rejects earlier with `422 VALIDATION_ERROR`. Database
+exceptions propagate unchanged.
 
 ### Implementation Guidelines
 
@@ -888,6 +1064,24 @@ required event sequence or explicit no-event outcome. For audited mutations:
     visibility cases of requirement 26, a role-less caller, and loss of
     visibility after the preliminary boundary, each inaccessible case
     returning `TICKET_NOT_FOUND` rather than an empty list
+32. List My Ticket Events tests assert that the list and `meta.total` hold
+    exactly the caller's events of the Tickets that the caller can see: no
+    event of another user, no system event, including one of a workflow that
+    the caller initiated, and no event of an invisible Ticket. They cover
+    callers with scope `all` and `non_confidential`, an explicit grant,
+    included-package maintainership, a caller with several visibility paths
+    to one Ticket (a grant and two included maintained packages), whose
+    events are each listed and counted once, the loss of the last visibility
+    path of a Ticket on which the caller acted and its regain, an
+    independent-session race that removes visibility after the caller
+    information is resolved and before the protected selection, a role-less
+    caller with past events, and a caller without events (empty page,
+    `total = 0`). They assert `cve_id` for a Ticket with and without a CVE,
+    current `is_confidential`, `ticket_id`, and the caller's current `actor`;
+    the event-type filter, including a supplied filter of only invalid
+    values; the search filter with literal `%`, `_`, and backslash;
+    the inclusive date bounds and `DATE_RANGE_INVERTED`; an ignored `actor`
+    parameter; and `created_at DESC, id DESC` pagination when timestamps tie
 
 `AGENTS.md` enforces these requirements through Quality and findings
 (mandatory tests) and its audit routing rule, and its Reviewer Trigger Matrix
@@ -902,7 +1096,8 @@ Indefinite. TicketAuditEvent records are never automatically deleted.
 - `docs/features/platform/audit-trail-infrastructure.md` — BaseAuditLog,
   AuditEventMixin, naming conventions
 - `docs/features/identity/identity-audit-log.md` — IdentityAuditEvent detail
-  JSONB pattern (reference implementation for the detail column contract)
+  JSONB pattern (reference implementation for the detail column contract);
+  List My Identity Audit Events, the precedent of List My Ticket Events
 - `docs/conventions.md` — Audit Trail
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)

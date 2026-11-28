@@ -217,6 +217,8 @@ Confidential Ticket Visibility). Authenticated access covers:
 - View ticket references, CVSS assessments, and submission/release requests
 - Calculate the Base score of a CVSS vector without storing it
 - View ticket audit logs and the users who acted on a ticket
+- View own Ticket audit events across Tickets
+  (`/api/v1/users/me/tickets/audit-log`)
 - View the access grants of a confidential ticket
 - View fetchers (list, run history, run detail, timeline, error messages, and
   the users who triggered runs or disabled and enabled a fetcher)
@@ -323,6 +325,7 @@ no response to a caller that the operation does not already admit.
 | View maintainer workbench | Authenticated |
 | View ticket audit log | Authenticated |
 | View the users who acted on a ticket | Authenticated |
+| View own Ticket audit events across Tickets | Authenticated |
 | View the access grants of a confidential ticket | Authenticated |
 | View the user directory (list and detail) | Authenticated |
 | View tickets / CVEs | Authenticated |
@@ -671,6 +674,7 @@ here with the required authorization level and a link to the owning spec.
 |--------|----------|---------------|-------------|
 | GET | `/api/v1/tickets/{ticket_id}/audit-log` | Authenticated | [ticket-audit-log](../tickets/ticket-audit-log.md#list-ticket-events) |
 | GET | `/api/v1/tickets/{ticket_id}/actors` | Authenticated | [ticket-audit-log](../tickets/ticket-audit-log.md#list-ticket-actors) |
+| GET | `/api/v1/users/me/tickets/audit-log` | Authenticated | [ticket-audit-log](../tickets/ticket-audit-log.md#list-my-ticket-events) |
 
 ### Submission Tracking
 
