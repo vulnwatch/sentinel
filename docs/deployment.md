@@ -606,6 +606,19 @@ workflow-level `env`, so uv uses only an interpreter that it manages, whose
 patch release follows the pinned uv (`docs/conventions.md`, Runtime
 Version).
 
+Every `astral-sh/setup-uv` step also sets `require-checksums: true`, so the
+action verifies the uv archive only against a SHA-256 checksum that the
+pinned action bundles or that the step supplies in its `checksum` input,
+and fails before the download when neither is known. By default the action
+would instead accept, for a uv version that it does not bundle yet, the
+checksum of the version manifest that it downloads from the same origin as
+the archive; that check detects a corrupted download but not a compromised
+origin. The bundled checksums arrive with the pinned commit SHA of the
+action, which passes review and the release-age cooldown. As a consequence,
+a uv update whose checksum the pinned setup-uv does not bundle fails CI
+until an update of setup-uv that bundles it is merged; Renovate then
+rebases the uv PR, which runs CI again (see Update schedule below).
+
 Dependency updates are managed by the hosted Mend Renovate GitHub App
 reading `renovate.jsonc` from the repository root; no workflow in this
 repository runs the hosted bot or creates its dependency-update PRs. The
@@ -1144,7 +1157,10 @@ Workflow Conventions, Release-age cooldown). The tag MUST match the
 `version:` input of every `astral-sh/setup-uv` step in the workflows.
 Renovate's `dockerfile` manager updates the tag and digest together, and a
 `packageRule` in `renovate.jsonc` groups that update with the workflow
-`version:` inputs into a single PR so CI and the image never diverge.
+`version:` inputs into a single PR so CI and the image never diverge. CI
+installs the workflow version only once the pinned `astral-sh/setup-uv`
+bundles its checksum (see Workflow Conventions, Pinned action references),
+so that PR can wait for an update of the action.
 `astral/uv` has more than 1,000 tags, so an anonymous lookup, such as the
 one of `renovate-validation.yml`, lacks its timestamps; the Mend Renovate
 App has had them for other images with more tags. A lookup without them
