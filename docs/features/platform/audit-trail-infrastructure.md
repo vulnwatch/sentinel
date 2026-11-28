@@ -409,7 +409,7 @@ specification).
 ## Access Level
 
 Most audit trail endpoints require a specific capability (typically
-`manage_users`, `manage_settings`, or `manage_fetchers`). Two exceptions
+`manage_users`, `manage_settings`, or `manage_fetchers`). Three exceptions
 exist:
 
 - **Ticket audit log** (`GET /api/v1/tickets/{ticket_id}/audit-log`):
@@ -426,10 +426,18 @@ exist:
   remains restricted to users with `manage_users` capability at
   `GET /api/v1/admin/identity/audit-log`.
 
+- **Ticket audit log — self-service**
+  (`GET /api/v1/users/me/tickets/audit-log`): **Authenticated**, scoped to
+  `user_id = current_user.id` and to the Tickets that the caller can see.
+  Users can review the Ticket events that they performed across Tickets
+  (`docs/features/tickets/ticket-audit-log.md`, List My Ticket Events). No
+  endpoint lists the Ticket events of every Ticket or of another user across
+  Tickets.
+
 The self-service pattern (authenticated access with implicit user
 scoping) is reusable for future audit trails that need to give users
-visibility into events affecting them without exposing the events of other
-users or entities. Like every audit trail endpoint, each of these endpoints
+visibility into events affecting them, or performed by them, without
+exposing the events of other users or entities. Like every audit trail endpoint, each of these endpoints
 identifies the actor of every event it returns (Actor Field).
 
 ## Immutability
@@ -443,8 +451,11 @@ Retention Policy above).
 
 ## Scalability Considerations
 
-Current indexes cover primary query patterns (per-entity lookups).
-Cross-entity queries at high volume may degrade on very large tables.
+Current indexes cover primary query patterns (per-entity lookups) and the
+self-service lists, whose mandatory scope is one user (the inherited
+`user_id` index for List My Ticket Events, `target_user_id` for List My
+Identity Audit Events). Cross-entity queries at high volume may degrade on
+very large tables.
 The expected event volume does not justify additional partitioning or
 performance measures at this time. See Retention Policy for the
 rationale.

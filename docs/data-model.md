@@ -1288,7 +1288,10 @@ represented in this table.
 - `ticket_id` — mandatory parent-scope filter for every Ticket audit query, as
   required by `docs/features/platform/audit-trail-infrastructure.md`. The
   inherited indexes on `created_at` and nullable actor `user_id` cover the
-  shared date and actor filters.
+  shared date and actor filters. The inherited `user_id` index also serves
+  List My Ticket Events, whose mandatory scope is the caller's `user_id`
+  (`docs/features/tickets/ticket-audit-log.md`): the query reads only one
+  user's events, so no additional index is declared.
 
 #### TicketAuditEventType Enum
 

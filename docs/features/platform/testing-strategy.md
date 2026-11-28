@@ -2225,7 +2225,10 @@ can report an action without a recorded actor, `null` for that action. This
 includes the self-service identity audit log, the fetcher list (`last_run`),
 run list, run detail, and timeline (`disabled_periods`), the self-service API
 key list (`revoked_by`), and the Ticket audit log and Ticket actors (a
-`track_status_changed` to `fixed` through `admin_ticket_ops`). For the same
+`track_status_changed` to `fixed` through `admin_ticket_ops`). The caller's
+own Ticket audit events are tested with a caller who has lost the roles under
+which they acted: the response carries the caller's own complete user
+reference. For the same
 caller, the fetcher run detail contains neither the `error_detail` nor the
 `error_traceback` key.
 
@@ -2980,8 +2983,9 @@ visibility predicate.
 **List and count reads:**
 
 - Ticket lists, CVE lists, the global CVE source listing, cross-Ticket package
-  search, Ticket audit lists, submission/release lists, and maintainer
-  workbench lists are exercised with mixed visible and invisible Tickets. No
+  search, Ticket audit lists, the caller's own Ticket audit events across
+  Tickets, submission/release lists, and maintainer workbench lists are
+  exercised with mixed visible and invisible Tickets. No
   returned item may derive from an invisible Ticket, and every paginated
   `meta.total` excludes invisible rows.
   A scoped audit or submission/release request for an invisible Ticket returns
