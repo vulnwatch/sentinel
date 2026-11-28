@@ -585,8 +585,11 @@ class TestFilters:
             event_types=[TicketAuditEventType.STATUS_CHANGE],
             search="analysis",
             from_date=date(2026, 3, 1),
+            per_page=1,
         )
 
+        # The decoys sort first by `id DESC`, so page 1 holds `target` only
+        # when every filter applies before pagination.
         assert [item.id for item in result.items] == [target.id]
         assert result.total == 1
 
@@ -606,17 +609,34 @@ class TestAccessibility:
         granted: Ticket = await ticket_factory(is_confidential=True)
         hidden: Ticket = await ticket_factory(is_confidential=True)
         await ticket_access_grant_factory(ticket_id=granted.id, user_id=user.id)
-        visible_ids = {
-            (await ticket_audit_event_factory(ticket_id=ticket.id, user_id=user.id)).id
-            for ticket in (public, granted)
-        }
-        await ticket_audit_event_factory(ticket_id=hidden.id, user_id=user.id)
+        older = await ticket_audit_event_factory(
+            ticket_id=public.id, user_id=user.id, created_at=_BASE_TIME
+        )
+        newer = await ticket_audit_event_factory(
+            ticket_id=granted.id,
+            user_id=user.id,
+            created_at=_BASE_TIME + timedelta(minutes=1),
+        )
+        # The invisible event is the newest, so a page sliced before the
+        # visibility predicate would start with it.
+        await ticket_audit_event_factory(
+            ticket_id=hidden.id,
+            user_id=user.id,
+            created_at=_BASE_TIME + timedelta(minutes=2),
+        )
+        caller = _restricted(user)
 
-        restricted = await list_own_ticket_events(db_session, caller=_restricted(user))
+        restricted = await list_own_ticket_events(db_session, caller=caller)
+        first = await list_own_ticket_events(db_session, caller=caller, per_page=1)
+        second = await list_own_ticket_events(
+            db_session, caller=caller, page=2, per_page=1
+        )
         unrestricted = await list_own_ticket_events(db_session, caller=_all(user))
 
-        assert {item.id for item in restricted.items} == visible_ids
+        assert [item.id for item in restricted.items] == [newer.id, older.id]
         assert restricted.total == 2
+        assert ([item.id for item in first.items], first.total) == ([newer.id], 2)
+        assert ([item.id for item in second.items], second.total) == ([older.id], 2)
         assert unrestricted.total == 3
 
     @pytest.mark.parametrize("branch", ["scope_all", "grant", "maintainer"])
@@ -835,8 +855,10 @@ class TestRaces:
     visibility change, and R performs the protected selection. The steps
     run in a fixed order on independent connections, so the interleaving
     is deterministic. An implementation that selected the caller's events
-    from a visibility decision taken before the selection would return the
-    now-invisible Ticket's events and fail these tests."""
+    from a visibility decision taken before the service call would return
+    the now-invisible Ticket's events and fail these tests; a visibility
+    decision split from the event selection inside the service is ruled
+    out by `TestProjection.test_read_is_one_statement`."""
 
     async def test_confidentiality_set_after_the_caller_is_resolved(
         self,

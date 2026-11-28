@@ -23,11 +23,10 @@ from httpx import AsyncClient
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import Role, TicketAuditEventType
+from app.core.enums import Role
 from app.core.identifiers import format_ticket_id
 from app.main import app
 from app.models.ticket import Ticket
-from app.models.ticket_access_grant import TicketAccessGrant
 from app.models.user import User
 from app.models.user_role import UserRole
 from app.services import ticket_audit_log
@@ -377,42 +376,23 @@ class TestTicketVisibility:
         assert response.json()["meta"]["total"] == 1
         assert format_ticket_id(hidden.sequence_id) not in response.text
 
-    @pytest.mark.parametrize(
-        "branch", ["va_scope", "admin_scope", "grant", "maintainer"]
-    )
-    async def test_each_visibility_branch_lists_the_confidential_ticket(
+    @pytest.mark.parametrize("role", [Role.VULNERABILITY_ANALYST, Role.ADMIN])
+    async def test_scope_all_role_lists_the_confidential_ticket(
         self,
-        branch: str,
+        role: Role,
         authenticated_client: AsyncClient,
         authenticated_user: User,
         ticket_factory: Factory,
         user_role_factory: Factory,
-        ticket_access_grant_factory: Factory,
-        ticket_package_factory: Factory,
-        ticket_package_maintainer_factory: Factory,
         ticket_audit_event_factory: Factory,
     ) -> None:
+        """The route resolves the caller's scope from its roles; the grant
+        and maintainership branches are covered at the service tier."""
         ticket: Ticket = await ticket_factory(is_confidential=True)
         await ticket_audit_event_factory(
             ticket_id=ticket.id, user_id=authenticated_user.id
         )
-        if branch == "va_scope":
-            await user_role_factory(
-                user_id=authenticated_user.id, role=Role.VULNERABILITY_ANALYST.value
-            )
-        elif branch == "admin_scope":
-            await user_role_factory(
-                user_id=authenticated_user.id, role=Role.ADMIN.value
-            )
-        elif branch == "grant":
-            await ticket_access_grant_factory(
-                ticket_id=ticket.id, user_id=authenticated_user.id
-            )
-        else:
-            package = await ticket_package_factory(ticket_id=ticket.id)
-            await ticket_package_maintainer_factory(
-                ticket_package_id=package.id, user_id=authenticated_user.id
-            )
+        await user_role_factory(user_id=authenticated_user.id, role=role.value)
 
         response = await authenticated_client.get(_PATH)
 
@@ -435,43 +415,6 @@ class TestTicketVisibility:
         )
         await user_role_factory(
             user_id=authenticated_user.id, role=Role.RESTRICTED_ANALYST.value
-        )
-
-        response = await authenticated_client.get(_PATH)
-
-        assert response.status_code == 200
-        assert response.json()["meta"]["total"] == 0
-
-    async def test_access_lost_during_the_request_hides_the_events(
-        self,
-        authenticated_client: AsyncClient,
-        authenticated_user: User,
-        ticket_factory: Factory,
-        ticket_access_grant_factory: Factory,
-        ticket_audit_event_factory: Factory,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """The route relies on the service's own protected selection: a
-        grant revoked after the caller was resolved hides its events."""
-        ticket: Ticket = await ticket_factory(is_confidential=True)
-        await ticket_access_grant_factory(
-            ticket_id=ticket.id, user_id=authenticated_user.id
-        )
-        await ticket_audit_event_factory(
-            ticket_id=ticket.id, user_id=authenticated_user.id
-        )
-        original = ticket_audit_log.list_own_ticket_events
-
-        async def _revoke_then_list(db: AsyncSession, **kwargs: Any) -> Any:
-            await db.execute(
-                delete(TicketAccessGrant).where(
-                    TicketAccessGrant.ticket_id == ticket.id
-                )
-            )
-            return await original(db, **kwargs)
-
-        monkeypatch.setattr(
-            ticket_audit_log, "list_own_ticket_events", _revoke_then_list
         )
 
         response = await authenticated_client.get(_PATH)
@@ -529,9 +472,6 @@ class TestOpenApiContract:
             "per_page",
         }
         assert all(param["in"] == "query" for param in parameters.values())
-        assert parameters["event_type"]["schema"]["items"]["enum"] == [
-            member.value for member in TicketAuditEventType
-        ]
 
     def test_declares_no_not_found_response(self) -> None:
         responses = app.openapi()["paths"][_PATH]["get"]["responses"]

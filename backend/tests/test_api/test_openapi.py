@@ -741,6 +741,7 @@ _RESPONSE_ENUMS = [
     ("FetcherAuditEventData", "event_type", "FetcherAuditEventType"),
     ("CNAAuditEventData", "event_type", "CNAAuditEventType"),
     ("TicketAuditEventData", "event_type", "TicketAuditEventType"),
+    ("OwnTicketAuditEventData", "event_type", "TicketAuditEventType"),
     ("TicketSummary", "ignore_reason", "TicketIgnoreReason"),
     ("TicketDetail", "ignore_reason", "TicketIgnoreReason"),
     ("TicketIgnoreRequest", "reason", "UserTicketIgnoreReasonValue"),
