@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.29.1](https://github.com/vulnwatch/sentinel/compare/v0.29.0...v0.29.1) (2026-11-28)
+
+
+### Dependencies
+
+* **deps:** Update dependency pydantic to v2.14.4 ([#1381](https://github.com/vulnwatch/sentinel/issues/1381)) ([937315e](https://github.com/vulnwatch/sentinel/commit/937315e4e2ac925fade60dc4bdfd4fc12c4d01a2))
+* **deps:** Update dependency swagger-ui-dist to v5.35.1 ([#1382](https://github.com/vulnwatch/sentinel/issues/1382)) ([124da75](https://github.com/vulnwatch/sentinel/commit/124da7511937700209b204270a78204073e0052d))
+* **deps:** Update python:3.15-slim Docker digest to 08a4c22 ([#1388](https://github.com/vulnwatch/sentinel/issues/1388)) ([eabc45e](https://github.com/vulnwatch/sentinel/commit/eabc45e7010f71cc80da2644ab4fb42480fb0ba0))
+
 ## [0.29.0](https://github.com/vulnwatch/sentinel/compare/v0.28.1...v0.29.0) (2026-11-26)
 
 
