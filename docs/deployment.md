@@ -612,9 +612,15 @@ pinned action bundles or that the step supplies in its `checksum` input,
 and fails before the download when neither is known. By default the action
 would instead accept, for a uv version that it does not bundle yet, the
 checksum of the version manifest that it downloads from the same origin as
-the archive; that check detects a corrupted download but not a compromised
-origin. The bundled checksums arrive with the pinned commit SHA of the
-action, which passes review and the release-age cooldown. As a consequence,
+the archive, at the time of the download; that check detects a corrupted
+download but not a compromised origin. setup-uv's release automation copies
+its bundled checksums from that same manifest, usually within a day of a uv
+release, and the pinned commit SHA freezes them: an archive that the origin
+replaces later fails the verification, while one that it already served
+when the checksum was copied does not. The bundled checksums reach CI only
+through an update of the action's commit SHA, which waits for the
+release-age cooldown; that cooldown holds an Action only as reliably as its
+tagged commit date (see Release-age cooldown below). As a consequence,
 a uv update whose checksum the pinned setup-uv does not bundle fails CI
 until an update of setup-uv that bundles it is merged; Renovate then
 rebases the uv PR, which runs CI again (see Update schedule below).

@@ -11,13 +11,12 @@ and digest, through `scripts/lint-shell.sh` (issue #1099). Every `uvx` tool, in
 a workflow, a script, a Git hook, or the `Makefile`, runs on the project's
 Python version (issue #1103) and with the backend's release-age cooldown
 (issue #1014), and every workflow that sets up uv runs the project only on a
-uv-managed interpreter, which follows the pinned uv (issue #1177), and verifies
-uv against a checksum that the pinned setup-uv bundles or the workflow supplies
-(issue #1392). The image
-scan runs Trivy from its image, pinned by version and digest, which Renovate
-looks up on Docker Hub (issue #1097). The Swagger UI of the API's `/api/docs`
-page shares the GitHub Pages site's pin, and the site enables the operation
-filter (issue #1070).
+uv-managed interpreter, which follows the pinned uv (issue #1177). Every
+setup-uv step verifies uv against a checksum that the pinned action bundles or
+the step supplies (issue #1392). The image scan runs Trivy from its image,
+pinned by version and digest, which Renovate looks up on Docker Hub (issue
+#1097). The Swagger UI of the API's `/api/docs` page shares the GitHub Pages
+site's pin, and the site enables the operation filter (issue #1070).
 
 The workflows are parsed as YAML (`tests/support/yaml_files.py`); only the
 `Makefile`, the scripts and the Git hooks, the `/api/docs` page module, and the
